@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="IglesiaTech App" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>IglesiaTech</title>
+
+    <!-- Firebase SDK -->
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-analytics-compat.js"></script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+
+    <!-- Firebase Initialization - Only for debugging -->
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        // Use a try-catch to avoid console errors if Firebase isn't initialized
+        try {
+          // Check if Firebase is available from your app's initialization
+          if (typeof firebase !== 'undefined') {
+            console.log('Firebase SDK loaded successfully');
+          } else {
+            console.log('Firebase is not available in global scope - this is expected when using Firebase SDK in modules');
+          }
+        } catch (e) {
+          console.log('Firebase check skipped - module-based initialization is used instead');
+        }
+      });
+    </script>
+  </body>
+</html>

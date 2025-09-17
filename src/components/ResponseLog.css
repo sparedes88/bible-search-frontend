@@ -1,0 +1,141 @@
+/* Styles for the Response Log component */
+.response-log-container {
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin: 20px 0;
+  padding: 16px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.response-log-title {
+  color: #2c3e50;
+  font-size: 18px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eaeaea;
+}
+
+.response-log-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.response-log-entry {
+  padding: 12px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.response-log-entry.incoming {
+  background-color: #f1f5f9;
+  border-left: 4px solid #64748b;
+  margin-right: 10%;
+}
+
+.response-log-entry.outgoing {
+  background-color: #e9f0fd;
+  border-left: 4px solid #3b82f6;
+  margin-left: 10%;
+}
+
+.response-log-message {
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.response-log-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.response-log-sender {
+  font-weight: 600;
+}
+
+.response-log-timestamp {
+  font-style: italic;
+}
+
+.response-log-status {
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.status-sent {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.status-failed {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-sending {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.status-unknown {
+  background-color: #f3f4f6;
+  color: #6b7280;
+}
+
+.status-received {
+  background-color: #e0e7ff;
+  color: #4338ca;
+}
+
+.response-log-loading {
+  text-align: center;
+  padding: 20px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.response-log-error {
+  text-align: center;
+  padding: 20px;
+  color: #b91c1c;
+  background-color: #fee2e2;
+  border-radius: 8px;
+}
+
+.response-log-empty {
+  text-align: center;
+  padding: 30px;
+  color: #6b7280;
+  font-style: italic;
+  background-color: #f9fafb;
+  border-radius: 8px;
+}
+
+.response-log-footer {
+  margin-top: 16px;
+  padding-top: 8px;
+  border-top: 1px solid #eaeaea;
+  font-size: 13px;
+  color: #6b7280;
+  text-align: right;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ** Public Read and Write Access for All Collections **
+
+    // Users Collection (Make it publicly readable and writable)
+    match /users/{userId} {
+      allow read, create, update, delete: if true;  // Allow anyone to read, create, update, and delete users
+    }
+
+    // Public `churches` Collection (Anyone can read and write)
+    match /churches/{churchId} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Events Collection (Anyone can read and write events)
+    match /events/{eventId} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Groups Collection (Anyone can read and write groups)
+    match /groups/{groupId} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Chats Collection (Anyone can read and write chats)
+    match /chats/{chatId} {
+      allow read, write, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Messages Collection (Anyone can read and write messages)
+    match /messages/{messageId} {
+      allow read, write, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Public `churches` Collection (Anyone can read and write churches)
+    match /churches/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Public `syncChurchPlaylist` Collection (Anyone can read and write syncChurchPlaylist)
+    match /syncChurchPlaylist/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+      // Public `media` Collection (Anyone can read and write media)
+    match /media/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+
+    // Family Collection (Anyone can read and write family data)
+    match /Family/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Nationalities Collection (Anyone can read and write nationality data)
+    match /Nationalities/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Profession Collection (Anyone can read and write profession data)
+    match /Profession/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // chat_members Collection (Anyone can read and write chat members data)
+    match /chat_members/{document} {
+      allow read, write, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Language Collection (Anyone can read and write language data)
+    match /language/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+
+    // Skills Collection (Anyone can read and write skills data)
+    match /skills/{document} {
+      allow read, create, update, delete: if true;  // Public Read/Write for anyone
+    }
+  }
+}

@@ -1,0 +1,221 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isGlobalAdmin() {
+      return isAuthenticated() && (
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'global_admin'
+      );
+    }
+    
+    function isChurchAdmin(churchId) {
+      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && (
+        (user.role == 'admin' && user.churchId == churchId) || 
+        user.role == 'global_admin'
+      );
+    }
+
+    // User profile images - allow authenticated users to upload their own profile images
+    match /users/{churchId}/{fileName} {
+      allow read: if true;  // Allow anyone to read profile images
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+
+    // Church logos and banners - allow public read access
+    match /churches/{churchId}/{fileName} {
+      allow read: if true;  // Allow anyone to read church logos and banners
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Church images with different path structure - allow public read access
+    match /churches/{churchId}/images/{fileName} {
+      allow read: if true;  // Allow anyone to read church images
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Public church images - allow public read access
+    match /public/churches/{churchId}/{fileName} {
+      allow read: if true;  // Allow anyone to read public church images
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Quick cards images - allow public read access
+    match /quick_cards/{churchId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+    
+    // Materials folder - explicit permissions for admins
+    // High priority rule for subcategory materials
+    match /coursecategories/{churchId}/{categoryId}/subcategories/{subId}/materials/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      ) && request.resource.size < 10 * 1024 * 1024;  // 10MB max for course materials
+      allow delete: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      );
+    }
+    
+    // Course categories wildcard rule - general permission
+    // This rule applies to all paths not specifically matched above
+    match /coursecategories/{churchId}/{categoryId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() ||
+        isChurchAdmin(churchId)
+      );
+    }
+
+    // Gallery images
+    match /galleries/{galleryId}/{imageId} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Courses wildcard rule
+    match /courses/{churchId}/{categoryId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (
+        isGlobalAdmin() ||
+        isChurchAdmin(churchId)
+      );
+    }
+
+    // Course category files
+    match /coursecategories/{churchId}/{categoryId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      ) && request.resource.size < 5 * 1024 * 1024;  // 5MB max
+    }
+    
+    // Subcategory files
+    match /coursecategories/{churchId}/{categoryId}/subcategories/{subId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      ) && request.resource.size < 5 * 1024 * 1024;  // 5MB max
+    }
+    
+    // Course categories root level files
+    match /coursecategories/{churchId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      ) && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Subcategories direct files
+    match /coursecategories/{churchId}/subcategories/{subId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() || 
+        isChurchAdmin(churchId)
+      ) && request.resource.size < 5 * 1024 * 1024;  // 5MB max
+    }
+    
+    // Course images
+    match /courses/{churchId}/{imageId} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Course files
+    match /courses/{churchId}/{courseId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Categories files
+    match /categories/{churchId}/{categoryId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+    
+    // Inventory images
+    match /categories/{churchId}/inventory/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Task documents
+    match /tasks/{churchId}/{taskId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && (
+          // Allow common document types
+          request.resource.contentType.matches('application/pdf') ||
+          request.resource.contentType.matches('application/msword') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
+          request.resource.contentType.matches('application/vnd.ms-excel') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
+          request.resource.contentType.matches('application/vnd.ms-powerpoint') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.presentationml.presentation') ||
+          request.resource.contentType.matches('text/plain') ||
+          request.resource.contentType.matches('image/.*')
+        );
+      allow delete: if request.auth != null;
+    }
+
+    // Leica project files (CSV/TXT) - allow authenticated users to read/write
+    match /leicaProjects/{projectName}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 10 * 1024 * 1024  // 10MB max
+        && (
+          request.resource.contentType.matches('text/csv') ||
+          request.resource.contentType.matches('text/plain') ||
+          request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+  }
+}

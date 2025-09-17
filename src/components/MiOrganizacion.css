@@ -1,0 +1,151 @@
+.punchlist-modal {
+  max-width: 600px;
+  width: 90%;
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+}
+
+.image-preview {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+
+.image-preview img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.priority-high {
+  color: #DC2626;
+  background-color: #FEE2E2;
+}
+
+.priority-medium {
+  color: #D97706;
+  background-color: #FEF3C7;
+}
+
+.priority-low {
+  color: #059669;
+  background-color: #D1FAE5;
+}
+
+.status-open {
+  color: #DC2626;
+  background-color: #FEE2E2;
+}
+
+.status-in-progress {
+  color: #D97706;
+  background-color: #FEF3C7;
+}
+
+.status-completed {
+  color: #059669;
+  background-color: #D1FAE5;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  list-style: none;
+  padding: 0;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.pagination li {
+  cursor: pointer;
+}
+
+.pagination li a {
+  padding: 0.5rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  color: #4b5563;
+  text-decoration: none;
+  display: block;
+}
+
+.pagination li.active a {
+  background-color: #4F46E5;
+  color: white;
+  border-color: #4F46E5;
+}
+
+.pagination li.disabled a {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination li:hover:not(.disabled) a {
+  background-color: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.pagination li.active:hover a {
+  background-color: #4338ca;
+}
+
+.pagination .previous,
+.pagination .next {
+  font-weight: 500;
+}
+
+.pagination .break a {
+  border: none;
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 2rem 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 50;
+}
+
+.modal-content {
+  background-color: white;
+  padding: 2rem;
+  border-radius: 0.5rem;
+  max-width: 32rem;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.modal-content input,
+.modal-content textarea,
+.modal-content select {
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.modal-content textarea {
+  min-height: 6rem;
+}

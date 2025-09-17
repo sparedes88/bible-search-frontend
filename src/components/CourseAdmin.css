@@ -1,0 +1,768 @@
+.catalog-section {
+  margin-top: 2rem;
+}
+
+.category-section {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  width: 100%;
+}
+
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.category-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.subcategory-section {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 0.375rem;
+}
+
+.subcategory-header {
+  margin-bottom: 1rem;
+}
+
+.subcategory-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.subcategory-meta {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.order-number {
+  background: #e5e7eb;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  margin-right: 0.5rem;
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+.prerequisite-tag {
+  font-size: 0.875rem;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.assigned-count {
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.assigned-users-list {
+  margin-top: 0.5rem;
+}
+
+.assigned-users-list details {
+  margin-left: 1rem;
+}
+
+.assigned-users-list summary {
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 0.875rem;
+}
+
+.assigned-users-list ul {
+  margin-top: 0.5rem;
+  padding-left: 1.5rem;
+  list-style-type: none;
+}
+
+.assigned-users-list li {
+  font-size: 0.875rem;
+  color: #6b7280;
+  padding: 0.25rem 0;
+}
+
+.courses-list {
+  margin-top: 1rem;
+}
+
+.course-list-item {
+  padding: 0.75rem;
+  border-left: 3px solid #e5e7eb;
+  margin: 0.5rem 0;
+  background: white;
+}
+
+.course-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.course-order {
+  font-size: 0.875rem;
+  color: #6b7280;
+  min-width: 2rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status-active { background: #dcfce7; color: #166534; }
+.status-inactive { background: #fee2e2; color: #991b1b; }
+.status-draft { background: #e5e7eb; color: #374151; }
+
+.status-badge.required {
+  background-color: #dc3545;
+  color: white;
+}
+
+.status-badge.optional {
+  background-color: #6c757d;
+  color: white;
+}
+
+.prerequisite-info {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+  padding-left: 2.5rem;
+}
+
+/* Modern Card-Based Course Admin Styling */
+.page-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.page-header {
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+.page-header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.admin-actions {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1.5rem 0;
+  flex-wrap: wrap;
+}
+
+.content-box {
+  background: #f9fafb;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Responsive Card Grid for Courses */
+.cards-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .cards-grid {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+  }
+}
+
+.courses-grid {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+@media (min-width: 640px) {
+  .courses-grid {
+    grid-template-columns: repeat(1, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .courses-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .courses-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+/* Nice Card Styling like ChurchApp */
+.course-card {
+  height: 220px;
+  border-radius: 8px;
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.course-card.in-progress {
+  background-color: #1A237E;
+  background-image: linear-gradient(135deg, #3949AB 0%, #1A237E 100%);
+  border: 1px solid #FBBF24;
+}
+
+.course-card.not-started {
+  background-color: #1A237E; 
+  background-image: linear-gradient(135deg, #303F9F 0%, #1A237E 100%);
+  border: 1px solid #EF4444;
+}
+
+.course-card.completed {
+  background-color: #10B981;
+  background-image: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  border: 1px solid #10B981;
+}
+
+.course-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Add a dark overlay for better text readability */
+.course-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.6) 100%);
+  pointer-events: none;
+}
+
+.card-content {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  z-index: 1;
+  position: relative;
+}
+
+.card-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 0.75rem;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+.card-details {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.9);
+  margin-top: auto;
+  z-index: 2;
+}
+
+.card-status-icon {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  font-size: 1.75rem;
+  font-weight: bold;
+  color: white;
+  opacity: 0.8;
+  z-index: 2;
+}
+
+/* Progress bar styling */
+.progress-bar {
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/* Responsive table styling */
+.custom-table-container {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  margin-top: 1rem;
+}
+
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  background-color: white;
+}
+
+.custom-table-header {
+  background-color: #f3f4f6;
+}
+
+.custom-table-header th {
+  padding: 1rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.custom-table-body td {
+  padding: 0.75rem;
+  border-top: 1px solid #e5e7eb;
+  vertical-align: middle;
+}
+
+.custom-table-body tr:hover {
+  background-color: #f9fafb;
+}
+
+/* Badge styling */
+.badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+.badge-green {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.badge-gray {
+  background-color: #e5e7eb;
+  color: #4b5563;
+}
+
+/* Assignment info */
+.assignment-info {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.9);
+  margin-top: 0.5rem;
+  z-index: 2;
+}
+
+.assignment-info small {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+/* Required events styling */
+.required-events,
+.in-progress-events,
+.missing-events {
+  margin-top: 0.5rem;
+  z-index: 2;
+}
+
+.required-count {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 0.5rem;
+  display: block;
+  z-index: 2;
+}
+
+/* Media queries for responsiveness */
+@media (max-width: 768px) {
+  .cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+  
+  .admin-actions {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  
+  .custom-table {
+    font-size: 0.75rem;
+  }
+  
+  .custom-table-header th,
+  .custom-table-body td {
+    padding: 0.5rem;
+  }
+  
+  .category-section {
+    padding: 1rem;
+  }
+  
+  .page-header h1 {
+    font-size: 1.5rem;
+  }
+  
+  .course-card {
+    height: 180px;
+  }
+}
+
+@media (max-width: 480px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .category-section {
+    padding: 0.75rem;
+  }
+  
+  .page-container {
+    padding: 0.75rem;
+  }
+  
+  .page-header h1 {
+    font-size: 1.25rem;
+  }
+  
+  .content-box {
+    padding: 1rem;
+  }
+}
+
+/* Improved responsiveness specifically for small phones */
+@media (max-width: 480px) {
+  .page-container {
+    padding: 0.5rem;
+  }
+  
+  .content-box {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+  }
+  
+  .category-section {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  
+  .course-card {
+    height: 160px; /* Shorter cards for small screens */
+  }
+  
+  .card-title {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+  
+  .card-details, 
+  .required-count,
+  .assignment-info {
+    font-size: 0.75rem;
+  }
+  
+  .card-status-icon {
+    font-size: 1.5rem;
+    bottom: 0.75rem;
+    right: 0.75rem;
+  }
+  
+  .status-group h4 {
+    font-size: 1rem;
+  }
+
+  .nav-controls button,
+  .admin-actions a {
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+    width: 100%;
+    text-align: center;
+  }
+  
+  .section-title {
+    font-size: 1.125rem;
+    margin-bottom: 1rem;
+  }
+  
+  .courses-grid {
+    gap: 1rem;
+  }
+}
+
+/* Extra small devices (portrait phones) */
+@media (max-width: 360px) {
+  .course-card {
+    height: 140px; /* Even shorter cards for very small screens */
+  }
+  
+  .card-title {
+    font-size: 1.125rem;
+  }
+  
+  .card-status-icon {
+    font-size: 1.25rem;
+  }
+  
+  .page-header h1 {
+    font-size: 1.125rem;
+  }
+  
+  .category-title {
+    font-size: 1rem;
+  }
+  
+  /* Improve table readability on very small screens */
+  .custom-table th:nth-child(5),
+  .custom-table td:nth-child(5),
+  .custom-table th:nth-child(6),
+  .custom-table td:nth-child(6),
+  .custom-table th:nth-child(7),
+  .custom-table td:nth-child(7),
+  .custom-table th:nth-child(9),
+  .custom-table td:nth-child(9) {
+    display: none;
+  }
+  
+  .custom-table td, 
+  .custom-table th {
+    padding: 0.375rem 0.25rem;
+    font-size: 0.75rem;
+  }
+  
+  /* Make the image column smaller on tiny screens */
+  .custom-table td:nth-child(2) div {
+    width: 40px !important;
+    height: 30px !important;
+  }
+  
+  /* Improve modal appearance on very small screens */
+  .close-button {
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+  }
+}
+
+/* Fix iOS safe area issues */
+@supports (padding: max(0px)) {
+  .page-container {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+  
+  .modal-overlay {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Modal styling */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding-bottom: 5px;
+  font-size: 30px;
+  color: #fff;
+  cursor: pointer;
+  z-index: 1001;
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-image {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* Hide editing controls for non-admin users */
+.user-role-member .admin-actions,
+.user-role-member .edit-controls {
+  display: none !important;
+}
+
+/* Status group styling */
+.status-group {
+  margin-bottom: 2rem;
+}
+
+.status-group h4 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* No courses message */
+.no-courses {
+  text-align: center;
+  padding: 3rem 1rem;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  color: #6b7280;
+}
+
+/* Section title styling */
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 1.25rem;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.user-progress-section, 
+.upcoming-events-section {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.view-all-link {
+  white-space: nowrap;
+}
+
+/* Responsive improvements */
+.nav-controls {
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .section-title {
+    font-size: 1.25rem;
+  }
+  
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .modal-content {
+    max-width: 95vw;
+  }
+  
+  .close-button {
+    top: 5px;
+    right: 5px;
+    width: 32px;
+    height: 32px;
+    font-size: 24px;
+  }
+}
+
+/* Styles for table on small screens */
+@media (max-width: 640px) {
+  .custom-table-container {
+    margin: 0 -1rem;
+    width: calc(100% + 2rem);
+    border-radius: 0;
+  }
+  
+  .custom-table th:nth-child(3),
+  .custom-table td:nth-child(3),
+  .custom-table th:nth-child(4),
+  .custom-table td:nth-child(4),
+  .custom-table th:nth-child(8),
+  .custom-table td:nth-child(8) {
+    display: none;
+  }
+  
+  .custom-table td, 
+  .custom-table th {
+    padding: 0.5rem 0.25rem;
+  }
+}

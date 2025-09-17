@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /completionLogs/{logId} {
+      allow read: if request.auth != null 
+        && request.auth.uid != null 
+        && exists(/databases/$(database)/documents/churches/$(resource.data.churchId)/members/$(request.auth.uid));
+    }
+  }
+}

@@ -1,0 +1,361 @@
+.member-contact-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background-color: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.contact-item {
+  display: flex;
+  align-items: center;
+}
+
+.contact-item .label {
+  font-weight: 600;
+  width: 80px;
+  color: #4b5563;
+}
+
+.messaging-container {
+  display: flex;
+  flex-direction: column;
+  height: 70vh;
+  max-height: 600px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background-color: #f9fafb;
+}
+
+.message-bubble {
+  max-width: 70%;
+  padding: 10px 16px;
+  border-radius: 12px;
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.message-bubble.sent {
+  align-self: flex-end;
+  background-color: #4f46e5;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.message-bubble.received {
+  align-self: flex-start;
+  background-color: white;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Message direction styles */
+.message-bubble.outbound {
+  align-self: flex-end;
+  background-color: #4f46e5;
+  color: white;
+  border-bottom-right-radius: 4px;
+  margin-left: auto;
+}
+
+.message-bubble.inbound {
+  align-self: flex-start;
+  background-color: white;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  margin-right: auto;
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+}
+
+.message-bubble.outbound .message-header {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.message-bubble.inbound .message-header {
+  color: #6b7280;
+}
+
+.sender-name {
+  font-weight: 600;
+}
+
+.message-content {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.message-metadata {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  margin-top: 4px;
+  opacity: 0.8;
+}
+
+.message-time {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
+.message-status {
+  margin-left: 8px;
+  font-style: italic;
+}
+
+.message-from {
+  font-size: 0.7rem;
+  color: #6b7280;
+  margin-left: 5px;
+}
+
+.status-tag {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-top: 4px;
+  display: inline-block;
+}
+
+.status-tag.sent {
+  background-color: #10b981;
+  color: white;
+}
+
+.status-tag.pending {
+  background-color: #f59e0b;
+  color: white;
+}
+
+.status-tag.failed {
+  background-color: #ef4444;
+  color: white;
+}
+
+.group-tag {
+  background-color: #6366f1;
+  color: white;
+  margin-right: 6px;
+}
+
+.no-messages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #6b7280;
+  text-align: center;
+  padding: 20px;
+}
+
+.message-input-container {
+  display: flex;
+  padding: 10px;
+  border-top: 1px solid #e5e7eb;
+  background-color: white;
+}
+
+.message-input {
+  flex: 1;
+  min-height: 60px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 10px;
+  resize: none;
+  font-family: inherit;
+  margin-right: 10px;
+}
+
+.send-message-button {
+  padding: 0 20px;
+  border: none;
+  background-color: #4f46e5;
+  color: white;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.send-message-button:hover {
+  background-color: #4338ca;
+}
+
+.send-message-button:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .message-bubble {
+    max-width: 85%;
+  }
+  
+  .message-input-container {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .message-input {
+    margin-right: 0;
+  }
+  
+  .send-message-button {
+    height: 40px;
+  }
+}
+
+/* Add new balance-related styles */
+.balance-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #f5f7fa;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  border: 1px solid #e2e8f0;
+}
+
+.balance-info, .messages-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.balance-label, .messages-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.balance-value, .messages-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.balance-value {
+  color: #047857; /* green */
+}
+
+.balance-value.low-balance {
+  color: #b91c1c; /* red */
+}
+
+.messages-value {
+  color: #2563eb; /* blue */
+}
+
+.recharge-btn {
+  background-color: #4f46e5;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.recharge-btn:hover {
+  background-color: #4338ca;
+}
+
+.recharge-prompt {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.recharge-warning {
+  background-color: white;
+  padding: 24px;
+  border-radius: 8px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.recharge-warning h3 {
+  color: #b91c1c;
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.recharge-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.recharge-now-btn {
+  background-color: #4f46e5;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dismiss-btn {
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.visitor-contact-info {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  background-color: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.back-button:hover {
+  background-color: #e5e7eb;
+}

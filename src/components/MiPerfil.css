@@ -1,0 +1,251 @@
+.qr-code-label {
+  width: 100%;
+  /* height: 6in; */
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center; /* Center everything */
+  padding: 20px 0px;
+  gap: 15px;
+  background-color: white;
+  box-sizing: border-box;
+  margin: 0;
+  /* border: 1px solid #ddd; */
+}
+.loading-group-adding{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  gap: 10px;
+}
+.loading-group-adding p{
+  margin: 0;
+}
+.qr-code-container {
+  height: 1.5in;
+  width: 1.5in;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.church-logo {
+  position: absolute;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 50%;
+  background-color: white;
+  padding: 2px;
+}
+
+.qr-code-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.qr-code-text h2 {
+  margin: 0;
+  font-size: 18pt;
+}
+
+.user-name {
+  margin: 0;
+  font-size: 14pt;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-id {
+  margin: 4px 0 0 0;
+  font-size: 10pt;
+  color: #666;
+}
+
+/* Responsive styles */
+/* @media (max-width: 768px) {
+  .qr-code-label {
+    width: 100%;
+    height: auto;
+    flex-direction: column;
+    text-align: center;
+    gap: 0.2in;
+    padding: 0.5in;
+  }
+
+  .qr-code-container {
+    width: 1.2in;
+    height: 1.2in;
+  }
+
+  .qr-code-text {
+    gap: 0.1in;
+  }
+
+  .qr-code-text h2 {
+    font-size: 16pt;
+  }
+
+  .user-name {
+    font-size: 12pt;
+  }
+
+  .user-id {
+    font-size: 9pt;
+  }
+} */
+
+
+/* Offline Banner Styles */
+.offline-banner {
+  background-color: #FEE2E2;
+  color: #DC2626;
+  padding: 12px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Loading Spinner */
+.loader {
+  border: 2px solid #f3f3f3;
+  border-radius: 50%;
+  border-top: 2px solid #3498db;
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Retry Button */
+.retry-button {
+  background-color: #DC2626;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.retry-button:disabled {
+  background-color: #9CA3AF;
+  cursor: not-allowed;
+}
+
+.retry-button:not(:disabled) {
+  background-color: #4B5563;
+  cursor: pointer;
+}
+
+.retry-button:not(:disabled):hover {
+  background-color: #374151;
+}
+
+.retry-button:hover {
+  background-color: #B91C1C;
+}
+
+.admin-buttons-container {
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 90%;
+  max-width: 300px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+}
+
+.admin-button {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: #4B5563;
+  color: white;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color 0.2s;
+}
+
+.admin-button:hover {
+  background: #374151;
+}
+
+/* Adjust for development mode offline button */
+@media (max-width: 768px) {
+  .admin-buttons-container {
+    bottom: 80px; /* Add space for the offline mode button */
+  }
+}
+
+.form-group {
+  padding: 0.5rem;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.form-field {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+/* Mobile-first responsive buttons container */
+.buttons-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  background: white;
+}
+
+/* Updated responsive styles */
+@media (max-width: 768px) {
+  .form-group {
+    padding: 0.75rem;
+  }
+  
+  .form-field {
+    padding: 0.5rem;
+  }
+  
+  h2 {
+    font-size: 1.5rem;
+    padding: 0 1rem;
+  }
+  
+  .buttons-container {
+    padding: 0.75rem;
+  }
+}

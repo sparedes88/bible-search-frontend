@@ -1,0 +1,323 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 🔐 Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isGlobalAdmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'global_admin';
+    }
+
+    function isChurchAdmin(churchId) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isAuthenticated() && (
+        userDoc.data.role == 'global_admin' ||
+        (userDoc.data.role == 'admin' && userDoc.data.churchId == churchId)
+      );
+    }
+
+    function isUserInChurch(churchId) {
+      return request.auth.uid != null &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == churchId;
+    }
+
+    // ✅ Users
+    match /users/{userId} {
+      function isMember() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'member';
+      }
+
+      function isOwner() {
+        return request.auth.uid == userId;
+      }
+
+      // Allow querying users by churchId for admin connections
+      allow list: if isAuthenticated() && 
+                  ('churchId' in request.query.filters) &&
+                  (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == request.query.filters.churchId[0] || 
+                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'global_admin');
+
+      // Allow querying users by phone number for login purposes
+      // This is needed for the phone-based login flow
+      allow list: if request.query.limit <= 1 && 
+                   'phone' in request.query.filters;
+
+      allow read: if isAuthenticated() && isMember() && isOwner();
+
+      allow update: if isAuthenticated() &&
+                      isMember() &&
+                      isOwner() &&
+                      !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+
+      allow create, delete: if false;
+
+      allow read: if isAuthenticated() &&
+        (userId == request.auth.uid ||
+         resource.data.churchId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId);
+
+      allow read, write, delete: if isGlobalAdmin();
+
+      allow update: if isAuthenticated() &&
+        request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']);
+    }
+
+    // ✅ Progress Collection
+    match /progress/{progressId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid ||
+         isUserInChurch(resource.data.churchId));
+      allow write: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+    }
+
+    // ✅ Course Categories
+    match /coursecategories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isChurchAdmin(request.resource.data.churchId);
+    }
+
+      // ✅ Course Topics
+      match /coursetopics/{topicId} {
+        allow read: if true;
+        // Add write rules as needed
+      }
+
+    // ✅ Event Instances
+    match /eventInstances/{eventId} {
+      allow read: if true;
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    // ✅ Events
+    match /events/{eventId} {
+      allow read: if true;
+      allow write, delete: if isAuthenticated() && 
+        (isChurchAdmin(resource.data.churchId) || isGlobalAdmin());
+    }
+
+    // ✅ Churches and Subcollections
+    match /churches/{churchId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+
+      match /broadcasts/{broadcastId} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+
+      match /songs/{songId} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+
+      match /courses/{courseId} {
+        allow read: if isAuthenticated();
+        allow write: if isChurchAdmin(churchId);
+      }
+
+      match /quickCards/{cardId} {
+        allow read: if true;
+        allow write: if isChurchAdmin(churchId);
+      }
+
+      match /categories/{categoryId} {
+        allow read: if isAuthenticated();
+        allow write: if isChurchAdmin(churchId);
+      }
+
+      match /members/{memberId} {
+        allow read, write, delete: if isChurchAdmin(churchId);
+      }
+
+      match /visitors/{visitorId} {
+        allow create: if isAuthenticated() && isChurchAdmin(churchId);
+        allow read, update, delete: if isChurchAdmin(churchId);
+      }
+
+      match /config/process {
+        allow read, write: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+      
+      // Social Media permissions - allow admin role to CRUD
+      match /socialMedia/{postId} {
+        allow read, write, create, update, delete: if isChurchAdmin(churchId);
+      }
+      
+      // Social Media Accounts permissions - allow admin role to CRUD
+      match /socialMediaAccounts/{accountId} {
+        allow read, write, create, update, delete: if isChurchAdmin(churchId);
+      }
+      
+      // Forms - Admin/Global admin can CRUD, authenticated users can read active forms
+      match /forms/{formId} {
+        allow read: if isAuthenticated() || (resource.data.isActive == true);
+        allow write, create, update, delete: if isChurchAdmin(churchId);
+        
+        // Form entries - anyone can create, admin can CRUD
+        match /entries/{entryId} {
+          allow create: if true; // Allow anonymous submissions
+          allow read, update, delete: if isChurchAdmin(churchId);
+        }
+      }
+      
+      // Time Tracking - Users can CRUD their own entries
+      match /timeEntries/{entryId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+      
+      // Tasks - Users can CRUD their own tasks
+      match /tasks/{taskId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+      
+      // Task Progress - Users can CRUD their own progress entries
+      match /taskProgress/{progressId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+      
+      // Submissions - Users can CRUD their own submissions
+      match /submissions/{submissionId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+      
+      // Areas of Focus - Users can CRUD their own areas
+      match /areasOfFocus/{areaId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+      
+      // Cost Codes - Users can CRUD their own cost codes
+      match /costCodes/{costCodeId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      }
+    }
+
+    // ✅ Visitors Collection (Top-level)
+    match /visitors/{churchId}/{path=**} {
+      allow read, write: if isChurchAdmin(churchId);
+    }
+
+    // ✅ Completion Logs
+    match /completionLogs/{logId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid ||
+         isUserInChurch(resource.data.churchId));
+      allow write: if isAuthenticated() &&
+        (request.resource.data.userId == request.auth.uid ||
+         isUserInChurch(request.resource.data.churchId));
+    }
+
+    // ✅ Categories
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated();
+    }
+
+    // ✅ Courses
+    match /courses/{courseId} {
+      allow read: if isAuthenticated();
+    }
+
+    // ✅ Media
+    match /media/{mediaId} {
+      allow read: if true;
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    match /playlist/{playlistId} {
+      allow read: if isAuthenticated();
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    match /syncChurchPlaylist/{syncId} {
+      allow read: if isAuthenticated();
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    // ✅ Gallery
+    match /gallery_new/{galleryId} {
+      allow read: if true;
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    match /gallery_images/{imageId} {
+      allow read: if true;
+      allow write, delete: if isChurchAdmin(resource.data.churchId);
+    }
+
+    // ✅ Chats & Messaging
+    match /chats/{chatId} {
+      allow read, write, delete: if isAuthenticated();
+    }
+
+    match /messages/{messageId} {
+      allow read, write, delete: if isAuthenticated();
+    }
+
+    match /chat_members/{memberId} {
+      allow read, write, delete: if isAuthenticated();
+    }
+
+    // ✅ Group Messaging
+    match /groups/{groupId} {
+      allow read, write, delete: if isAuthenticated();
+
+      match /messages/{messageId} {
+        allow read, write, delete: if isAuthenticated();
+      }
+
+      match /readStatus/{statusId} {
+        allow read, write, delete: if isAuthenticated();
+      }
+
+      match /typingStatus/{typingId} {
+        allow read, write, delete: if isAuthenticated();
+      }
+    }
+
+    // ✅ Profiles
+    match /{path=**}/profiles/{profileId} {
+      allow read: if isAuthenticated();
+      allow write, delete: if isAuthenticated() && request.auth.uid == profileId;
+    }
+
+    // ✅ Reference Data
+    match /{collection}/{docId} {
+      allow read: if isAuthenticated() &&
+        collection in ['Family', 'Nationalities', 'Profession', 'language', 'skills'];
+      allow write, delete: if isGlobalAdmin();
+    }
+
+    // ✅ Event Registrations
+    match /eventRegistrations/{registrationId} {
+      // Anyone can read registrations
+      // For public users, we use client-side filtering to limit visible fields
+      allow read: if true;
+      
+      // Anyone can create a registration
+      allow create: if true;
+      
+      // Only admins and global admins can update or delete registrations
+      allow update, delete: if isAuthenticated() && 
+        (isChurchAdmin(resource.data.churchId) || isGlobalAdmin());
+    }
+
+    // ✅ Global Admin Override
+    match /{document=**} {
+      allow read, write, delete: if isGlobalAdmin();
+    }
+  }
+}

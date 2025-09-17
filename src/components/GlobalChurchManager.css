@@ -1,0 +1,132 @@
+body {
+  background: #f6f8fa;
+}
+.global-church-manager {
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+}
+.church-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 1rem;
+  margin-bottom: 2rem;
+}
+.church-table th {
+  position: sticky;
+  top: 0;
+  background: #f3f4f6;
+  color: #222;
+  font-weight: 600;
+  padding: 1rem;
+  border-bottom: 2px solid #e5e7eb;
+  z-index: 2;
+}
+.church-table td {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  padding: 1rem;
+  border: none;
+  vertical-align: middle;
+}
+.church-table tr {
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.church-table tr:hover td {
+  box-shadow: 0 4px 16px rgba(60,60,120,0.10);
+  transform: scale(1.01);
+}
+.church-table img {
+  border-radius: 8px;
+  background: #f3f4f6;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.add-church-form {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: #f9fafb;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.add-church-form input {
+  display: block;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 1rem;
+  background: #fff;
+}
+.add-church-form button {
+  margin-right: 1rem;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1.2rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.add-church-form button:hover {
+  background: #1d4ed8;
+}
+.church-table button {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  margin-right: 0.5rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.church-table button:hover {
+  background: #1d4ed8;
+}
+.church-table button:disabled {
+  background: #e5e7eb;
+  color: #888;
+  cursor: not-allowed;
+}
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+.pagination-controls button {
+  background: #f3f4f6;
+  color: #222;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.2rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.pagination-controls button:hover:not(:disabled) {
+  background: #dbeafe;
+}
+.pagination-controls button:disabled {
+  background: #e5e7eb;
+  color: #888;
+  cursor: not-allowed;
+}
+.pagination-controls span {
+  font-size: 1.1rem;
+  color: #2563eb;
+  font-weight: 500;
+}
+.church-table tr.inactive-row td {
+  background: #e5e7eb !important;
+  color: #888 !important;
+  opacity: 0.7;
+}

@@ -1,0 +1,10 @@
+diff a/src/components/CourseManager.js b/src/components/CourseManager.js	(rejected hunks)
+@@ -516,7 +516,7 @@
+                         className="form-control"
+                       >
+                         {categories
+-                          .find(cat => cat.name === course.category.name)
++                          .find(cat => cat.name === course.category)
+                           ?.subcategories.map(sub => (
+                             <option key={sub.name} value={sub.name}>{sub.name}</option>
+                           ))}
