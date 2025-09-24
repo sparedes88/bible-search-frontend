@@ -1,0 +1,184 @@
+.group-details-container {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  margin-top: -30px;
+  border: 1px solid #dddddd;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.group-details-header {
+  border-bottom: 2px solid #f8f9fa;
+  padding-bottom: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.group-details-header h2 {
+  color: #333;
+  margin-bottom: 0.5rem;
+  font-size: 2rem;
+}
+
+.group-description {
+  color: #666;
+  font-size: 1.1rem;
+  margin: 0;
+  font-style: italic;
+}
+
+.group-details-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.group-info-section {
+  background: #f8f9fa;
+  padding: 1.5rem;
+  border-radius: 8px;
+  border-left: 4px solid #428b51;
+}
+
+.group-info-section h3 {
+  color: #333;
+  margin-bottom: 1rem;
+  font-size: 1.3rem;
+  display: flex;
+  align-items: center;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.info-item {
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.info-item strong {
+  color: #495057;
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.info-item:not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+
+.meeting-times-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.meeting-time-item {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+  color: #495057;
+}
+
+.members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.member-item {
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.member-role {
+  color: #6c757d;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.group-actions {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 2px solid #f8f9fa;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.action-btn {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: all 0.3s ease;
+  text-decoration: none;
+}
+
+.chat-btn {
+  background-color: #007bff;
+  color: white;
+}
+
+.chat-btn:hover {
+  background-color: #0056b3;
+  transform: translateY(-1px);
+}
+
+@media screen and (max-width: 768px) {
+  .group-details-container {
+    padding: 1rem;
+    margin-top: -20px;
+  }
+
+  .group-details-header h2 {
+    font-size: 1.5rem;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .group-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .action-btn {
+    width: 100%;
+    max-width: 300px;
+    justify-content: center;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .group-details-container {
+    padding: 0.75rem;
+  }
+
+  .group-info-section {
+    padding: 1rem;
+  }
+
+  .meeting-time-item,
+  .member-item,
+  .info-item {
+    padding: 0.5rem;
+  }
+}

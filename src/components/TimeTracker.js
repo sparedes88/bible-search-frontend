@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { 
   collection, 
   addDoc, 
-  updateDoc, 
+  updateDoc,  
   deleteDoc, 
   doc, 
   query, 
@@ -20,24 +20,108 @@ import {
 import { toast } from 'react-toastify';
 import { canAccessModule } from '../utils/permissions';
 import TaskProgress from './TaskProgress';
+import TaskManager from './TaskManager';
 import ChurchHeader from './ChurchHeader';
 import commonStyles from '../pages/commonStyles';
 import './TimeTracker.css';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
-// Helper function to format time in seconds to HH:MM:SS or MM:SS
-const formatTime = (seconds) => {
-  if (!seconds || seconds === 0) return '00:00';
-  
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  
-  if (hours > 0) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  } else {
-    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+// History Tooltip Component
+const HistoryTooltip = ({ history, users }) => {
+  if (!history || history.length === 0) {
+    return <div className="history-tooltip">No edit history available</div>;
   }
+
+  const formatFieldName = (field) => {
+    const fieldNames = {
+      startTime: 'Start Time',
+      endTime: 'End Time',
+      duration: 'Duration',
+      note: 'Note',
+      date: 'Date',
+      project: 'Project',
+      areaOfFocus: 'Area of Focus',
+      costCode: 'Cost Code',
+      userId: 'User'
+    };
+    return fieldNames[field] || field;
+  };
+
+  const formatHistoryValue = (field, value) => {
+    if (value === 'None' || !value) return 'None';
+    
+    // Format time fields
+    if ((field === 'startTime' || field === 'endTime') && value) {
+      try {
+        // If it's already a formatted time string, return as-is
+        if (typeof value === 'string' && (value.includes('AM') || value.includes('PM'))) {
+          return value;
+        }
+        // If it's an ISO string, format it
+        return formatTimeDisplay(value);
+      } catch (error) {
+        return value;
+      }
+    }
+    
+    // Format duration
+    if (field === 'duration' && value) {
+      const duration = parseFloat(value);
+      if (!isNaN(duration)) {
+        return `${duration.toFixed(2)}h`;
+      }
+    }
+    
+    return value;
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleString();
+  };
+
+  const getUserName = (userId) => {
+    const user = users.find(u => u.id === userId);
+    return user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : 'Unknown User';
+  };
+
+  return (
+    <div className="history-tooltip">
+      <div className="history-header">Edit History</div>
+      <div className="history-list">
+        {history.slice().reverse().map((change, index) => (
+          <div key={index} className="history-item">
+            <div className="history-field">{formatFieldName(change.field)}</div>
+            <div className="history-change">
+              <span className="history-old">{formatHistoryValue(change.field, change.oldValue)}</span>
+              <span className="history-arrow">→</span>
+              <span className="history-new">{formatHistoryValue(change.field, change.newValue)}</span>
+            </div>
+            <div className="history-meta">
+              <span className="history-user">{getUserName(change.changedBy)}</span>
+              <span className="history-date">{formatDate(change.changedAt)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 };
+
+// Helper function to format time in seconds to HH:MM:SS or MM:SS - Moved to TimerPage
+// const formatTime = (seconds) => {
+//   if (!seconds || seconds === 0) return '00:00';
+//   
+//   const hours = Math.floor(seconds / 3600);
+//   const minutes = Math.floor((seconds % 3600) / 60);
+//   const secs = seconds % 60;
+//   
+//   if (hours > 0) {
+//     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+//   } else {
+//     return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+//   }
+// };
 
 // Helper function to get current time in 12-hour format
 const getCurrentTime12Hour = () => {
@@ -85,137 +169,512 @@ const getDefaultEndTime = (startTime) => {
   }
 };
 
+// Helper function to format time for display in table
+const formatTimeDisplay = (dateValue) => {
+  if (!dateValue) return '-';
+  
+  try {
+    // Handle ISO date strings directly
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return '-';
+    
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    return `${displayHours}:${displayMinutes} ${ampm}`;
+  } catch (error) {
+    console.error('Error formatting time display:', error);
+    return '-';
+  }
+};
+
+// Helper function to format duration in seconds to HH:MM or MM:SS
+const formatDuration = (seconds) => {
+  if (!seconds || seconds === 0) return '00:00';
+  
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  } else {
+    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+};
+
 // Helper function to format time input with masking
 const formatTimeInput = (value) => {
-  if (!value) return '';
-  
-  // Remove any invalid characters, keep only numbers, colon, space, A, M, P
-  let cleaned = value.replace(/[^0-9:AMP\s]/gi, '').toUpperCase();
-  
-  // Convert 24-hour format to 12-hour format
-  if (cleaned.includes(':')) {
-    const timeParts = cleaned.split(':');
-    if (timeParts.length === 2) {
-      const hours24 = parseInt(timeParts[0], 10);
-      const minutes = timeParts[1].replace(/[^\d]/g, '');
-      
-      if (hours24 >= 0 && hours24 <= 23 && minutes.length >= 1 && minutes.length <= 2) {
-        let hours12 = hours24;
-        let ampm = 'AM';
-        
-        if (hours24 === 0) {
-          hours12 = 12; // 00:00 becomes 12:00 AM
-        } else if (hours24 === 12) {
-          ampm = 'PM'; // 12:00 stays 12:00 PM
-        } else if (hours24 > 12) {
-          hours12 = hours24 - 12;
-          ampm = 'PM';
-        }
-        
-        // Return immediately to avoid further processing
-        return `${hours12}:${minutes} ${ampm}`;
-      }
+  if (!value || value.trim() === '') return '';
+
+  let cleaned = value.trim().toUpperCase();
+
+  // If it already has AM/PM, ensure proper formatting with space
+  if (cleaned.includes('AM') || cleaned.includes('PM')) {
+    // Extract the time part and AM/PM part
+    const ampmMatch = cleaned.match(/(AM|PM)$/i);
+    if (ampmMatch) {
+      const ampm = ampmMatch[0];
+      const timePart = cleaned.replace(/(AM|PM)$/i, '').trim();
+      return `${timePart} ${ampm}`;
+    }
+    return cleaned;
+  }
+
+  // Check if user typed AM/PM first (like "pm9" or "am 9")
+  if (cleaned.startsWith('AM') || cleaned.startsWith('PM')) {
+    const ampm = cleaned.slice(0, 2);
+    const rest = cleaned.slice(2).trim();
+    if (rest) {
+      return `${rest} ${ampm}`;
     }
   }
+
+  // Extract numbers only
+  const numbersOnly = cleaned.replace(/[^0-9]/g, '');
+
+  // Handle different number lengths (12-hour format only)
+  if (numbersOnly.length === 1) {
+    // Single digit - don't format yet, let user continue typing
+    return cleaned;
+  } else if (numbersOnly.length === 2) {
+    // Two digits - could be hour or hour:minute
+    const hour = parseInt(numbersOnly, 10);
+    if (hour >= 1 && hour <= 12) {
+      return `${hour} AM`;
+    }
+    // If not a valid hour, don't format
+    return cleaned;
+  } else if (numbersOnly.length === 3) {
+    // Three digits: H:MM format
+    const hour = parseInt(numbersOnly.slice(0, 1), 10);
+    const minutes = numbersOnly.slice(1);
+    if (hour >= 1 && hour <= 9 && minutes >= 0 && minutes <= 59) {
+      return `${hour}:${minutes} AM`;
+    }
+  } else if (numbersOnly.length === 4) {
+    // Four digits: HH:MM format - only accept 1-12 for hour
+    const hour = parseInt(numbersOnly.slice(0, 2), 10);
+    const minutes = numbersOnly.slice(2);
+    if (hour >= 1 && hour <= 12 && minutes >= 0 && minutes <= 59) {
+      return `${hour}:${minutes} AM`;
+    }
+    // If hour is outside 1-12 range, don't format
+    return cleaned;
+  }
+
+  // If we can't format it, return the original cleaned value
+  return cleaned;
+};
+
+// Helper function to create change history for time entries
+const createChangeHistory = (originalEntry, updatedData, changedBy) => {
+  const changes = [];
+  const now = new Date().toISOString();
+
+  // Fields to track changes for
+  const trackableFields = [
+    'startTime', 'endTime', 'duration', 'note', 'date', 
+    'project', 'areaOfFocus', 'costCode', 'userId'
+  ];
+
+  trackableFields.forEach(field => {
+    const originalValue = originalEntry[field];
+    const newValue = updatedData[field];
+
+    // Handle time fields specially - convert to display format for comparison
+    let displayOriginal = originalValue;
+    let displayNew = newValue;
+
+    if ((field === 'startTime' || field === 'endTime') && originalValue && newValue) {
+      try {
+        // Convert ISO strings to display format for comparison
+        displayOriginal = formatTimeDisplay(originalValue);
+        displayNew = formatTimeDisplay(newValue);
+      } catch (error) {
+        // If formatting fails, use raw values
+        displayOriginal = originalValue;
+        displayNew = newValue;
+      }
+    }
+
+    // Check if values are different
+    if (displayOriginal !== displayNew) {
+      changes.push({
+        field,
+        oldValue: displayOriginal || 'None',
+        newValue: displayNew || 'None',
+        changedBy,
+        changedAt: now
+      });
+    }
+  });
+
+  return changes;
+};
+
+// Helper function to export time entries to PDF
+const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCodes, filters = {}) => {
+  const doc = new jsPDF();
   
-  // Handle AM/PM formatting first
-  if (cleaned.includes('A') || cleaned.includes('P')) {
-    // Extract numbers and AM/PM
-    const numbers = cleaned.replace(/[AMP\s]/g, '');
-    const hasA = cleaned.includes('A');
-    const hasP = cleaned.includes('P');
+  // Add title
+  doc.setFontSize(20);
+  doc.text('Time Entries Report', 14, 22);
+  
+  // Add date range if filters are applied
+  let yPosition = 35;
+  if (filters.dateFrom || filters.dateTo) {
+    doc.setFontSize(12);
+    let dateRangeText = 'Date Range: ';
+    if (filters.dateFrom && filters.dateTo) {
+      dateRangeText += `${filters.dateFrom} to ${filters.dateTo}`;
+    } else if (filters.dateFrom) {
+      dateRangeText += `From ${filters.dateFrom}`;
+    } else if (filters.dateTo) {
+      dateRangeText += `To ${filters.dateTo}`;
+    }
+    doc.text(dateRangeText, 14, yPosition);
+    yPosition += 10;
+  }
+  
+  // Add generation date
+  doc.setFontSize(10);
+  doc.text(`Generated on: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 14, yPosition);
+  yPosition += 15;
+  
+  // Prepare table data
+  const tableData = entries.map(entry => {
+    const user = users.find(u => u.id === entry.userId);
+    const userName = user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : 'Unknown User';
     
-    // Format as HHMM AM/PM
-    if (numbers.length >= 1 && numbers.length <= 4) {
-      const ampm = hasP ? 'PM' : 'AM';
-      if (numbers.length === 4) {
-        // Format as HH:MM AM/PM for 4 digits
-        cleaned = numbers.slice(0, 2) + ':' + numbers.slice(2) + ' ' + ampm;
-      } else if (numbers.length === 3) {
-        // Format as H:MM AM/PM for 3 digits
-        cleaned = numbers.slice(0, 1) + ':' + numbers.slice(1) + ' ' + ampm;
-      } else {
-        // For 1-2 digits, just add AM/PM
-        cleaned = numbers + ' ' + ampm;
+    return [
+      new Date(entry.date).toLocaleDateString(),
+      userName,
+      formatTimeDisplay(entry.startTime),
+      formatTimeDisplay(entry.endTime),
+      entry.duration ? (entry.duration / 3600).toFixed(2) + 'h' : '-',
+      projects.find(p => p.id === entry.project)?.name || 'Unknown Project',
+      areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area',
+      costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code',
+      entry.note || '-'
+    ];
+  });
+  
+  // Add table
+  doc.autoTable({
+    head: [['Date', 'User', 'Start Time', 'End Time', 'Duration', 'Project', 'Area of Focus', 'Cost Code', 'Notes']],
+    body: tableData,
+    startY: yPosition,
+    styles: {
+      fontSize: 8,
+      cellPadding: 3,
+    },
+    headStyles: {
+      fillColor: [102, 126, 234], // Blue header
+      textColor: 255,
+      fontSize: 9,
+      fontStyle: 'bold',
+    },
+    alternateRowStyles: {
+      fillColor: [245, 245, 245], // Light gray alternating rows
+    },
+    columnStyles: {
+      0: { cellWidth: 20 }, // Date
+      1: { cellWidth: 25 }, // User
+      2: { cellWidth: 20 }, // Start Time
+      3: { cellWidth: 20 }, // End Time
+      4: { cellWidth: 15 }, // Duration
+      5: { cellWidth: 25 }, // Project
+      6: { cellWidth: 25 }, // Area of Focus
+      7: { cellWidth: 20 }, // Cost Code
+      8: { cellWidth: 'auto' }, // Notes
+    },
+    margin: { top: 10 },
+  });
+  
+  // Add summary statistics at the bottom
+  const finalY = doc.lastAutoTable.finalY + 20;
+  doc.setFontSize(12);
+  doc.text('Summary Statistics:', 14, finalY);
+  
+  const totalEntries = entries.length;
+  const totalHours = entries.reduce((sum, entry) => sum + (entry.duration || 0), 0) / 3600;
+  const avgHoursPerEntry = totalEntries > 0 ? totalHours / totalEntries : 0;
+  
+  doc.setFontSize(10);
+  doc.text(`Total Entries: ${totalEntries}`, 14, finalY + 10);
+  doc.text(`Total Hours: ${totalHours.toFixed(2)}h`, 14, finalY + 18);
+  doc.text(`Average Hours per Entry: ${avgHoursPerEntry.toFixed(2)}h`, 14, finalY + 26);
+  
+  // Save the PDF
+  const fileName = `time-entries-${new Date().toISOString().split('T')[0]}.pdf`;
+  doc.save(fileName);
+  
+  return fileName;
+};
+
+// Helper function to format time input with context awareness (considers start time for AM/PM)
+const formatTimeInputWithContext = (value, startTime = null) => {
+  if (!value || value.trim() === '') return '';
+
+  let cleaned = value.trim();
+
+  // If it already contains AM/PM (even partially), don't mess with it
+  // This allows editing of already formatted times and typing AM/PM
+  if (/(AM|PM)/i.test(cleaned)) {
+    // Ensure proper spacing between time and AM/PM
+    if (!/\s+(AM|PM)$/i.test(cleaned)) {
+      // If AM/PM exists but not properly spaced, fix the spacing
+      const ampmMatch = cleaned.match(/(AM|PM)$/i);
+      if (ampmMatch) {
+        const ampm = ampmMatch[0];
+        const timePart = cleaned.replace(/(AM|PM)$/i, '').trim();
+        return `${timePart} ${ampm}`;
       }
-    } else {
-      // Invalid number of digits, remove AM/PM
-      cleaned = numbers;
     }
-  } else {
-    // No AM/PM yet, just keep the numbers (up to 4 digits)
-    const numbersOnly = cleaned.replace(/[^0-9]/g, '');
-    cleaned = numbersOnly.slice(0, 4);
+    return cleaned;
   }
-  
-  // Limit length to prevent overly long inputs
-  if (cleaned.length > 8) {
-    cleaned = cleaned.slice(0, 8);
+
+  // Convert to uppercase for processing
+  cleaned = cleaned.toUpperCase();
+
+  // Check if user typed AM/PM first (like "pm9" or "am 9")
+  if (cleaned.startsWith('AM') || cleaned.startsWith('PM')) {
+    const ampm = cleaned.slice(0, 2);
+    const rest = cleaned.slice(2).trim();
+    if (rest) {
+      return `${rest} ${ampm}`;
+    }
   }
-  
+
+  // If it contains a colon, it's already formatted - don't mess with it
+  // This allows editing of times like "2:30" without reformatting
+  if (cleaned.includes(':')) {
+    return cleaned;
+  }
+
+  // Extract numbers only
+  const numbersOnly = cleaned.replace(/[^0-9]/g, '');
+
+  // Determine default AM/PM based on start time and input time
+  let defaultAMPM = 'AM';
+  if (startTime && numbersOnly.length >= 2) {
+    try {
+      const startTime24h = convertTo24Hour(startTime);
+      const startHour = new Date(`2000-01-01T${startTime24h}`).getHours();
+
+      // Parse the input hour
+      let inputHour;
+      if (numbersOnly.length === 2) {
+        inputHour = parseInt(numbersOnly, 10);
+      } else if (numbersOnly.length === 3) {
+        inputHour = parseInt(numbersOnly.slice(0, 1), 10);
+      } else if (numbersOnly.length === 4) {
+        inputHour = parseInt(numbersOnly.slice(0, 2), 10);
+      }
+
+      if (inputHour && inputHour >= 1 && inputHour <= 12) {
+        // Smart AM/PM defaulting for end times:
+        // If start time is AM, default end time to PM (most work sessions go into afternoon)
+        // If start time is PM, keep PM
+        // But if input hour is close to start hour, could be same AM period
+        const startHour12 = startHour === 0 ? 12 : (startHour > 12 ? startHour - 12 : startHour);
+
+        if (startHour >= 12) {
+          // Start is PM, end should be PM
+          defaultAMPM = 'PM';
+        } else {
+          // Start is AM - default to PM for end times (work goes into afternoon)
+          // But if input hour is just 1-2 hours ahead, could be same AM period
+          if (inputHour >= startHour12 && inputHour <= startHour12 + 2) {
+            defaultAMPM = 'AM'; // Same morning
+          } else {
+            defaultAMPM = 'PM'; // Afternoon/evening
+          }
+        }
+      }
+    } catch (error) {
+      // Fall back to AM
+    }
+  } else if (startTime) {
+    // Fallback to PM if we can't parse input hour (most end times are PM)
+    try {
+      const startTime24h = convertTo24Hour(startTime);
+      const startHour = new Date(`2000-01-01T${startTime24h}`).getHours();
+      defaultAMPM = 'PM'; // Default to PM for end times
+    } catch (error) {
+      // Fall back to AM
+    }
+  }
+
+  // Handle different number lengths (12-hour format only)
+  if (numbersOnly.length === 1) {
+    // Single digit - don't format yet, let user continue typing
+    return numbersOnly;
+  } else if (numbersOnly.length === 2) {
+    // Two digits - could be hour or hour:minute, don't add AM/PM yet
+    const hour = parseInt(numbersOnly, 10);
+    if (hour >= 1 && hour <= 12) {
+      // Don't add AM/PM yet - let user continue typing minutes
+      return numbersOnly;
+    }
+    // If not a valid hour, don't format
+    return numbersOnly;
+  } else if (numbersOnly.length === 3) {
+    // Three digits: H:MM format
+    const hour = parseInt(numbersOnly.slice(0, 1), 10);
+    const minutes = numbersOnly.slice(1);
+    if (hour >= 1 && hour <= 9 && minutes >= 0 && minutes <= 59) {
+      return `${hour}:${minutes} ${defaultAMPM}`;
+    }
+  } else if (numbersOnly.length === 4) {
+    // Four digits: HH:MM format - only accept 1-12 for hour
+    const hour = parseInt(numbersOnly.slice(0, 2), 10);
+    const minutes = numbersOnly.slice(2);
+    if (hour >= 1 && hour <= 12 && minutes >= 0 && minutes <= 59) {
+      return `${hour}:${minutes} ${defaultAMPM}`;
+    }
+    // If hour is outside 1-12 range, don't format
+    return numbersOnly;
+  }
+
+  // If we can't format it, return the original cleaned value
   return cleaned;
 };
 
 // Helper function to validate time input (more permissive)
 const isValidTimeInput = (value) => {
   if (!value || value.trim() === '') return true; // Empty is always valid
-  
+
   const trimmed = value.trim();
-  
+
+  // Allow just "am", "pm", "a", "p" (user might be typing AM/PM first)
+  if (/^(am?|pm?)$/i.test(trimmed)) {
+    return true;
+  }
+
+  // Allow AM/PM followed by numbers (like "pm9", "am 9")
+  if (/^(am?|pm?)\s*\d{1,4}$/i.test(trimmed)) {
+    return true;
+  }
+
   // Allow any single digit (1-9) - user might be typing "7:30 AM"
   if (/^\d{1}$/.test(trimmed)) {
     return true; // Allow any single digit
   }
-  
-  // Allow two digits - be very permissive
+
+  // Allow two digits - only 1-12 for 12-hour format
   if (/^\d{2}$/.test(trimmed)) {
     const hour = parseInt(trimmed, 10);
-    return hour >= 1 && hour <= 24;
+    return hour >= 1 && hour <= 12;
   }
-  
+
   // Allow three digits
   if (/^\d{3}$/.test(trimmed)) {
     return true; // Allow any 3 digits
   }
-  
-  // Allow four digits
+
+  // Allow four digits - only if hour part is 1-12
   if (/^\d{4}$/.test(trimmed)) {
-    return true; // Allow any 4 digits
+    const hour = parseInt(trimmed.slice(0, 2), 10);
+    return hour >= 1 && hour <= 12;
   }
-  
-  // Allow 24-hour format times (HH:MM)
+
+  // Allow 12-hour format times (HH:MM) - only 1-12 for hour
   if (/^\d{1,2}:\d{1,2}$/.test(trimmed)) {
     const parts = trimmed.split(':');
     const hours = parseInt(parts[0], 10);
     const minutes = parseInt(parts[1], 10);
-    return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+    return hours >= 1 && hours <= 12 && minutes >= 0 && minutes <= 59;
   }
-  
+
   // Allow formats with AM/PM
   if (/^\d{1,4}\s*AM?$/i.test(trimmed)) {
     const numbers = trimmed.replace(/\s*AM?\s*$/i, '');
     return numbers.length >= 1 && numbers.length <= 4;
   }
-  
+
   if (/^\d{1,4}\s*PM?$/i.test(trimmed)) {
     const numbers = trimmed.replace(/\s*PM?\s*$/i, '');
     return numbers.length >= 1 && numbers.length <= 4;
   }
-  
+
   // Allow colon formats
   if (/^\d{1,2}:\d{1,2}\s*(AM?|PM?)?$/i.test(trimmed)) {
     const hour = parseInt(trimmed.split(':')[0], 10);
     return hour >= 1 && hour <= 12;
   }
-  
+
   // Full validation for complete time format
   const pattern = /^(1[0-2]|0?[1-9])(:[0-5][0-9])?\s*(AM|PM|am|pm)?$/i;
   return pattern.test(trimmed);
 };
 
+// Helper function to calculate end time from start time and duration in hours
+const calculateEndTime = (startTime, hours) => {
+  if (!startTime || !hours || hours <= 0) return '';
+  
+  try {
+    // Convert start time to 24-hour format for calculation
+    const startTime24h = convertTo24Hour(startTime);
+    const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+    
+    // Add the duration in hours
+    startDateTime.setHours(startDateTime.getHours() + hours);
+    
+    // Convert back to 12-hour format for display
+    const endHours = startDateTime.getHours();
+    const endMinutes = startDateTime.getMinutes();
+    const ampm = endHours >= 12 ? 'PM' : 'AM';
+    const displayHours = endHours % 12 || 12;
+    const displayMinutes = endMinutes.toString().padStart(2, '0');
+    
+    return `${displayHours}:${displayMinutes} ${ampm}`;
+  } catch (error) {
+    console.error('Error calculating end time:', error);
+    return '';
+  }
+};
+
+// Helper function to convert 12-hour time format to 24-hour format
+const convertTo24Hour = (time12h) => {
+  if (!time12h) return '00:00';
+  
+  const trimmed = time12h.trim();
+  const isPM = trimmed.toUpperCase().includes('PM');
+  const isAM = trimmed.toUpperCase().includes('AM');
+  
+  // Remove AM/PM
+  let timePart = trimmed.replace(/\s*(AM|PM|am|pm)\s*$/, '');
+  
+  // Handle HH:MM format
+  let hours, minutes;
+  if (timePart.includes(':')) {
+    const parts = timePart.split(':');
+    hours = parseInt(parts[0], 10);
+    minutes = parseInt(parts[1], 10) || 0;
+  } else {
+    // Handle single number (assume hours)
+    hours = parseInt(timePart, 10);
+    minutes = 0;
+  }
+  
+  // Convert to 24-hour format
+  if (isPM && hours !== 12) {
+    hours += 12;
+  } else if (isAM && hours === 12) {
+    hours = 0;
+  }
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
 const TimeTracker = () => {
   const { id: churchId } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   
   // Tab State
   const [activeTab, setActiveTab] = useState('timer');
@@ -239,14 +698,14 @@ const TimeTracker = () => {
     setTabSwitchTimeout(timeout);
   };
   
-  // Time Tracking State
-  const [isTracking, setIsTracking] = useState(false);
-  const [currentSession, setCurrentSession] = useState(null);
-  const [currentProject, setCurrentProject] = useState('');
-  const [currentAreaOfFocus, setCurrentAreaOfFocus] = useState('');
-  const [currentCostCode, setCurrentCostCode] = useState('');
+  // Time Tracking State - Moved to TimerPage
+  // const [isTracking, setIsTracking] = useState(false);
+  // const [currentSession, setCurrentSession] = useState(null);
+  // const [currentProject, setCurrentProject] = useState('');
+  // const [currentAreaOfFocus, setCurrentAreaOfFocus] = useState('');
+  // const [currentCostCode, setCurrentCostCode] = useState('');
   const [timeEntries, setTimeEntries] = useState([]);
-  const [elapsedTime, setElapsedTime] = useState(0);
+  // const [elapsedTime, setElapsedTime] = useState(0);
   
   // Permissions State
   const [hasTimeTrackerAccess, setHasTimeTrackerAccess] = useState(false);
@@ -279,12 +738,11 @@ const TimeTracker = () => {
       areaOfFocus: '',
       costCode: '',
       duration: '',
-      durationMode: 'start' // 'start' = start + duration, 'end' = end + duration
+      durationMode: 'start', // 'start' = start + duration, 'end' = end + duration
+      userId: user?.uid || '' // Default to current user
     };
   });
   
-  // Inline edit state
-  const [editingRowId, setEditingRowId] = useState(null);
   const [editRowData, setEditRowData] = useState({
     note: '',
     startTime: '',
@@ -292,7 +750,17 @@ const TimeTracker = () => {
     date: '',
     project: '',
     areaOfFocus: '',
-    costCode: ''
+    costCode: '',
+    duration: '',
+    userId: ''
+  });
+
+  // Validation state for time inputs
+  const [timeValidationErrors, setTimeValidationErrors] = useState({
+    newStartTime: '',
+    newEndTime: '',
+    editStartTime: '',
+    editEndTime: ''
   });
   
   const [newTask, setNewTask] = useState({
@@ -325,12 +793,14 @@ const TimeTracker = () => {
   const [selectedProject, setSelectedProject] = useState(null);
   const [projectTimeEntries, setProjectTimeEntries] = useState([]);
   const [projectCostCodeStats, setProjectCostCodeStats] = useState({});
+  const [projectContracts, setProjectContracts] = useState([]);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [newProject, setNewProject] = useState({
     name: '',
     description: '',
-    costCodeAssignments: []
+    costCodeAssignments: [],
+    assignedUsers: []
   });
 
   // Cost Codes State
@@ -359,6 +829,56 @@ const TimeTracker = () => {
     color: '#667eea'
   });
 
+  // Expenses State
+  const [expenses, setExpenses] = useState([]);
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [expenseSubcategories, setExpenseSubcategories] = useState([]);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [expenseSearchTerm, setExpenseSearchTerm] = useState('');
+  const [newExpense, setNewExpense] = useState({
+    title: '',
+    description: '',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    categoryId: '',
+    subcategoryId: '',
+    costCodeId: '',
+    projectId: '',
+    vendor: '',
+    receipt: null
+  });
+  const [showExpenseCategoryModal, setShowExpenseCategoryModal] = useState(false);
+  const [editingExpenseCategory, setEditingExpenseCategory] = useState(null);
+  const [newExpenseCategory, setNewExpenseCategory] = useState({
+    name: '',
+    description: '',
+    color: '#667eea'
+  });
+
+  // Contracts State
+  const [contracts, setContracts] = useState([]);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [showCommentsModal, setShowCommentsModal] = useState(false);
+  const [selectedContractForComments, setSelectedContractForComments] = useState(null);
+  const [newComment, setNewComment] = useState('');
+  const [editingComment, setEditingComment] = useState(null);
+  const [newContract, setNewContract] = useState({
+    name: '',
+    description: '',
+    clientName: '',
+    contractNumber: '',
+    status: 'estimating', // estimating, awarded, in-progress
+    totalAmount: '',
+    startDate: '',
+    endDate: '',
+    projectId: '',
+    notes: '',
+    statusChangeLog: [], // Array to track status changes
+    comments: [] // Array to store comments
+  });
+
   // Inline creation state
   const [showInlineProjectForm, setShowInlineProjectForm] = useState(false);
   const [showInlineAreaForm, setShowInlineAreaForm] = useState(false);
@@ -370,6 +890,20 @@ const TimeTracker = () => {
   const [inlineCostCode, setInlineCostCode] = useState('');
   const [inlineCostDescription, setInlineCostDescription] = useState('');
 
+  // Inline editing state for time entries
+  const [editingRowId, setEditingRowId] = useState(null);
+
+  // Cost Code Assignment Editing State
+  const [editingCostCodeAssignment, setEditingCostCodeAssignment] = useState(null);
+  const [editCostCodeAssignmentData, setEditCostCodeAssignmentData] = useState({
+    costCodeId: '',
+    hours: ''
+  });
+
+  // Cost Code Assignment Form State
+  const [assigningCostCode, setAssigningCostCode] = useState(null);
+  const [assignmentHours, setAssignmentHours] = useState('');
+
   // Time Entries Table State
   const [searchTerm, setSearchTerm] = useState('');
   const [filterProject, setFilterProject] = useState('');
@@ -379,18 +913,40 @@ const TimeTracker = () => {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [sortField, setSortField] = useState('startTime');
   const [sortDirection, setSortDirection] = useState('desc');
+
+  // Users State
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [entriesPerPage] = useState(20);
 
+  // Helper function to validate time input and provide feedback
+  const validateTimeInput = (timeValue, fieldName) => {
+    if (!timeValue || timeValue.trim() === '') {
+      return ''; // Empty is valid
+    }
+
+    try {
+      convertTo24Hour(timeValue);
+      return ''; // Valid
+    } catch (error) {
+      return error.message;
+    }
+  };
+
+  // Helper function to update validation errors
+  const updateTimeValidation = (field, error) => {
+    setTimeValidationErrors(prev => ({
+      ...prev,
+      [field]: error
+    }));
+  };
+
   // Helper function to convert 12-hour time format to 24-hour format
   const convertTo24Hour = (time12h) => {
-    if (!time12h) return '';
-
-    // Remove any extra spaces and convert to uppercase
-    const timeStr = time12h.trim().toUpperCase();
 
     // Match pattern like "9:00 AM", "9:00AM", "2:30 PM", "2:30PM", "9 AM", "9AM", etc.
-    const match = timeStr.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(AM|PM)$/);
+    const match = time12h.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(AM|PM)$/);
     if (!match) {
       throw new Error('Invalid time format. Please use format like "9:00 AM", "9 AM", or "2:30 PM"');
     }
@@ -537,38 +1093,32 @@ const TimeTracker = () => {
     }
   }, [user?.role, activeTab]);
 
-  // Timer interval
-  useEffect(() => {
-    let interval;
-    if (isTracking && currentSession) {
-      interval = setInterval(() => {
-        const now = new Date();
-        const start = new Date(currentSession.startTime);
-        setElapsedTime(Math.floor((now - start) / 1000));
-      }, 1000);
-    }
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [isTracking, currentSession]);
+  // Timer interval - Moved to TimerPage
+  // useEffect(() => {
+  //   let interval;
+  //   if (isTracking && currentSession) {
+  //     interval = setInterval(() => {
+  //       const now = new Date();
+  //       const start = new Date(currentSession.startTime);
+  //       setElapsedTime(Math.floor((now - start) / 1000));
+  //     }, 1000);
+  //   }
+  //   return () => {
+  //     if (interval) {
+  //       clearInterval(interval);
+  //     }
+  //   };
+  // }, [isTracking, currentSession]);
 
   // Component cleanup effect
   useEffect(() => {
     return () => {
-      // Stop any running timers on component unmount
-      if (isTracking) {
-        setIsTracking(false);
-        setCurrentSession(null);
-        setElapsedTime(0);
-      }
       // Clear any pending tab switch timeouts
       if (tabSwitchTimeout) {
         clearTimeout(tabSwitchTimeout);
       }
     };
-  }, [isTracking, tabSwitchTimeout]);
+  }, [tabSwitchTimeout]);
 
   // Fetch time entries
   useEffect(() => {
@@ -856,6 +1406,126 @@ const TimeTracker = () => {
     };
   }, [user?.uid, churchId]);
 
+  // Load Expenses
+  useEffect(() => {
+    if (!churchId) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, `churches/${churchId}/expenses`),
+      (snapshot) => {
+        const expensesData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setExpenses(expensesData);
+      },
+      (error) => {
+        console.error('Error loading expenses:', error);
+        toast.error('Failed to load expenses');
+      }
+    );
+
+    return () => unsubscribe();
+  }, [churchId]);
+
+  // Load Expense Categories
+  useEffect(() => {
+    if (!churchId) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, `churches/${churchId}/expenseCategories`),
+      (snapshot) => {
+        const categoriesData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setExpenseCategories(categoriesData);
+      },
+      (error) => {
+        console.error('Error loading expense categories:', error);
+        toast.error('Failed to load expense categories');
+      }
+    );
+
+    return () => unsubscribe();
+  }, [churchId]);
+
+  // Load Expense Subcategories
+  useEffect(() => {
+    if (!churchId) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, `churches/${churchId}/expenseSubcategories`),
+      (snapshot) => {
+        const subcategoriesData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setExpenseSubcategories(subcategoriesData);
+      },
+      (error) => {
+        console.error('Error loading expense subcategories:', error);
+        toast.error('Failed to load expense subcategories');
+      }
+    );
+
+    return () => unsubscribe();
+  }, [churchId]);
+
+  // Load Contracts
+  useEffect(() => {
+    if (!churchId) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, `churches/${churchId}/contracts`),
+      (snapshot) => {
+        const contractsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setContracts(contractsData);
+      },
+      (error) => {
+        console.error('Error loading contracts:', error);
+        toast.error('Failed to load contracts');
+      }
+    );
+
+    return () => unsubscribe();
+  }, [churchId]);
+
+  // Fetch users for the church
+  useEffect(() => {
+    if (!churchId) return;
+
+    const fetchUsers = async () => {
+      try {
+        setLoadingUsers(true);
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('churchId', '==', churchId));
+        const querySnapshot = await getDocs(q);
+        
+        const fetchedUsers = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name || doc.data().email || 'Unnamed User',
+          firstName: doc.data().firstName || '',
+          lastName: doc.data().lastName || '',
+          email: doc.data().email || '',
+          ...doc.data()
+        }));
+        
+        console.log(`Found ${fetchedUsers.length} users for church ${churchId}`);
+        setUsers(fetchedUsers);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+      } finally {
+        setLoadingUsers(false);
+      }
+    };
+
+    fetchUsers();
+  }, [churchId]);
+
   // Time Entries Table Functions
   const handleSort = (field) => {
     if (sortField === field) {
@@ -866,6 +1536,74 @@ const TimeTracker = () => {
     }
   };
 
+  // Get available projects for current user (assigned projects for members, all for admins)
+  const getAvailableProjects = () => {
+    if (user.role === 'global_admin' || user.role === 'admin') {
+      return projects;
+    }
+    return projects.filter(project => 
+      project.assignedUsers && project.assignedUsers.includes(user.uid)
+    );
+  };
+
+  // Helper function to track changes for history
+  const createChangeHistory = (oldEntry, newData, changedBy) => {
+    const changes = [];
+    const changeTime = new Date().toISOString();
+
+    // Compare each field
+    Object.keys(newData).forEach(field => {
+      if (field === 'history') return; // Skip history field itself
+      
+      const oldValue = oldEntry[field];
+      const newValue = newData[field];
+      
+      // Handle different field types
+      let oldDisplay = oldValue;
+      let newDisplay = newValue;
+      
+      if (field === 'startTime' || field === 'endTime') {
+        oldDisplay = oldValue ? formatTimeDisplay(oldValue) : 'None';
+        newDisplay = newValue ? formatTimeDisplay(newValue) : 'None';
+      } else if (field === 'duration') {
+        oldDisplay = oldValue ? `${(oldValue / 3600).toFixed(2)}h` : 'None';
+        newDisplay = newValue ? `${(newValue / 3600).toFixed(2)}h` : 'None';
+      } else if (field === 'project') {
+        const oldProject = projects.find(p => p.id === oldValue);
+        const newProject = projects.find(p => p.id === newValue);
+        oldDisplay = oldProject ? oldProject.name : 'None';
+        newDisplay = newProject ? newProject.name : 'None';
+      } else if (field === 'areaOfFocus') {
+        const oldArea = areasOfFocus.find(a => a.id === oldValue);
+        const newArea = areasOfFocus.find(a => a.id === newValue);
+        oldDisplay = oldArea ? oldArea.name : 'None';
+        newDisplay = newArea ? newArea.name : 'None';
+      } else if (field === 'costCode') {
+        const oldCostCode = costCodes.find(c => c.code === oldValue);
+        const newCostCode = costCodes.find(c => c.code === newValue);
+        oldDisplay = oldCostCode ? oldCostCode.description : 'None';
+        newDisplay = newCostCode ? newCostCode.description : 'None';
+      } else if (field === 'userId') {
+        const oldUser = users.find(u => u.id === oldValue);
+        const newUser = users.find(u => u.id === newValue);
+        oldDisplay = oldUser ? (oldUser.name && oldUser.lastName ? `${oldUser.name} ${oldUser.lastName}` : oldUser.name || oldUser.email) : 'None';
+        newDisplay = newUser ? (newUser.name && newUser.lastName ? `${newUser.name} ${newUser.lastName}` : newUser.name || newUser.email) : 'None';
+      }
+
+      if (oldValue !== newValue) {
+        changes.push({
+          field,
+          oldValue: oldDisplay,
+          newValue: newDisplay,
+          changedBy,
+          changedAt: changeTime
+        });
+      }
+    });
+
+    return changes;
+  };
+
   const filteredAndSortedEntries = () => {
     let filtered = timeEntries.filter(entry => {
       // Search filter
@@ -874,10 +1612,13 @@ const TimeTracker = () => {
         const projectName = projects.find(p => p.id === entry.project)?.name || '';
         const areaName = areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || '';
         const costCodeName = costCodes.find(c => c.code === entry.costCode)?.description || '';
+        const user = users.find(u => u.id === entry.userId);
+        const userName = user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : '';
         
         if (!projectName.toLowerCase().includes(searchLower) &&
             !areaName.toLowerCase().includes(searchLower) &&
             !costCodeName.toLowerCase().includes(searchLower) &&
+            !userName.toLowerCase().includes(searchLower) &&
             !entry.note?.toLowerCase().includes(searchLower)) {
           return false;
         }
@@ -937,6 +1678,12 @@ const TimeTracker = () => {
           aValue = costCodes.find(c => c.code === a.costCode)?.code || '';
           bValue = costCodes.find(c => c.code === b.costCode)?.code || '';
           break;
+        case 'userId':
+          const aUser = users.find(u => u.id === a.userId);
+          const bUser = users.find(u => u.id === b.userId);
+          aValue = aUser ? (aUser.name && aUser.lastName ? `${aUser.name} ${aUser.lastName}` : aUser.name || aUser.email) : '';
+          bValue = bUser ? (bUser.name && bUser.lastName ? `${bUser.name} ${bUser.lastName}` : bUser.name || bUser.email) : '';
+          break;
         default:
           aValue = a[sortField] || '';
           bValue = b[sortField] || '';
@@ -991,66 +1738,66 @@ const TimeTracker = () => {
     }
   };
 
-  // Start time tracking
-  const startTracking = async () => {
-    if (!currentProject || !currentAreaOfFocus || !currentCostCode) {
-      toast.error('Please select a project, area of focus, and cost code before starting the timer');
-      return;
-    }
+  // Start time tracking - Moved to TimerPage
+  // const startTracking = async () => {
+  //   if (!currentProject || !currentAreaOfFocus || !currentCostCode) {
+  //     toast.error('Please select a project, area of focus, and cost code before starting the timer');
+  //     return;
+  //   }
 
-    try {
-      const startTime = new Date();
-      const session = {
-        userId: user.uid,
-        churchId,
-        startTime: startTime.toISOString(),
-        date: startTime.toISOString().split('T')[0],
-        note: '',
-        project: currentProject,
-        areaOfFocus: currentAreaOfFocus,
-        costCode: currentCostCode
-      };
+  //   try {
+  //     const startTime = new Date();
+  //     const session = {
+  //       userId: user.uid,
+  //       churchId,
+  //       startTime: startTime.toISOString(),
+  //       date: startTime.toISOString().split('T')[0],
+  //       note: '',
+  //       project: currentProject,
+  //       areaOfFocus: currentAreaOfFocus,
+  //       costCode: currentCostCode
+  //     };
 
-      console.log('Starting tracking with session data:', session);
-      const docRef = await addDoc(collection(db, `churches/${churchId}/timeEntries`), session);
-      console.log('Time tracking session saved with ID:', docRef.id);
-      setCurrentSession({ ...session, id: docRef.id });
-      setIsTracking(true);
-      setElapsedTime(0);
-      toast.success('Time tracking started!');
-    } catch (error) {
-      console.error('Error starting time tracking:', error);
-      console.error('Error details:', error.code, error.message);
-      toast.error('Failed to start time tracking: ' + error.message);
-    }
-  };
+  //     console.log('Starting tracking with session data:', session);
+  //     const docRef = await addDoc(collection(db, `churches/${churchId}/timeEntries`), session);
+  //     console.log('Time tracking session saved with ID:', docRef.id);
+  //     setCurrentSession({ ...session, id: docRef.id });
+  //     setIsTracking(true);
+  //     setElapsedTime(0);
+  //     toast.success('Time tracking started!');
+  //   } catch (error) {
+  //     console.error('Error starting time tracking:', error);
+  //     console.error('Error details:', error.code, error.message);
+  //     toast.error('Failed to start time tracking: ' + error.message);
+  //   }
+  // };
 
-  // Stop time tracking
-  const stopTracking = async () => {
-    if (!currentSession) return;
+  // Stop time tracking - Moved to TimerPage
+  // const stopTracking = async () => {
+  //   if (!currentSession) return;
 
-    try {
-      const endTime = new Date();
-      const duration = Math.floor((endTime - new Date(currentSession.startTime)) / 1000);
+  //   try {
+  //     const endTime = new Date();
+  //     const duration = Math.floor((endTime - new Date(currentSession.startTime)) / 1000);
 
-      await updateDoc(doc(db, `churches/${churchId}/timeEntries`, currentSession.id), {
-        endTime: endTime.toISOString(),
-        duration,
-        updatedAt: serverTimestamp()
-      });
+  //     await updateDoc(doc(db, `churches/${churchId}/timeEntries`, currentSession.id), {
+  //       endTime: endTime.toISOString(),
+  //       duration,
+  //       updatedAt: serverTimestamp()
+  //     });
 
-      setIsTracking(false);
-      setCurrentSession(null);
-      setElapsedTime(0);
-      setCurrentProject('');
-      setCurrentAreaOfFocus('');
-      setCurrentCostCode('');
-      toast.success('Time tracking stopped!');
-    } catch (error) {
-      console.error('Error stopping time tracking:', error);
-      toast.error('Failed to stop time tracking');
-    }
-  };
+  //     setIsTracking(false);
+  //     setCurrentSession(null);
+  //     setElapsedTime(0);
+  //     setCurrentProject('');
+  //     setCurrentAreaOfFocus('');
+  //     setCurrentCostCode('');
+  //     toast.success('Time tracking stopped!');
+  //   } catch (error) {
+  //     console.error('Error stopping time tracking:', error);
+  //     toast.error('Failed to stop time tracking');
+  //   }
+  // };
 
   // Inline add row functions
   const startAddRow = () => {
@@ -1084,13 +1831,28 @@ const TimeTracker = () => {
   };
 
   const saveAddRow = async () => {
-    if (!newRowData.startTime || !newRowData.endTime) {
-      toast.error('Please enter both start and end times');
+    if (!newRowData.startTime) {
+      toast.error('Please enter a start time');
       return;
     }
 
-    if (!newRowData.project || !newRowData.areaOfFocus || !newRowData.costCode) {
-      toast.error('Please select a project, area of focus, and cost code');
+    if (!newRowData.project || !newRowData.areaOfFocus || !newRowData.costCode || !newRowData.userId) {
+      toast.error('Please select a user, project, area of focus, and cost code');
+      return;
+    }
+
+    // Check if the selected user is assigned to the selected project (admins can assign anyone)
+    if (user.role !== 'global_admin' && user.role !== 'admin') {
+      const selectedProject = projects.find(p => p.id === newRowData.project);
+      if (selectedProject && selectedProject.assignedUsers && !selectedProject.assignedUsers.includes(newRowData.userId)) {
+        toast.error('You can only add time entries for users assigned to this project');
+        return;
+      }
+    }
+
+    // Require either end time OR duration
+    if (!newRowData.endTime && (!newRowData.duration || newRowData.duration <= 0)) {
+      toast.error('Please enter either an end time or duration');
       return;
     }
 
@@ -1099,22 +1861,30 @@ const TimeTracker = () => {
       let startTime24h, endTime24h;
       try {
         startTime24h = convertTo24Hour(newRowData.startTime);
-        endTime24h = convertTo24Hour(newRowData.endTime);
+        endTime24h = newRowData.endTime ? convertTo24Hour(newRowData.endTime) : null;
       } catch (timeError) {
         toast.error(timeError.message);
         return;
       }
 
       const startDateTime = new Date(`${newRowData.date}T${startTime24h}`);
-      let endDateTime = new Date(`${newRowData.date}T${endTime24h}`);
+      
+      let endDateTime = null;
+      let duration = null;
 
-      // Handle overnight entries
-      if (endDateTime < startDateTime) {
+      // If duration is provided, calculate end time from start time + duration
+      if (newRowData.duration && newRowData.duration > 0) {
+        duration = newRowData.duration * 3600; // Convert hours to seconds
+        endDateTime = new Date(startDateTime.getTime() + duration * 1000);
+      } else if (endTime24h) {
+        // If no duration provided but end time is provided, calculate duration from start and end times
         endDateTime = new Date(`${newRowData.date}T${endTime24h}`);
-        endDateTime.setDate(endDateTime.getDate() + 1);
+        if (endDateTime <= startDateTime) {
+          endDateTime = new Date(`${newRowData.date}T${endTime24h}`);
+          endDateTime.setDate(endDateTime.getDate() + 1);
+        }
+        duration = Math.floor((endDateTime - startDateTime) / 1000);
       }
-
-      const duration = Math.floor((endDateTime - startDateTime) / 1000);
 
       if (duration <= 0) {
         toast.error('End time must be after start time');
@@ -1123,14 +1893,14 @@ const TimeTracker = () => {
 
       const entryData = {
         startTime: startDateTime.toISOString(),
-        endTime: endDateTime.toISOString(),
+        endTime: endDateTime ? endDateTime.toISOString() : null,
         duration: duration,
         note: newRowData.note,
         date: newRowData.date,
         project: newRowData.project,
         areaOfFocus: newRowData.areaOfFocus,
         costCode: newRowData.costCode,
-        userId: user.uid,
+        userId: newRowData.userId || user.uid, // Use selected user or default to current user
         createdAt: serverTimestamp()
       };
 
@@ -1201,23 +1971,16 @@ const TimeTracker = () => {
   const editTimeEntry = (entry) => {
     setEditingRowId(entry.id);
     
-    const startDate = parseDate(entry.startTime);
-    const endDate = parseDate(entry.endTime);
-    
-    // For entries that cross midnight, we need to determine the correct date to show
-    let displayDate = entry.date;
-    if (!displayDate && startDate) {
-      displayDate = startDate.toISOString().split('T')[0];
-    }
-    
     setEditRowData({
       note: entry.note || '',
-      startTime: startDate ? startDate.toTimeString().slice(0, 5) : '',
-      endTime: endDate ? endDate.toTimeString().slice(0, 5) : '',
-      date: displayDate,
+      startTime: formatTimeDisplay(entry.startTime) !== '-' ? formatTimeDisplay(entry.startTime) : '',
+      endTime: formatTimeDisplay(entry.endTime) !== '-' ? formatTimeDisplay(entry.endTime) : '',
+      date: entry.date,
       project: entry.project || '',
       areaOfFocus: entry.areaOfFocus || '',
-      costCode: entry.costCode || ''
+      costCode: entry.costCode || '',
+      duration: entry.duration ? (entry.duration / 3600).toFixed(2) : '',
+      userId: entry.userId || ''
     });
   };
 
@@ -1236,9 +1999,18 @@ const TimeTracker = () => {
       return;
     }
 
-    if (!editRowData.project || !editRowData.areaOfFocus || !editRowData.costCode) {
-      toast.error('Please select a project, area of focus, and cost code');
+    if (!editRowData.project || !editRowData.areaOfFocus || !editRowData.costCode || !editRowData.userId) {
+      toast.error('Please select a user, project, area of focus, and cost code');
       return;
+    }
+
+    // Check if the selected user is assigned to the selected project (admins can assign anyone)
+    if (user.role !== 'global_admin' && user.role !== 'admin') {
+      const selectedProject = projects.find(p => p.id === editRowData.project);
+      if (selectedProject && selectedProject.assignedUsers && !selectedProject.assignedUsers.includes(editRowData.userId)) {
+        toast.error('You can only add time entries for users assigned to this project');
+        return;
+      }
     }
 
     try {
@@ -1255,15 +2027,21 @@ const TimeTracker = () => {
       const startDateTime = new Date(`${editRowData.date}T${startTime24h}`);
       
       let endDateTime = null;
-      if (endTime24h) {
+      let duration = null;
+
+      // If duration is provided, calculate end time from start time + duration
+      if (editRowData.duration && editRowData.duration > 0) {
+        duration = editRowData.duration * 3600; // Convert hours to seconds
+        endDateTime = new Date(startDateTime.getTime() + duration * 1000);
+      } else if (endTime24h) {
+        // If no duration provided but end time is provided, calculate duration from start and end times
         endDateTime = new Date(`${editRowData.date}T${endTime24h}`);
         if (endDateTime <= startDateTime) {
           endDateTime = new Date(`${editRowData.date}T${endTime24h}`);
           endDateTime.setDate(endDateTime.getDate() + 1);
         }
+        duration = Math.floor((endDateTime - startDateTime) / 1000);
       }
-
-      const duration = endDateTime ? Math.floor((endDateTime - startDateTime) / 1000) : null;
 
       const updateData = {
         startTime: startDateTime.toISOString(),
@@ -1273,8 +2051,16 @@ const TimeTracker = () => {
         date: editRowData.date,
         project: editRowData.project,
         areaOfFocus: editRowData.areaOfFocus,
-        costCode: editRowData.costCode
+        costCode: editRowData.costCode,
+        userId: editRowData.userId
       };
+
+      // Track changes for history
+      const changes = createChangeHistory(entry, updateData, user.uid);
+      if (changes.length > 0) {
+        const existingHistory = entry.history || [];
+        updateData.history = [...existingHistory, ...changes];
+      }
 
       await updateDoc(doc(db, `churches/${churchId}/timeEntries`, entryId), updateData);
 
@@ -1301,7 +2087,9 @@ const TimeTracker = () => {
       date: '',
       project: '',
       areaOfFocus: '',
-      costCode: ''
+      costCode: '',
+      duration: '',
+      userId: ''
     });
   };
 
@@ -1516,6 +2304,33 @@ const TimeTracker = () => {
     }));
   };
 
+  // Add user to project assignment
+  const addAssignedUser = (userId) => {
+    if (!userId) {
+      toast.error('Please select a user');
+      return;
+    }
+
+    // Check if user is already assigned
+    if (newProject.assignedUsers?.includes(userId)) {
+      toast.error('This user is already assigned to the project');
+      return;
+    }
+
+    setNewProject(prev => ({
+      ...prev,
+      assignedUsers: [...(prev.assignedUsers || []), userId]
+    }));
+  };
+
+  // Remove user from project assignment
+  const removeAssignedUser = (userId) => {
+    setNewProject(prev => ({
+      ...prev,
+      assignedUsers: prev.assignedUsers?.filter(id => id !== userId) || []
+    }));
+  };
+
   // Create/Update cost code
   const saveCostCode = async (e) => {
     e.preventDefault();
@@ -1611,6 +2426,366 @@ const TimeTracker = () => {
     } catch (error) {
       console.error('Error deleting cost code:', error);
       toast.error('Failed to delete cost code');
+    }
+  };
+
+  // Save Expense Category
+  const saveExpenseCategory = async () => {
+    if (!churchId) return;
+
+    try {
+      if (editingExpenseCategory) {
+        await updateDoc(doc(db, `churches/${churchId}/expenseCategories`, editingExpenseCategory.id), {
+          ...newExpenseCategory,
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense category updated successfully');
+      } else {
+        await addDoc(collection(db, `churches/${churchId}/expenseCategories`), {
+          ...newExpenseCategory,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense category created successfully');
+      }
+      setShowExpenseCategoryModal(false);
+      setEditingExpenseCategory(null);
+      setNewExpenseCategory({
+        name: '',
+        description: '',
+        color: '#10b981'
+      });
+    } catch (error) {
+      console.error('Error saving expense category:', error);
+      toast.error('Failed to save expense category');
+    }
+  };
+
+  // Delete Expense Category
+  const deleteExpenseCategory = async (categoryId) => {
+    if (!churchId || !window.confirm('Are you sure you want to delete this expense category?')) return;
+
+    try {
+      await deleteDoc(doc(db, `churches/${churchId}/expenseCategories`, categoryId));
+      toast.success('Expense category deleted successfully');
+    } catch (error) {
+      console.error('Error deleting expense category:', error);
+      toast.error('Failed to delete expense category');
+    }
+  };
+
+  // Save Expense
+  const saveExpense = async () => {
+    if (!churchId) return;
+
+    try {
+      const expenseData = {
+        ...newExpense,
+        amount: parseFloat(newExpense.amount),
+        date: new Date(newExpense.date)
+      };
+
+      if (editingExpense) {
+        await updateDoc(doc(db, `churches/${churchId}/expenses`, editingExpense.id), {
+          ...expenseData,
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense updated successfully');
+      } else {
+        await addDoc(collection(db, `churches/${churchId}/expenses`), {
+          ...expenseData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense created successfully');
+      }
+      setShowExpenseModal(false);
+      setEditingExpense(null);
+      setNewExpense({
+        title: '',
+        description: '',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        categoryId: '',
+        subcategoryId: '',
+        costCodeId: '',
+        projectId: '',
+        vendor: '',
+        receipt: null
+      });
+    } catch (error) {
+      console.error('Error saving expense:', error);
+      toast.error('Failed to save expense');
+    }
+  };
+
+  // Filtered expenses based on search term
+  const filteredExpenses = expenses.filter(expense => {
+    if (!expenseSearchTerm) return true;
+    
+    const searchLower = expenseSearchTerm.toLowerCase();
+    return (
+      expense.title?.toLowerCase().includes(searchLower) ||
+      expense.description?.toLowerCase().includes(searchLower) ||
+      expense.vendor?.toLowerCase().includes(searchLower) ||
+      expenseCategories.find(cat => cat.id === expense.categoryId)?.name?.toLowerCase().includes(searchLower) ||
+      costCodes.find(cc => cc.id === expense.costCodeId)?.code?.toLowerCase().includes(searchLower) ||
+      projects.find(p => p.id === expense.projectId)?.name?.toLowerCase().includes(searchLower)
+    );
+  });
+
+  // Contract Functions
+  const saveContract = async () => {
+    try {
+      const contractData = {
+        ...newContract,
+        userId: user.uid,
+        churchId,
+        totalAmount: parseFloat(newContract.totalAmount) || 0,
+        updatedAt: new Date()
+      };
+
+      if (editingContract) {
+        // Check if status changed and log it
+        let statusChangeLog = editingContract.statusChangeLog || [];
+        if (editingContract.status !== newContract.status) {
+          const statusChange = {
+            id: Date.now().toString(),
+            previousStatus: editingContract.status,
+            newStatus: newContract.status,
+            changedBy: user.email || user.displayName || 'Unknown User',
+            changedAt: new Date(),
+            userId: user.uid
+          };
+          statusChangeLog = [...statusChangeLog, statusChange];
+          contractData.statusChangeLog = statusChangeLog;
+        }
+
+        // Update existing contract
+        await updateDoc(doc(db, `churches/${churchId}/contracts`, editingContract.id), {
+          ...contractData,
+          updatedAt: serverTimestamp()
+        });
+
+        // Update local state
+        setContracts(prev => prev.map(contract =>
+          contract.id === editingContract.id
+            ? { ...contract, ...contractData, id: editingContract.id }
+            : contract
+        ));
+
+        toast.success('Contract updated successfully!');
+      } else {
+        // Create new contract
+        contractData.createdAt = new Date();
+        // Initialize status change log with creation
+        contractData.statusChangeLog = [{
+          id: Date.now().toString(),
+          previousStatus: null,
+          newStatus: newContract.status,
+          changedBy: user.email || user.displayName || 'Unknown User',
+          changedAt: new Date(),
+          userId: user.uid
+        }];
+
+        const docRef = await addDoc(collection(db, `churches/${churchId}/contracts`), {
+          ...contractData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        // Update local state
+        const newContractWithId = {
+          id: docRef.id,
+          ...contractData
+        };
+        setContracts(prev => [newContractWithId, ...prev]);
+
+        toast.success('Contract created successfully!');
+      }
+
+      setNewContract({
+        name: '',
+        description: '',
+        clientName: '',
+        contractNumber: '',
+        status: 'estimating',
+        totalAmount: '',
+        startDate: '',
+        endDate: '',
+        projectId: '',
+        notes: '',
+        statusChangeLog: [],
+        comments: []
+      });
+      setEditingContract(null);
+      setShowContractModal(false);
+    } catch (error) {
+      console.error('Error saving contract:', error);
+      toast.error('Failed to save contract');
+    }
+  };
+
+  const deleteContract = async (contractId) => {
+    if (!window.confirm('Are you sure you want to delete this contract?')) return;
+
+    try {
+      // Update local state first for immediate feedback
+      setContracts(prev => prev.filter(contract => contract.id !== contractId));
+
+      // Delete from Firestore
+      await deleteDoc(doc(db, `churches/${churchId}/contracts`, contractId));
+
+      toast.success('Contract deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting contract:', error);
+      toast.error('Failed to delete contract');
+    }
+  };
+
+  const editContract = (contract) => {
+    setEditingContract(contract);
+    setNewContract({
+      name: contract.name || '',
+      description: contract.description || '',
+      clientName: contract.clientName || '',
+      contractNumber: contract.contractNumber || '',
+      status: contract.status || 'estimating',
+      totalAmount: contract.totalAmount?.toString() || '',
+      startDate: contract.startDate || '',
+      endDate: contract.endDate || '',
+      projectId: contract.projectId || '',
+      notes: contract.notes || ''
+    });
+    setShowContractModal(true);
+  };
+
+  // Comments CRUD Functions
+  const openCommentsModal = (contract) => {
+    setSelectedContractForComments(contract);
+    setShowCommentsModal(true);
+  };
+
+  const closeCommentsModal = () => {
+    setShowCommentsModal(false);
+    setSelectedContractForComments(null);
+    setNewComment('');
+    setEditingComment(null);
+  };
+
+  const addComment = async () => {
+    if (!newComment.trim() || !selectedContractForComments) return;
+
+    try {
+      const comment = {
+        id: Date.now().toString(),
+        text: newComment.trim(),
+        createdBy: user.email || user.displayName || 'Unknown User',
+        userId: user.uid,
+        createdAt: new Date()
+      };
+
+      const updatedComments = [...(selectedContractForComments.comments || []), comment];
+
+      await updateDoc(doc(db, `churches/${churchId}/contracts`, selectedContractForComments.id), {
+        comments: updatedComments,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setContracts(prev => prev.map(contract =>
+        contract.id === selectedContractForComments.id
+          ? { ...contract, comments: updatedComments }
+          : contract
+      ));
+
+      setSelectedContractForComments(prev => ({ ...prev, comments: updatedComments }));
+      setNewComment('');
+      toast.success('Comment added successfully!');
+    } catch (error) {
+      console.error('Error adding comment:', error);
+      toast.error('Failed to add comment');
+    }
+  };
+
+  const updateComment = async () => {
+    if (!editingComment || !selectedContractForComments) return;
+
+    try {
+      const updatedComments = selectedContractForComments.comments.map(comment =>
+        comment.id === editingComment.id
+          ? { ...comment, text: editingComment.text, updatedAt: new Date() }
+          : comment
+      );
+
+      await updateDoc(doc(db, `churches/${churchId}/contracts`, selectedContractForComments.id), {
+        comments: updatedComments,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setContracts(prev => prev.map(contract =>
+        contract.id === selectedContractForComments.id
+          ? { ...contract, comments: updatedComments }
+          : contract
+      ));
+
+      setSelectedContractForComments(prev => ({ ...prev, comments: updatedComments }));
+      setEditingComment(null);
+      toast.success('Comment updated successfully!');
+    } catch (error) {
+      console.error('Error updating comment:', error);
+      toast.error('Failed to update comment');
+    }
+  };
+
+  const deleteComment = async (commentId) => {
+    if (!selectedContractForComments) return;
+
+    try {
+      const updatedComments = selectedContractForComments.comments.filter(comment => comment.id !== commentId);
+
+      await updateDoc(doc(db, `churches/${churchId}/contracts`, selectedContractForComments.id), {
+        comments: updatedComments,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setContracts(prev => prev.map(contract =>
+        contract.id === selectedContractForComments.id
+          ? { ...contract, comments: updatedComments }
+          : contract
+      ));
+
+      setSelectedContractForComments(prev => ({ ...prev, comments: updatedComments }));
+      toast.success('Comment deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+      toast.error('Failed to delete comment');
+    }
+  };
+
+  const startEditingComment = (comment) => {
+    setEditingComment({ ...comment });
+  };
+
+  const cancelEditingComment = () => {
+    setEditingComment(null);
+  };
+
+  // Load contracts from Firestore
+  const loadContracts = async () => {
+    try {
+      const contractsRef = collection(db, `churches/${churchId}/contracts`);
+      const snapshot = await getDocs(contractsRef);
+      const contractsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setContracts(contractsData);
+    } catch (error) {
+      console.error('Error loading contracts:', error);
+      toast.error('Failed to load contracts');
     }
   };
 
@@ -1731,6 +2906,31 @@ const TimeTracker = () => {
 
       console.log('Calculated stats:', stats);
       setProjectCostCodeStats(stats);
+
+      // Get all contracts for this project
+      const contractsRef = collection(db, `churches/${churchId}/contracts`);
+      const contractsQuery = query(
+        contractsRef,
+        where('projectId', '==', project.id)
+      );
+
+      console.log('Fetching contracts for project:', project.id);
+      let contractsSnapshot;
+      try {
+        contractsSnapshot = await getDocs(contractsQuery);
+      } catch (contractsError) {
+        console.error('Error fetching contracts:', contractsError);
+        contractsSnapshot = { docs: [] };
+      }
+
+      const projectContractsData = contractsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      console.log('Found contracts:', projectContractsData.length);
+      setProjectContracts(projectContractsData);
+
       setActiveTab('projectProfile');
 
       console.log('Project profile loaded successfully');
@@ -1742,11 +2942,11 @@ const TimeTracker = () => {
   };
 
   // Assign cost code to project
-  const assignCostCodeToProject = async (costCodeId) => {
+  const assignCostCodeToProject = async (costCodeId, hours = '0') => {
     if (!selectedProject) return;
 
     try {
-      const newAssignment = { costCodeId, hours: '0' };
+      const newAssignment = { costCodeId, hours: hours.toString() };
       
       // Update project with assigned cost code
       await updateDoc(doc(db, `churches/${churchId}/projects`, selectedProject.id), {
@@ -1776,7 +2976,14 @@ const TimeTracker = () => {
 
   // Remove cost code from project
   const removeCostCodeFromProject = async (costCodeId) => {
-    if (!selectedProject) return;
+    if (!selectedProject) {
+      console.error('No selected project for cost code removal');
+      toast.error('No project selected');
+      return;
+    }
+
+    console.log('Removing cost code:', costCodeId, 'from project:', selectedProject.id);
+    console.log('Current cost code assignments:', selectedProject.costCodeAssignments);
 
     try {
       // Find the assignment to remove
@@ -1784,13 +2991,21 @@ const TimeTracker = () => {
         assignment => assignment.costCodeId === costCodeId
       );
 
-      if (!assignmentToRemove) return;
+      console.log('Assignment to remove:', assignmentToRemove);
 
+      if (!assignmentToRemove) {
+        console.error('Assignment not found for cost code:', costCodeId);
+        toast.error('Cost code assignment not found');
+        return;
+      }
+
+      console.log('Updating Firestore...');
       await updateDoc(doc(db, `churches/${churchId}/projects`, selectedProject.id), {
         costCodeAssignments: arrayRemove(assignmentToRemove),
         updatedAt: serverTimestamp()
       });
 
+      console.log('Updating local state...');
       // Update local state
       setSelectedProject(prev => ({
         ...prev,
@@ -1808,11 +3023,119 @@ const TimeTracker = () => {
           : p
       ));
 
+      console.log('Cost code removed successfully');
       toast.success('Cost code removed from project!');
     } catch (error) {
       console.error('Error removing cost code:', error);
-      toast.error('Failed to remove cost code');
+      console.error('Error details:', error.code, error.message);
+      toast.error(`Failed to remove cost code: ${error.message}`);
     }
+  };
+
+  // Start editing cost code assignment
+  const startEditingCostCodeAssignment = (assignment) => {
+    console.log('startEditingCostCodeAssignment called with:', assignment);
+    console.log('Setting editingCostCodeAssignment to:', assignment.costCodeId);
+    setEditingCostCodeAssignment(assignment.costCodeId);
+    setEditCostCodeAssignmentData({
+      costCodeId: assignment.costCodeId,
+      hours: assignment.hours || ''
+    });
+    console.log('Edit state set successfully');
+  };
+
+  // Cancel editing cost code assignment
+  const cancelEditingCostCodeAssignment = () => {
+    setEditingCostCodeAssignment(null);
+    setEditCostCodeAssignmentData({
+      costCodeId: '',
+      hours: ''
+    });
+  };
+
+  // Save edited cost code assignment
+  const saveEditedCostCodeAssignment = async () => {
+    if (!selectedProject || !editingCostCodeAssignment) return;
+
+    try {
+      const updatedHours = parseFloat(editCostCodeAssignmentData.hours || 0);
+      
+      // Find the assignment to update
+      const assignmentIndex = selectedProject.costCodeAssignments?.findIndex(
+        assignment => assignment.costCodeId === editingCostCodeAssignment
+      );
+
+      if (assignmentIndex === -1) return;
+
+      // Create updated assignment
+      const updatedAssignment = {
+        ...selectedProject.costCodeAssignments[assignmentIndex],
+        hours: updatedHours.toString()
+      };
+
+      // Create new array with updated assignment
+      const updatedAssignments = [...selectedProject.costCodeAssignments];
+      updatedAssignments[assignmentIndex] = updatedAssignment;
+
+      await updateDoc(doc(db, `churches/${churchId}/projects`, selectedProject.id), {
+        costCodeAssignments: updatedAssignments,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setSelectedProject(prev => ({
+        ...prev,
+        costCodeAssignments: updatedAssignments
+      }));
+
+      // Also update the projects list
+      setProjects(prev => prev.map(p => 
+        p.id === selectedProject.id 
+          ? { ...p, costCodeAssignments: updatedAssignments }
+          : p
+      ));
+
+      setEditingCostCodeAssignment(null);
+      setEditCostCodeAssignmentData({
+        costCodeId: '',
+        hours: ''
+      });
+
+      toast.success('Cost code assignment updated!');
+    } catch (error) {
+      console.error('Error updating cost code assignment:', error);
+      toast.error('Failed to update cost code assignment');
+    }
+  };
+
+  // Start assigning cost code with hours input
+  const startAssigningCostCode = (costCodeId) => {
+    setAssigningCostCode(costCodeId);
+    setAssignmentHours('');
+  };
+
+  // Cancel cost code assignment
+  const cancelAssigningCostCode = () => {
+    setAssigningCostCode(null);
+    setAssignmentHours('');
+  };
+
+  // Confirm cost code assignment with hours
+  const confirmAssignCostCode = async () => {
+    if (!assigningCostCode || !assignmentHours.trim()) {
+      toast.error('Please enter hours for the cost code assignment');
+      return;
+    }
+
+    const hours = parseFloat(assignmentHours);
+    if (isNaN(hours) || hours < 0) {
+      toast.error('Please enter a valid positive number for hours');
+      return;
+    }
+
+    await assignCostCodeToProject(assigningCostCode, hours.toString());
+    setAssigningCostCode(null);
+    setAssignmentHours('');
   };
 
   // Create/Update area of focus
@@ -2241,7 +3564,7 @@ const TimeTracker = () => {
   return (
     <div style={{ 
       padding: "20px", 
-      maxWidth: "1200px", 
+      width: "100%", 
       margin: "20px auto", 
       display: "flex", 
       flexDirection: "column", 
@@ -2250,7 +3573,7 @@ const TimeTracker = () => {
       borderRadius: "12px",
       boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)"
     }}>
-      <Link to={`/church/${churchId}/mi-organizacion`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${churchId}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
       <ChurchHeader id={churchId} applyShadow={false} allowEditBannerLogo={true} />
@@ -2297,6 +3620,18 @@ const TimeTracker = () => {
             >
               💰 Cost Codes
             </button>
+            <button 
+              className={`tab-btn ${activeTab === 'expenses' ? 'active' : ''}`}
+              onClick={() => handleTabChange('expenses')}
+            >
+              💸 Expenses
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'contracts' ? 'active' : ''}`}
+              onClick={() => handleTabChange('contracts')}
+            >
+              📄 Contracts
+            </button>
             {selectedProject && (
               <button 
                 className={`tab-btn ${activeTab === 'projectProfile' ? 'active' : ''}`}
@@ -2314,380 +3649,14 @@ const TimeTracker = () => {
           <div className="time-tracker-header">
             <h1>Time Tracker</h1>
             
-            {/* Project Selection */}
-            {!isTracking && (
-              <div className="project-selection">
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Select Project</label>
-                    <select
-                      value={currentProject}
-                      onChange={(e) => {
-                        if (e.target.value === 'add-new-project') {
-                          setShowInlineProjectForm(true);
-                          return;
-                        }
-                        setCurrentProject(e.target.value);
-                        setCurrentAreaOfFocus(''); // Clear area of focus when project changes
-                        setCurrentCostCode(''); // Clear cost code when project changes
-                      }}
-                    >
-                      <option value="">Select Project</option>
-                      {projects.map(project => (
-                        <option key={project.id} value={project.id}>
-                          {project.name}
-                        </option>
-                      ))}
-                      <option value="add-new-project" style={{ fontStyle: 'italic', color: '#2563eb' }}>
-                        ➕ Add New Project...
-                      </option>
-                    </select>
-                    {showInlineProjectForm && (
-                      <div className="inline-creation-form">
-                        <input
-                          type="text"
-                          placeholder="Enter project name"
-                          value={inlineProjectName}
-                          onChange={(e) => setInlineProjectName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              createInlineProject();
-                            } else if (e.key === 'Escape') {
-                              setShowInlineProjectForm(false);
-                              setInlineProjectName('');
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          onClick={createInlineProject}
-                          className="inline-create-btn"
-                        >
-                          Create
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowInlineProjectForm(false);
-                            setInlineProjectName('');
-                          }}
-                          className="inline-cancel-btn"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Area of Focus</label>
-                    <select
-                      value={currentAreaOfFocus}
-                      onChange={(e) => {
-                        if (e.target.value === 'add-new-area') {
-                          setShowInlineAreaForm(true);
-                          return;
-                        }
-                        setCurrentAreaOfFocus(e.target.value);
-                        setCurrentCostCode(''); // Clear cost code when area of focus changes
-                      }}
-                      disabled={!currentProject}
-                    >
-                      <option value="">
-                        {currentProject ? 'Select Area of Focus' : 'Select a project first'}
-                      </option>
-                      {currentProject && (() => {
-                        // Get areas of focus that have cost codes assigned to the selected project
-                        const selectedProject = projects.find(p => p.id === currentProject);
-                        console.log('Timer - Selected project:', selectedProject);
-                        console.log('Timer - Project cost code assignments:', selectedProject?.costCodeAssignments);
-                        
-                        if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                          console.log('Timer - No cost code assignments found for project - showing all areas as fallback');
-                          // Fallback: show all areas of focus if no cost codes are assigned
-                          return areasOfFocus.length > 0 ? (
-                            areasOfFocus.map(area => (
-                              <option key={area.id} value={area.id}>
-                                {area.name} (no cost codes assigned)
-                              </option>
-                            ))
-                          ) : (
-                            <option value="" disabled>No areas available - assign cost codes to this project first</option>
-                          );
-                        }
-                        
-                        const assignedAreaIds = selectedProject.costCodeAssignments
-                          .map(assignment => {
-                            console.log('Timer - Processing assignment:', assignment);
-                            const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                            console.log('Timer - Found cost code:', costCode);
-                            return costCode?.areaOfFocusId;
-                          })
-                          .filter((areaId, index, arr) => {
-                            const isValid = areaId && arr.indexOf(areaId) === index;
-                            console.log('Timer - Area ID:', areaId, 'isValid:', isValid);
-                            return isValid;
-                          });
-                        
-                        console.log('Timer - Assigned area IDs:', assignedAreaIds);
-                        console.log('Timer - Available areas of focus:', areasOfFocus);
-                        
-                        const filteredAreas = areasOfFocus.filter(area => {
-                          const isIncluded = assignedAreaIds.includes(area.id);
-                          console.log('Timer - Area:', area.name, 'ID:', area.id, 'included:', isIncluded);
-                          return isIncluded;
-                        });
-                        
-                        console.log('Timer - Filtered areas:', filteredAreas);
-                        
-                        if (filteredAreas.length === 0) {
-                          return <option value="" disabled>No areas available for this project</option>;
-                        }
-                        
-                        return filteredAreas.map(area => (
-                          <option key={area.id} value={area.id}>
-                            {area.name}
-                          </option>
-                        ));
-                      })()}
-                      {currentProject && (
-                        <option value="add-new-area" style={{ fontStyle: 'italic', color: '#2563eb' }}>
-                          ➕ Add New Area of Focus...
-                        </option>
-                      )}
-                    </select>
-                    {showInlineAreaForm && (
-                      <div className="inline-creation-form">
-                        <input
-                          type="text"
-                          placeholder="Enter area name"
-                          value={inlineAreaName}
-                          onChange={(e) => setInlineAreaName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              createInlineAreaOfFocus();
-                            } else if (e.key === 'Escape') {
-                              setShowInlineAreaForm(false);
-                              setInlineAreaName('');
-                              setInlineAreaDescription('');
-                              setInlineAreaColor('#667eea');
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <input
-                          type="text"
-                          placeholder="Description (optional)"
-                          value={inlineAreaDescription}
-                          onChange={(e) => setInlineAreaDescription(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              createInlineAreaOfFocus();
-                            } else if (e.key === 'Escape') {
-                              setShowInlineAreaForm(false);
-                              setInlineAreaName('');
-                              setInlineAreaDescription('');
-                              setInlineAreaColor('#667eea');
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={createInlineAreaOfFocus}
-                          className="inline-create-btn"
-                        >
-                          Create
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowInlineAreaForm(false);
-                            setInlineAreaName('');
-                            setInlineAreaDescription('');
-                            setInlineAreaColor('#667eea');
-                          }}
-                          className="inline-cancel-btn"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Cost Code</label>
-                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-                      Debug: {costCodes.length} cost codes, {areasOfFocus.length} areas, Current area: {currentAreaOfFocus}
-                    </div>
-                    <select
-                      value={currentCostCode}
-                      onChange={(e) => {
-                        if (e.target.value === 'add-new-costcode') {
-                          setShowInlineCostCodeForm(true);
-                          return;
-                        }
-                        setCurrentCostCode(e.target.value);
-                      }}
-                      disabled={!currentAreaOfFocus}
-                    >
-                      <option value="">
-                        {currentAreaOfFocus ? 'Select Cost Code' : 'Select an area of focus first'}
-                      </option>
-                      {currentAreaOfFocus && (() => {
-                        // Get cost codes assigned to the selected project and area of focus
-                        const selectedProject = projects.find(p => p.id === currentProject);
-                        console.log('Timer - Selected project for cost codes:', selectedProject);
-                        console.log('Timer - Project cost code assignments for cost codes:', selectedProject?.costCodeAssignments);
-                        
-                        if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                          console.log('Timer - No cost code assignments found for project');
-                          return <option value="" disabled>No cost codes available - assign cost codes to this project first</option>;
-                        }
-                        
-                        const availableCostCodes = selectedProject.costCodeAssignments
-                          .map(assignment => {
-                            console.log('Timer - Processing assignment for cost code:', assignment);
-                            const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                            console.log('Timer - Found cost code:', costCode);
-                            return costCode;
-                          })
-                          .filter(costCode => {
-                            const matches = costCode && costCode.areaOfFocusId === currentAreaOfFocus;
-                            console.log('Timer - Cost code:', costCode?.code, 'areaOfFocusId:', costCode?.areaOfFocusId, 'selected area:', currentAreaOfFocus, 'matches:', matches);
-                            return matches;
-                          });
-                        
-                        console.log('Timer - Available cost codes for area:', availableCostCodes);
-                        
-                        if (availableCostCodes.length === 0) {
-                          return <option value="" disabled>No cost codes available for this area</option>;
-                        }
-                        
-                        return availableCostCodes.map(costCode => (
-                          <option key={costCode.id} value={costCode.code}>
-                            {costCode.code} - {costCode.description}
-                            {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                          </option>
-                        ));
-                      })()}
-                      {currentAreaOfFocus && (() => {
-                        // Get cost codes assigned to the selected project and area of focus
-                        const selectedProject = projects.find(p => p.id === currentProject);
-                        if (!selectedProject?.costCodeAssignments) return null;
-                        
-                        const availableCostCodes = selectedProject.costCodeAssignments
-                          .map(assignment => costCodes.find(cc => cc.id === assignment.costCodeId))
-                          .filter(costCode => costCode && costCode.areaOfFocusId === currentAreaOfFocus);
-                        
-                        return availableCostCodes.length === 0 ? (
-                          <option value="" disabled>
-                            No cost codes available for this area of focus
-                          </option>
-                        ) : (
-                          <option value="add-new-costcode" style={{ fontStyle: 'italic', color: '#2563eb' }}>
-                            ➕ Add New Cost Code...
-                          </option>
-                        );
-                      })()}
-                    </select>
-                    {showInlineCostCodeForm && (
-                      <div className="inline-creation-form">
-                        <input
-                          type="text"
-                          placeholder="Enter cost code"
-                          value={inlineCostCode}
-                          onChange={(e) => setInlineCostCode(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              createInlineCostCode();
-                            } else if (e.key === 'Escape') {
-                              setShowInlineCostCodeForm(false);
-                              setInlineCostCode('');
-                              setInlineCostDescription('');
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <input
-                          type="text"
-                          placeholder="Description (optional)"
-                          value={inlineCostDescription}
-                          onChange={(e) => setInlineCostDescription(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              createInlineCostCode();
-                            } else if (e.key === 'Escape') {
-                              setShowInlineCostCodeForm(false);
-                              setInlineCostCode('');
-                              setInlineCostDescription('');
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={createInlineCostCode}
-                          className="inline-create-btn"
-                        >
-                          Create
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowInlineCostCodeForm(false);
-                            setInlineCostCode('');
-                            setInlineCostDescription('');
-                          }}
-                          className="inline-cancel-btn"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {/* Timer Controls */}
-            <div className="timer-section">
-              <div className="timer-display">
-                <h2>{formatTime(elapsedTime)}</h2>
-                {isTracking && <span className="tracking-indicator">● Recording</span>}
-              </div>
-              
-              {isTracking && currentSession && (
-                <div className="current-session-details">
-                  <h4>Currently Tracking:</h4>
-                  <div className="session-details">
-                    {currentSession.project && (
-                      <div className="session-detail">
-                        <strong>Project:</strong> {projects.find(p => p.id === currentSession.project)?.name || currentSession.project}
-                      </div>
-                    )}
-                    {currentSession.areaOfFocus && (
-                      <div className="session-detail">
-                        <strong>Area:</strong> {areasOfFocus.find(a => a.id === currentSession.areaOfFocus)?.name || currentSession.areaOfFocus}
-                      </div>
-                    )}
-                    {currentSession.costCode && (
-                      <div className="session-detail">
-                        <strong>Cost Code:</strong> {costCodes.find(c => c.code === currentSession.costCode)?.code || currentSession.costCode}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              <div className="timer-controls">
-                {!isTracking ? (
-                  <button className="start-btn" onClick={startTracking}>
-                    Start Timer
-                  </button>
-                ) : (
-                  <button className="stop-btn" onClick={stopTracking}>
-                    Stop Timer
-                  </button>
-                )}
-              </div>
+            {/* Timer Navigation */}
+            <div className="timer-navigation">
+              <button
+                className="timer-nav-btn"
+                onClick={() => navigate(`/organization/${churchId}/timer-page`)}
+              >
+                🕒 Go to Timer Page
+              </button>
             </div>
           </div>
 
@@ -2716,81 +3685,20 @@ const TimeTracker = () => {
                   >
                     + Add New Entry
                   </button>
-                </div>
-              </div>
-
-              {/* Filters */}
-              <div className="filters-container">
-                <div className="filter-row">
-                  <div className="filter-group">
-                    <label>Project:</label>
-                    <select
-                      value={filterProject}
-                      onChange={(e) => setFilterProject(e.target.value)}
-                      className="filter-select"
-                    >
-                      <option value="">All Projects</option>
-                      {projects.map(project => (
-                        <option key={project.id} value={project.id}>
-                          {project.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="filter-group">
-                    <label>Area of Focus:</label>
-                    <select
-                      value={filterAreaOfFocus}
-                      onChange={(e) => setFilterAreaOfFocus(e.target.value)}
-                      className="filter-select"
-                    >
-                      <option value="">All Areas</option>
-                      {areasOfFocus.map(area => (
-                        <option key={area.id} value={area.id}>
-                          {area.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="filter-group">
-                    <label>Cost Code:</label>
-                    <select
-                      value={filterCostCode}
-                      onChange={(e) => setFilterCostCode(e.target.value)}
-                      className="filter-select"
-                    >
-                      <option value="">All Cost Codes</option>
-                      {costCodes.map(costCode => (
-                        <option key={costCode.id} value={costCode.code}>
-                          {costCode.code} - {costCode.description}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="filter-row">
-                  <div className="filter-group">
-                    <label>From Date:</label>
-                    <input
-                      type="date"
-                      value={filterDateFrom}
-                      onChange={(e) => setFilterDateFrom(e.target.value)}
-                      className="filter-input"
-                    />
-                  </div>
-
-                  <div className="filter-group">
-                    <label>To Date:</label>
-                    <input
-                      type="date"
-                      value={filterDateTo}
-                      onChange={(e) => setFilterDateTo(e.target.value)}
-                      className="filter-input"
-                    />
-                  </div>
+                  <button 
+                    onClick={() => exportTimeEntriesToPDF(
+                      filteredAndSortedEntries(),
+                      users,
+                      projects,
+                      areasOfFocus,
+                      costCodes,
+                      { dateFrom: filterDateFrom, dateTo: filterDateTo }
+                    )} 
+                    className="export-pdf-btn"
+                    disabled={filteredAndSortedEntries().length === 0}
+                  >
+                    📄 Export to PDF
+                  </button>
                 </div>
               </div>
 
@@ -2799,9 +3707,13 @@ const TimeTracker = () => {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th onClick={() => handleSort('startTime')} className="sortable">
-                        Date/Time {sortField === 'startTime' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      <th onClick={() => handleSort('userId')} className="sortable">
+                        User {sortField === 'userId' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
+                      <th onClick={() => handleSort('startTime')} className="sortable">
+                        Start Time {sortField === 'startTime' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th>End Time</th>
                       <th onClick={() => handleSort('duration')} className="sortable">
                         Duration {sortField === 'duration' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
@@ -2819,653 +3731,403 @@ const TimeTracker = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredAndSortedEntries()
-                      .slice((currentPage - 1) * entriesPerPage, currentPage * entriesPerPage)
-                      .map(entry => {
-                        const startDate = parseDate(entry.startTime);
-                        const endDate = parseDate(entry.endTime);
-
-                        const isEditing = editingRowId === entry.id;
-
-                        return (
-                          <tr key={entry.id} className={isEditing ? 'editing-row' : ''}>
+                    {filteredAndSortedEntries().map(entry => (
+                      <tr key={entry.id}>
+                        {editingRowId === entry.id ? (
+                          // Edit mode - show input fields
+                          <>
                             <td>
-                              {isEditing ? (
-                                <div className="date-time-cell">
-                                  <input
-                                    type="date"
-                                    value={editRowData.date}
-                                    onChange={(e) => setEditRowData({...editRowData, date: e.target.value})}
-                                    className="inline-input"
-                                    required
-                                  />
-                                  <div style={{display: 'flex', gap: '5px', marginTop: '5px'}}>
-                                    <input
-                                      type="text"
-                                      placeholder="9:00 AM"
-                                      value={editRowData.startTime}
-                                      onChange={(e) => setEditRowData({...editRowData, startTime: e.target.value})}
-                                      className="inline-input time-input"
-                                      pattern="(1[0-2]|0?[1-9])(:[0-5][0-9])?\s*(AM|PM|am|pm)"
-                                      title="Examples: 9:00 AM, 9 AM, 2:30 PM, 2:30PM"
-                                      required
-                                    />
-                                    <span>to</span>
-                                    <input
-                                      type="text"
-                                      placeholder="5:00 PM"
-                                      value={editRowData.endTime}
-                                      onChange={(e) => setEditRowData({...editRowData, endTime: e.target.value})}
-                                      className="inline-input time-input"
-                                      pattern="(1[0-2]|0?[1-9])(:[0-5][0-9])?\s*(AM|PM|am|pm)"
-                                      title="Examples: 9:00 AM, 9 AM, 2:30 PM, 2:30PM"
-                                      required
-                                    />
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="date-time-cell">
-                                  <div className="date">
-                                    {startDate ? startDate.toLocaleDateString() : 'Invalid Date'}
-                                  </div>
-                                  <div className="time">
-                                    {startDate ? startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Invalid Time'}
-                                    {endDate && ` - ${endDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`}
-                                  </div>
-                                </div>
-                              )}
+                              <select
+                                value={editRowData.userId}
+                                onChange={(e) => setEditRowData({...editRowData, userId: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select User</option>
+                                {users.map(user => (
+                                  <option key={user.id} value={user.id}>
+                                    {user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td>
-                              <span className="duration-cell">
-                                {isEditing ? (
-                                  editRowData.startTime && editRowData.endTime ? 
-                                    (() => {
-                                      const start = new Date(`${editRowData.date}T${editRowData.startTime}`);
-                                      let end = new Date(`${editRowData.date}T${editRowData.endTime}`);
-                                      
-                                      // Handle overnight entries
-                                      if (end < start) {
-                                        end = new Date(end);
-                                        end.setDate(end.getDate() + 1);
+                              <input
+                                type="text"
+                                value={editRowData.startTime}
+                                onChange={(e) => {
+                                  const formatted = formatTimeInputWithContext(e.target.value);
+                                  const validationError = validateTimeInput(formatted, 'editStartTime');
+                                  updateTimeValidation('editStartTime', validationError);
+                                  
+                                  setEditRowData(prev => {
+                                    const newData = {...prev, startTime: formatted};
+                                    // Auto-calculate duration if end time is set
+                                    if (prev.endTime && formatted && !validationError) {
+                                      try {
+                                        const startTime24h = convertTo24Hour(formatted);
+                                        const endTime24h = convertTo24Hour(prev.endTime);
+                                        const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                        const endDateTime = new Date(`2000-01-01T${endTime24h}`);
+                                        
+                                        if (endDateTime > startDateTime) {
+                                          const durationSeconds = Math.floor((endDateTime - startDateTime) / 1000);
+                                          const durationHours = (durationSeconds / 3600).toFixed(2);
+                                          newData.duration = durationHours;
+                                        }
+                                      } catch (error) {
+                                        // If calculation fails, leave duration as-is
                                       }
+                                    }
+                                    return newData;
+                                  });
+                                }}
+                                onBlur={(e) => {
+                                  // Additional validation on blur if needed
+                                  const currentValue = editRowData.startTime;
+                                  if (editRowData.endTime && currentValue) {
+                                    try {
+                                      const startTime24h = convertTo24Hour(currentValue);
+                                      const endTime24h = convertTo24Hour(editRowData.endTime);
+                                      const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                      const endDateTime = new Date(`2000-01-01T${endTime24h}`);
                                       
-                                      const duration = Math.floor((end - start) / 1000);
-                                      return duration > 0 ? formatTime(duration) : '--:--';
-                                    })() : 
-                                    '--:--'
-                                ) : (
-                                  entry.duration ? formatTime(entry.duration) : 'In Progress'
-                                )}
-                              </span>
-                            </td>
-                            <td>
-                              {isEditing ? (
-                                <select
-                                  value={editRowData.project}
-                                  onChange={(e) => {
-                                    const selectedProject = e.target.value;
-                                    setEditRowData({
-                                      ...editRowData, 
-                                      project: selectedProject,
-                                      areaOfFocus: '', // Clear area of focus when project changes
-                                      costCode: '' // Clear cost code when project changes
-                                    });
-                                  }}
-                                  className="inline-select"
-                                >
-                                  <option value="">Select Project</option>
-                                  {projects.map(project => (
-                                    <option key={project.id} value={project.id}>
-                                      {project.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                projects.find(p => p.id === entry.project)?.name || entry.project || '-'
+                                      // Allow midnight crossing - no error for start time after end time
+                                      // The duration calculation already handles this
+                                    } catch (error) {
+                                      // Validation error, but don't prevent the blur
+                                    }
+                                  }
+                                }}
+                                className={`inline-edit-input time-input ${timeValidationErrors.editStartTime ? 'error' : ''}`}
+                                placeholder="9:00 AM"
+                              />
+                              {timeValidationErrors.editStartTime && (
+                                <div className="field-error">{timeValidationErrors.editStartTime}</div>
                               )}
                             </td>
                             <td>
-                              {isEditing ? (
-                                <select
-                                  value={editRowData.areaOfFocus}
-                                  onChange={(e) => {
-                                    const selectedArea = e.target.value;
-                                    setEditRowData({
-                                      ...editRowData, 
-                                      areaOfFocus: selectedArea,
-                                      costCode: '' // Clear cost code when area of focus changes
-                                    });
-                                  }}
-                                  className="inline-select"
-                                  disabled={!editRowData.project}
-                                >
-                                  <option value="">
-                                    {editRowData.project ? 'Select Area of Focus' : 'Select project first'}
-                                  </option>
-                                  {editRowData.project && (() => {
-                                    // Get areas of focus that have cost codes assigned to the selected project
-                                    const selectedProject = projects.find(p => p.id === editRowData.project);
-                                    console.log('Edit - Selected project:', selectedProject);
-                                    console.log('Edit - Project cost code assignments:', selectedProject?.costCodeAssignments);
-                                    
-                                    if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                                      console.log('Edit - No cost code assignments found for project - showing all areas as fallback');
-                                      // Fallback: show all areas of focus if no cost codes are assigned
-                                      return areasOfFocus.length > 0 ? (
-                                        areasOfFocus.map(area => (
-                                          <option key={area.id} value={area.id}>
-                                            {area.name} (no cost codes assigned)
-                                          </option>
-                                        ))
-                                      ) : (
-                                        <option value="" disabled>No areas available - assign cost codes to this project first</option>
-                                      );
+                              <input
+                                type="text"
+                                value={editRowData.endTime}
+                                onChange={(e) => {
+                                  const formatted = formatTimeInputWithContext(e.target.value, editRowData.startTime);
+                                  const validationError = validateTimeInput(formatted, 'editEndTime');
+                                  updateTimeValidation('editEndTime', validationError);
+                                  
+                                  setEditRowData(prev => {
+                                    const newData = {...prev, endTime: formatted};
+                                    // Auto-calculate duration if start time is set
+                                    if (prev.startTime && formatted && !validationError) {
+                                      try {
+                                        const startTime24h = convertTo24Hour(prev.startTime);
+                                        const endTime24h = convertTo24Hour(formatted);
+                                        const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                        let endDateTime = new Date(`2000-01-01T${endTime24h}`);
+                                        
+                                        // Handle midnight crossing - if end time is before start time, assume next day
+                                        if (endDateTime <= startDateTime) {
+                                          endDateTime = new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000);
+                                        }
+                                        
+                                        if (endDateTime > startDateTime) {
+                                          const durationSeconds = Math.floor((endDateTime - startDateTime) / 1000);
+                                          const durationHours = (durationSeconds / 3600).toFixed(2);
+                                          newData.duration = durationHours;
+                                        }
+                                      } catch (error) {
+                                        // If calculation fails, leave duration as-is
+                                      }
                                     }
-                                    
-                                    const assignedAreaIds = selectedProject.costCodeAssignments
-                                      .map(assignment => {
-                                        console.log('Edit - Processing assignment:', assignment);
-                                        const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                                        console.log('Edit - Found cost code:', costCode);
-                                        return costCode?.areaOfFocusId;
-                                      })
-                                      .filter((areaId, index, arr) => {
-                                        const isValid = areaId && arr.indexOf(areaId) === index;
-                                        console.log('Edit - Area ID:', areaId, 'isValid:', isValid);
-                                        return isValid;
-                                      });
-                                    
-                                    console.log('Edit - Assigned area IDs:', assignedAreaIds);
-                                    console.log('Edit - Available areas of focus:', areasOfFocus);
-                                    
-                                    const filteredAreas = areasOfFocus.filter(area => {
-                                      const isIncluded = assignedAreaIds.includes(area.id);
-                                      console.log('Edit - Area:', area.name, 'ID:', area.id, 'included:', isIncluded);
-                                      return isIncluded;
-                                    });
-                                    
-                                    console.log('Edit - Filtered areas:', filteredAreas);
-                                    
-                                    if (filteredAreas.length === 0) {
-                                      return <option value="" disabled>No areas available for this project</option>;
+                                    return newData;
+                                  });
+                                }}
+                                onBlur={(e) => {
+                                  // Additional validation on blur if needed
+                                  const currentValue = editRowData.endTime;
+                                  if (editRowData.startTime && currentValue) {
+                                    try {
+                                      const startTime24h = convertTo24Hour(editRowData.startTime);
+                                      const endTime24h = convertTo24Hour(currentValue);
+                                      const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                      const endDateTime = new Date(`2000-01-01T${endTime24h}`);
+                                      
+                                      // Allow midnight crossing - no error for end time before start time
+                                      // The duration calculation already handles this
+                                    } catch (error) {
+                                      // Validation error, but don't prevent the blur
                                     }
-                                    
-                                    return filteredAreas.map(area => (
-                                      <option key={area.id} value={area.id}>
-                                        {area.name}
-                                      </option>
-                                    ));
-                                  })()}
-                                </select>
-                              ) : (
-                                areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || entry.areaOfFocus || '-'
+                                  }
+                                }}
+                                className={`inline-edit-input time-input ${timeValidationErrors.editEndTime ? 'error' : ''}`}
+                                placeholder="5:00 PM"
+                              />
+                              {timeValidationErrors.editEndTime && (
+                                <div className="field-error">{timeValidationErrors.editEndTime}</div>
                               )}
                             </td>
                             <td>
-                              {isEditing ? (
-                                <select
-                                  value={editRowData.costCode}
-                                  onChange={(e) => setEditRowData({...editRowData, costCode: e.target.value})}
-                                  className="inline-select"
-                                  disabled={!editRowData.areaOfFocus}
-                                >
-                                  <option value="">
-                                    {editRowData.areaOfFocus ? 'Select Cost Code' : 'Select area of focus first'}
-                                  </option>
-                                  {editRowData.areaOfFocus && (() => {
-                                    // Get cost codes assigned to the selected project and area of focus
-                                    const selectedProject = projects.find(p => p.id === editRowData.project);
-                                    console.log('Edit - Selected project for cost codes:', selectedProject);
-                                    console.log('Edit - Project cost code assignments for cost codes:', selectedProject?.costCodeAssignments);
-                                    
-                                    if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                                      console.log('Edit - No cost code assignments found for project');
-                                      return <option value="" disabled>No cost codes available - assign cost codes to this project first</option>;
+                              <input
+                                type="text"
+                                value={editRowData.duration || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setEditRowData(prev => {
+                                    const newData = {...prev, duration: value};
+                                    // Auto-calculate end time if start time is set
+                                    if (prev.startTime && value) {
+                                      const hours = parseFloat(value);
+                                      if (!isNaN(hours)) {
+                                        const endTime = calculateEndTime(prev.startTime, hours);
+                                        newData.endTime = endTime;
+                                      }
                                     }
-                                    
-                                    const availableCostCodes = selectedProject.costCodeAssignments
-                                      .map(assignment => {
-                                        console.log('Edit - Processing assignment for cost code:', assignment);
-                                        const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                                        console.log('Edit - Found cost code:', costCode);
-                                        return costCode;
-                                      })
-                                      .filter(costCode => {
-                                        const matches = costCode && costCode.areaOfFocusId === editRowData.areaOfFocus;
-                                        console.log('Edit - Cost code:', costCode?.code, 'areaOfFocusId:', costCode?.areaOfFocusId, 'selected area:', editRowData.areaOfFocus, 'matches:', matches);
-                                        return matches;
-                                      });
-                                    
-                                    console.log('Edit - Available cost codes for area:', availableCostCodes);
-                                    
-                                    if (availableCostCodes.length === 0) {
-                                      return <option value="" disabled>No cost codes available for this area</option>;
-                                    }
-                                    
-                                    return availableCostCodes.map(costCode => (
-                                      <option key={costCode.id} value={costCode.code}>
-                                        {costCode.code} - {costCode.description}
-                                        {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                                      </option>
-                                    ));
-                                  })()}
-                                </select>
-                              ) : (
-                                costCodes.find(c => c.code === entry.costCode)?.code || entry.costCode || '-'
-                              )}
+                                    return newData;
+                                  });
+                                }}
+                                className="inline-edit-input"
+                                placeholder="8.5"
+                                style={{width: '60px'}}
+                              />
                             </td>
                             <td>
-                              {isEditing ? (
-                                <input
-                                  type="text"
-                                  value={editRowData.note}
-                                  onChange={(e) => setEditRowData({...editRowData, note: e.target.value})}
-                                  className="inline-input"
-                                  placeholder="Add a note..."
-                                />
-                              ) : (
-                                <div className="note-cell">
-                                  {entry.note || '-'}
-                                </div>
-                              )}
+                              <select
+                                value={editRowData.project}
+                                onChange={(e) => setEditRowData({...editRowData, project: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Project</option>
+                                {getAvailableProjects().map(project => (
+                                  <option key={project.id} value={project.id}>{project.name}</option>
+                                ))}
+                              </select>
                             </td>
+                            <td>
+                              <select
+                                value={editRowData.areaOfFocus}
+                                onChange={(e) => setEditRowData({...editRowData, areaOfFocus: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Area of Focus</option>
+                                {areasOfFocus.map(area => (
+                                  <option key={area.id} value={area.id}>{area.name}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                value={editRowData.costCode}
+                                onChange={(e) => setEditRowData({...editRowData, costCode: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Cost Code</option>
+                                {costCodes.map(code => (
+                                  <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                value={editRowData.note}
+                                onChange={(e) => setEditRowData({...editRowData, note: e.target.value})}
+                                className="inline-edit-input"
+                                placeholder="Note"
+                              />
+                            </td>
+                            <td>
+                              <button onClick={() => saveInlineEdit(entry.id)} className="save-btn">Save</button>
+                              <button onClick={cancelInlineEdit} className="cancel-btn">Cancel</button>
+                            </td>
+                          </>
+                        ) : (
+                          // View mode - show static data
+                          <>
+                            <td>
+                              {(() => {
+                                const user = users.find(u => u.id === entry.userId);
+                                return user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : 'Unknown User';
+                              })()}
+                            </td>
+                            <td>{formatTimeDisplay(entry.startTime)}</td>
+                            <td>{formatTimeDisplay(entry.endTime)}</td>
+                            <td>{entry.duration ? (entry.duration / 3600).toFixed(2) + 'h' : '-'}</td>
+                            <td>{projects.find(p => p.id === entry.project)?.name || 'Unknown Project'}</td>
+                            <td>{areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area'}</td>
+                            <td>{costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code'}</td>
+                            <td>{entry.note || '-'}</td>
                             <td>
                               <div className="action-buttons">
-                                {isEditing ? (
-                                  <>
-                                    <button
-                                      onClick={() => saveInlineEdit(entry.id)}
-                                      className="save-btn-small"
-                                      title="Save Changes"
-                                    >
-                                      💾
-                                    </button>
-                                    <button
-                                      onClick={cancelInlineEdit}
-                                      className="cancel-btn-small"
-                                      title="Cancel"
-                                    >
-                                      ❌
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    {/* Show edit button only if user can edit this entry */}
-                                    {(user.role !== 'member' || entry.userId === user.uid) && (
-                                      <button
-                                        onClick={() => editTimeEntry(entry)}
-                                        className="edit-btn-small"
-                                        disabled={!startDate}
-                                        title="Edit Entry"
-                                      >
-                                        ✏️
-                                      </button>
-                                    )}
-                                    {/* Show delete button only if user can delete this entry */}
-                                    {(user.role !== 'member' || entry.userId === user.uid) && (
-                                      <button
-                                        onClick={() => deleteTimeEntry(entry.id)}
-                                        className="delete-btn-small"
-                                        title="Delete Entry"
-                                      >
-                                        🗑️
-                                      </button>
-                                    )}
-                                  </>
+                                <button onClick={() => editTimeEntry(entry)} className="edit-btn">Edit</button>
+                                <button onClick={() => deleteTimeEntry(entry.id)} className="delete-btn">Delete</button>
+                                {entry.history && entry.history.length > 0 && (
+                                  <div className="history-tooltip-container">
+                                    <button className="history-btn" title="View edit history">📝</button>
+                                    <HistoryTooltip history={entry.history} users={users} />
+                                  </div>
                                 )}
                               </div>
                             </td>
-                          </tr>
-                        );
-                      })}
-
-                    {/* Add New Entry Row (shown when not in inline add mode) */}
-                    {!showAddRow && editingRowId === null && (
-                      <tr className="add-new-row">
-                        <td colSpan="7" className="add-new-cell">
-                          <button 
-                            onClick={startAddRow} 
-                            className="add-new-row-btn"
-                          >
-                            + Add New Entry
-                          </button>
-                        </td>
+                          </>
+                        )}
                       </tr>
-                    )}
+                    ))}
 
-                    {/* Inline Add Row */}
-                    {showAddRow && editingRowId === null && (
+                    {/* Add New Row Form */}
+                    {showAddRow && (
                       <tr className="add-row">
                         <td>
-                          <div className="date-time-cell">
-                            <input
-                              type="date"
-                              value={newRowData.date}
-                              onChange={(e) => setNewRowData({...newRowData, date: e.target.value})}
-                              className="inline-input"
-                              min={new Date().toISOString().split('T')[0]}
-                              required
-                            />
-                            <div style={{display: 'flex', gap: '5px', marginTop: '5px'}}>
-                              <input
-                                type="text"
-                                placeholder="HH:MM AM"
-                                value={newRowData.startTime}
-                                onChange={(e) => {
-                                  const rawValue = e.target.value;
-                                  const formattedValue = formatTimeInput(rawValue);
-                                  
-                                  // Always update the input value to allow natural typing
-                                  setNewRowData({...newRowData, startTime: formattedValue});
-                                  
-                                  // Only attempt duration calculation if we have a reasonably complete time
-                                  if (formattedValue && formattedValue.length >= 3 && newRowData.durationMode === 'start' && newRowData.duration) {
-                                    try {
-                                      const calculatedEndTime = calculateEndTime(formattedValue, parseFloat(newRowData.duration));
-                                      if (calculatedEndTime) {
-                                        setNewRowData(prev => ({...prev, endTime: calculatedEndTime}));
-                                      }
-                                    } catch (error) {
-                                      // Silently ignore calculation errors during typing
-                                      console.debug('Duration calculation skipped during typing');
-                                    }
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  // Auto-insert colon when user types a number after 2 digits
-                                  const currentValue = e.target.value;
-                                  if (e.key >= '0' && e.key <= '9' && currentValue.length === 2 && !currentValue.includes(':')) {
-                                    e.preventDefault();
-                                    const newValue = currentValue + ':' + e.key;
-                                    setNewRowData({...newRowData, startTime: newValue});
-                                  }
-                                }}
-                                className="inline-input time-input"
-                                pattern="(1[0-2]|0?[1-9])(:[0-5][0-9])?\s*(AM|PM|am|pm)"
-                                title="Format: HH:MM AM/PM (e.g., 9:00 AM, 2:30 PM)"
-                                maxLength="8"
-                                required
-                              />
-                              <span>to</span>
-                              <input
-                                type="text"
-                                placeholder="HH:MM PM"
-                                value={newRowData.endTime}
-                                onChange={(e) => {
-                                  const rawValue = e.target.value;
-                                  const formattedValue = formatTimeInput(rawValue);
-                                  
-                                  // Always update the input value to allow natural typing
-                                  setNewRowData({...newRowData, endTime: formattedValue});
-                                  
-                                  // Only attempt duration calculation if we have a reasonably complete time
-                                  if (formattedValue && formattedValue.length >= 3 && newRowData.durationMode === 'end' && newRowData.duration) {
-                                    try {
-                                      const calculatedStartTime = calculateStartTime(formattedValue, parseFloat(newRowData.duration));
-                                      if (calculatedStartTime) {
-                                        setNewRowData(prev => ({...prev, startTime: calculatedStartTime}));
-                                      }
-                                    } catch (error) {
-                                      // Silently ignore calculation errors during typing
-                                      console.debug('Duration calculation skipped during typing');
-                                    }
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  // Auto-insert colon when user types a number after 2 digits
-                                  const currentValue = e.target.value;
-                                  if (e.key >= '0' && e.key <= '9' && currentValue.length === 2 && !currentValue.includes(':')) {
-                                    e.preventDefault();
-                                    const newValue = currentValue + ':' + e.key;
-                                    setNewRowData({...newRowData, endTime: newValue});
-                                  }
-                                }}
-                                className="inline-input time-input"
-                                pattern="(1[0-2]|0?[1-9])(:[0-5][0-9])?\s*(AM|PM|am|pm)"
-                                title="Format: HH:MM AM/PM (e.g., 9:00 AM, 2:30 PM)"
-                                maxLength="8"
-                                required
-                              />
-                            </div>
-                            {/* Duration Calculator */}
-                            <div className="duration-calculator">
-                              <select
-                                value={newRowData.durationMode}
-                                onChange={(e) => setNewRowData({...newRowData, durationMode: e.target.value})}
-                                className="inline-select"
-                              >
-                                <option value="start">Start + Duration</option>
-                                <option value="end">End + Duration</option>
-                              </select>
-                              <input
-                                type="number"
-                                placeholder="Hours"
-                                value={newRowData.duration}
-                                onChange={(e) => {
-                                  const duration = e.target.value;
-                                  setNewRowData({...newRowData, duration});
-                                  
-                                  // Auto-calculate the other time based on mode
-                                  if (newRowData.durationMode === 'start' && newRowData.startTime && duration) {
-                                    const calculatedEndTime = calculateEndTime(newRowData.startTime, parseFloat(duration));
-                                    if (calculatedEndTime) {
-                                      setNewRowData(prev => ({...prev, endTime: calculatedEndTime}));
-                                    }
-                                  } else if (newRowData.durationMode === 'end' && newRowData.endTime && duration) {
-                                    const calculatedStartTime = calculateStartTime(newRowData.endTime, parseFloat(duration));
-                                    if (calculatedStartTime) {
-                                      setNewRowData(prev => ({...prev, startTime: calculatedStartTime}));
-                                    }
-                                  }
-                                }}
-                                className="inline-input"
-                                min="0"
-                                step="0.25"
-                                title="Enter duration in hours (e.g., 2.5 for 2.5 hours)"
-                              />
-                              <span className="duration-label">hrs</span>
-                            </div>
-                          </div>
+                          <select
+                            value={newRowData.userId}
+                            onChange={(e) => setNewRowData({...newRowData, userId: e.target.value})}
+                            className="inline-edit-select"
+                          >
+                            <option value="">Select User</option>
+                            {users.map(user => (
+                              <option key={user.id} value={user.id}>
+                                {user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td>
-                          <span className="duration-cell">
-                            {newRowData.startTime && newRowData.endTime ? 
-                              (() => {
-                                try {
-                                  const startTime24h = convertTo24Hour(newRowData.startTime);
-                                  const endTime24h = convertTo24Hour(newRowData.endTime);
-                                  
-                                  const start = new Date(`${newRowData.date}T${startTime24h}`);
-                                  let end = new Date(`${newRowData.date}T${endTime24h}`);
-                                  
-                                  // Handle overnight entries
-                                  if (end < start) {
-                                    end = new Date(end);
-                                    end.setDate(end.getDate() + 1);
+                          <input
+                            type="text"
+                            value={newRowData.startTime}
+                            onChange={(e) => {
+                              const formatted = formatTimeInputWithContext(e.target.value);
+                              const validationError = validateTimeInput(formatted, 'newStartTime');
+                              updateTimeValidation('newStartTime', validationError);
+                              
+                              setNewRowData(prev => {
+                                const newData = {...prev, startTime: formatted};
+                                // Auto-calculate duration if end time is set
+                                if (prev.endTime && formatted && !validationError) {
+                                  try {
+                                    const startTime24h = convertTo24Hour(formatted);
+                                    const endTime24h = convertTo24Hour(prev.endTime);
+                                    const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                    const endDateTime = new Date(`2000-01-01T${endTime24h}`);
+                                    
+                                    if (endDateTime > startDateTime) {
+                                      const durationSeconds = Math.floor((endDateTime - startDateTime) / 1000);
+                                      const durationHours = (durationSeconds / 3600).toFixed(2);
+                                      newData.duration = durationHours;
+                                    }
+                                  } catch (error) {
+                                    // If calculation fails, leave duration as-is
                                   }
-                                  
-                                  const duration = Math.floor((end - start) / 1000);
-                                  return duration > 0 ? formatTime(duration) : '--:--';
-                                } catch (error) {
-                                  return '--:--';
                                 }
-                              })() : 
-                              '--:--'
-                            }
-                          </span>
+                                return newData;
+                              });
+                            }}
+                            className={`inline-edit-input time-input ${timeValidationErrors.newStartTime ? 'error' : ''}`}
+                            placeholder="9:00 AM"
+                          />
+                          {timeValidationErrors.newStartTime && (
+                            <div className="field-error">{timeValidationErrors.newStartTime}</div>
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={newRowData.endTime}
+                            onChange={(e) => {
+                              const formatted = formatTimeInputWithContext(e.target.value, newRowData.startTime);
+                              const validationError = validateTimeInput(formatted, 'newEndTime');
+                              updateTimeValidation('newEndTime', validationError);
+                              
+                              setNewRowData(prev => {
+                                const newData = {...prev, endTime: formatted};
+                                // Auto-calculate duration if start time is set
+                                if (prev.startTime && formatted && !validationError) {
+                                  try {
+                                    const startTime24h = convertTo24Hour(prev.startTime);
+                                    const endTime24h = convertTo24Hour(formatted);
+                                    const startDateTime = new Date(`2000-01-01T${startTime24h}`);
+                                    let endDateTime = new Date(`2000-01-01T${endTime24h}`);
+                                    
+                                    // Handle midnight crossing - if end time is before start time, assume next day
+                                    if (endDateTime <= startDateTime) {
+                                      endDateTime = new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000);
+                                    }
+                                    
+                                    if (endDateTime > startDateTime) {
+                                      const durationSeconds = Math.floor((endDateTime - startDateTime) / 1000);
+                                      const durationHours = (durationSeconds / 3600).toFixed(2);
+                                      newData.duration = durationHours;
+                                    }
+                                  } catch (error) {
+                                    // If calculation fails, leave duration as-is
+                                  }
+                                }
+                                return newData;
+                              });
+                            }}
+                            className={`inline-edit-input time-input ${timeValidationErrors.newEndTime ? 'error' : ''}`}
+                            placeholder="5:00 PM"
+                          />
+                          {timeValidationErrors.newEndTime && (
+                            <div className="field-error">{timeValidationErrors.newEndTime}</div>
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={newRowData.duration || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setNewRowData(prev => {
+                                const newData = {...prev, duration: value};
+                                // Auto-calculate end time if start time is set
+                                if (prev.startTime && value) {
+                                  const hours = parseFloat(value);
+                                  if (!isNaN(hours)) {
+                                    const endTime = calculateEndTime(prev.startTime, hours);
+                                    newData.endTime = endTime;
+                                  }
+                                }
+                                return newData;
+                              });
+                            }}
+                            className="inline-edit-input"
+                            placeholder="8.5"
+                            style={{width: '60px'}}
+                          />
                         </td>
                         <td>
                           <select
                             value={newRowData.project}
-                            onChange={(e) => {
-                              const selectedProject = e.target.value;
-                              setNewRowData({
-                                ...newRowData, 
-                                project: selectedProject,
-                                areaOfFocus: '', // Clear area of focus when project changes
-                                costCode: '' // Clear cost code when project changes
-                              });
-                            }}
-                            className="inline-select"
+                            onChange={(e) => setNewRowData({...newRowData, project: e.target.value})}
+                            className="inline-edit-select"
                           >
                             <option value="">Select Project</option>
-                            {projects.map(project => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
+                            {getAvailableProjects().map(project => (
+                              <option key={project.id} value={project.id}>{project.name}</option>
                             ))}
                           </select>
                         </td>
                         <td>
                           <select
                             value={newRowData.areaOfFocus}
-                            onChange={(e) => {
-                              const selectedArea = e.target.value;
-                              console.log('=== AREA OF FOCUS SELECTION DEBUG ===');
-                              console.log('Selected area ID:', selectedArea);
-                              console.log('Previous newRowData:', newRowData);
-                              
-                              setNewRowData({
-                                ...newRowData, 
-                                areaOfFocus: selectedArea,
-                                costCode: '' // Clear cost code when area of focus changes
-                              });
-                              
-                              console.log('Updated newRowData:', {...newRowData, areaOfFocus: selectedArea, costCode: ''});
-                            }}
-                            className="inline-select"
-                            disabled={!newRowData.project}
+                            onChange={(e) => setNewRowData({...newRowData, areaOfFocus: e.target.value})}
+                            className="inline-edit-select"
                           >
-                            <option value="">
-                              {newRowData.project ? 'Select Area of Focus' : 'Select project first'}
-                            </option>
-                            {newRowData.project && (() => {
-                              // Get areas of focus that have cost codes assigned to the selected project
-                              const selectedProject = projects.find(p => p.id === newRowData.project);
-                              console.log('Selected project:', selectedProject);
-                              console.log('Project cost code assignments:', selectedProject?.costCodeAssignments);
-                              
-                              if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                                console.log('No cost code assignments found for project - showing all areas as fallback');
-                                // Fallback: show all areas of focus if no cost codes are assigned
-                                return areasOfFocus.length > 0 ? (
-                                  areasOfFocus.map(area => (
-                                    <option key={area.id} value={area.id}>
-                                      {area.name} (no cost codes assigned)
-                                    </option>
-                                  ))
-                                ) : (
-                                  <option value="" disabled>No areas available - assign cost codes to this project first</option>
-                                );
-                              }
-                              
-                              const assignedAreaIds = selectedProject.costCodeAssignments
-                                .map(assignment => {
-                                  console.log('Processing assignment:', assignment);
-                                  const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                                  console.log('Found cost code:', costCode);
-                                  return costCode?.areaOfFocusId;
-                                })
-                                .filter((areaId, index, arr) => {
-                                  const isValid = areaId && arr.indexOf(areaId) === index;
-                                  console.log('Area ID:', areaId, 'isValid:', isValid);
-                                  return isValid;
-                                });
-                              
-                              console.log('Assigned area IDs:', assignedAreaIds);
-                              console.log('Available areas of focus:', areasOfFocus);
-                              
-                              const filteredAreas = areasOfFocus.filter(area => {
-                                const isIncluded = assignedAreaIds.includes(area.id);
-                                console.log('Area:', area.name, 'ID:', area.id, 'included:', isIncluded);
-                                return isIncluded;
-                              });
-                              
-                              console.log('Filtered areas:', filteredAreas);
-                              
-                              if (filteredAreas.length === 0) {
-                                return <option value="" disabled>No areas available for this project</option>;
-                              }
-                              
-                              return filteredAreas.map(area => (
-                                <option key={area.id} value={area.id}>
-                                  {area.name}
-                                </option>
-                              ));
-                            })()}
+                            <option value="">Select Area of Focus</option>
+                            {areasOfFocus.map(area => (
+                              <option key={area.id} value={area.id}>{area.name}</option>
+                            ))}
                           </select>
                         </td>
                         <td>
                           <select
                             value={newRowData.costCode}
                             onChange={(e) => setNewRowData({...newRowData, costCode: e.target.value})}
-                            className="inline-select"
-                            disabled={!newRowData.areaOfFocus}
+                            className="inline-edit-select"
                           >
-                            <option value="">
-                              {newRowData.areaOfFocus ? 'Select Cost Code' : 'Select area of focus first'}
-                            </option>
-                            {newRowData.areaOfFocus && (() => {
-                              console.log('=== COST CODE DEBUGGING ===');
-                              console.log('newRowData.areaOfFocus:', newRowData.areaOfFocus);
-                              console.log('newRowData.project:', newRowData.project);
-                              console.log('Data loading status - projects:', projects.length, 'costCodes:', costCodes.length);
-                              
-                              // Check if data is still loading
-                              if (projects.length === 0 || costCodes.length === 0) {
-                                console.log('Data still loading...');
-                                return <option value="" disabled>Loading cost codes...</option>;
-                              }
-                              const selectedProject = projects.find(p => p.id === newRowData.project);
-                              console.log('Selected project for cost codes:', selectedProject);
-                              console.log('Project cost code assignments:', selectedProject?.costCodeAssignments);
-                              console.log('All cost codes:', costCodes);
-                              
-                              if (!selectedProject?.costCodeAssignments || selectedProject.costCodeAssignments.length === 0) {
-                                console.log('No cost code assignments found for project - showing all cost codes for area as fallback');
-                                // Fallback: show all cost codes for the selected area if no assignments exist
-                                const fallbackCostCodes = costCodes.filter(cc => cc.areaOfFocusId === newRowData.areaOfFocus);
-                                console.log('Fallback cost codes for area:', fallbackCostCodes);
-                                
-                                if (fallbackCostCodes.length === 0) {
-                                  return <option value="" disabled>No cost codes available - assign cost codes to this project first</option>;
-                                }
-                                
-                                return fallbackCostCodes.map(costCode => (
-                                  <option key={costCode.id} value={costCode.code}>
-                                    {costCode.code} - {costCode.description} (not assigned to project)
-                                    {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                                  </option>
-                                ));
-                              }
-                              
-                              const availableCostCodes = selectedProject.costCodeAssignments
-                                .map(assignment => {
-                                  console.log('Processing assignment for cost code:', assignment);
-                                  const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                                  console.log('Found cost code:', costCode);
-                                  return costCode;
-                                })
-                                .filter(costCode => {
-                                  const matches = costCode && costCode.areaOfFocusId === newRowData.areaOfFocus;
-                                  console.log('Cost code:', costCode?.code, 'areaOfFocusId:', costCode?.areaOfFocusId, 'selected area:', newRowData.areaOfFocus, 'matches:', matches);
-                                  return matches;
-                                });
-                              
-                              console.log('Available cost codes for area:', availableCostCodes);
-                              
-                              if (availableCostCodes.length === 0) {
-                                console.log('No cost codes match the criteria');
-                                return <option value="" disabled>No cost codes available for this area</option>;
-                              }
-                              
-                              return availableCostCodes.map(costCode => (
-                                <option key={costCode.id} value={costCode.code}>
-                                  {costCode.code} - {costCode.description}
-                                  {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                                </option>
-                              ));
-                            })()}
+                            <option value="">Select Cost Code</option>
+                            {costCodes.map(code => (
+                              <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
+                            ))}
                           </select>
                         </td>
                         <td>
@@ -3473,76 +4135,28 @@ const TimeTracker = () => {
                             type="text"
                             value={newRowData.note}
                             onChange={(e) => setNewRowData({...newRowData, note: e.target.value})}
-                            className="inline-input"
-                            placeholder="Add a note..."
+                            className="inline-edit-input"
+                            placeholder="Note"
                           />
                         </td>
                         <td>
-                          <div className="action-buttons">
-                            <button
-                              onClick={saveAddRow}
-                              className="save-btn-small"
-                              title="Save Entry"
-                            >
-                              💾
-                            </button>
-                            <button
-                              onClick={cancelAddRow}
-                              className="cancel-btn-small"
-                              title="Cancel"
-                            >
-                              ❌
-                            </button>
-                          </div>
+                          <button onClick={saveAddRow} className="save-btn">Save</button>
+                          <button onClick={cancelAddRow} className="cancel-btn">Cancel</button>
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
-
-                {filteredAndSortedEntries().length === 0 && !showAddRow && (
-                  <div className="no-data">
-                    <p>No time entries found matching your criteria.</p>
-                  </div>
-                )}
               </div>
-
-              {/* Pagination */}
-              {filteredAndSortedEntries().length > entriesPerPage && (
-                <div className="pagination">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="pagination-btn"
-                  >
-                    Previous
-                  </button>
-
-                  <span className="pagination-info">
-                    Page {currentPage} of {Math.ceil(filteredAndSortedEntries().length / entriesPerPage)}
-                    ({filteredAndSortedEntries().length} total entries)
-                  </span>
-
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(filteredAndSortedEntries().length / entriesPerPage)))}
-                    disabled={currentPage === Math.ceil(filteredAndSortedEntries().length / entriesPerPage)}
-                    className="pagination-btn"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'tasks' && (
-        <div className="tasks-tab-content">
-          <div className="tasks-header">
-            <h1>Task & Submission Management</h1>
-          </div>
 
+      {activeTab === 'tasks' && (
+        <>
+          <TaskManager />
           <div className="tasks-content">
             {/* Task Management */}
             <div className="section">
@@ -3714,7 +4328,7 @@ const TimeTracker = () => {
               </div>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {activeTab === 'areasOfFocus' && (
@@ -3883,7 +4497,8 @@ const TimeTracker = () => {
                           setNewProject({
                             name: project.name,
                             description: project.description,
-                            costCodeAssignments: project.costCodeAssignments || []
+                            costCodeAssignments: project.costCodeAssignments || [],
+                            assignedUsers: project.assignedUsers || []
                           });
                           setShowProjectModal(true);
                         }}
@@ -4122,53 +4737,709 @@ const TimeTracker = () => {
         </div>
       )}
 
+      {activeTab === 'expenses' && (
+        <div className="expenses-tab-content">
+          <div className="expenses-header">
+            <h1>Expense Management</h1>
+            <div className="expenses-header-actions">
+              <button className="add-btn" onClick={() => setShowExpenseCategoryModal(true)}>
+                + Add Category
+              </button>
+              <button className="add-btn" onClick={() => setShowExpenseModal(true)}>
+                + Add Expense
+              </button>
+            </div>
+          </div>
+
+          {/* Expense Categories */}
+          <div className="expense-categories-section">
+            <h3>Expense Categories</h3>
+            <div className="expense-categories-grid">
+              {expenseCategories.length === 0 ? (
+                <div className="no-categories-placeholder">
+                  <div className="placeholder-icon">📂</div>
+                  <h3>No Categories Yet</h3>
+                  <p>Create your first expense category to organize your expenses.</p>
+                  <button className="add-btn" onClick={() => setShowExpenseCategoryModal(true)}>
+                    + Create Your First Category
+                  </button>
+                </div>
+              ) : (
+                expenseCategories.map(category => (
+                  <div key={category.id} className="expense-category-card">
+                    <div className="category-header">
+                      <div 
+                        className="category-color"
+                        style={{ backgroundColor: category.color }}
+                      ></div>
+                      <div className="category-info">
+                        <h4>{category.name}</h4>
+                        <p>{category.description}</p>
+                      </div>
+                    </div>
+                    <div className="category-actions">
+                      <button 
+                        className="edit-btn"
+                        onClick={() => {
+                          setEditingExpenseCategory(category);
+                          setNewExpenseCategory({
+                            name: category.name,
+                            description: category.description,
+                            color: category.color
+                          });
+                          setShowExpenseCategoryModal(true);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button 
+                        className="delete-btn"
+                        onClick={() => deleteExpenseCategory(category.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Expenses List */}
+          <div className="expenses-list-section">
+            <div className="expenses-summary">
+              <h3>Expenses</h3>
+              <div className="expenses-controls">
+                <div className="search-container">
+                  <input
+                    type="text"
+                    placeholder="Search expenses..."
+                    value={expenseSearchTerm}
+                    onChange={(e) => setExpenseSearchTerm(e.target.value)}
+                    className="search-input"
+                  />
+                  {expenseSearchTerm && (
+                    <button 
+                      className="clear-search-btn"
+                      onClick={() => setExpenseSearchTerm('')}
+                      title="Clear search"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                <div className="expenses-total">
+                  <span className="total-label">Total Expenses:</span>
+                  <span className="total-amount">
+                    ${filteredExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0).toFixed(2)}
+                  </span>
+                  <span className="total-count">({filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''})</span>
+                </div>
+              </div>
+            </div>
+            <div className="expenses-list">
+              {filteredExpenses.length === 0 ? (
+                <div className="no-expenses-placeholder">
+                  <div className="placeholder-icon">💸</div>
+                  <h3>{expenseSearchTerm ? 'No Matching Expenses' : 'No Expenses Yet'}</h3>
+                  <p>
+                    {expenseSearchTerm 
+                      ? `No expenses match your search "${expenseSearchTerm}". Try a different search term.`
+                      : 'Track your project expenses by adding your first expense.'
+                    }
+                  </p>
+                  {expenseSearchTerm ? (
+                    <button className="add-btn" onClick={() => setExpenseSearchTerm('')}>
+                      Clear Search
+                    </button>
+                  ) : (
+                    <button className="add-btn" onClick={() => setShowExpenseModal(true)}>
+                      + Add Your First Expense
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredExpenses.map(expense => {
+                  const category = expenseCategories.find(cat => cat.id === expense.categoryId);
+                  const subcategory = expenseSubcategories.find(sub => sub.id === expense.subcategoryId);
+                  const costCode = costCodes.find(cc => cc.id === expense.costCodeId);
+                  
+                  return (
+                    <div key={expense.id} className="expense-card">
+                      <div className="expense-header">
+                        <div className="expense-title-section">
+                          <h4>{expense.title}</h4>
+                          <div className="expense-meta">
+                            <span className="expense-date">{new Date(expense.date.seconds * 1000).toLocaleDateString()}</span>
+                            {expense.vendor && <span className="expense-vendor">• {expense.vendor}</span>}
+                          </div>
+                        </div>
+                        <div className="expense-amount">
+                          ${expense.amount.toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="expense-details">
+                        {expense.description && <p>{expense.description}</p>}
+                        <div className="expense-tags">
+                          {category && (
+                            <span 
+                              className="expense-tag category-tag"
+                              style={{ backgroundColor: category.color }}
+                            >
+                              {category.name}
+                            </span>
+                          )}
+                          {subcategory && (
+                            <span className="expense-tag subcategory-tag">
+                              {subcategory.name}
+                            </span>
+                          )}
+                          {costCode && (
+                            <span className="expense-tag cost-code-tag">
+                              {costCode.code}
+                            </span>
+                          )}
+                          {expense.projectId && (
+                            <span className="expense-tag project-tag">
+                              {projects.find(p => p.id === expense.projectId)?.name || 'Unknown Project'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="expense-actions">
+                        <button 
+                          className="edit-btn"
+                          onClick={() => {
+                            setEditingExpense(expense);
+                            setNewExpense({
+                              title: expense.title,
+                              description: expense.description || '',
+                              amount: expense.amount.toString(),
+                              date: new Date(expense.date.seconds * 1000).toISOString().split('T')[0],
+                              categoryId: expense.categoryId || '',
+                              subcategoryId: expense.subcategoryId || '',
+                              costCodeId: expense.costCodeId || '',
+                              projectId: expense.projectId || '',
+                              vendor: expense.vendor || '',
+                              receipt: null
+                            });
+                            setShowExpenseModal(true);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button 
+                          className="delete-btn"
+                          onClick={() => deleteExpense(expense.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'contracts' && (
+        <div className="contracts-tab-content">
+          <div className="contracts-header">
+            <h1>Contract Management</h1>
+            <div className="contracts-header-actions">
+              <button className="add-btn" onClick={() => setShowContractModal(true)}>
+                + Add Contract
+              </button>
+            </div>
+          </div>
+
+          <div className="contracts-content">
+            {/* Contracts Summary */}
+            <div className="contracts-summary">
+              <div className="summary-card">
+                <h3>Total Contracts</h3>
+                <span className="summary-value">{contracts.length}</span>
+              </div>
+              <div className="summary-card">
+                <h3>Estimating</h3>
+                <span className="summary-value">{contracts.filter(c => c.status === 'estimating').length}</span>
+              </div>
+              <div className="summary-card">
+                <h3>Awarded</h3>
+                <span className="summary-value">{contracts.filter(c => c.status === 'awarded').length}</span>
+              </div>
+              <div className="summary-card">
+                <h3>In Progress</h3>
+                <span className="summary-value">{contracts.filter(c => c.status === 'in-progress').length}</span>
+              </div>
+              <div className="summary-card total-value">
+                <h3>Total Contract Value</h3>
+                <span className="summary-value">${contracts.reduce((sum, contract) => sum + (contract.totalAmount || 0), 0).toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Contracts List */}
+            <div className="contracts-list">
+              {contracts.length === 0 ? (
+                <div className="empty-state">
+                  <p>No contracts found. Click "Add Contract" to get started.</p>
+                </div>
+              ) : (
+                contracts.map(contract => (
+                  <div key={contract.id} className="contract-card">
+                    <div className="contract-header">
+                      <div className="contract-info">
+                        <h3>{contract.name}</h3>
+                        <p className="contract-number">Contract #{contract.contractNumber}</p>
+                        <p className="client-name">{contract.clientName}</p>
+                      </div>
+                      <div className="contract-status">
+                        <span 
+                          className={`status-badge status-${contract.status}`}
+                          title={contract.statusChangeLog && contract.statusChangeLog.length > 0 
+                            ? contract.statusChangeLog.map(log => 
+                                `${new Date(log.changedAt.seconds ? log.changedAt.seconds * 1000 : log.changedAt).toLocaleString()} - ${log.changedBy}: ${log.previousStatus || 'Created'} → ${log.newStatus}`
+                              ).join('\n')
+                            : 'No status changes recorded'
+                          }
+                        >
+                          {contract.status === 'estimating' ? 'Estimating' :
+                           contract.status === 'awarded' ? 'Awarded' :
+                           contract.status === 'in-progress' ? 'In Progress' : contract.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="contract-details">
+                      <div className="contract-amount">
+                        <span className="amount-label">Contract Value:</span>
+                        <span className="amount-value">${(contract.totalAmount || 0).toLocaleString()}</span>
+                      </div>
+
+                      {contract.projectId && (
+                        <div className="contract-project">
+                          <span className="project-label">Project:</span>
+                          <span className="project-name">
+                            {projects.find(p => p.id === contract.projectId)?.name || 'Unknown Project'}
+                          </span>
+                        </div>
+                      )}
+
+                      {(contract.startDate || contract.endDate) && (
+                        <div className="contract-dates">
+                          {contract.startDate && <span>Start: {new Date(contract.startDate).toLocaleDateString()}</span>}
+                          {contract.endDate && <span>End: {new Date(contract.endDate).toLocaleDateString()}</span>}
+                        </div>
+                      )}
+                    </div>
+
+                    {contract.description && (
+                      <div className="contract-description">
+                        <p>{contract.description}</p>
+                      </div>
+                    )}
+
+                    <div className="contract-actions">
+                      <button 
+                        className="edit-btn"
+                        onClick={() => editContract(contract)}
+                      >
+                        Edit
+                      </button>
+                      <button 
+                        className="comments-btn"
+                        onClick={() => openCommentsModal(contract)}
+                      >
+                        💬 Comments ({contract.comments?.length || 0})
+                      </button>
+                      <button 
+                        className="delete-btn"
+                        onClick={() => deleteContract(contract.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'projectProfile' && selectedProject && (
         <div className="project-profile-tab-content">
           <div className="project-profile-header">
             <div className="project-profile-info">
               <h1>{selectedProject.name}</h1>
               <p>{selectedProject.description}</p>
-              <div className="project-stats">
-                <span>Total Time Entries: {projectTimeEntries.length}</span>
-                <span>Actual Hours: {Object.values(projectCostCodeStats).reduce((sum, stat) => sum + stat.totalHours, 0).toFixed(2)}</span>
-                <span>Actual Cost: ${Object.entries(projectCostCodeStats).reduce((sum, [code, stat]) => {
+            </div>
+
+            {/* Business Intelligence Dashboard */}
+            <div className="bi-dashboard">
+              <h2>📊 Business Intelligence Dashboard</h2>
+
+              {(() => {
+                // Define shared variables for all BI sections
+                const totalRevenue = projectContracts.reduce((sum, contract) => sum + (contract.totalAmount || contract.contractValue || contract.amount || 0), 0);
+                const totalExpenses = expenses.filter(expense => expense.projectId === selectedProject.id).reduce((sum, expense) => sum + (expense.amount || 0), 0);
+                const totalLaborCost = Object.entries(projectCostCodeStats).reduce((sum, [code, stat]) => {
                   const costCode = costCodes.find(cc => cc.code === code);
                   return sum + (stat.totalHours * (costCode?.costPerHour ? parseFloat(costCode.costPerHour) : 0));
-                }, 0).toFixed(2)}</span>
-                {(() => {
-                  console.log('=== PROJECT STATS DEBUG ===');
-                  console.log('selectedProject:', selectedProject);
-                  console.log('costCodeAssignments:', selectedProject?.costCodeAssignments);
-                  console.log('costCodeAssignments length:', selectedProject?.costCodeAssignments?.length);
-                  
-                  const hasAssignments = selectedProject?.costCodeAssignments && selectedProject.costCodeAssignments.length > 0;
-                  console.log('hasAssignments:', hasAssignments);
-                  
-                  if (hasAssignments) {
-                    const totalAssigned = selectedProject.costCodeAssignments.reduce((sum, assignment) => sum + parseFloat(assignment.hours || 0), 0);
-                    console.log('totalAssigned:', totalAssigned);
-                  }
-                  
-                  return hasAssignments ? (
-                    <>
-                      <span>Assigned Hours: {selectedProject.costCodeAssignments.reduce((sum, assignment) => sum + parseFloat(assignment.hours || 0), 0).toFixed(2)}</span>
-                      <span>Assigned Cost: ${selectedProject.costCodeAssignments.reduce((sum, assignment) => {
-                        const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
-                        return sum + (parseFloat(assignment.hours || 0) * (costCode?.costPerHour ? parseFloat(costCode.costPerHour) : 0));
-                      }, 0).toFixed(2)}</span>
-                    </>
-                  ) : (
-                    <span>No assigned hours (add cost code assignments to this project)</span>
-                  );
-                })()}
-              </div>
+                }, 0);
+                const totalActualHours = Object.values(projectCostCodeStats).reduce((sum, stat) => sum + stat.totalHours, 0);
+                const totalAssignedHours = selectedProject.costCodeAssignments?.reduce((sum, assignment) => sum + parseFloat(assignment.hours || 0), 0) || 0;
+                const totalTimeEntries = projectTimeEntries.length;
+                const activeContracts = projectContracts.filter(c => c.status === 'in-progress').length;
+                const completedContracts = projectContracts.filter(c => c.status === 'completed').length;
+                const totalContracts = projectContracts.length;
+                const contractCompletionRate = totalContracts > 0 ? (completedContracts / totalContracts) * 100 : 0;
+                const avgEntriesPerDay = (() => {
+                  if (totalTimeEntries === 0) return 0;
+                  const dates = [...new Set(projectTimeEntries.map(entry => entry.date?.split('T')[0]).filter(Boolean))];
+                  const uniqueDays = dates.length;
+                  return uniqueDays > 0 ? totalTimeEntries / uniqueDays : 0;
+                })();
+
+                return (
+                  <>
+                    {/* Financial Overview */}
+                    <div className="bi-section">
+                      <h3>💰 Financial Overview</h3>
+                      <div className="bi-cards-grid">
+                        {(() => {
+                          const totalCost = totalExpenses + totalLaborCost;
+                          const netProfit = totalRevenue - totalCost;
+                          const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+                          return (
+                            <>
+                              <div className="bi-card revenue">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">💵</span>
+                                  <span className="bi-label">Total Revenue</span>
+                                </div>
+                                <div className="bi-card-value">${totalRevenue.toFixed(2)}</div>
+                                <div className="bi-card-subtitle">Contract Value</div>
+                              </div>
+
+                              <div className="bi-card costs">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">💸</span>
+                                  <span className="bi-label">Total Costs</span>
+                                </div>
+                                <div className="bi-card-value">${totalCost.toFixed(2)}</div>
+                                <div className="bi-card-subtitle">Expenses + Labor</div>
+                              </div>
+
+                              <div className={`bi-card profit ${netProfit >= 0 ? 'positive' : 'negative'}`}>
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">{netProfit >= 0 ? '📈' : '📉'}</span>
+                                  <span className="bi-label">Net Profit</span>
+                                </div>
+                                <div className="bi-card-value">${netProfit.toFixed(2)}</div>
+                                <div className="bi-card-subtitle">{netProfit >= 0 ? 'Profit' : 'Loss'}</div>
+                                <div className="mini-bar-chart">
+                                  <div className="mini-bar" style={{height: '60%', background: '#ef4444'}}></div>
+                                  <div className="mini-bar" style={{height: '40%', background: '#10b981'}}></div>
+                                </div>
+                              </div>
+
+                              <div className={`bi-card margin ${profitMargin >= 0 ? 'positive' : 'negative'}`}>
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">📊</span>
+                                  <span className="bi-label">Profit Margin</span>
+                                </div>
+                                <div className="bi-card-value">{profitMargin.toFixed(1)}%</div>
+                                <div className="bi-card-subtitle">Revenue Efficiency</div>
+                                <div className="mini-bar-chart">
+                                  <div className="mini-bar fill" style={{height: `${Math.max(Math.min(profitMargin + 50, 100), 10)}%`}}>
+                                    <span className="mini-bar-label">{profitMargin >= 0 ? 'Profit' : 'Loss'}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Project Efficiency Metrics */}
+                    <div className="bi-section">
+                      <h3>⚡ Project Efficiency</h3>
+                      <div className="bi-cards-grid">
+                        {(() => {
+                          const hoursUtilization = totalAssignedHours > 0 ? (totalActualHours / totalAssignedHours) * 100 : 0;
+
+                          const totalAssignedCost = selectedProject.costCodeAssignments?.reduce((sum, assignment) => {
+                            const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
+                            return sum + (parseFloat(assignment.hours || 0) * (costCode?.costPerHour ? parseFloat(costCode.costPerHour) : 0));
+                          }, 0) || 0;
+
+                          const totalActualCost = Object.entries(projectCostCodeStats).reduce((sum, [code, stat]) => {
+                            const costCode = costCodes.find(cc => cc.code === code);
+                            return sum + (stat.totalHours * (costCode?.costPerHour ? parseFloat(costCode.costPerHour) : 0));
+                          }, 0);
+
+                          const budgetEfficiency = totalAssignedCost > 0 ? ((totalAssignedCost - totalActualCost) / totalAssignedCost) * 100 : 0;
+
+                          const avgCostPerHour = totalActualHours > 0 ? totalActualCost / totalActualHours : 0;
+                          const revenuePerHour = totalActualHours > 0 ? totalRevenue / totalActualHours : 0;
+
+                          return (
+                            <>
+                        <div className={`bi-card utilization ${hoursUtilization <= 100 ? 'good' : 'warning'}`}>
+                          <div className="bi-card-header">
+                            <span className="bi-icon">⏱️</span>
+                            <span className="bi-label">Hours Utilization</span>
+                          </div>
+                          <div className="bi-card-value">{hoursUtilization.toFixed(1)}%</div>
+                          <div className="bi-card-subtitle">{totalActualHours.toFixed(1)}h / {totalAssignedHours.toFixed(1)}h</div>
+                          <div className="progress-circle">
+                            <svg width="60" height="60" viewBox="0 0 60 60">
+                              <circle cx="30" cy="30" r="25" fill="none" stroke="#e5e7eb" strokeWidth="4"/>
+                              <circle cx="30" cy="30" r="25" fill="none" stroke="#3b82f6" strokeWidth="4"
+                                strokeDasharray={`${2 * Math.PI * 25}`}
+                                strokeDashoffset={`${2 * Math.PI * 25 * (1 - Math.min(hoursUtilization / 100, 1))}`}
+                                transform="rotate(-90 30 30)"/>
+                            </svg>
+                          </div>
+                        </div>                              <div className={`bi-card budget ${Math.abs(budgetEfficiency) <= 10 ? 'good' : budgetEfficiency > 0 ? 'positive' : 'negative'}`}>
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">💰</span>
+                                  <span className="bi-label">Budget Efficiency</span>
+                                </div>
+                                <div className="bi-card-value">{budgetEfficiency >= 0 ? '+' : ''}{budgetEfficiency.toFixed(1)}%</div>
+                                <div className="bi-card-subtitle">Under/Over Budget</div>
+                                <div className="mini-bar-chart">
+                                  <div className="mini-bar fill" style={{height: `${Math.max(100 - Math.abs(budgetEfficiency), 10)}%`}}>
+                                    <span className="mini-bar-label">{budgetEfficiency >= 0 ? 'Under' : 'Over'}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bi-card cost-hour">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">💵</span>
+                                  <span className="bi-label">Avg Cost/Hour</span>
+                                </div>
+                                <div className="bi-card-value">${avgCostPerHour.toFixed(2)}</div>
+                                <div className="bi-card-subtitle">Labor Cost</div>
+                              </div>
+
+                              <div className="bi-card revenue-hour">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">📈</span>
+                                  <span className="bi-label">Revenue/Hour</span>
+                                </div>
+                                <div className="bi-card-value">${revenuePerHour.toFixed(2)}</div>
+                                <div className="bi-card-subtitle">Productivity Rate</div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Project Status & Progress */}
+                    <div className="bi-section">
+                      <h3>📋 Project Status</h3>
+                      <div className="bi-cards-grid">
+                        {(() => {
+                          const projectProgress = totalAssignedHours > 0 ? (totalActualHours / totalAssignedHours) * 100 : 0;
+
+                          return (
+                            <>
+                              <div className="bi-card progress">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">📊</span>
+                                  <span className="bi-label">Project Progress</span>
+                                </div>
+                                <div className="bi-card-value">{projectProgress.toFixed(1)}%</div>
+                                <div className="bi-card-subtitle">{totalActualHours.toFixed(1)}h / {totalAssignedHours.toFixed(1)}h</div>
+                                <div className="progress-bar">
+                                  <div className="progress-fill" style={{width: `${Math.min(projectProgress, 100)}%`}}></div>
+                                </div>
+                              </div>
+
+                              <div className="bi-card contracts">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">📄</span>
+                                  <span className="bi-label">Contract Status</span>
+                                </div>
+                                <div className="bi-card-value">{activeContracts} Active</div>
+                                <div className="bi-card-subtitle">{completedContracts} Completed</div>
+                              </div>
+
+                              <div className="bi-card activity">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">⚡</span>
+                                  <span className="bi-label">Activity Level</span>
+                                </div>
+                                <div className="bi-card-value">{avgEntriesPerDay.toFixed(1)}</div>
+                                <div className="bi-card-subtitle">Entries/Day</div>
+                                <div className="sparkline">
+                                  {[0.3, 0.5, 0.8, 0.6, 0.9, 0.7, 1.0].map((height, index) => (
+                                    <div
+                                      key={index}
+                                      className={`sparkline-bar ${avgEntriesPerDay > 3 ? 'positive' : 'negative'}`}
+                                      style={{height: `${height * 100}%`}}
+                                    ></div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="bi-card completion">
+                                <div className="bi-card-header">
+                                  <span className="bi-icon">✅</span>
+                                  <span className="bi-label">Completion Rate</span>
+                                </div>
+                                <div className="bi-card-value">{contractCompletionRate.toFixed(1)}%</div>
+                                <div className="bi-card-subtitle">Contracts Done</div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Key Insights */}
+                    <div className="bi-section insights">
+                      <h3>🔍 Key Insights</h3>
+                      <div className="insights-grid">
+                        {(() => {
+                          const insights = [];
+                          const netProfit = totalRevenue - (totalExpenses + totalLaborCost);
+                          const hoursUtilization = totalAssignedHours > 0 ? (totalActualHours / totalAssignedHours) * 100 : 0;
+
+                          if (netProfit > 0) {
+                            insights.push({
+                              type: 'positive',
+                              icon: '💰',
+                              title: 'Profitable Project',
+                              description: `Generating $${netProfit.toFixed(2)} in profit`
+                            });
+                          } else if (netProfit < 0) {
+                            insights.push({
+                              type: 'negative',
+                              icon: '⚠️',
+                              title: 'Loss-Making Project',
+                              description: `Currently at $${Math.abs(netProfit).toFixed(2)} loss`
+                            });
+                          }
+
+                          if (hoursUtilization > 110) {
+                            insights.push({
+                              type: 'warning',
+                              icon: '⏰',
+                              title: 'Over Budget Hours',
+                              description: `${(hoursUtilization - 100).toFixed(1)}% over allocated hours`
+                            });
+                          } else if (hoursUtilization < 80 && totalAssignedHours > 0) {
+                            insights.push({
+                              type: 'info',
+                              icon: '📉',
+                              title: 'Underutilized Hours',
+                              description: `${(100 - hoursUtilization).toFixed(1)}% of budget remaining`
+                            });
+                          }
+
+                          if (avgEntriesPerDay > 5) {
+                            insights.push({
+                              type: 'positive',
+                              icon: '⚡',
+                              title: 'High Activity',
+                              description: `${avgEntriesPerDay.toFixed(1)} entries per day`
+                            });
+                          }
+
+                          if (contractCompletionRate === 100 && totalContracts > 0) {
+                            insights.push({
+                              type: 'positive',
+                              icon: '🎉',
+                              title: 'All Contracts Complete',
+                              description: 'Project fully delivered'
+                            });
+                          }
+
+                          return insights.length > 0 ? insights.map((insight, index) => (
+                            <div key={index} className={`insight-card ${insight.type}`}>
+                              <div className="insight-icon">{insight.icon}</div>
+                              <div className="insight-content">
+                                <h4>{insight.title}</h4>
+                                <p>{insight.description}</p>
+                              </div>
+                            </div>
+                          )) : (
+                            <div className="no-insights">
+                              <p>📊 Analyzing project data...</p>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
+
+            <div className="project-stats">
+                <div className="stat-line">
+                  <span className="stat-label">Total Time Entries:</span>
+                  <span className="stat-value">{projectTimeEntries.length}</span>
+                </div>
+                <div className="stat-line">
+                  <span className="stat-label">Total Hours:</span>
+                  <span className="stat-value">{Object.values(projectCostCodeStats).reduce((sum, stat) => sum + stat.totalHours, 0).toFixed(2)}h</span>
+                </div>
+                <div className="stat-line">
+                  <span className="stat-label">Total Expenses:</span>
+                  <span className="stat-value">${expenses.filter(expense => expense.projectId === selectedProject.id).reduce((sum, expense) => sum + (expense.amount || 0), 0).toFixed(2)}</span>
+                </div>
+                <div className="stat-line">
+                  <span className="stat-label">Total Contracts:</span>
+                  <span className="stat-value">${(() => {
+                    const total = projectContracts.reduce((sum, contract) => sum + (contract.totalAmount || contract.contractValue || contract.amount || 0), 0);
+                    console.log('Contract total calculation:', { projectContracts: projectContracts.length, total });
+                    return total.toFixed(2);
+                  })()}</span>
+                </div>
+                  {(() => {
+                    console.log('=== PROJECT STATS DEBUG ===');
+                    console.log('selectedProject:', selectedProject);
+                    console.log('costCodeAssignments:', selectedProject?.costCodeAssignments);
+                    console.log('costCodeAssignments length:', selectedProject?.costCodeAssignments?.length);
+                    
+                    const hasAssignments = selectedProject?.costCodeAssignments && selectedProject.costCodeAssignments.length > 0;
+                    console.log('hasAssignments:', hasAssignments);
+                    
+                    if (hasAssignments) {
+                      const totalAssigned = selectedProject.costCodeAssignments.reduce((sum, assignment) => sum + parseFloat(assignment.hours || 0), 0);
+                      console.log('totalAssigned:', totalAssigned);
+                    }
+                    
+                    return hasAssignments ? (
+                      <div className="project-assigned-stats">
+                        <span>Assigned Hours: {selectedProject.costCodeAssignments.reduce((sum, assignment) => sum + parseFloat(assignment.hours || 0), 0).toFixed(2)}</span>
+                        <span>Assigned Cost: ${selectedProject.costCodeAssignments.reduce((sum, assignment) => {
+                          const costCode = costCodes.find(cc => cc.id === assignment.costCodeId);
+                          return sum + (parseFloat(assignment.hours || 0) * (costCode?.costPerHour ? parseFloat(costCode.costPerHour) : 0));
+                        }, 0).toFixed(2)}</span>
+                      </div>
+                    ) : (
+                      <span>No assigned hours (add cost code assignments to this project)</span>
+                    );
+                  })()}
+              </div>
             <button 
               className="back-btn"
               onClick={() => {
                 setSelectedProject(null);
                 setProjectTimeEntries([]);
                 setProjectCostCodeStats({});
+                setProjectContracts([]);
                 handleTabChange('projects');
               }}
             >
@@ -4283,9 +5554,43 @@ const TimeTracker = () => {
                           <div className="cost-code-stats">
                             <div className="stats-group">
                               <span className="stat-label">Assigned:</span>
-                              <span className="stat-value">{assignment.hours || '0'}h</span>
-                              {costCode?.costPerHour && (
-                                <span className="stat-cost">${(parseFloat(assignment.hours || 0) * parseFloat(costCode.costPerHour)).toFixed(2)}</span>
+                              {editingCostCodeAssignment === assignment.costCodeId ? (
+                                <div className="edit-assignment-group">
+                                  <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0"
+                                    value={editCostCodeAssignmentData.hours}
+                                    onChange={(e) => setEditCostCodeAssignmentData(prev => ({
+                                      ...prev,
+                                      hours: e.target.value
+                                    }))}
+                                    className="edit-hours-input"
+                                    placeholder="0.00"
+                                  />
+                                  <span className="stat-unit">h</span>
+                                  <div className="edit-buttons">
+                                    <button 
+                                      className="save-edit-btn"
+                                      onClick={saveEditedCostCodeAssignment}
+                                    >
+                                      Save
+                                    </button>
+                                    <button 
+                                      className="cancel-edit-btn"
+                                      onClick={cancelEditingCostCodeAssignment}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="stat-value">{assignment.hours || '0'}h</span>
+                                  {costCode?.costPerHour && (
+                                    <span className="stat-cost">${(parseFloat(assignment.hours || 0) * parseFloat(costCode.costPerHour)).toFixed(2)}</span>
+                                  )}
+                                </>
                               )}
                             </div>
                             <div className="stats-group">
@@ -4330,12 +5635,28 @@ const TimeTracker = () => {
                             </div>
                           </div>
                         </div>
-                        <button 
-                          className="remove-btn"
-                          onClick={() => removeCostCodeFromProject(assignment.costCodeId)}
-                        >
-                          Remove
-                        </button>
+                        <div className="cost-code-actions">
+                          {editingCostCodeAssignment !== assignment.costCodeId && (
+                            <button 
+                              className="edit-btn"
+                              onClick={() => {
+                                console.log('Edit button clicked for assignment:', assignment);
+                                startEditingCostCodeAssignment(assignment);
+                              }}
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <button 
+                            className="remove-btn"
+                            onClick={() => {
+                              console.log('Remove button clicked for costCodeId:', assignment.costCodeId);
+                              removeCostCodeFromProject(assignment.costCodeId);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     );
                   })
@@ -4350,16 +5671,58 @@ const TimeTracker = () => {
                   {costCodes
                     .filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id))
                     .map(costCode => (
-                      <button
-                        key={costCode.id}
-                        className="assign-cost-code-btn"
-                        onClick={() => assignCostCodeToProject(costCode.id)}
-                      >
-                        + {costCode.code} - {costCode.description}
-                        {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                      </button>
+                      <div key={costCode.id} className="cost-code-assignment-item">
+                        {assigningCostCode === costCode.id ? (
+                          <div className="assignment-form">
+                            <div className="assignment-form-header">
+                              <span className="cost-code-info">
+                                {costCode.code} - {costCode.description}
+                                {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
+                              </span>
+                            </div>
+                            <div className="assignment-form-body">
+                              <div className="hours-input-group">
+                                <label>Assigned Hours:</label>
+                                <input
+                                  type="number"
+                                  step="0.25"
+                                  min="0"
+                                  value={assignmentHours}
+                                  onChange={(e) => setAssignmentHours(e.target.value)}
+                                  placeholder="0.00"
+                                  className="assignment-hours-input"
+                                  autoFocus
+                                />
+                                <span className="hours-unit">h</span>
+                              </div>
+                              <div className="assignment-form-actions">
+                                <button 
+                                  className="confirm-assign-btn"
+                                  onClick={confirmAssignCostCode}
+                                >
+                                  Assign
+                                </button>
+                                <button 
+                                  className="cancel-assign-btn"
+                                  onClick={cancelAssigningCostCode}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            className="assign-cost-code-btn"
+                            onClick={() => startAssigningCostCode(costCode.id)}
+                          >
+                            + {costCode.code} - {costCode.description}
+                            {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
+                          </button>
+                        )}
+                      </div>
                     ))}
-                  {costCodes.filter(cc => !selectedProject.assignedCostCodes?.includes(cc.id)).length === 0 && (
+                  {costCodes.filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id)).length === 0 && (
                     <p>All available cost codes are already assigned.</p>
                   )}
                 </div>
@@ -4377,7 +5740,7 @@ const TimeTracker = () => {
                     <div key={entry.id} className="time-entry-item">
                       <div className="entry-details">
                         <span className="entry-date">{new Date(entry.date).toLocaleDateString()}</span>
-                        <span className="entry-duration">{formatTime(entry.duration || 0)}</span>
+                        <span className="entry-duration">{entry.duration ? (entry.duration / 3600).toFixed(2) + 'h' : '0.00h'}</span>
                         <span className="entry-cost-code">Cost Code: {entry.costCode || 'None'}</span>
                       </div>
                       <div className="entry-note">
@@ -4387,6 +5750,156 @@ const TimeTracker = () => {
                   ))
                 )}
               </div>
+            </div>
+
+            {/* Expense Breakdown Section */}
+            <div className="section">
+              <h3>Expense Breakdown</h3>
+              
+              {/* Expense Breakdown by Category */}
+              <div className="expense-breakdown">
+                <h4>By Category</h4>
+                {(() => {
+                  const projectExpenses = expenses.filter(expense => expense.projectId === selectedProject.id);
+                  const expensesByCategory = {};
+                  
+                  projectExpenses.forEach(expense => {
+                    const categoryName = expenseCategories.find(cat => cat.id === expense.categoryId)?.name || 'Uncategorized';
+                    if (!expensesByCategory[categoryName]) {
+                      expensesByCategory[categoryName] = { total: 0, count: 0 };
+                    }
+                    expensesByCategory[categoryName].total += expense.amount || 0;
+                    expensesByCategory[categoryName].count += 1;
+                  });
+                  
+                  const sortedCategories = Object.entries(expensesByCategory)
+                    .sort(([,a], [,b]) => b.total - a.total);
+                  
+                  return sortedCategories.length > 0 ? (
+                    <div className="breakdown-table">
+                      <div className="breakdown-header">
+                        <span className="breakdown-label">Category</span>
+                        <span className="breakdown-count">Count</span>
+                        <span className="breakdown-amount">Total Amount</span>
+                      </div>
+                      {sortedCategories.map(([category, data]) => (
+                        <div key={category} className="breakdown-row">
+                          <span className="breakdown-label">{category}</span>
+                          <span className="breakdown-count">{data.count}</span>
+                          <span className="breakdown-amount">${data.total.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No expenses found for this project.</p>
+                  );
+                })()}
+              </div>
+              
+              {/* Expense Breakdown by Cost Code */}
+              <div className="expense-breakdown">
+                <h4>By Cost Code</h4>
+                {(() => {
+                  const projectExpenses = expenses.filter(expense => expense.projectId === selectedProject.id);
+                  const expensesByCostCode = {};
+                  
+                  projectExpenses.forEach(expense => {
+                    const costCodeName = costCodes.find(cc => cc.id === expense.costCodeId)?.code || 'No Cost Code';
+                    if (!expensesByCostCode[costCodeName]) {
+                      expensesByCostCode[costCodeName] = { total: 0, count: 0 };
+                    }
+                    expensesByCostCode[costCodeName].total += expense.amount || 0;
+                    expensesByCostCode[costCodeName].count += 1;
+                  });
+                  
+                  const sortedCostCodes = Object.entries(expensesByCostCode)
+                    .sort(([,a], [,b]) => b.total - a.total);
+                  
+                  return sortedCostCodes.length > 0 ? (
+                    <div className="breakdown-table">
+                      <div className="breakdown-header">
+                        <span className="breakdown-label">Cost Code</span>
+                        <span className="breakdown-count">Count</span>
+                        <span className="breakdown-amount">Total Amount</span>
+                      </div>
+                      {sortedCostCodes.map(([costCode, data]) => (
+                        <div key={costCode} className="breakdown-row">
+                          <span className="breakdown-label">{costCode}</span>
+                          <span className="breakdown-count">{data.count}</span>
+                          <span className="breakdown-amount">${data.total.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No expenses with cost codes found for this project.</p>
+                  );
+                })()}
+              </div>
+              
+              {/* Total Hours by Cost Code */}
+              <div className="expense-breakdown">
+                <h4>Total Hours by Cost Code</h4>
+                {(() => {
+                  const sortedCostCodeStats = Object.entries(projectCostCodeStats)
+                    .sort(([,a], [,b]) => b.totalHours - a.totalHours);
+                  
+                  return sortedCostCodeStats.length > 0 ? (
+                    <div className="breakdown-table">
+                      <div className="breakdown-header">
+                        <span className="breakdown-label">Cost Code</span>
+                        <span className="breakdown-hours">Total Hours</span>
+                        <span className="breakdown-entries">Entries</span>
+                        <span className="breakdown-cost">Cost</span>
+                      </div>
+                      {sortedCostCodeStats.map(([costCode, stats]) => {
+                        const costCodeData = costCodes.find(cc => cc.code === costCode);
+                        const cost = costCodeData?.costPerHour ? (stats.totalHours * parseFloat(costCodeData.costPerHour)) : 0;
+                        
+                        return (
+                          <div key={costCode} className="breakdown-row">
+                            <span className="breakdown-label">{costCode}</span>
+                            <span className="breakdown-hours">{stats.totalHours.toFixed(2)}h</span>
+                            <span className="breakdown-entries">{stats.totalEntries}</span>
+                            <span className="breakdown-cost">${cost.toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p>No time entries found for this project.</p>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Contracts Section */}
+            <div className="section">
+              <h3>Project Contracts</h3>
+              
+              {projectContracts.length > 0 ? (
+                <div className="contracts-list">
+                  {projectContracts.map(contract => (
+                    <div key={contract.id} className="contract-item">
+                      <div className="contract-info">
+                        <h4>{contract.name || 'Unnamed Contract'}</h4>
+                        <div className="contract-details">
+                          <span className="contract-status" data-status={contract.status || 'estimating'}>
+                            {contract.status || 'estimating'}
+                          </span>
+                          <span className="contract-value">
+                            ${(contract.totalAmount || contract.contractValue || contract.amount || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        {contract.description && (
+                          <p className="contract-description">{contract.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>No contracts found for this project.</p>
+              )}
             </div>
           </div>
         </div>
@@ -4529,6 +6042,60 @@ const TimeTracker = () => {
                   onChange={(e) => setNewProject({...newProject, description: e.target.value})}
                   rows="3"
                 />
+              </div>
+
+              <div className="form-group">
+                <label>Assigned Users</label>
+                <div className="user-assignment-section">
+                  <div className="current-assigned-users">
+                    <h5>Assigned Users</h5>
+                    {newProject.assignedUsers && newProject.assignedUsers.length > 0 ? (
+                      <div className="assigned-users-list">
+                        {newProject.assignedUsers.map(userId => {
+                          const user = users.find(u => u.id === userId);
+                          return (
+                            <div key={userId} className="assigned-user-item">
+                              <span className="user-name">
+                                {user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : 'Unknown User'}
+                              </span>
+                              <button
+                                type="button"
+                                className="remove-user-btn"
+                                onClick={() => removeAssignedUser(userId)}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p>No users assigned yet.</p>
+                    )}
+                  </div>
+
+                  <div className="add-user-assignment">
+                    <h5>Add User</h5>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          addAssignedUser(e.target.value);
+                          e.target.value = ''; // Reset select
+                        }
+                      }}
+                    >
+                      <option value="">Select User to Assign</option>
+                      {users
+                        .filter(user => !newProject.assignedUsers?.includes(user.id))
+                        .map(user => (
+                          <option key={user.id} value={user.id}>
+                            {user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
               </div>
               
               {editingProject && (
@@ -4948,8 +6515,405 @@ const TimeTracker = () => {
           </div>
         </div>
       )}
+
+      {/* Expense Modal */}
+      {showExpenseModal && (
+        <div className="modal-overlay" onClick={() => setShowExpenseModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingExpense ? 'Edit Expense' : 'Add New Expense'}</h2>
+              <button className="close-btn" onClick={() => setShowExpenseModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Title *</label>
+                <input
+                  type="text"
+                  value={newExpense.title}
+                  onChange={(e) => setNewExpense(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="Expense title"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={newExpense.description}
+                  onChange={(e) => setNewExpense(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Expense description"
+                  rows="3"
+                />
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Amount *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newExpense.amount}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, amount: e.target.value }))}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Date *</label>
+                  <input
+                    type="date"
+                    value={newExpense.date}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, date: e.target.value }))}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Category</label>
+                  <select
+                    value={newExpense.categoryId}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, categoryId: e.target.value }))}
+                  >
+                    <option value="">Select Category</option>
+                    {expenseCategories.map(category => (
+                      <option key={category.id} value={category.id}>{category.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Project *</label>
+                  <select
+                    value={newExpense.projectId}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, projectId: e.target.value }))}
+                    required
+                  >
+                    <option value="">Select Project</option>
+                    {projects.map(project => (
+                      <option key={project.id} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Cost Code</label>
+                  <select
+                    value={newExpense.costCodeId}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, costCodeId: e.target.value }))}
+                  >
+                    <option value="">Select Cost Code</option>
+                    {costCodes.map(costCode => (
+                      <option key={costCode.id} value={costCode.id}>{costCode.code} - {costCode.description}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Vendor</label>
+                <input
+                  type="text"
+                  value={newExpense.vendor}
+                  onChange={(e) => setNewExpense(prev => ({ ...prev, vendor: e.target.value }))}
+                  placeholder="Vendor name"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="cancel-btn" onClick={() => setShowExpenseModal(false)}>Cancel</button>
+              <button 
+                className="save-btn" 
+                onClick={saveExpense}
+                disabled={!newExpense.title || !newExpense.amount || !newExpense.date || !newExpense.projectId}
+              >
+                {editingExpense ? 'Update' : 'Save'} Expense
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Expense Category Modal */}
+      {showExpenseCategoryModal && (
+        <div className="modal-overlay" onClick={() => setShowExpenseCategoryModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingExpenseCategory ? 'Edit Category' : 'Add New Category'}</h2>
+              <button className="close-btn" onClick={() => setShowExpenseCategoryModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Name *</label>
+                <input
+                  type="text"
+                  value={newExpenseCategory.name}
+                  onChange={(e) => setNewExpenseCategory(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Category name"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={newExpenseCategory.description}
+                  onChange={(e) => setNewExpenseCategory(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Category description"
+                  rows="2"
+                />
+              </div>
+              <div className="form-group">
+                <label>Color</label>
+                <input
+                  type="color"
+                  value={newExpenseCategory.color}
+                  onChange={(e) => setNewExpenseCategory(prev => ({ ...prev, color: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="cancel-btn" onClick={() => setShowExpenseCategoryModal(false)}>Cancel</button>
+              <button 
+                className="save-btn" 
+                onClick={saveExpenseCategory}
+                disabled={!newExpenseCategory.name}
+              >
+                {editingExpenseCategory ? 'Update' : 'Save'} Category
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contract Modal */}
+      {showContractModal && (
+        <div className="modal-overlay" onClick={() => setShowContractModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingContract ? 'Edit Contract' : 'Add New Contract'}</h2>
+              <button className="close-btn" onClick={() => setShowContractModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Contract Name *</label>
+                <input
+                  type="text"
+                  value={newContract.name}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Enter contract name"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Contract Number</label>
+                <input
+                  type="text"
+                  value={newContract.contractNumber}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, contractNumber: e.target.value }))}
+                  placeholder="Enter contract number"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Client Name *</label>
+                <input
+                  type="text"
+                  value={newContract.clientName}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, clientName: e.target.value }))}
+                  placeholder="Enter client name"
+                  required
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Status *</label>
+                  <select
+                    value={newContract.status}
+                    onChange={(e) => setNewContract(prev => ({ ...prev, status: e.target.value }))}
+                    required
+                  >
+                    <option value="estimating">Estimating</option>
+                    <option value="awarded">Awarded</option>
+                    <option value="in-progress">In Progress</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Contract Value *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newContract.totalAmount}
+                    onChange={(e) => setNewContract(prev => ({ ...prev, totalAmount: e.target.value }))}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={newContract.startDate}
+                    onChange={(e) => setNewContract(prev => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>End Date</label>
+                  <input
+                    type="date"
+                    value={newContract.endDate}
+                    onChange={(e) => setNewContract(prev => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Associated Project</label>
+                <select
+                  value={newContract.projectId}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, projectId: e.target.value }))}
+                >
+                  <option value="">Select Project (Optional)</option>
+                  {projects.map(project => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={newContract.description}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Enter contract description"
+                  rows="3"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea
+                  value={newContract.notes}
+                  onChange={(e) => setNewContract(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Additional notes"
+                  rows="2"
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="cancel-btn" onClick={() => setShowContractModal(false)}>Cancel</button>
+              <button
+                className="save-btn"
+                onClick={saveContract}
+                disabled={!newContract.name || !newContract.clientName || !newContract.totalAmount || !newContract.status}
+              >
+                {editingContract ? 'Update' : 'Save'} Contract
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+{/* Comments Modal */}
+{showCommentsModal && selectedContractForComments && (
+  <div className="modal-overlay" onClick={closeCommentsModal}>
+    <div className="modal-content comments-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-header">
+        <h2>Comments for {selectedContractForComments.name}</h2>
+        <button className="close-btn" onClick={closeCommentsModal}>×</button>
+      </div>
+
+      <div className="modal-body">
+        {/* Add Comment Section */}
+        <div className="add-comment-section">
+          <h3>Add Comment</h3>
+          <textarea
+            value={editingComment ? editingComment.text : newComment}
+            onChange={(e) => editingComment 
+              ? setEditingComment({...editingComment, text: e.target.value})
+              : setNewComment(e.target.value)
+            }
+            placeholder="Enter your comment..."
+            rows="3"
+          />
+          <div className="comment-actions">
+            {editingComment ? (
+              <>
+                <button 
+                  className="save-btn"
+                  onClick={updateComment}
+                  disabled={!editingComment.text.trim()}
+                >
+                  Update Comment
+                </button>
+                <button 
+                  className="cancel-btn"
+                  onClick={cancelEditingComment}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button 
+                className="save-btn"
+                onClick={addComment}
+                disabled={!newComment.trim()}
+              >
+                Add Comment
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Comments List */}
+        <div className="comments-list">
+          <h3>Comments ({selectedContractForComments.comments?.length || 0})</h3>
+          {selectedContractForComments.comments && selectedContractForComments.comments.length > 0 ? (
+            selectedContractForComments.comments
+              .sort((a, b) => new Date(b.createdAt.seconds ? b.createdAt.seconds * 1000 : b.createdAt) - new Date(a.createdAt.seconds ? a.createdAt.seconds * 1000 : a.createdAt))
+              .map(comment => (
+                <div key={comment.id} className="comment-item">
+                  <div className="comment-header">
+                    <span className="comment-author">{comment.createdBy}</span>
+                    <span className="comment-date">
+                      {new Date(comment.createdAt.seconds ? comment.createdAt.seconds * 1000 : comment.createdAt).toLocaleString()}
+                    </span>
+                    <div className="comment-actions">
+                      <button 
+                        className="edit-comment-btn"
+                        onClick={() => startEditingComment(comment)}
+                      >
+                        ✏️
+                      </button>
+                      <button 
+                        className="delete-comment-btn"
+                        onClick={() => deleteComment(comment.id)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                  <div className="comment-text">
+                    {comment.text}
+                  </div>
+                </div>
+              ))
+          ) : (
+            <p className="no-comments">No comments yet. Be the first to add one!</p>
+          )}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
 export default TimeTracker;

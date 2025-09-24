@@ -10,7 +10,7 @@ import {
   ref,
   uploadBytes,
 } from "firebase/storage";
-import { doc, updateDoc } from "@firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
 import { db, storage } from "../firebase";
 import { toast, ToastContainer } from "react-toastify";
 
@@ -46,6 +46,12 @@ const ChurchHeader = ({
   const handleFileUpload = async (event, field) => {
     const file = event.target.files[0];
     if (!file || !id) return;
+
+    // Check if storage is available
+    if (!storage) {
+      toast.error("File storage is not available. Please try again later.");
+      return;
+    }
 
     // Validate file type
     const validTypes = ["image/jpeg", "image/png", "image/jpg"];
@@ -120,7 +126,7 @@ const ChurchHeader = ({
       <ToastContainer />
       <div style={{ ...commonStyles.banner, position: "relative" }}>
         {loading || uploading ? (
-          <Skeleton height={200} />
+          <Skeleton height={300} />
         ) : (
           <>
             <img

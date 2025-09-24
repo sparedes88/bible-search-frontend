@@ -159,15 +159,15 @@ const ArticlesPage = () => {
   };
 
   const handleArticleClick = (articleId) => {
-    navigate(`/church/${id}/articles/${articleId}`);
+    navigate(`/organization/${id}/articles/${articleId}`);
   };
 
   return (
     <div style={commonStyles.container}>
       <div style={commonStyles.banner}>
-        {loading ? <Skeleton height={200} /> : church?.portadaArticulos ? (
+        {loading ? <Skeleton height={300} /> : church?.portadaArticulos ? (
           <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />
-        ) : <Skeleton height={200} />}
+        ) : <Skeleton height={300} />}
       </div>
 
       <div style={commonStyles.logoContainer} onClick={() => setTapCount(prev => prev + 1)}>

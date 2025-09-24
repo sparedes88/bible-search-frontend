@@ -377,7 +377,7 @@ console.log("users list >>",users)
   };
 
   const handleBackClick = (id) => {
-    navigate(`/church/${id}/mi-organizacion`);
+    navigate(`/organization/${id}/mi-organizacion`);
   };
 
   const handleSearchChange = (e) => {

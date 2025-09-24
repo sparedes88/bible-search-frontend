@@ -15,24 +15,50 @@ import {
   doc,
   deleteDoc,
   getDoc,
-} from "@firebase/firestore";
+  updateDoc,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import { Spinner } from "react-bootstrap";
-import { MdDelete } from "react-icons/md";
-import { fetchUserById } from "../api/church";
-import { FaEye } from "react-icons/fa6";
+import { MdDelete, MdEdit, MdAdd, MdLocationOn, MdSchedule } from "react-icons/md";
+import { FaEye, FaPenToSquare, FaCalendarAlt, FaClock, FaMapMarkerAlt } from "react-icons/fa6";
 import { Tooltip } from "react-tooltip";
+import Modal from "react-modal";
+import { fetchUserById } from "../api/church";
+
+// Set the app element for accessibility
+Modal.setAppElement('#root');
 
 const ManageGroups = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Basic state
   const [newGroupName, setNewGroupName] = useState("");
   const [isCreatingGroup, setCreatingGroup] = useState(false);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDeletingGroup, setDeletingGroup] = useState(false);
   const [refresh, setRefresh] = useState(false);
+
+  // Edit modal state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [editFormData, setEditFormData] = useState({
+    groupName: "",
+    description: "",
+    address: "",
+    meetingTimes: [],
+    recurrence: "none"
+  });
+
+  // Meeting time form state
+  const [newMeetingTime, setNewMeetingTime] = useState({
+    date: "",
+    time: "",
+    dayOfWeek: ""
+  });
+
   console.log("groups >>", groups);
   useEffect(() => {
     const fetchGroups = async () => {
@@ -80,9 +106,14 @@ const ManageGroups = () => {
     try {
       const newGroup = {
         groupName: newGroupName,
+        description: "",
+        address: "",
+        meetingTimes: [],
+        recurrence: "none",
         churchId: id,
         createdBy: user.uid,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         members: [
           {
             userId: user.uid,
@@ -129,11 +160,98 @@ const ManageGroups = () => {
     }
   };
 
+  const openEditModal = (group) => {
+    setEditingGroup(group);
+    setEditFormData({
+      groupName: group.groupName || "",
+      description: group.description || "",
+      address: group.address || "",
+      meetingTimes: group.meetingTimes || [],
+      recurrence: group.recurrence || "none"
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingGroup(null);
+    setEditFormData({
+      groupName: "",
+      description: "",
+      address: "",
+      meetingTimes: [],
+      recurrence: "none"
+    });
+    setNewMeetingTime({ date: "", time: "", dayOfWeek: "" });
+  };
+
+  const handleUpdateGroup = async () => {
+    if (!editFormData.groupName.trim()) {
+      toast.warn("Please enter group name!");
+      return;
+    }
+
+    try {
+      const groupDocRef = doc(db, "groups", editingGroup.id);
+      await updateDoc(groupDocRef, {
+        ...editFormData,
+        updatedAt: serverTimestamp(),
+      });
+
+      toast.success("Group updated successfully!");
+      setRefresh(!refresh);
+      closeEditModal();
+    } catch (error) {
+      console.error("Error updating group:", error);
+      toast.error("Failed to update group");
+    }
+  };
+
+  const addMeetingTime = () => {
+    if (!newMeetingTime.date || !newMeetingTime.time) {
+      toast.warn("Please select both date and time!");
+      return;
+    }
+
+    const meetingTime = {
+      id: Date.now().toString(),
+      date: newMeetingTime.date,
+      time: newMeetingTime.time,
+      dayOfWeek: newMeetingTime.dayOfWeek || getDayOfWeek(newMeetingTime.date)
+    };
+
+    setEditFormData(prev => ({
+      ...prev,
+      meetingTimes: [...prev.meetingTimes, meetingTime]
+    }));
+
+    setNewMeetingTime({ date: "", time: "", dayOfWeek: "" });
+  };
+
+  const removeMeetingTime = (meetingTimeId) => {
+    setEditFormData(prev => ({
+      ...prev,
+      meetingTimes: prev.meetingTimes.filter(mt => mt.id !== meetingTimeId)
+    }));
+  };
+
+  const getDayOfWeek = (dateString) => {
+    const date = new Date(dateString);
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[date.getDay()];
+  };
+
+  const formatMeetingTime = (meetingTime) => {
+    const date = new Date(meetingTime.date);
+    const time = meetingTime.time;
+    return `${date.toLocaleDateString()} at ${time} (${meetingTime.dayOfWeek})`;
+  };
+
   return (
     <div style={commonStyles.container}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <button
-          onClick={() => navigate(`/church/${id}/mi-organizacion`)}
+          onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
           style={commonStyles.backButton}
         >
           ⬅ Back to Organization
@@ -179,17 +297,43 @@ const ManageGroups = () => {
                   </div>
                   <div>
                     <button
-                      onClick={() => navigate(`/church/${id}/chat/${group.id}`)}
+                      onClick={() => navigate(`/organization/${id}/chat/${group.id}`)}
                       className="icon-button"
                       disabled={isDeletingGroup}
                     >
                       <FaEye
                         size={20}
                         color="#228af2"
+                        data-tooltip-id="chat-tooltip"
+                        data-tooltip-content="Chat with Group"
+                      />
+                      <Tooltip id="chat-tooltip" place="top" effect="solid" />
+                    </button>
+                    <button
+                      onClick={() => navigate(`/organization/${id}/group-details/${group.id}`)}
+                      className="icon-button"
+                      disabled={isDeletingGroup}
+                    >
+                      <MdSchedule
+                        size={20}
+                        color="#17a2b8"
                         data-tooltip-id="view-tooltip"
-                        data-tooltip-content="View Group chat"
+                        data-tooltip-content="View Group Details"
                       />
                       <Tooltip id="view-tooltip" place="top" effect="solid" />
+                    </button>
+                    <button
+                      onClick={() => openEditModal(group)}
+                      className="icon-button"
+                      disabled={isDeletingGroup}
+                    >
+                      <FaPenToSquare
+                        size={20}
+                        color="#28a745"
+                        data-tooltip-id="edit-tooltip"
+                        data-tooltip-content="Edit Group"
+                      />
+                      <Tooltip id="edit-tooltip" place="top" effect="solid" />
                     </button>
                     <button
                       onClick={() => handleDeleteGroup(group.id)}
@@ -211,6 +355,102 @@ const ManageGroups = () => {
           </div>
         )}
       </div>
+
+      {/* Edit Group Modal */}
+      {isEditModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>Edit Group</h3>
+              <button onClick={closeEditModal} className="close-button">×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Group Name *</label>
+                <input
+                  type="text"
+                  value={editFormData.groupName}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, groupName: e.target.value }))}
+                  placeholder="Enter group name"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Enter group description"
+                  rows="3"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Address</label>
+                <input
+                  type="text"
+                  value={editFormData.address}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, address: e.target.value }))}
+                  placeholder="Enter meeting address"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Recurrence</label>
+                <select
+                  value={editFormData.recurrence}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, recurrence: e.target.value }))}
+                >
+                  <option value="none">No recurrence</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Meeting Times</label>
+                <div className="meeting-times-list">
+                  {editFormData.meetingTimes.map((meetingTime) => (
+                    <div key={meetingTime.id} className="meeting-time-item">
+                      <span>{formatMeetingTime(meetingTime)}</span>
+                      <button
+                        onClick={() => removeMeetingTime(meetingTime.id)}
+                        className="remove-meeting-time-btn"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="add-meeting-time">
+                  <input
+                    type="date"
+                    value={newMeetingTime.date}
+                    onChange={(e) => setNewMeetingTime(prev => ({ ...prev, date: e.target.value }))}
+                  />
+                  <input
+                    type="time"
+                    value={newMeetingTime.time}
+                    onChange={(e) => setNewMeetingTime(prev => ({ ...prev, time: e.target.value }))}
+                  />
+                  <button onClick={addMeetingTime} className="add-meeting-time-btn">
+                    Add Meeting Time
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={closeEditModal} className="cancel-btn">
+                Cancel
+              </button>
+              <button onClick={handleUpdateGroup} className="save-btn">
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

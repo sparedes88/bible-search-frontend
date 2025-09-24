@@ -314,7 +314,7 @@ const RoomsPage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
       <h2 style={commonStyles.title}>Rooms Management</h2>

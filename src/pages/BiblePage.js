@@ -92,7 +92,7 @@ const BiblePage = () => {
     <div style={commonStyles.container}>
       {backLoading ? (
         <div style={commonStyles.fullPageLoader}>
-          <Skeleton height={200} width="100%" />
+          <Skeleton height={300} width="100%" />
           <Skeleton circle height={90} width={90} style={{ margin: "20px auto" }} />
           <Skeleton height={30} width="60%" />
           <Skeleton count={4} />
@@ -101,10 +101,10 @@ const BiblePage = () => {
         <>
           {/* Banner (Main Slider) */}
           <div style={commonStyles.banner}>
-            {loading ? <Skeleton height={200} /> : (
+            {loading ? <Skeleton height={300} /> : (
               church && church.portadaArticulos ? (
                 <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />
-              ) : <Skeleton height={200} />
+              ) : <Skeleton height={300} />
             )}
           </div>
 

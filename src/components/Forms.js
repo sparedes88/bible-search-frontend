@@ -235,7 +235,7 @@ const Forms = () => {
   if (!canView) {
     return (
       <div style={commonStyles.container}>
-        <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+        <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
           ← Back to Mi Organización
         </Link>
         <div style={{ textAlign: 'center', padding: '3rem' }}>

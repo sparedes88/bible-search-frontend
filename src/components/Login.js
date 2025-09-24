@@ -6,7 +6,7 @@ import {
   browserLocalPersistence,
   browserSessionPersistence
 } from "firebase/auth";
-import { auth, db, requestForToken } from "../firebase";
+import { auth, db } from "../firebase";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { doc, getDoc, collection, query, where, getDocs, limit, setDoc } from "firebase/firestore";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -197,18 +197,11 @@ const Login = () => {
         if (isAdminEmail) {
           console.log("Admin email detected, bypassing Firestore check");
           
-          // Request notification token but don't block on failures
-          try {
-            await requestForToken();
-          } catch (tokenError) {
-            console.warn("FCM token request failed:", tokenError);
-          }
-          
           // Redirect to return URL if it exists, otherwise to profile
           if (returnUrl) {
             navigate(returnUrl);
           } else {
-            navigate(`/church/${id}/mi-perfil`);
+            navigate(`/organization/${id}/mi-perfil`);
           }
         } else {
           // Normal user - check church access in Firestore
@@ -293,19 +286,11 @@ const Login = () => {
           userData.role === "global_admin" ||
           String(userData.churchId) === String(id)
         ) {
-          // Request notification token
-          try {
-            await requestForToken();
-          } catch (tokenError) {
-            console.warn("FCM token request failed:", tokenError);
-            // Non-blocking error, continue with login
-          }
-
           // Redirect to return URL if it exists, otherwise to profile
           if (returnUrl) {
             navigate(returnUrl);
           } else {
-            navigate(`/church/${id}/mi-perfil`);
+            navigate(`/organization/${id}/mi-perfil`);
           }
         } else {
           throw new Error("Usuario no tiene permiso para acceder a esta iglesia");
@@ -330,7 +315,7 @@ const Login = () => {
             if (returnUrl) {
               navigate(returnUrl);
             } else {
-              navigate(`/church/${id}/mi-perfil`);
+              navigate(`/organization/${id}/mi-perfil`);
             }
             return;
           }
@@ -359,7 +344,7 @@ const Login = () => {
 
     try {
       setIsLoading(true);
-      const resetUrl = `${window.location.origin}/church/${id}/login`;
+      const resetUrl = `${window.location.origin}/organization/${id}/login`;
 
       await sendPasswordResetEmail(auth, identifier.trim(), {
         url: resetUrl,
@@ -390,7 +375,7 @@ const Login = () => {
           ⬅ Volver
         </button>
         <button
-          onClick={() => navigate(`/church/${id}/church-app`)}
+          onClick={() => navigate(`/organization/${id}/church-app`)}
           style={{...commonStyles.backButtonLink, width:"140px"}}
         >
           Church App ➞
@@ -490,7 +475,7 @@ const Login = () => {
         </form>
 
         <button
-          onClick={() => navigate(`/church/${id}/register`)}
+          onClick={() => navigate(`/organization/${id}/register`)}
           className="form-field"
           style={{ marginTop: "20px" }}
           disabled={loginDisabled}

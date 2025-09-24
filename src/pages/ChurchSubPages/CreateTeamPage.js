@@ -72,7 +72,7 @@ const CreateTeamPage = () => {
 
       const teamRef = await addDoc(collection(db, `churches/${id}/teams`), teamData);
       toast.success('Team created successfully');
-      navigate(`/church/${id}/teams/${teamRef.id}`);
+      navigate(`/organization/${id}/teams/${teamRef.id}`);
     } catch (error) {
       console.error('Error creating team:', error);
       toast.error('Failed to create team');
@@ -83,7 +83,7 @@ const CreateTeamPage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/teams`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${id}/teams`} style={commonStyles.backButtonLink}>
         ← Back to Teams
       </Link>
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />

@@ -185,13 +185,13 @@ const VisitorDetails = () => {
   }, [visitorData]);
 
   const handleBackClick = (id) => {
-    navigate(`/church/${id}/admin-connect`);
+    navigate(`/organization/${id}/admin-connect`);
   };
 
   const handleAddNote = async () => {
     if (visitorData.hasUserAccount) {
       showToast('This visitor has been migrated to a member account. Please add notes there.', 'info');
-      navigate(`/church/${id}/member/${visitorData.migratedToUserId}`);
+      navigate(`/organization/${id}/member/${visitorData.migratedToUserId}`);
       return;
     }
 
@@ -677,7 +677,7 @@ const VisitorDetails = () => {
       }));
   
       // Navigate to the new member profile
-      navigate(`/church/${id}/member/${newUserId}`);
+      navigate(`/organization/${id}/member/${newUserId}`);
   
     } catch (error) {
       console.error("Error creating user:", error);
@@ -911,7 +911,7 @@ const VisitorDetails = () => {
           <div className="transfer-details">
             <p>Transferred on: {new Date(visitorData.userAccountCreatedAt).toLocaleDateString()}</p>
             <button
-              onClick={() => navigate(`/church/${id}/member/${visitorData.migratedToUserId}`)}
+              onClick={() => navigate(`/organization/${id}/member/${visitorData.migratedToUserId}`)}
               className="view-member-btn"
             >
               View Member Profile
@@ -931,7 +931,7 @@ const VisitorDetails = () => {
             <p>This visitor has been migrated to a member account.</p>
             <p>All notes have been transferred to the member profile.</p>
             <button
-              onClick={() => navigate(`/church/${id}/member/${visitorData.migratedToUserId}`)}
+              onClick={() => navigate(`/organization/${id}/member/${visitorData.migratedToUserId}`)}
               className="view-member-notes-btn"
             >
               View Notes in Member Profile
@@ -1165,7 +1165,7 @@ const VisitorDetails = () => {
                 {/* Add Messaging Button */}
                 {visitorData.phone && !visitorData.hasUserAccount && (
                   <button 
-                    onClick={() => navigate(`/church/${id}/visitor/${visitorId}/messages`)} 
+                    onClick={() => navigate(`/organization/${id}/visitor/${visitorId}/messages`)} 
                     className="message-button"
                     style={{
                       backgroundColor: '#4F46E5',
@@ -1485,7 +1485,7 @@ const VisitorDetails = () => {
       <span className="user-account-date">
         Migrated on: {new Date(visitorData.userAccountCreatedAt).toLocaleDateString()}
       </span>
-      <a href={`/church/${id}/member/${visitorData.migratedToUserId}`}>View Member Profile</a>
+      <a href={`/organization/${id}/member/${visitorData.migratedToUserId}`}>View Member Profile</a>
     </div>
   )}
 

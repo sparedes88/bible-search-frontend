@@ -249,9 +249,9 @@ const ChurchInfo = () => {
       <div style={commonStyles.sectionContainer}>
         {/* Header Section */}
         <div style={commonStyles.banner}>
-          {loading ? <Skeleton height={200} /> : church?.portadaArticulos ? (
+          {loading ? <Skeleton height={300} /> : church?.portadaArticulos ? (
             <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />
-          ) : <Skeleton height={200} />}
+          ) : <Skeleton height={300} />}
         </div>
 
         <div style={commonStyles.logoContainer}>

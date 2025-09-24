@@ -36,6 +36,12 @@ const Search = () => {
   // Function to get Firebase Storage download URL
   const getImageUrl = async (imagePath) => {
     if (!imagePath) return null;
+
+    // Check if storage is available
+    if (!storage) {
+      console.warn('Storage not available, cannot get image URL for:', imagePath);
+      return null;
+    }
     
     try {
       // If it's already a full URL, return as is
@@ -205,7 +211,7 @@ const Search = () => {
     }
     
     if (church) {
-      navigate(`/church/${church.idIglesia}/login`);
+      navigate(`/organization/${church.idIglesia}/login`);
     } else {
       alert(`No organization found with name "${churchName}". Please check the spelling or browse the list below.`);
     }
@@ -271,7 +277,7 @@ const Search = () => {
         setIsCreatingChurch(false);
   
         alert("Organization and admin user created successfully!");
-        navigate(`/church/${churchId}/mi-perfil`);
+        navigate(`/organization/${churchId}/mi-perfil`);
   
       } catch (authError) {
         if (authError.code === 'auth/email-already-in-use') {

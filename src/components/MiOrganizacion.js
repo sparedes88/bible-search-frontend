@@ -81,7 +81,7 @@ const MiOrganizacion = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [churchData, setChurchData] = useState(null);
+  const [organizationData, setOrganizationData] = useState(null);
   const [error, setError] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
@@ -103,85 +103,85 @@ const MiOrganizacion = () => {
           title: "Personal BI Dashboard",
           description: "Track your progress and get AI-powered growth insights",
           icon: "📊",
-          path: `/church/${id}/user-dashboard`
+          path: `/organization/${id}/user-dashboard`
         },
         {
           title: "Events",
-          description: "Manage and coordinate church events",
+          description: "Manage and coordinate organization events",
           icon: "📅",
-          path: `/church/${id}/all-events`
+          path: `/organization/${id}/all-events`
         },
         {
           title: "Rooms",
-          description: "Manage church rooms and spaces",
+          description: "Manage organization rooms and spaces",
           icon: "🏠",
-          path: `/church/${id}/rooms`
+          path: `/organization/${id}/rooms`
         },
         {
           title: "Inventory",
           description: "Track equipment and supplies",
           icon: "📦",
-          path: `/church/${id}/inventory`
+          path: `/organization/${id}/inventory`
         },
         {
           title: "Finances",
           description: "Manage income and expenses",
           icon: "💰",
-          path: `/church/${id}/finances`
+          path: `/organization/${id}/finances`
         },
         {
           title: "Teams",
           description: "Organize serving teams",
           icon: "👥",
-          path: `/church/${id}/teams`
+          path: `/organization/${id}/teams`
         },
         {
           title: "Maintenance",
           description: "Track repairs and improvements",
           icon: "🔧",
-          path: `/church/${id}/maintenance`
+          path: `/organization/${id}/maintenance`
         },
         {
-          title: "Build my Church",
+          title: "Build my Organization",
           description: "Post and track building tasks and improvements",
           icon: "🏗️",
-          path: `/church/${id}/build-my-church`
+          path: `/organization/${id}/build-my-church`
         },
         {
           title: "Connection Center",
           description: "Manage visitors and connections",
           icon: "🔗",
-          path: `/church/${id}/admin-connect`
+          path: `/organization/${id}/admin-connect`
         },
         {
           title: "EasyProjector",
           description: "Create and manage presentations",
           icon: "🎥",
-          path: `/church/${id}/easy-projector`
+          path: `/organization/${id}/easy-projector`
         },
         {
           title: "AI Assistant",
           description: "Use AI to help with pastoral tasks",
           icon: "🤖",
-          path: `/church/${id}/asistente-pastoral`
+          path: `/organization/${id}/asistente-pastoral`
         },
         {
           title: "Course Analytics",
           description: "View congregation progress statistics and insights",
           icon: "📊",
-          path: `/church/${id}/course-analytics`
+          path: `/organization/${id}/course-analytics`
         },
         {
           title: "Leica",
           description: "Upload and analyze CSV or text files",
           icon: "📁",
-          path: `/church/${id}/leica`
+          path: `/organization/${id}/leica`
         },
         {
           title: "Time Tracker",
           description: "Track time and manage tasks with daily progress",
           icon: "⏱️",
-          path: `/church/${id}/time-tracker`
+          path: `/organization/${id}/time-tracker`
         }
       ]
     },
@@ -192,7 +192,7 @@ const MiOrganizacion = () => {
           title: "Message Balance",
           description: "Manage SMS messaging credits",
           icon: "💬",
-          path: `/church/${id}/balance`
+          path: `/organization/${id}/balance`
         }
       ]
     },
@@ -201,7 +201,7 @@ const MiOrganizacion = () => {
       cards: [
         {
           title: "User Management",
-          description: "Manage church users and roles",
+          description: "Manage organization users and roles",
           icon: "👤",
           path: `/admin/${id}`
         },
@@ -209,66 +209,66 @@ const MiOrganizacion = () => {
           title: "Role Manager",
           description: "Create and manage custom roles with permissions",
           icon: "🔐",
-          path: `/church/${id}/role-manager`
+          path: `/organization/${id}/role-manager`
         },
         {
           title: "User Role Assignment",
-          description: "Assign roles to church members",
+          description: "Assign roles to organization members",
           icon: "👥",
-          path: `/church/${id}/user-role-assignment`
+          path: `/organization/${id}/user-role-assignment`
         },
         {
           title: "Content Admin",
-          description: "Manage church content and courses",
+          description: "Manage organization content and courses",
           icon: "📝",
-          path: `/church/${id}/course-admin`
+          path: `/organization/${id}/course-admin`
         },
         {
           title: "Gallery Management",
           description: "Create and manage photo galleries",
           icon: "🖼️",
-          path: `/church/${id}/gallery-admin`
+          path: `/organization/${id}/gallery-admin`
         },
         {
           title: "Song Manager",
           description: "Create and edit songs for presentations",
           icon: "🎵",
-          path: `/church/${id}/song-manager`
+          path: `/organization/${id}/song-manager`
         },
         {
-          title: "Church App",
-          description: "Customize church mobile app",
+          title: "Organization App",
+          description: "Customize organization mobile app",
           icon: "📱",
-          path: `/church/${id}/church-app`
+          path: `/organization/${id}/church-app`
         },
         {
           title: "Forms",
           description: "Create and manage custom forms with unlimited fields",
           icon: "📋",
-          path: `/church/${id}/forms`,
+          path: `/organization/${id}/forms`,
           requiresPermission: 'forms'
         },
         {
-          title: "Administrar Grupos",
-          description: "Create and manage church groups",
+          title: "Manage Groups",
+          description: "Create and manage organization groups",
           icon: "👪",
-          path: `/church/${id}/manage-groups`
+          path: `/organization/${id}/manage-groups`
         },
         {
           title: "Invoices",
           description: "Create and manage invoices",
           icon: "📝",
-          path: `/church/${id}/invoices`
+          path: `/organization/${id}/invoices`
         },
         {
           title: "Social Media",
           description: "Schedule and track social media posts",
           icon: "📱",
-          path: `/church/${id}/social-media`
+          path: `/organization/${id}/social-media`
         },
         {
           title: "Global",
-          description: "Manage all churches globally",
+          description: "Manage all organizations globally",
           icon: "🌎",
           path: "/global-church-manager"
         }
@@ -277,17 +277,17 @@ const MiOrganizacion = () => {
   ];
 
   useEffect(() => {
-    const fetchChurchData = async () => {
+    const fetchOrganizationData = async () => {
       if (!id) return;
 
       try {
         setLoading(true);
-        const churchRef = doc(db, "churches", id);
-        const churchSnap = await getDoc(churchRef);
+        const organizationRef = doc(db, "organizations", id);
+        const organizationSnap = await getDoc(organizationRef);
         
-        if (churchSnap.exists()) {
-          const data = churchSnap.data();
-          setChurchData(data);
+        if (organizationSnap.exists()) {
+          const data = organizationSnap.data();
+          setOrganizationData(data);
           setFormData({
             address: data.address || "",
             website: data.website || "",
@@ -303,7 +303,7 @@ const MiOrganizacion = () => {
       }
     };
 
-    fetchChurchData();
+    fetchOrganizationData();
   }, [id]);
 
   useEffect(() => {
@@ -352,15 +352,15 @@ const MiOrganizacion = () => {
     const errors = {};
 
     if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      errors.email = "Email inválido";
+      errors.email = "Invalid email";
     }
 
     if (formData.phone) {
       const phoneDigits = formData.phone.replace(/[^\d]/g, "");
       if (phoneDigits.length !== 10) {
-        errors.phone = "El teléfono debe tener 10 dígitos";
+        errors.phone = "Phone number must have 10 digits";
       } else if (!/^\(\d{3}\)\d{3}-\d{4}$/.test(formData.phone)) {
-        errors.phone = "Formato debe ser (123)456-7890";
+        errors.phone = "Format must be (123)456-7890";
       }
     }
 
@@ -370,11 +370,11 @@ const MiOrganizacion = () => {
         formData.website
       )
     ) {
-      errors.website = "URL inválida";
+      errors.website = "Invalid URL";
     }
 
     if (isEditing && !formData.address.trim()) {
-      errors.address = "Dirección es requerida";
+      errors.address = "Address is required";
     }
 
     setValidationErrors(errors);
@@ -388,26 +388,26 @@ const MiOrganizacion = () => {
 
     try {
       setLoading(true);
-      const churchRef = doc(db, "churches", id);
-      await updateDoc(churchRef, {
+      const organizationRef = doc(db, "organizations", id);
+      await updateDoc(organizationRef, {
         address: formData.address,
         website: formData.website,
         email: formData.email,
         phone: formData.phone,
       });
       
-      setChurchData((prev) => ({
+      setOrganizationData((prev) => ({
         ...prev,
         ...formData,
       }));
       setIsEditing(false);
       setSaveSuccess(true);
-      toast.success("Church information updated successfully!");
+      toast.success("Organization information updated successfully!");
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
-      console.error("Error updating church data:", err);
-      setError("Failed to update church information");
-      toast.error("Failed to update church information");
+      console.error("Error updating organization data:", err);
+      setError("Failed to update organization information");
+      toast.error("Failed to update organization information");
     } finally {
       setLoading(false);
     }
@@ -436,13 +436,13 @@ const MiOrganizacion = () => {
   }
 
   return (
-    <div className="" style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-perfil`} style={commonStyles.backButtonLink}>
+    <div className="" style={commonStyles.fullWidthContainer}>
+      <Link to={`/organization/${id}/mi-perfil`} style={commonStyles.backButtonLink}>
         ← Back to Profile
       </Link>
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
       <div style={{ marginTop: "-30px" }}>
-        <h1 style={commonStyles.title}>Mi Iglesia</h1>
+        <h1 style={commonStyles.title}>My Organization</h1>
         {(user.role === "global_admin" ||
           (user.role === "admin" && user.churchId == id)) && (
           <div
@@ -466,10 +466,10 @@ const MiOrganizacion = () => {
               disabled={loading}
             >
               {loading
-                ? "Guardando..."
+                ? "Saving..."
                 : isEditing
-                ? "Guardar Cambios"
-                : "Editar Información"}
+                ? "Save Changes"
+                : "Edit Information"}
             </button>
             {isEditing && (
               <button
@@ -486,7 +486,7 @@ const MiOrganizacion = () => {
                 }}
                 disabled={loading}
               >
-                Cancelar
+                Cancel
               </button>
             )}
           </div>
@@ -497,7 +497,7 @@ const MiOrganizacion = () => {
           </div>
         ) : (
           <>
-            {churchData && (
+            {organizationData && (
               <div className="grid gap-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="form-group" style={formGroupStyle}>
@@ -507,7 +507,7 @@ const MiOrganizacion = () => {
                           className="block text-sm font-medium text-gray-700"
                           style={formLabelStyle}
                         >
-                          Dirección
+                          Address
                         </label>
                         <input
                           type="text"
@@ -535,8 +535,8 @@ const MiOrganizacion = () => {
                     ) : (
                       <ContactSection
                         icon="📍"
-                        label="Dirección"
-                        value={churchData.address}
+                        label="Address"
+                        value={organizationData.address}
                       />
                     )}
                   </div>
@@ -547,7 +547,7 @@ const MiOrganizacion = () => {
                           className="block text-sm font-medium text-gray-700"
                           style={formLabelStyle}
                         >
-                          Sitio Web
+                          Website
                         </label>
                         <input
                           type="url"
@@ -575,12 +575,12 @@ const MiOrganizacion = () => {
                     ) : (
                       <ContactSection
                         icon="🌐"
-                        label="Sitio Web"
-                        value={churchData.website}
+                        label="Website"
+                        value={organizationData.website}
                         link={
-                          churchData.website?.startsWith("http")
-                            ? churchData.website
-                            : `https://${churchData.website}`
+                          organizationData.website?.startsWith("http")
+                            ? organizationData.website
+                            : `https://${organizationData.website}`
                         }
                       />
                     )}
@@ -621,8 +621,8 @@ const MiOrganizacion = () => {
                       <ContactSection
                         icon="📧"
                         label="Email"
-                        value={churchData.email}
-                        link={`mailto:${churchData.email}`}
+                        value={organizationData.email}
+                        link={`mailto:${organizationData.email}`}
                       />
                     )}
                   </div>
@@ -633,7 +633,7 @@ const MiOrganizacion = () => {
                           className="block text-sm font-medium text-gray-700"
                           style={formLabelStyle}
                         >
-                          Teléfono
+                          Phone
                         </label>
                         <input
                           type="tel"
@@ -663,9 +663,9 @@ const MiOrganizacion = () => {
                     ) : (
                       <ContactSection
                         icon="📞"
-                        label="Teléfono"
-                        value={formatPhoneNumber(churchData.phone)}
-                        link={`tel:${churchData.phone}`}
+                        label="Phone"
+                        value={formatPhoneNumber(organizationData.phone)}
+                        link={`tel:${organizationData.phone}`}
                       />
                     )}
                   </div>
@@ -683,7 +683,7 @@ const MiOrganizacion = () => {
             <h2 style={{ marginBottom: "1rem", fontSize: "1.5rem", fontWeight: "bold" }}>{section.title}</h2>
             <div style={{ 
               display: "grid", 
-              gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", 
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", 
               gap: "1rem" 
             }}>
               {section.cards.map((card, cardIndex) => (
@@ -727,7 +727,7 @@ const MiOrganizacion = () => {
           boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
           zIndex: 50
         }}>
-          ¡Información de la iglesia actualizada con éxito!
+          Organization information updated successfully!
         </div>
       )}
     </div>

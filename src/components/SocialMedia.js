@@ -637,7 +637,7 @@ const SocialMedia = () => {
       <ChurchHeader id={id} />
       
       <div className="back-button-container">
-        <Link to={`/church/${id}/mi-organizacion`} className="back-button">
+        <Link to={`/organization/${id}/mi-organizacion`} className="back-button">
           <FaArrowLeft /> Back to Mi Organización
         </Link>
       </div>

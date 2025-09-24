@@ -588,7 +588,7 @@ const CourseAnalytics = () => {
   return (
     <div className="course-analytics-container">
       <div className="dashboard-container">
-        <Link to={`/church/${id}/mi-organizacion`} className="back-button">
+        <Link to={`/organization/${id}/mi-organizacion`} className="back-button">
           ← Back to Mi Organización
         </Link>
         

@@ -251,7 +251,7 @@ const SongManager = () => {
     <div style={commonStyles.container}>
       <ToastContainer position="top-right" autoClose={5000} />
       <button
-        onClick={() => navigate(`/church/${id}/mi-organizacion`)}
+        onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
         style={{ ...commonStyles.backButtonLink }}
       >
         ← Back to Organization

@@ -333,7 +333,7 @@ const BalanceManager = () => {
   return (
     <div className="page-container">
       <ChurchHeader id={id} />
-      <Link to={`/church/${id}/mi-organizacion`} className="back-button" style={{
+      <Link to={`/organization/${id}/mi-organizacion`} className="back-button" style={{
         display: "inline-block",
         marginBottom: "15px",
         color: "#3498db",

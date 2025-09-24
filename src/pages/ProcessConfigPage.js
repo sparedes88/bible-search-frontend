@@ -62,7 +62,7 @@ const ProcessConfigPage = () => {
 
       if (user.role !== 'global_admin') {
         console.log('User is not global admin, redirecting');
-        navigate(`/church/${id}`);
+        navigate(`/organization/${id}`);
         return;
       }
 
@@ -97,7 +97,7 @@ const ProcessConfigPage = () => {
       await setDoc(configRef, dataToSave);
       
       toast.success('Process categories configured successfully!');
-      navigate(`/church/${id}/mi-perfil`);
+      navigate(`/organization/${id}/mi-perfil`);
     } catch (error) {
       console.error('Error saving process config:', error);
       setError('Failed to save configuration');
@@ -118,7 +118,7 @@ const ProcessConfigPage = () => {
   return (
     <div className="max-w-2xl mx-auto p-4">
       <button 
-        onClick={() => navigate(`/church/${id}/mi-perfil`)}
+        onClick={() => navigate(`/organization/${id}/mi-perfil`)}
         className="mb-4 flex items-center text-blue-600 hover:text-blue-800"
       >
         ← Back to Profile

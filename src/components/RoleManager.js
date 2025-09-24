@@ -900,7 +900,7 @@ const RoleManager = () => {
       <div className="role-manager-header">
         <div className="container">
           <button
-            onClick={() => navigate(`/church/${id}/mi-organizacion`)}
+            onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
             className="back-button"
           >
             ← Back to My Organization

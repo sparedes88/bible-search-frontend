@@ -40,9 +40,9 @@ const ChurchPage = () => {
 
   const handleProfileClick = () => {
     if (auth.currentUser) {
-      navigate(`/church/${id}/mi-perfil`); // ✅ If logged in, go to profile
+      navigate(`/organization/${id}/mi-perfil`); // ✅ If logged in, go to profile
     } else {
-      navigate(`/church/${id}/login`); // ✅ If NOT logged in, go to login
+      navigate(`/organization/${id}/login`); // ✅ If NOT logged in, go to login
     }
   };
 
@@ -87,7 +87,7 @@ const ChurchPage = () => {
               backgroundPosition: 'center',
               backgroundColor: '#1A237E', // Fallback color
             }}
-            onClick={() => item.onClick ? item.onClick() : navigate(`/church/${id}/${item.path}`)}
+            onClick={() => item.onClick ? item.onClick() : navigate(`/organization/${id}/${item.path}`)}
           >
             {!imageLoaded[index] && <h3>{item.label}</h3>}
             <img

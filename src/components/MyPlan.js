@@ -399,7 +399,7 @@ const MyPlan = () => {
   return (
     <div className="my-plan-container">
       <div className="back-button-container">
-        <Link to={`/church/${id}/mi-organizacion`} className="back-button">
+        <Link to={`/organization/${id}/mi-organizacion`} className="back-button">
           ← Back
         </Link>
       </div>

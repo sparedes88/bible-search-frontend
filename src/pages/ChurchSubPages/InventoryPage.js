@@ -68,7 +68,7 @@ const InventoryPage = () => {
     title: "Inventory",
     description: "Track equipment and supplies",
     icon: "📦",
-    path: `/church/${id}/inventory`
+    path: `/organization/${id}/inventory`
   };
 
   const itemStatuses = [
@@ -326,7 +326,7 @@ const InventoryPage = () => {
   useEffect(() => {
     if (!user) {
       const returnUrl = `${location.pathname}${location.search}${location.hash}`;
-      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+      navigate(`/organization/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
       return;
     }
 
@@ -1014,7 +1014,7 @@ const InventoryPage = () => {
     const baseUrl = window.location.origin;
     // Generate a clean URL that will be processed by InventoryItemDetail.js
     // This URL format ensures the item is redirected correctly after login
-    return `${baseUrl}/church/${id}/inventory/${itemId}`;
+    return `${baseUrl}/organization/${id}/inventory/${itemId}`;
   };
 
   // Add function to handle direct item viewing
@@ -1483,7 +1483,7 @@ const InventoryPage = () => {
   return (
     <div style={{ backgroundColor: '#f3f4f6', minHeight: '100vh', width: '100%', padding: '2rem' }}>
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-        <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+        <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
           ← Back to Mi Organización
         </Link>
 
@@ -1622,7 +1622,7 @@ const InventoryPage = () => {
                         setSelectedItem(item);
                         setShowItemDetails(true);
                         // Update URL without refreshing
-                        window.history.pushState({}, '', `/church/${id}/inventory/${item.id}`);
+                        window.history.pushState({}, '', `/organization/${id}/inventory/${item.id}`);
                       }}
                       style={{
                         ...styles.button,
@@ -1757,7 +1757,7 @@ const InventoryPage = () => {
               setShowItemDetails(false);
               setSelectedItem(null);
               // Update URL back to inventory list
-              window.history.pushState({}, '', `/church/${id}/inventory`);
+              window.history.pushState({}, '', `/organization/${id}/inventory`);
             }} 
           />
         )}

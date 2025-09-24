@@ -96,6 +96,27 @@ service firebase.storage {
       );
     }
 
+    // Course topics images - allow authenticated users to upload topic images
+    match /coursetopics/{churchId}/{topicId}/{fileName} {
+      allow read: if true;  // Allow anyone to read topic images
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Task comment files - allow authenticated users to upload files to task comments
+    match /churches/{churchId}/tasks/{taskId}/comments/{fileName} {
+      allow read: if true;  // Allow anyone to read task comment files
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 10 * 1024 * 1024  // 10MB max for task files
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
     // Gallery images
     match /galleries/{galleryId}/{imageId} {
       allow read: if true;

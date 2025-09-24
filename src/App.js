@@ -5,7 +5,7 @@ import {
   Routes,
   Navigate,
 } from "react-router-dom";
-import { auth, onMessageListener, requestForToken } from "./firebase"; // Import Firebase Auth
+import { auth } from "./firebase"; // Import Firebase Auth
 import { useAuthState } from "react-firebase-hooks/auth";
 import ChurchInfo from "./pages/ChurchInfo";
 import MiPerfil from "./components/MiPerfil"; // Ensure this import is correct
@@ -66,12 +66,12 @@ import EventDetails from "./components/EventDetails";
 import VisitorDetails from "./components/VisitorDetails";
 import EventCoordination from "./components/EventCoordination";
 import ManageGroups from "./components/ManageGroups";
+import GroupDetails from "./components/GroupDetails";
 import AsistentePastoral from "./components/AsistentePastoral";
 import EasyProjector from "./components/EasyProjector"; // Import EasyProjector component
 import BroadcastView from "./components/BroadcastView";
 import BroadcastView3 from './components/BroadcastView3';
 import MemberProfile from './components/MemberProfile';
-import MemberMessaging from './components/MemberMessaging'; // Import MemberMessaging component
 import MemberDashboard from './components/MemberDashboard'; // Import MemberDashboard component
 import VisitorMessages from './components/VisitorMessages'; // Import VisitorMessages component
 import {
@@ -116,6 +116,7 @@ import Forms from "./components/Forms"; // Import Forms component
 import FormViewer from "./components/FormViewer"; // Import FormViewer component
 import FormEmbed from "./components/FormEmbed"; // Import FormEmbed component
 import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
+import TimerPage from "./components/TimerPage"; // Import TimerPage component
 import GlobalChurchManager from "./components/GlobalChurchManager";
 import ChurchProfile from "./components/ChurchProfile";
 import FreshBooksCallback from "./components/FreshBooksCallback";
@@ -125,221 +126,117 @@ const App = () => {
   const [user] = useAuthState(auth);
   const userRole = user ? "global_admin" : "user"; // Example role assignment
 
-  useEffect(() => {
-    // Request notification permission and store token
-    requestForToken();
-
-    let unsubscribe;
-    // Listen for foreground notifications
-    const setupMessageListener = async () => {
-      try {
-        // Keep listening for messages
-        const handleNewMessage = async () => {
-          try {
-            const payload = await onMessageListener();
-            console.log("New notification received:", payload);
-
-            // Only show notification if app is in foreground and visible
-            if (Notification.permission === "granted" && document.visibilityState === "visible") {
-              // Check if we're already on the chat route
-              const currentPath = window.location.pathname;
-              const targetPath = payload.data?.clickAction;
-
-              // Skip notification if we're already on the target chat page
-              if (currentPath === targetPath) {
-                console.log("Skipping notification - user already on chat page");
-                return;
-              }
-
-              // Show notification using service worker
-              if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
-                const registration = await navigator.serviceWorker.ready;
-                await registration.showNotification(payload.notification.title, {
-                  body: payload.notification.body,
-                  icon: "/logo.png",
-                  badge: "/logo.png",
-                  data: payload.data,
-                  tag: payload.data?.messageId || "chat-notification",
-                  actions: [
-                    {
-                      action: "view",
-                      title: "View Message",
-                    },
-                  ],
-                });
-              } else {
-                // Fallback to basic notification if service worker is not available
-                new Notification(payload.notification.title, {
-                  body: payload.notification.body,
-                  icon: "/logo.png",
-                  badge: "/logo.png",
-                  data: payload.data,
-                  tag: payload.data?.messageId || "chat-notification",
-                });
-              }
-            }
-            // Continue listening for next message
-            handleNewMessage();
-          } catch (error) {
-            console.error("Error handling message:", error);
-            setTimeout(handleNewMessage, 1000);
-          }
-        };
-
-        // Start listening
-        handleNewMessage();
-      } catch (error) {
-        console.error("Error setting up message listener:", error);
-      }
-    };
-
-    // Start the message listener
-    setupMessageListener();
-
-    // Initialize service worker
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/firebase-messaging-sw.js")
-        .then((registration) => {
-          console.log("Service Worker registered successfully:", registration);
-        })
-        .catch((err) => {
-          console.error("Service Worker registration failed:", err);
-        });
-    }
-
-    // Cleanup on unmount
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, []);
-
-  // Initialize service worker on component mount
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/firebase-messaging-sw.js")
-        .then((registration) => {
-          console.log(
-            "Service Worker registered successfully:",
-            registration.scope
-          );
-        })
-        .catch((err) => {
-          console.error("Service Worker registration failed:", err);
-        });
-    }
-  }, []);
-
   return (
     <AuthProvider>
       <Router>
         <Routes>
           <Route path="/" element={<Search />} />{" "}
           {/* Set Search as the main page */}
-          <Route path="/church/:id" element={<ChurchApp />} />
-          <Route path="/church/:id/info" element={<ChurchInfo />} />
-          <Route path="/church/:id/mi-perfil" element={<MiPerfil />} />
-          <Route path="/church/:id/profile" element={<ProfilePage />} />
-          <Route path="/church/:id/search" element={<Search />} />
-          <Route path="/church/:id/events" element={<EventsPage />} />
-          <Route path="/church/:id/groups" element={<GroupsPage />} />
-          <Route path="/church/:id/directory" element={<DirectoryPage />} />
-          <Route path="/church/:id/contact" element={<ContactPage />} />
-          <Route path="/church/:id/articles" element={<ArticlesPage />} />
+          <Route path="/organization/:id" element={<ChurchApp />} />
+          <Route path="/organization/:id/info" element={<ChurchInfo />} />
+          <Route path="/organization/:id/mi-perfil" element={<MiPerfil />} />
+          <Route path="/organization/:id/profile" element={<ProfilePage />} />
+          <Route path="/organization/:id/search" element={<Search />} />
+          <Route path="/organization/:id/events" element={<EventsPage />} />
+          <Route path="/organization/:id/groups" element={<GroupsPage />} />
+          <Route path="/organization/:id/directory" element={<DirectoryPage />} />
+          <Route path="/organization/:id/contact" element={<ContactPage />} />
+          <Route path="/organization/:id/articles" element={<ArticlesPage />} />
           <Route
-            path="/church/:id/articles/:articleId"
+            path="/organization/:id/articles/:articleId"
             element={<ArticlePageDetail />}
           />
-          <Route path="/church/:id/media" element={<MediaPage />} />{" "}
+          <Route path="/organization/:id/media" element={<MediaPage />} />{" "}
           {/* Updated route */}
           <Route
-            path="/church/:id/media/:playlistId"
+            path="/organization/:id/media/:playlistId"
             element={<MediaDetailPage />}
           />{" "}
           {/* New route */}
-          <Route path="/church/:id/media/video" element={<VideoPage />} />
-          <Route path="/church/:id/media/audio" element={<AudioPage />} />
-          <Route path="/church/:id/media/pdf" element={<PDFPage />} />
-          <Route path="/church/:id/gallery" element={<GalleryPage />} />
-          <Route path="/church/:id/bible" element={<BiblePage />} />
+          <Route path="/organization/:id/media/video" element={<VideoPage />} />
+          <Route path="/organization/:id/media/audio" element={<AudioPage />} />
+          <Route path="/organization/:id/media/pdf" element={<PDFPage />} />
+          <Route path="/organization/:id/gallery" element={<GalleryPage />} />
+          <Route path="/organization/:id/bible" element={<BiblePage />} />
           <Route
-            path="/church/:id/letter-generator"
+            path="/organization/:id/letter-generator"
             element={<LetterGeneratorPage />}
           />
-          <Route path="/church/:id/login" element={<Login />} />
-          <Route path="/church/:id/register" element={<Register />} />
+          <Route path="/organization/:id/login" element={<Login />} />
+          <Route path="/organization/:id/register" element={<Register />} />
           <Route
             path="/group-list"
             element={
-              user ? <GroupList /> : <Navigate to="/church/:id/login" />
+              user ? <GroupList /> : <Navigate to="/organization/:id/login" />
             }
           />
           <Route
             path="/chat/:groupId"
-            element={user ? <Chat /> : <Navigate to="/church/:id/login" />}
+            element={user ? <Chat /> : <Navigate to="/organization/:id/login" />}
           />
           <Route
             path="/admin/:id"
-            element={user ? <Admin /> : <Navigate to="/church/:id/login" />}
+            element={user ? <Admin /> : <Navigate to="/organization/:id/login" />}
           />
-          <Route path="/church/:id/chatv2" element={<ChatV2 />} />
+          <Route path="/organization/:id/chatv2" element={<ChatV2 />} />
           <Route
-            path="/church/:id/chat/:groupId"
+            path="/organization/:id/chat/:groupId"
             element={<ChatLog />}
           />{" "}
           {/* Add the route for ChatLog */}
           <Route
-            path="/church/:id/manage-groups"
+            path="/organization/:id/manage-groups"
             element={<ManageGroups />}
           />
+          <Route
+            path="/organization/:id/group-details/:groupId"
+            element={<GroupDetails />}
+          />
           <Route path="/mediaadmin/:id" element={<MediaAdmin />} />
-          <Route path="/church/:id/sobre" element={<Sobre />} />{" "}
+          <Route path="/organization/:id/sobre" element={<Sobre />} />{" "}
           {/* Add the route for Sobre */}
-          <Route path="/church/:id/family" element={<Familia />} />{" "}
+          <Route path="/organization/:id/family" element={<Familia />} />{" "}
           {/* Add the route for Familia */}
           <Route
-            path="/church/:id/gallery-admin"
+            path="/organization/:id/gallery-admin"
             element={<GalleryAdmin />}
           />
           <Route
-            path="/church/:id/gallery-upload"
+            path="/organization/:id/gallery-upload"
             element={<GalleryUpload />}
           />
-          <Route path="/church/:id/gallery-view" element={<GalleryView />} />
+          <Route path="/organization/:id/gallery-view" element={<GalleryView />} />
           <Route
-            path="/church/:id/gallery-images/:galleryId"
+            path="/organization/:id/gallery-images/:galleryId"
             element={<GalleryImages />}
           />
-          <Route path="/church/:id/courses" element={<Courses />} />{" "}
+          <Route path="/organization/:id/courses" element={<Courses />} />{" "}
           {/* Add the route for Courses */}
           <Route
-            path="/church/:id/courses/:courseId"
+            path="/organization/:id/courses/:courseId"
             element={<CourseDetail />}
           />{" "}
           {/* Add the route for CourseDetail */}
           <Route
-            path="/church/:id/course-admin"
+            path="/organization/:id/course-admin"
             element={<CourseAdmin />}
           />{" "}
           {/* Add the route for CourseAdmin */}
           <Route
-            path="/church/:id/user-permissions"
+            path="/organization/:id/user-permissions"
             element={<UserPermissionsAdmin />}
           />
           <Route
-            path="/church/:id/find-users-test"
+            path="/organization/:id/find-users-test"
             element={<FindUsersTest />}
           />
           <Route
-            path="/church/:id/course-categories"
+            path="/organization/:id/course-categories"
             element={<CourseCategories />}
           />{" "}
           {/* Add the route for CourseCategories */}
           <Route
-            path="/church/:id/course-manager"
+            path="/organization/:id/course-manager"
             element={
               <ErrorBoundary>
                 <CourseManager />
@@ -347,30 +244,30 @@ const App = () => {
             }
           />{" "}
           {/* Add the route for CourseManager */}
-          <Route path="/church/:id/process" element={<Process />} />{" "}
+          <Route path="/organization/:id/process" element={<Process />} />{" "}
           {/* Add the route for Process */}
           <Route
-            path="/church/:idIglesia/users"
+            path="/organization/:idIglesia/users"
             element={<UsersDropdown />}
           />{" "}
           {/* Add the route for UsersDropdown */}
           <Route
-            path="/church/:id/course/:categoryId/subcategory/:subcategoryId"
+            path="/organization/:id/course/:categoryId/subcategory/:subcategoryId"
             element={<CourseDetail />}
           />{" "}
           {/* Add the route for CourseDetail with subcategory */}
           {/* Add the route for direct category access */}
           <Route
-            path="/church/:id/course/:categoryId"
+            path="/organization/:id/course/:categoryId"
             element={<CourseDetail />}
           />
-          {/* Add route for /churchDetail pattern */}
+          {/* Add route for /organizationDetail pattern */}
           <Route
-            path="/church/:id/courseDetail/:categoryId"
+            path="/organization/:id/courseDetail/:categoryId"
             element={<CourseDetail />}
           />
           <Route
-            path="/church/:id/process-config"
+            path="/organization/:id/process-config"
             element={
               <ProtectedRoute requireGlobalAdmin={true}>
                 <ProcessConfigPage />
@@ -378,7 +275,7 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/admin-connect"
+            path="/organization/:id/admin-connect"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <AdminConnect />
@@ -386,7 +283,7 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/admin-connect/:visitorId"
+            path="/organization/:id/admin-connect/:visitorId"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <VisitorDetails />
@@ -394,15 +291,15 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:churchId/course/:categoryId/subcategory/:subcategoryId/settings"
+            path="/organization/:churchId/course/:categoryId/subcategory/:subcategoryId/settings"
             element={<SubcategorySettings />}
           />
           <Route
-            path="/church/:id/mi-organizacion"
+            path="/organization/:id/mi-organizacion"
             element={<MiOrganizacion />}
           />
           <Route
-            path="/church/:id/role-manager"
+            path="/organization/:id/role-manager"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <RoleManager />
@@ -410,25 +307,25 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/user-role-assignment"
+            path="/organization/:id/user-role-assignment"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <UserRoleAssignment />
               </PrivateRoute>
             }
           />
-          <Route path="/church/:id/all-events" element={<AllEvents />} />
+          <Route path="/organization/:id/all-events" element={<AllEvents />} />
           <Route
-            path="/church/:id/event/:eventId"
+            path="/organization/:id/event/:eventId"
             element={<EventDetails />}
           />
-          <Route path="/church/:id/church-app" element={<ChurchApp />} />
+          <Route path="/organization/:id/church-app" element={<ChurchApp />} />
           <Route
-            path="/church/:id/event/:eventId/coordination"
+            path="/organization/:id/event/:eventId/coordination"
             element={<EventCoordination />}
           />
           <Route
-            path="/church/:id/asistente-pastoral"
+            path="/organization/:id/asistente-pastoral"
             element={
               <PrivateRoute>
                 <AsistentePastoral />
@@ -436,7 +333,7 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/easy-projector"
+            path="/organization/:id/easy-projector"
             element={
               <PrivateRoute>
                 <EasyProjector />
@@ -444,15 +341,15 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/broadcast/:broadcastId"
+            path="/organization/:id/broadcast/:broadcastId"
             element={<BroadcastView />}
           />
           <Route
-            path="/church/:id/broadcast3/:broadcastId"
+            path="/organization/:id/broadcast3/:broadcastId"
             element={<BroadcastView3 />}
           />
           <Route
-            path="/church/:id/broadcast3/:broadcastId/control"
+            path="/organization/:id/broadcast3/:broadcastId/control"
             element={
               <PrivateRoute>
                 <BroadcastView3 isControl={true} />
@@ -460,28 +357,27 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/member/:profileId"
+            path="/organization/:id/member/:profileId"
             element={<MemberProfile />}
           />
           <Route 
-            path="/church/:id/member/:profileId/dashboard" 
+            path="/organization/:id/member/:profileId/dashboard" 
             element={<MemberDashboard />}
           />
-          <Route path="/church/:id/member/:profileId/messages" element={<MemberMessaging />} /> {/* Add the route for MemberMessaging */}
           {/* Add Visitor Messaging route */}
-          <Route path="/church/:id/visitor/:visitorId/messages" element={<VisitorMessages />} />
-          <Route path="/church/:id/rooms" element={<RoomsPage />} />
-          <Route path="/church/:id/inventory" element={<InventoryPage />} />
-          <Route path="/church/:id/inventory/:itemId" element={<InventoryItemDetail />} />
-          <Route path="/church/:id/finances" element={<FinancesPage />} />
-          <Route path="/church/:id/teams" element={<TeamsPage />} />
-          <Route path="/church/:id/teams/create" element={<CreateTeamPage />} />
-          <Route path="/church/:id/maintenance" element={<MaintenancePage />} />
-          <Route path="/church/:id/rooms" element={<ChurchRooms />} />
-          <Route path="/church/:id/inventory" element={<ChurchInventory />} />
-          <Route path="/church/:id/finances" element={<ChurchFinances />} />
+          <Route path="/organization/:id/visitor/:visitorId/messages" element={<VisitorMessages />} />
+          <Route path="/organization/:id/rooms" element={<RoomsPage />} />
+          <Route path="/organization/:id/inventory" element={<InventoryPage />} />
+          <Route path="/organization/:id/inventory/:itemId" element={<InventoryItemDetail />} />
+          <Route path="/organization/:id/finances" element={<FinancesPage />} />
+          <Route path="/organization/:id/teams" element={<TeamsPage />} />
+          <Route path="/organization/:id/teams/create" element={<CreateTeamPage />} />
+          <Route path="/organization/:id/maintenance" element={<MaintenancePage />} />
+          <Route path="/organization/:id/rooms" element={<ChurchRooms />} />
+          <Route path="/organization/:id/inventory" element={<ChurchInventory />} />
+          <Route path="/organization/:id/finances" element={<ChurchFinances />} />
           <Route 
-            path="/church/:id/balance-manager" 
+            path="/organization/:id/balance-manager" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <BalanceManager />
@@ -489,24 +385,24 @@ const App = () => {
             } 
           />
           <Route 
-            path="/church/:id/balance" 
+            path="/organization/:id/balance" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <BalanceManager />
               </PrivateRoute>
             } 
           />
-          <Route path="/church/:id/teams" element={<ChurchTeams />} />
-          <Route path="/church/:id/maintenance" element={<ChurchMaintenance />} />
-          <Route path="/church/:id/rooms" element={<Rooms />} />
-          <Route path="/church/:id/inventory" element={<Inventory />} />
-          <Route path="/church/:id/finances" element={<Finances />} />
-          <Route path="/church/:id/teams" element={<Teams />} />
-          <Route path="/church/:id/maintenance" element={<Maintenance />} />
-          <Route path="/church/:id/teams/:teamId" element={<TeamDetailPage />} />
-          <Route path="/church/:id/event/:eventId/register" element={<EventRegistration />} />
+          <Route path="/organization/:id/teams" element={<ChurchTeams />} />
+          <Route path="/organization/:id/maintenance" element={<ChurchMaintenance />} />
+          <Route path="/organization/:id/rooms" element={<Rooms />} />
+          <Route path="/organization/:id/inventory" element={<Inventory />} />
+          <Route path="/organization/:id/finances" element={<Finances />} />
+          <Route path="/organization/:id/teams" element={<Teams />} />
+          <Route path="/organization/:id/maintenance" element={<Maintenance />} />
+          <Route path="/organization/:id/teams/:teamId" element={<TeamDetailPage />} />
+          <Route path="/organization/:id/event/:eventId/register" element={<EventRegistration />} />
           <Route 
-            path="/church/:id/event/:eventId/registrations" 
+            path="/organization/:id/event/:eventId/registrations" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <EventRegistrationAdmin />
@@ -514,7 +410,7 @@ const App = () => {
             } 
           />
           <Route 
-            path="/church/:id/event/:eventId/manage-registrations" 
+            path="/organization/:id/event/:eventId/manage-registrations" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <EventRegistrationAdmin />
@@ -522,7 +418,7 @@ const App = () => {
             } 
           />
           <Route
-            path="/church/:id/user-dashboard"
+            path="/organization/:id/user-dashboard"
             element={
               <PrivateRoute>
                 <UserBIDashboard />
@@ -530,20 +426,20 @@ const App = () => {
             }
           />
           <Route
-            path="/church/:id/build-my-church"
+            path="/organization/:id/build-my-church"
             element={
               <PrivateRoute>
                 <BuildMyChurch />
               </PrivateRoute>
             }
           />
-          <Route path="/church/:id/messages" element={
+          <Route path="/organization/:id/messages" element={
             <RequireAuth>
               <Messages />
             </RequireAuth>
           } />
           <Route
-            path="/church/:id/song-manager"
+            path="/organization/:id/song-manager"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <SongManager />
@@ -553,7 +449,7 @@ const App = () => {
           
           {/* Message Log Routes */}
           <Route 
-            path="/church/:id/message-log/:type/:entityId" 
+            path="/organization/:id/message-log/:type/:entityId" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <MessageLogView />
@@ -563,23 +459,23 @@ const App = () => {
           
           {/* Visitor Message Log Shortcut */}
           <Route 
-            path="/church/:id/visitor-log/:visitorId" 
+            path="/organization/:id/visitor-log/:visitorId" 
             element={
-              <Navigate to={params => `/church/${params.id}/message-log/visitor/${params.visitorId}`} replace />
+              <Navigate to={params => `/organization/${params.id}/message-log/visitor/${params.visitorId}`} replace />
             } 
           />
           
           {/* Member Message Log Shortcut */}
           <Route 
-            path="/church/:id/member-log/:memberId" 
+            path="/organization/:id/member-log/:memberId" 
             element={
-              <Navigate to={params => `/church/${params.id}/message-log/member/${params.memberId}`} replace />
+              <Navigate to={params => `/organization/${params.id}/message-log/member/${params.memberId}`} replace />
             } 
           />
           
           {/* Course Analytics Route */}
           <Route
-            path="/church/:id/course-analytics"
+            path="/organization/:id/course-analytics"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <CourseAnalytics />
@@ -589,7 +485,7 @@ const App = () => {
           
           {/* Business Intelligence Dashboard Route */}
           <Route
-            path="/church/:id/bi-dashboard"
+            path="/organization/:id/bi-dashboard"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <BIDashboard />
@@ -599,7 +495,7 @@ const App = () => {
           
           {/* My Plan Route */}
           <Route
-            path="/church/:id/my-plan"
+            path="/organization/:id/my-plan"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <MyPlan />
@@ -609,7 +505,7 @@ const App = () => {
           
           {/* Product Manager Routes */}
           <Route
-            path="/church/:id/product-manager"
+            path="/organization/:id/product-manager"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <ProductManager />
@@ -628,7 +524,7 @@ const App = () => {
 
           {/* InvoiceManager Route */}
           <Route 
-            path="/church/:id/invoices" 
+            path="/organization/:id/invoices" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <InvoiceManager />
@@ -638,7 +534,7 @@ const App = () => {
           
           {/* SocialMedia Route */}
           <Route 
-            path="/church/:id/social-media" 
+            path="/organization/:id/social-media" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <SocialMedia />
@@ -648,7 +544,7 @@ const App = () => {
           
           {/* SocialMediaAccounts Route */}
           <Route 
-            path="/church/:id/social-media-accounts" 
+            path="/organization/:id/social-media-accounts" 
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <SocialMediaAccounts />
@@ -658,7 +554,7 @@ const App = () => {
           
           {/* Forms Route */}
           <Route 
-            path="/church/:id/forms" 
+            path="/organization/:id/forms" 
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <Forms />
@@ -668,29 +564,44 @@ const App = () => {
           
           {/* Time Tracker Route */}
           <Route 
-            path="/church/:id/time-tracker" 
+            path="/organization/:id/time-tracker" 
             element={
               <PrivateRoute>
                 <TimeTracker />
               </PrivateRoute>
             } 
           />
+          <Route 
+            path="/organization/:id/timer-page" 
+            element={
+              <PrivateRoute>
+                <TimerPage />
+              </PrivateRoute>
+            } 
+          />
           
           {/* Public Form Viewer Route */}
           <Route 
-            path="/church/:id/form/:formId" 
+            path="/organization/:id/form/:formId" 
             element={<FormViewer />}
           />
           
           {/* Embeddable Form Route */}
           <Route 
-            path="/church/:id/embed/:formId" 
+            path="/organization/:id/embed/:formId" 
             element={<FormEmbed />}
           />
           
-          <Route path="/church/:id/leica" element={<LeicaModule />} />
+          <Route path="/organization/:id/leica" element={<LeicaModule />} />
           <Route path="/global-church-manager" element={<GlobalChurchManager />} />
           <Route path="/church-profile/:id" element={<ChurchProfile />} />
+          <Route path="/church/:id/course-categories" element={<CourseCategories />} />
+          <Route path="/church/:id/forms" element={<Forms />} />
+          <Route path="/church/:id/bible" element={<BiblePage />} />
+          <Route path="/church/:id/events" element={<EventsPage />} />
+          <Route path="/church/:id/mi-perfil" element={<MiPerfil />} />
+          <Route path="/church/:id/login" element={<Login />} />
+          <Route path="/church/:id/form/:formId" element={<FormViewer />} />
           <Route 
             path="/sql-server-bridge" 
             element={

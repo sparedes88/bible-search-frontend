@@ -175,7 +175,7 @@ const TeamsPage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
@@ -193,7 +193,7 @@ const TeamsPage = () => {
               <FaFilePdf /> Export to PDF
             </button>
             <button 
-              onClick={() => navigate(`/church/${id}/teams/create`)} 
+              onClick={() => navigate(`/organization/${id}/teams/create`)} 
               style={styles.addButton}
             >
               <FaPlus /> Create New Team
@@ -211,7 +211,7 @@ const TeamsPage = () => {
               <div 
                 key={team.id} 
                 style={styles.teamCard}
-                onClick={() => navigate(`/church/${id}/teams/${team.id}`)}
+                onClick={() => navigate(`/organization/${id}/teams/${team.id}`)}
               >
                 <div style={styles.teamHeader}>
                   <FaUsers size={24} color="#4F46E5" />

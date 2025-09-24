@@ -190,7 +190,7 @@ const MaintenancePage = () => {
       setSelectedPunchlist(null);
       setInitialItemId(null);
       const returnUrl = `${location.pathname}${location.search}${location.hash}`;
-      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+      navigate(`/organization/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
       return;
     }
 
@@ -1012,7 +1012,7 @@ const MaintenancePage = () => {
 
   const getPunchlistUrl = (punchlistId) => {
     // Generate an absolute URL that includes the item parameter
-    return `${window.location.origin}/church/${id}/maintenance?item=${punchlistId}`;
+    return `${window.location.origin}/organization/${id}/maintenance?item=${punchlistId}`;
   };
 
   const DetailModal = ({ item, onClose }) => {
@@ -1954,7 +1954,7 @@ const MaintenancePage = () => {
   return (
     <div style={{ backgroundColor: '#f3f4f6', minHeight: '100vh', width: '100%', padding: '2rem' }}>
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-        <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+        <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
           ← Back to Mi Organización
         </Link>
 

@@ -7,7 +7,7 @@ const MaintenancePage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Organization
       </Link>
       <h1 style={commonStyles.title}>Maintenance Management</h1>

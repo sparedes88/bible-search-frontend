@@ -45,7 +45,7 @@ const VisitorMessages = () => {
   useEffect(() => {
     // Save current path as return path if not already set
     if (!sessionStorage.getItem('adminConnectReturnPath')) {
-      sessionStorage.setItem('adminConnectReturnPath', `/church/${id}/admin-connect`);
+      sessionStorage.setItem('adminConnectReturnPath', `/organization/${id}/admin-connect`);
     }
   }, [id]);
 
@@ -564,7 +564,7 @@ const VisitorMessages = () => {
       navigate(returnPath);
     } else {
       // Default fallback
-      navigate(`/church/${id}/admin-connect`);
+      navigate(`/organization/${id}/admin-connect`);
     }
   };
 
@@ -624,7 +624,7 @@ const VisitorMessages = () => {
             </div>
             <button 
               className="recharge-btn"
-              onClick={() => navigate(`/church/${id}/balance-manager`)}
+              onClick={() => navigate(`/organization/${id}/balance-manager`)}
             >
               Recharge
             </button>
@@ -640,7 +640,7 @@ const VisitorMessages = () => {
               <div className="recharge-actions">
                 <button 
                   className="recharge-now-btn"
-                  onClick={() => navigate(`/church/${id}/balance-manager`)}
+                  onClick={() => navigate(`/organization/${id}/balance-manager`)}
                 >
                   Recharge Now
                 </button>
@@ -713,7 +713,7 @@ const VisitorMessages = () => {
           
           {/* View Message Log Button */}
           <button
-            onClick={() => navigate(`/church/${id}/message-log/visitor/${visitorId}`)}
+            onClick={() => navigate(`/organization/${id}/message-log/visitor/${visitorId}`)}
             style={{
               padding: '5px 10px',
               marginLeft: '10px',

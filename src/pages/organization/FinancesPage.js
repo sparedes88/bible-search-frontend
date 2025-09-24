@@ -7,8 +7,8 @@ const FinancesPage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
-        ← Back to Organization1
+      <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+        ← Back to Organization
       </Link>
       <h1 style={commonStyles.title}>Financial Management</h1>
       <div className="mt-4">

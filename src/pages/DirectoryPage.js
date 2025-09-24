@@ -33,7 +33,7 @@ const DirectoryPage = () => {
   return (
     <div style={commonStyles.container}>
       <div style={commonStyles.banner}>
-        {loading ? <Skeleton height={200} /> : <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />}
+        {loading ? <Skeleton height={300} /> : <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />}
       </div>
 
       <div style={commonStyles.logoContainer} onClick={handleLogoTap}>

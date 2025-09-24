@@ -791,7 +791,7 @@ const InvoiceManager = () => {
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button 
-            onClick={() => navigate(`/church/${id}/mi-organizacion`)} 
+            onClick={() => navigate(`/organization/${id}/mi-organizacion`)} 
             style={{
               display: 'flex',
               alignItems: 'center',

@@ -284,7 +284,7 @@ const TeamDetailPage = () => {
 
   return (
     <div style={commonStyles.container}>
-      <Link to={`/church/${id}/teams`} style={commonStyles.backButtonLink}>
+      <Link to={`/organization/${id}/teams`} style={commonStyles.backButtonLink}>
         ← Back to Teams
       </Link>
       <ChurchHeader id={id} applyShadow={false} />

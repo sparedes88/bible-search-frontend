@@ -928,7 +928,7 @@ const LeadershipDevelopment = () => {
   if (loading) {
     return (
       <div style={commonStyles.container}>
-        <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
+        <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
           ← Back to Mi Organización
         </Link>
         <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />

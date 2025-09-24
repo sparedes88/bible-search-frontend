@@ -866,7 +866,7 @@ const MiPerfil = () => {
           </Link>
 
           <Link 
-            to={`/church/${id}/mi-organizacion`}
+            to={`/organization/${id}/mi-organizacion`}
             style={{
               textDecoration: "none",
               color: "inherit"

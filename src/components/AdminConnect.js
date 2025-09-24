@@ -775,7 +775,7 @@ const AdminConnect = () => {
   };
 
   const handleBackClick = (id) => {
-    navigate(`/church/${id}/mi-organizacion`);
+    navigate(`/organization/${id}/mi-organizacion`);
   };
 
   const handleViewMember = (item) => {
@@ -1371,7 +1371,7 @@ const AdminConnect = () => {
             <div className="header-with-tabs">
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <button 
-                  onClick={() => navigate(`/church/${id}/mi-organizacion`)}
+                  onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
                   className="back-button" 
                   style={{
                     display: 'flex',

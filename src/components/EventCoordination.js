@@ -589,7 +589,7 @@ const EventCoordination = () => {
 
   return (
     <div className="coordination-container">
-      <button onClick={() => navigate(`/church/${id}/mi-organizacion`)}>
+      <button onClick={() => navigate(`/organization/${id}/mi-organizacion`)}>
         ← Back
       </button>
 

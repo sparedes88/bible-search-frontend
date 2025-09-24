@@ -6,17 +6,16 @@ import {
   getFirestore,
   query,
   where,
-} from "@firebase/firestore";
-import { getDownloadURL, getStorage, ref } from "firebase/storage";
-import { db } from "../firebase";
+} from "firebase/firestore";
+import { getDownloadURL, ref } from "firebase/storage";
+import { db, storage } from "../firebase";
 
 export const getChurchData = async (id) => {
   try {
-    const db = getFirestore();
-    const storage = getStorage();
+    const dbInstance = getFirestore();
 
     // Fetch church data from Firestore
-    const churchRef = doc(db, "churches", id);
+    const churchRef = doc(dbInstance, "churches", id);
     const churchSnap = await getDoc(churchRef);
     const churchData = churchSnap.data();
 
@@ -26,12 +25,28 @@ export const getChurchData = async (id) => {
     }
 
     // Fetch downloadable URLs for logo and banner
-    const logoURL = churchData.logo
-      ? await getDownloadURL(ref(storage, churchData.logo))
-      : null;
-    const bannerURL = churchData.banner
-      ? await getDownloadURL(ref(storage, churchData.banner))
-      : null;
+    let logoURL = null;
+    let bannerURL = null;
+
+    if (storage) {
+      try {
+        if (churchData.logo) {
+          logoURL = await getDownloadURL(ref(storage, churchData.logo));
+        }
+      } catch (logoError) {
+        console.warn("Failed to get logo URL:", logoError.message);
+      }
+
+      try {
+        if (churchData.banner) {
+          bannerURL = await getDownloadURL(ref(storage, churchData.banner));
+        }
+      } catch (bannerError) {
+        console.warn("Failed to get banner URL:", bannerError.message);
+      }
+    } else {
+      console.warn("Storage not available, using fallback images for church data");
+    }
 
     // Return modified church data with logo and banner URLs
     return {

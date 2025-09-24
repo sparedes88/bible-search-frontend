@@ -722,7 +722,7 @@ const BuildMyChurch = () => {
 
   return (
     <div className="build-my-church-container">
-      <Link to={`/church/${id}/mi-organizacion`} className="back-link">
+      <Link to={`/organization/${id}/mi-organizacion`} className="back-link">
         ← Back to Organization
       </Link>
 

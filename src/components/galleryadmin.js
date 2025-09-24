@@ -106,7 +106,7 @@ const GalleryAdmin = () => {
   };
 
   const handleBack = (id) => {
-    navigate(`/church/${id}/mi-organizacion`);
+    navigate(`/organization/${id}/mi-organizacion`);
   };
 
   return (

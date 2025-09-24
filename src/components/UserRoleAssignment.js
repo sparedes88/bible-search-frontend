@@ -180,7 +180,7 @@ const UserRoleAssignment = () => {
       }}>
         <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
           <button
-            onClick={() => navigate(`/church/${id}/mi-organizacion`)}
+            onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
             style={{
               ...commonStyles.button,
               marginBottom: '15px',
