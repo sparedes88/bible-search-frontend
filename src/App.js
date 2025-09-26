@@ -117,7 +117,7 @@ import FormViewer from "./components/FormViewer"; // Import FormViewer component
 import FormEmbed from "./components/FormEmbed"; // Import FormEmbed component
 import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
 import TimerPage from "./components/TimerPage"; // Import TimerPage component
-import GlobalChurchManager from "./components/GlobalChurchManager";
+import GlobalOrganizationManager from "./components/GlobalOrganizationManager";
 import ChurchProfile from "./components/ChurchProfile";
 import FreshBooksCallback from "./components/FreshBooksCallback";
 import SqlServerBridge from "./components/SqlServerBridge";
@@ -593,9 +593,11 @@ const App = () => {
           />
           
           <Route path="/organization/:id/leica" element={<LeicaModule />} />
-          <Route path="/global-church-manager" element={<GlobalChurchManager />} />
+          <Route path="/global-organization-manager" element={<GlobalOrganizationManager />} />
           <Route path="/church-profile/:id" element={<ChurchProfile />} />
           <Route path="/church/:id/course-categories" element={<CourseCategories />} />
+          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId" element={<CourseDetail />} />
+          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId/settings" element={<SubcategorySettings />} />
           <Route path="/church/:id/forms" element={<Forms />} />
           <Route path="/church/:id/bible" element={<BiblePage />} />
           <Route path="/church/:id/events" element={<EventsPage />} />

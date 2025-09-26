@@ -17,6 +17,8 @@ import {
   getDocs,
   getDoc
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../firebase';
 import { toast } from 'react-toastify';
 import { canAccessModule } from '../utils/permissions';
 import TaskProgress from './TaskProgress';
@@ -875,9 +877,23 @@ const TimeTracker = () => {
     endDate: '',
     projectId: '',
     notes: '',
+    featured: false, // New featured checkbox field
+    brand: '', // New brand field
     statusChangeLog: [], // Array to track status changes
     comments: [] // Array to store comments
   });
+
+  // Brands State
+  const [brands, setBrands] = useState([]);
+  const [showBrandModal, setShowBrandModal] = useState(false);
+  const [editingBrand, setEditingBrand] = useState(null);
+  const [newBrand, setNewBrand] = useState({
+    name: '',
+    description: '',
+    imageUrl: '',
+    imageFile: null
+  });
+  const [brandImagePreview, setBrandImagePreview] = useState(null);
 
   // Inline creation state
   const [showInlineProjectForm, setShowInlineProjectForm] = useState(false);
@@ -1488,6 +1504,28 @@ const TimeTracker = () => {
       (error) => {
         console.error('Error loading contracts:', error);
         toast.error('Failed to load contracts');
+      }
+    );
+
+    return () => unsubscribe();
+  }, [churchId]);
+
+  // Load Brands
+  useEffect(() => {
+    if (!churchId) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, `churches/${churchId}/brands`),
+      (snapshot) => {
+        const brandsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setBrands(brandsData);
+      },
+      (error) => {
+        console.error('Error loading brands:', error);
+        toast.error('Failed to load brands');
       }
     );
 
@@ -2615,6 +2653,8 @@ const TimeTracker = () => {
         endDate: '',
         projectId: '',
         notes: '',
+        featured: false,
+        brand: '',
         statusChangeLog: [],
         comments: []
       });
@@ -2786,6 +2826,164 @@ const TimeTracker = () => {
     } catch (error) {
       console.error('Error loading contracts:', error);
       toast.error('Failed to load contracts');
+    }
+  };
+
+  // Brand Management Functions
+  const loadBrands = async () => {
+    try {
+      const brandsRef = collection(db, `churches/${churchId}/brands`);
+      const snapshot = await getDocs(brandsRef);
+      const brandsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setBrands(brandsData);
+    } catch (error) {
+      console.error('Error loading brands:', error);
+      toast.error('Failed to load brands');
+    }
+  };
+
+  const saveBrand = async () => {
+    try {
+      if (!newBrand.name.trim()) {
+        toast.error('Brand name is required');
+        return;
+      }
+
+      let imageUrl = newBrand.imageUrl;
+
+      // Upload image if there's a file
+      if (newBrand.imageFile) {
+        const storageRef = ref(storage, `churches/${churchId}/brands/${Date.now()}_${newBrand.imageFile.name}`);
+        const uploadTask = await uploadBytes(storageRef, newBrand.imageFile);
+        imageUrl = await getDownloadURL(uploadTask.ref);
+      }
+
+      const brandData = {
+        name: newBrand.name.trim(),
+        description: newBrand.description.trim(),
+        imageUrl: imageUrl,
+        userId: user.uid,
+        churchId,
+        updatedAt: new Date()
+      };
+
+      if (editingBrand) {
+        // Update existing brand
+        await updateDoc(doc(db, `churches/${churchId}/brands`, editingBrand.id), {
+          ...brandData,
+          updatedAt: serverTimestamp()
+        });
+
+        // Update local state
+        setBrands(prev => prev.map(brand =>
+          brand.id === editingBrand.id
+            ? { ...brand, ...brandData, id: editingBrand.id }
+            : brand
+        ));
+
+        toast.success('Brand updated successfully!');
+      } else {
+        // Create new brand
+        brandData.createdAt = new Date();
+
+        const docRef = await addDoc(collection(db, `churches/${churchId}/brands`), {
+          ...brandData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        // Update local state
+        const newBrandWithId = {
+          id: docRef.id,
+          ...brandData
+        };
+        setBrands(prev => [...prev, newBrandWithId]);
+
+        toast.success('Brand created successfully!');
+      }
+
+      // Reset form
+      setNewBrand({
+        name: '',
+        description: '',
+        imageUrl: '',
+        imageFile: null
+      });
+      setBrandImagePreview(null);
+      setEditingBrand(null);
+      setShowBrandModal(false);
+    } catch (error) {
+      console.error('Error saving brand:', error);
+      toast.error('Failed to save brand');
+    }
+  };
+
+  const deleteBrand = async (brandId) => {
+    if (!window.confirm('Are you sure you want to delete this brand?')) return;
+
+    try {
+      // Update local state first for immediate feedback
+      setBrands(prev => prev.filter(brand => brand.id !== brandId));
+
+      // Delete from Firestore
+      await deleteDoc(doc(db, `churches/${churchId}/brands`, brandId));
+
+      toast.success('Brand deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting brand:', error);
+      toast.error('Failed to delete brand');
+    }
+  };
+
+  const openBrandModal = (brand = null) => {
+    if (brand) {
+      setEditingBrand(brand);
+      setNewBrand({
+        name: brand.name || '',
+        description: brand.description || '',
+        imageUrl: brand.imageUrl || '',
+        imageFile: null
+      });
+      setBrandImagePreview(brand.imageUrl || null);
+    } else {
+      setEditingBrand(null);
+      setNewBrand({
+        name: '',
+        description: '',
+        imageUrl: '',
+        imageFile: null
+      });
+      setBrandImagePreview(null);
+    }
+    setShowBrandModal(true);
+  };
+
+  const closeBrandModal = () => {
+    setShowBrandModal(false);
+    setEditingBrand(null);
+    setNewBrand({
+      name: '',
+      description: '',
+      imageUrl: '',
+      imageFile: null
+    });
+    setBrandImagePreview(null);
+  };
+
+  const handleBrandImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setNewBrand(prev => ({ ...prev, imageFile: file }));
+      
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setBrandImagePreview(e.target.result);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -3631,6 +3829,12 @@ const TimeTracker = () => {
               onClick={() => handleTabChange('contracts')}
             >
               📄 Contracts
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'brands' ? 'active' : ''}`}
+              onClick={() => handleTabChange('brands')}
+            >
+              🏷️ Brand Management
             </button>
             {selectedProject && (
               <button 
@@ -6804,6 +7008,32 @@ const TimeTracker = () => {
                   rows="2"
                 />
               </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={newContract.featured}
+                      onChange={(e) => setNewContract(prev => ({ ...prev, featured: e.target.checked }))}
+                    />
+                    Featured Contract
+                  </label>
+                </div>
+
+                <div className="form-group">
+                  <label>Brand</label>
+                  <select
+                    value={newContract.brand}
+                    onChange={(e) => setNewContract(prev => ({ ...prev, brand: e.target.value }))}
+                  >
+                    <option value="">Select Brand (Optional)</option>
+                    {brands.map(brand => (
+                      <option key={brand.id} value={brand.name}>{brand.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
 
             <div className="modal-footer">
@@ -6819,101 +7049,102 @@ const TimeTracker = () => {
           </div>
         </div>
       )}
+
+      {/* Comments Modal */}
+      {showCommentsModal && selectedContractForComments && (
+        <div className="modal-overlay" onClick={closeCommentsModal}>
+          <div className="modal-content comments-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Comments for {selectedContractForComments.name}</h2>
+              <button className="close-btn" onClick={closeCommentsModal}>×</button>
+            </div>
+
+            <div className="modal-body">
+              {/* Add Comment Section */}
+              <div className="add-comment-section">
+                <h3>Add Comment</h3>
+                <textarea
+                  value={editingComment ? editingComment.text : newComment}
+                  onChange={(e) => editingComment
+                    ? setEditingComment({...editingComment, text: e.target.value})
+                    : setNewComment(e.target.value)
+                  }
+                  placeholder="Enter your comment..."
+                  rows="3"
+                />
+                <div className="comment-actions">
+                  {editingComment ? (
+                    <>
+                      <button
+                        className="save-btn"
+                        onClick={updateComment}
+                        disabled={!editingComment.text.trim()}
+                      >
+                        Update Comment
+                      </button>
+                      <button
+                        className="cancel-btn"
+                        onClick={cancelEditingComment}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="save-btn"
+                      onClick={addComment}
+                      disabled={!newComment.trim()}
+                    >
+                      Add Comment
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Comments List */}
+              <div className="comments-list">
+                <h3>Comments ({selectedContractForComments.comments?.length || 0})</h3>
+                {selectedContractForComments.comments && selectedContractForComments.comments.length > 0 ? (
+                  selectedContractForComments.comments
+                    .sort((a, b) => new Date(b.createdAt.seconds ? b.createdAt.seconds * 1000 : b.createdAt) - new Date(a.createdAt.seconds ? a.createdAt.seconds * 1000 : a.createdAt))
+                    .map(comment => (
+                      <div key={comment.id} className="comment-item">
+                        <div className="comment-header">
+                          <span className="comment-author">{comment.createdBy}</span>
+                          <span className="comment-date">
+                            {new Date(comment.createdAt.seconds ? comment.createdAt.seconds * 1000 : comment.createdAt).toLocaleString()}
+                          </span>
+                          <div className="comment-actions">
+                            <button
+                              className="edit-comment-btn"
+                              onClick={() => startEditingComment(comment)}
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              className="delete-comment-btn"
+                              onClick={() => deleteComment(comment.id)}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                        <div className="comment-text">
+                          {comment.text}
+                        </div>
+                      </div>
+                    ))
+                ) : (
+                  <p className="no-comments">No comments yet. Be the first to add one!</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
-
-{/* Comments Modal */}
-{showCommentsModal && selectedContractForComments && (
-  <div className="modal-overlay" onClick={closeCommentsModal}>
-    <div className="modal-content comments-modal" onClick={(e) => e.stopPropagation()}>
-      <div className="modal-header">
-        <h2>Comments for {selectedContractForComments.name}</h2>
-        <button className="close-btn" onClick={closeCommentsModal}>×</button>
-      </div>
-
-      <div className="modal-body">
-        {/* Add Comment Section */}
-        <div className="add-comment-section">
-          <h3>Add Comment</h3>
-          <textarea
-            value={editingComment ? editingComment.text : newComment}
-            onChange={(e) => editingComment 
-              ? setEditingComment({...editingComment, text: e.target.value})
-              : setNewComment(e.target.value)
-            }
-            placeholder="Enter your comment..."
-            rows="3"
-          />
-          <div className="comment-actions">
-            {editingComment ? (
-              <>
-                <button 
-                  className="save-btn"
-                  onClick={updateComment}
-                  disabled={!editingComment.text.trim()}
-                >
-                  Update Comment
-                </button>
-                <button 
-                  className="cancel-btn"
-                  onClick={cancelEditingComment}
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button 
-                className="save-btn"
-                onClick={addComment}
-                disabled={!newComment.trim()}
-              >
-                Add Comment
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Comments List */}
-        <div className="comments-list">
-          <h3>Comments ({selectedContractForComments.comments?.length || 0})</h3>
-          {selectedContractForComments.comments && selectedContractForComments.comments.length > 0 ? (
-            selectedContractForComments.comments
-              .sort((a, b) => new Date(b.createdAt.seconds ? b.createdAt.seconds * 1000 : b.createdAt) - new Date(a.createdAt.seconds ? a.createdAt.seconds * 1000 : a.createdAt))
-              .map(comment => (
-                <div key={comment.id} className="comment-item">
-                  <div className="comment-header">
-                    <span className="comment-author">{comment.createdBy}</span>
-                    <span className="comment-date">
-                      {new Date(comment.createdAt.seconds ? comment.createdAt.seconds * 1000 : comment.createdAt).toLocaleString()}
-                    </span>
-                    <div className="comment-actions">
-                      <button 
-                        className="edit-comment-btn"
-                        onClick={() => startEditingComment(comment)}
-                      >
-                        ✏️
-                      </button>
-                      <button 
-                        className="delete-comment-btn"
-                        onClick={() => deleteComment(comment.id)}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                  <div className="comment-text">
-                    {comment.text}
-                  </div>
-                </div>
-              ))
-          ) : (
-            <p className="no-comments">No comments yet. Be the first to add one!</p>
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
 
 export default TimeTracker;

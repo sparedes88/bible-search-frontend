@@ -184,7 +184,9 @@ const generateNextInstances = async (event) => {
 };
 
 const SubcategorySettings = () => {
-  const { churchId, categoryId, subcategoryId } = useParams();
+  const params = useParams();
+  console.log('SubcategorySettings useParams:', params);
+  const { id: churchId, categoryId, subcategoryId } = params;
   const { user } = useAuth();
   const navigate = useNavigate();
   // Video Links State
@@ -380,8 +382,23 @@ const SubcategorySettings = () => {
   };
 
   useEffect(() => {
+    console.log('SubcategorySettings: Starting fetchData with params:', { churchId, categoryId, subcategoryId });
+    
+    if (!categoryId) {
+      console.error('SubcategorySettings: categoryId is missing');
+      setLoading(false);
+      return;
+    }
+    
+    if (!subcategoryId) {
+      console.error('SubcategorySettings: subcategoryId is missing');
+      setLoading(false);
+      return;
+    }
+    
     const fetchData = async () => {
       try {
+        console.log('SubcategorySettings: Fetching category data for categoryId:', categoryId);
         const categoryDoc = await getDoc(
           doc(db, "coursecategories", categoryId)
         );

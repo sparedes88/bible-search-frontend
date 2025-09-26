@@ -193,7 +193,7 @@ const calculateEventStats = (eventInstance, allCompletionLogs) => {
 };
 
 const CourseDetail = () => {
-  const { id, categoryId, subcategoryId, mode } = useParams();
+  const { id, categoryId, subcategoryId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -228,8 +228,8 @@ const CourseDetail = () => {
 
   // Debug URL parameters
   useEffect(() => {
-    console.log('CourseDetail URL Params:', { id, categoryId, subcategoryId, mode });
-  }, [id, categoryId, subcategoryId, mode]);
+    console.log('CourseDetail URL Params:', { id, categoryId, subcategoryId });
+  }, [id, categoryId, subcategoryId]);
   
   useEffect(() => {
     const fetchCourse = async () => {
@@ -247,9 +247,28 @@ const CourseDetail = () => {
         const courseRef = doc(db, 'coursecategories', categoryId);
         const courseSnap = await getDoc(courseRef);
         
+        console.log('Looking for category with ID:', categoryId);
+        console.log('Document exists:', courseSnap.exists());
+        
         if (!courseSnap.exists()) {
           console.error('Course category not found for ID:', categoryId);
-          setError('Course category not found');
+          
+          // Try to find if this ID exists in coursetopics instead
+          try {
+            const topicRef = doc(db, 'coursetopics', categoryId);
+            const topicSnap = await getDoc(topicRef);
+            if (topicSnap.exists()) {
+              console.log('Found topic with this ID instead:', topicSnap.data());
+              setError('This appears to be a topic ID, not a category ID. Please check the URL.');
+            } else {
+              console.log('ID not found in topics either');
+              setError('Course category not found. The category may have been deleted or the URL is incorrect.');
+            }
+          } catch (topicError) {
+            console.error('Error checking topics:', topicError);
+            setError('Course category not found. Please check the URL.');
+          }
+          
           setLoading(false);
           return;
         }
@@ -259,32 +278,49 @@ const CourseDetail = () => {
         
         // Check if we need to find a specific subcategory
         if (subcategoryId) {
-          const subcategory = categoryData.subcategories?.find(sub => sub.id === subcategoryId);
+          console.log('Looking for subcategory with ID:', subcategoryId);
+          console.log('Available subcategories:', categoryData.subcategories);
           
-          if (subcategory) {
-            console.log('Found subcategory:', subcategory);
-            console.log('Subcategory image URL:', subcategory.imageUrl);
-            console.log('Subcategory formId:', subcategory.formId);
+          const subcategory = categoryData.subcategories?.find(sub => {
+            console.log('Checking sub:', sub.id, 'against:', subcategoryId, 'match:', sub.id === subcategoryId);
+            return sub.id === subcategoryId;
+          });
+          
+          if (!subcategory) {
+            console.error('Subcategory not found for ID:', subcategoryId);
+            console.log('Available subcategory IDs:', categoryData.subcategories?.map(sub => sub.id));
             
-            // Check materials and their URLs for debugging
-            if (subcategory.materials && subcategory.materials.length > 0) {
-              console.log('Subcategory has materials:', subcategory.materials.length);
-              subcategory.materials.forEach((mat, idx) => {
-                console.log(`Material ${idx}:`, mat.name, 'URL:', mat.url);
-              });
-            } else {
-              console.log('Subcategory has no materials');
+            // Try finding by name if the ID doesn't work
+            const subcategoryByName = categoryData.subcategories?.find(sub => sub.name === subcategoryId);
+            if (subcategoryByName) {
+              console.log('Found subcategory by name instead:', subcategoryByName);
+              // Could redirect or handle this case
             }
             
-            setCourse({ 
-              categoryId: categoryId,
-              categoryName: categoryData.name,
-              ...subcategory
+            setError('Subcategory not found. The subcategory may have been deleted or the URL is incorrect.');
+            setLoading(false);
+            return;
+          }
+          
+          console.log('Found subcategory:', subcategory);
+          console.log('Subcategory image URL:', subcategory.imageUrl);
+          console.log('Subcategory formId:', subcategory.formId);
+            
+          // Check materials and their URLs for debugging
+          if (subcategory.materials && subcategory.materials.length > 0) {
+            console.log('Subcategory has materials:', subcategory.materials.length);
+            subcategory.materials.forEach((mat, idx) => {
+              console.log(`Material ${idx}:`, mat.name, 'URL:', mat.url);
             });
           } else {
-            console.error('Subcategory not found for ID:', subcategoryId);
-            setError('Subcategory not found');
+            console.log('Subcategory has no materials');
           }
+            
+          setCourse({ 
+            categoryId: categoryId,
+            categoryName: categoryData.name,
+            ...subcategory
+          });
         } else {
           // If no subcategoryId, just display the category data
           console.log('No subcategoryId, displaying category data');

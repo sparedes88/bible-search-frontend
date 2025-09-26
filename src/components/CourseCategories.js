@@ -570,6 +570,7 @@ const CourseCategories = () => {
         churchId: id,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        createdBy: user?.uid || null,
         order: topics.length + 1,
       };
 
@@ -647,6 +648,61 @@ const CourseCategories = () => {
     setFilteredCategories(getFilteredCategories());
   }, [categories, searchTerm, selectedCategories, selectedSubcategories, selectedTopics, hasSubcategoryFilter, topics]);
 
+  // Initialize selected filters with proper labels after data loads
+  useEffect(() => {
+    if (categories.length > 0 && topics.length > 0) {
+      // Initialize selected categories with proper labels
+      if (preselectedCategories.length > 0) {
+        const initializedCategories = preselectedCategories
+          .map(id => {
+            const category = categories.find(cat => cat.id === id);
+            return category ? { value: id, label: category.name } : null;
+          })
+          .filter(Boolean);
+        if (initializedCategories.length > 0) {
+          setSelectedCategories(initializedCategories);
+        }
+      }
+
+      // Initialize selected subcategories with proper labels
+      if (preselectedSubcategories.length > 0) {
+        const initializedSubcategories = preselectedSubcategories
+          .map(id => {
+            // Find subcategory across all categories
+            for (const category of categories) {
+              const subcategory = (category.subcategories || []).find(sub => sub.id === id);
+              if (subcategory) {
+                return { value: id, label: subcategory.name };
+              }
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (initializedSubcategories.length > 0) {
+          setSelectedSubcategories(initializedSubcategories);
+        }
+      }
+
+      // Initialize selected topics with proper labels
+      if (preselectedTopics.length > 0) {
+        const initializedTopics = preselectedTopics
+          .map(id => {
+            const topic = topics.find(t => t.id === id);
+            return topic ? { value: id, label: topic.name } : null;
+          })
+          .filter(Boolean);
+        if (initializedTopics.length > 0) {
+          setSelectedTopics(initializedTopics);
+        }
+      }
+    }
+  }, [categories, topics, preselectedCategories, preselectedSubcategories, preselectedTopics]);
+
+  // Update hasSubcategoryFilter when selectedSubcategories changes
+  useEffect(() => {
+    setHasSubcategoryFilter(selectedSubcategories && selectedSubcategories.length > 0);
+  }, [selectedSubcategories]);
+
   const handleAddCategory = async (topicId = null) => {
     try {
       if (!newCategory.name.trim()) {
@@ -667,6 +723,7 @@ const CourseCategories = () => {
         topicId: topicId || null, // Associate with topic if provided
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        createdBy: user?.uid || null,
       };
 
       console.log("Category data to add:", categoryToAdd);
@@ -758,6 +815,7 @@ const CourseCategories = () => {
         id: `sub_${Date.now()}`,
         order: (category.subcategories?.length || 0) + 1,
         createdAt: new Date().toISOString(),
+        createdBy: user?.uid || null,
         assignedUsers: category.assignedUsers || [],
       };
 
@@ -2076,6 +2134,34 @@ const CourseCategories = () => {
               if (!matchesSearch) return false;
             }
 
+            // Get categories that belong to this topic
+            const topicCategories = categories.filter(cat => 
+              topic.categories && topic.categories.includes(cat.id)
+            );
+            
+            // If there are category or subcategory filters, check if topic has matching categories
+            if ((selectedCategories && selectedCategories.length > 0) || (selectedSubcategories && selectedSubcategories.length > 0)) {
+              const hasMatchingCategories = topicCategories.some(category => {
+                // Category filter
+                if (selectedCategories && selectedCategories.length > 0) {
+                  const categoryIsSelected = selectedCategories.some(selected => selected.value === category.id);
+                  if (!categoryIsSelected) return false;
+                }
+
+                // Subcategory filter
+                if (selectedSubcategories && selectedSubcategories.length > 0) {
+                  const subcategoryMatches = selectedSubcategories.some(selectedSub => {
+                    return (category.subcategories || []).some(sub => sub.id === selectedSub.value);
+                  });
+                  if (!subcategoryMatches) return false;
+                }
+
+                return true;
+              });
+
+              if (!hasMatchingCategories) return false;
+            }
+
             return true;
           })
           .sort((a, b) => (a.order || 0) - (b.order || 0))
@@ -2086,13 +2172,13 @@ const CourseCategories = () => {
           );
           
           const filteredTopicCategories = topicCategories.filter(category => {
-            // Category filter
+            // Category filter (already checked at topic level, but keeping for additional filtering)
             if (selectedCategories && selectedCategories.length > 0) {
               const categoryIsSelected = selectedCategories.some(selected => selected.value === category.id);
               if (!categoryIsSelected) return false;
             }
 
-            // Subcategory filter
+            // Subcategory filter (already checked at topic level, but keeping for additional filtering)
             if (selectedSubcategories && selectedSubcategories.length > 0) {
               const subcategoryMatches = selectedSubcategories.some(selectedSub => {
                 return (category.subcategories || []).some(sub => sub.id === selectedSub.value);

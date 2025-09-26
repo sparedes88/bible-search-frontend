@@ -270,7 +270,7 @@ const MiOrganizacion = () => {
           title: "Global",
           description: "Manage all organizations globally",
           icon: "🌎",
-          path: "/global-church-manager"
+          path: "/global-organization-manager"
         }
       ]
     }
