@@ -3635,6 +3635,36 @@ const TimeTracker = () => {
     }
   };
 
+  // Update task forecasted hours
+  const updateTaskForecastedHours = async (taskId, forecastedHours) => {
+    try {
+      // Immediately update local state for instant feedback
+      setTasks(prev => prev.map(task => 
+        task.id === taskId 
+          ? { ...task, forecastedHours, updatedAt: new Date() }
+          : task
+      ));
+
+      // Update in Firestore
+      await updateDoc(doc(db, `churches/${churchId}/tasks`, taskId), {
+        forecastedHours,
+        updatedAt: serverTimestamp()
+      });
+      
+      toast.success('Task forecasted hours updated!');
+    } catch (error) {
+      console.error('Error updating task forecasted hours:', error);
+      toast.error('Failed to update forecasted hours');
+      
+      // Revert the optimistic update on error
+      setTasks(prev => prev.map(task => 
+        task.id === taskId 
+          ? { ...task, forecastedHours: tasks.find(t => t.id === taskId)?.forecastedHours || 0 }
+          : task
+      ));
+    }
+  };
+
   // Create/Update submission
   const saveSubmission = async (e) => {
     e.preventDefault();
@@ -4368,54 +4398,26 @@ const TimeTracker = () => {
             {/* Task Management */}
             <div className="section">
               <div className="section-header">
-                <h3>Task Management</h3>
+                <div className="header-content">
+                  <h3>Task Management</h3>
+                  <div className="forecast-overview">
+                    <div className="forecast-summary">
+                      <span className="forecast-label">Total Forecasted Hours:</span>
+                      <span className="forecast-value">{tasks.reduce((total, task) => total + (task.forecastedHours || 0), 0)}h</span>
+                    </div>
+                    <div className="status-summary">
+                      <span className="status-count started">Started: {tasks.filter(task => task.status === 'started').length}</span>
+                      <span className="status-count in-progress">In Progress: {tasks.filter(task => task.status === 'in-progress').length}</span>
+                      <span className="status-count completed">Completed: {tasks.filter(task => task.status === 'completed').length}</span>
+                    </div>
+                  </div>
+                </div>
                 <button
                   className="create-task-btn"
                   onClick={() => setShowTaskModal(true)}
                 >
                   Create Task
                 </button>
-              </div>
-
-              {/* Task Progress for Today */}
-              <div className="task-progress-section">
-                <h4>Add Progress for Today</h4>
-                <form onSubmit={addTaskProgress} className="progress-form">
-                  <div className="form-row">
-                    <select
-                      value={taskProgress.taskId}
-                      onChange={(e) => setTaskProgress({...taskProgress, taskId: e.target.value})}
-                      required
-                    >
-                      <option value="">Select Task</option>
-                      {tasks.filter(task => task.status !== 'completed').map(task => (
-                        <option key={task.id} value={task.id}>{task.title}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="date"
-                      value={taskProgress.date}
-                      onChange={(e) => setTaskProgress({...taskProgress, date: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div className="form-row">
-                    <textarea
-                      placeholder="Progress made today..."
-                      value={taskProgress.progress}
-                      onChange={(e) => setTaskProgress({...taskProgress, progress: e.target.value})}
-                      rows="2"
-                      required
-                    />
-                    <textarea
-                      placeholder="Additional notes (optional)"
-                      value={taskProgress.notes}
-                      onChange={(e) => setTaskProgress({...taskProgress, notes: e.target.value})}
-                      rows="2"
-                    />
-                  </div>
-                  <button type="submit" className="add-progress-btn">Add Progress</button>
-                </form>
               </div>
 
               {/* Task List */}
@@ -4443,11 +4445,19 @@ const TimeTracker = () => {
                       <span className={`priority ${task.priority}`}>
                         {task.priority} priority
                       </span>
-                      {task.forecastedHours && (
-                        <span className="forecasted-hours">
-                          Forecast: {task.forecastedHours}h
-                        </span>
-                      )}
+                      <div className="forecasted-hours-section">
+                        <label>Forecast:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={task.forecastedHours || 0}
+                          onChange={(e) => updateTaskForecastedHours(task.id, parseFloat(e.target.value) || 0)}
+                          placeholder="0"
+                          className="forecast-input"
+                        />
+                        <span>h</span>
+                      </div>
                       {task.dueDate && (
                         <span className="due-date">Due: {task.dueDate}</span>
                       )}
@@ -4536,65 +4546,6 @@ const TimeTracker = () => {
                     </div>
                   ))
                 )}
-              </div>
-            </div>
-
-            {/* Task Summary */}
-            <div className="task-summary-section">
-              <h3>Task Summary</h3>
-              <div className="summary-grid">
-                <div className="summary-card">
-                  <h4>Total Forecasted Hours</h4>
-                  <div className="summary-value">
-                    {tasks.reduce((total, task) => total + (task.forecastedHours || 0), 0)}h
-                  </div>
-                </div>
-                <div className="summary-card">
-                  <h4>Status Breakdown</h4>
-                  <div className="status-stats">
-                    <div className="status-stat">
-                      <span className="status-label">Started:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'started').length}</span>
-                    </div>
-                    <div className="status-stat">
-                      <span className="status-label">In Progress:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'in-progress').length}</span>
-                    </div>
-                    <div className="status-stat">
-                      <span className="status-label">Completed:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'completed').length}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Task List with Forecasted Hours */}
-              <div className="forecasted-hours-list">
-                <h4>All Tasks with Forecasted Hours</h4>
-                <div className="forecast-table">
-                  <div className="forecast-header">
-                    <span>Task</span>
-                    <span>Status</span>
-                    <span>Forecasted Hours</span>
-                  </div>
-                  {tasks.filter(task => task.forecastedHours > 0).map(task => (
-                    <div key={task.id} className="forecast-row">
-                      <span className="task-title">{task.title}</span>
-                      <span className={`task-status ${task.status}`}>
-                        {task.status === 'started' ? 'Started' : 
-                         task.status === 'in-progress' ? 'In Progress' : 
-                         task.status === 'completed' ? 'Completed' : 
-                         task.status.replace('-', ' ')}
-                      </span>
-                      <span className="forecast-hours">{task.forecastedHours}h</span>
-                    </div>
-                  ))}
-                  {tasks.filter(task => task.forecastedHours > 0).length === 0 && (
-                    <div className="no-forecasts">
-                      No tasks with forecasted hours yet.
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </div>
