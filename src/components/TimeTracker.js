@@ -770,7 +770,7 @@ const TimeTracker = () => {
     description: '',
     priority: 'medium',
     dueDate: '',
-    status: 'not-started',
+    status: 'started',
     forecastedHours: 0
   });
   
@@ -2184,7 +2184,7 @@ const TimeTracker = () => {
         description: '',
         priority: 'medium',
         dueDate: '',
-        status: 'not-started',
+        status: 'started',
         forecastedHours: 0
       });
       setEditingTask(null);
@@ -4430,10 +4430,9 @@ const TimeTracker = () => {
                           onChange={(e) => updateTaskStatus(task.id, e.target.value)}
                           className="status-select"
                         >
-                          <option value="not-started">Not Started</option>
+                          <option value="started">Started</option>
                           <option value="in-progress">In Progress</option>
-                          <option value="complete">Complete</option>
-                          <option value="in-review">In Review</option>
+                          <option value="completed">Completed</option>
                         </select>
                         <button onClick={() => editTask(task)} className="edit-btn">Edit</button>
                         <button onClick={() => deleteTask(task.id)} className="delete-btn">Delete</button>
@@ -4554,20 +4553,16 @@ const TimeTracker = () => {
                   <h4>Status Breakdown</h4>
                   <div className="status-stats">
                     <div className="status-stat">
-                      <span className="status-label">Not Started:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'not-started').length}</span>
+                      <span className="status-label">Started:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'started').length}</span>
                     </div>
                     <div className="status-stat">
                       <span className="status-label">In Progress:</span>
                       <span className="status-count">{tasks.filter(task => task.status === 'in-progress').length}</span>
                     </div>
                     <div className="status-stat">
-                      <span className="status-label">Complete:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'complete').length}</span>
-                    </div>
-                    <div className="status-stat">
-                      <span className="status-label">In Review:</span>
-                      <span className="status-count">{tasks.filter(task => task.status === 'in-review').length}</span>
+                      <span className="status-label">Completed:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'completed').length}</span>
                     </div>
                   </div>
                 </div>
@@ -4586,7 +4581,10 @@ const TimeTracker = () => {
                     <div key={task.id} className="forecast-row">
                       <span className="task-title">{task.title}</span>
                       <span className={`task-status ${task.status}`}>
-                        {task.status.replace('-', ' ')}
+                        {task.status === 'started' ? 'Started' : 
+                         task.status === 'in-progress' ? 'In Progress' : 
+                         task.status === 'completed' ? 'Completed' : 
+                         task.status.replace('-', ' ')}
                       </span>
                       <span className="forecast-hours">{task.forecastedHours}h</span>
                     </div>
@@ -6199,7 +6197,7 @@ const TimeTracker = () => {
                     description: '',
                     priority: 'medium',
                     dueDate: '',
-                    status: 'not-started',
+                    status: 'started',
                     forecastedHours: 0
                   });
                 }}
@@ -6259,10 +6257,9 @@ const TimeTracker = () => {
                     value={newTask.status}
                     onChange={(e) => setNewTask({...newTask, status: e.target.value})}
                   >
-                    <option value="not-started">Not Started</option>
+                    <option value="started">Started</option>
                     <option value="in-progress">In Progress</option>
-                    <option value="complete">Complete</option>
-                    <option value="in-review">In Review</option>
+                    <option value="completed">Completed</option>
                   </select>
                 </div>
                 

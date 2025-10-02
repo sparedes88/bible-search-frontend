@@ -6106,9 +6106,9 @@ input:required:valid, select:required:valid, textarea:required:valid {
   text-transform: capitalize;
 }
 
-.task-status.not-started {
-  background: #fef3c7;
-  color: #d97706;
+.task-status.started {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
 .task-status.in-progress {
@@ -6116,14 +6116,9 @@ input:required:valid, select:required:valid, textarea:required:valid {
   color: #2563eb;
 }
 
-.task-status.complete {
+.task-status.completed {
   background: #d1fae5;
   color: #065f46;
-}
-
-.task-status.in-review {
-  background: #f3e8ff;
-  color: #7c3aed;
 }
 
 .forecast-hours {
