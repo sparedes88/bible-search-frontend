@@ -10,7 +10,8 @@ import {
   deleteDoc,
   onSnapshot,
   query,
-  where
+  where,
+  getDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import "./GlobalOrganizationManager.css";
@@ -398,7 +399,56 @@ const GlobalOrganizationManager = () => {
         ...doc.data()
       }));
 
-      const allData = [...topics, ...categories, ...subcategories, ...users];
+      // Collect all unique user IDs from createdBy fields
+      const userIds = new Set();
+      [...topics, ...categories, ...subcategories, ...users].forEach(item => {
+        if (item.createdBy && typeof item.createdBy === 'string') {
+          userIds.add(item.createdBy);
+        }
+      });
+
+      // Fetch user data for all unique user IDs
+      const userMap = {};
+      if (userIds.size > 0) {
+        const userPromises = Array.from(userIds).map(async (userId) => {
+          try {
+            const userDoc = await getDoc(doc(db, "users", userId));
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              userMap[userId] = userData.name || userData.displayName || userData.email || 'Unknown User';
+            } else {
+              userMap[userId] = 'Unknown User';
+            }
+          } catch (error) {
+            console.error(`Error fetching user ${userId}:`, error);
+            userMap[userId] = 'Unknown User';
+          }
+        });
+        await Promise.all(userPromises);
+      }
+
+      // Update all items with user names instead of IDs
+      const updatedTopics = topics.map(topic => ({
+        ...topic,
+        createdBy: userMap[topic.createdBy] || topic.createdBy || 'Unknown'
+      }));
+
+      const updatedCategories = categories.map(category => ({
+        ...category,
+        createdBy: userMap[category.createdBy] || category.createdBy || 'Unknown'
+      }));
+
+      const updatedSubcategories = subcategories.map(subcategory => ({
+        ...subcategory,
+        createdBy: userMap[subcategory.createdBy] || subcategory.createdBy || 'Unknown'
+      }));
+
+      const updatedUsers = users.map(user => ({
+        ...user,
+        createdBy: userMap[user.createdBy] || user.createdBy || 'Unknown'
+      }));
+
+      const allData = [...updatedTopics, ...updatedCategories, ...updatedSubcategories, ...updatedUsers];
       setAnalyticsData(allData);
       
       setAnalyticsSummary({
@@ -834,15 +884,10 @@ const GlobalOrganizationManager = () => {
         console.log('Updating subcategory, categoryId:', item.categoryId, 'subcategoryId:', item.subcategoryId, 'subcategory:', item.subcategory);
 
         try {
-          console.log('About to fetch category document...');
           // For subcategories, we need to update the subcategory within the category document
           const categoryDoc = await getDoc(doc(db, 'coursecategories', item.categoryId));
-          console.log('Category document fetched, exists:', categoryDoc.exists());
-          
           if (categoryDoc.exists()) {
-            console.log('Processing category data...');
             const categoryData = categoryDoc.data();
-            console.log('Category data retrieved successfully');
             console.log('Category data:', categoryData);
             console.log('All subcategories in category:', categoryData.subcategories);
             const updatedSubcategories = (categoryData.subcategories || []).map(sub => {

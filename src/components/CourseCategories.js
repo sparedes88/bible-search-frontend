@@ -264,67 +264,63 @@ const CourseCategories = () => {
       const files = e.target.files;
       if (!files || files.length === 0) return;
 
+      // Only allow one file at a time
+      const file = files[0];
+
       const category = categories.find((c) => c.id === categoryId);
       if (!category) {
         throw new Error("Category not found");
       }
 
-      // Handle multiple files
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const timestamp = Date.now();
-        const path = isSubcategory
-          ? `coursecategories/${id}/${categoryId}/subcategories/${subIndex}/${timestamp}_${file.name}`
-          : `coursecategories/${id}/${categoryId}/${timestamp}_${file.name}`;
+      const timestamp = Date.now();
+      const path = isSubcategory
+        ? `coursecategories/${id}/${categoryId}/subcategories/${subIndex}/${timestamp}_${file.name}`
+        : `coursecategories/${id}/${categoryId}/${timestamp}_${file.name}`;
 
-        const storageRef = ref(storage, path);
+      const storageRef = ref(storage, path);
 
-        // Set proper metadata to ensure image is processed correctly
-        const metadata = {
-          contentType: file.type,
-          customMetadata: {
-            churchId: id,
-            categoryId: categoryId,
-            uploadedAt: new Date().toISOString(),
-            fullHeight: "true", // Add flag to indicate this image should display at full height
-          },
+      // Set proper metadata to ensure image is processed correctly
+      const metadata = {
+        contentType: file.type,
+        customMetadata: {
+          churchId: id,
+          categoryId: categoryId,
+          uploadedAt: new Date().toISOString(),
+          fullHeight: "true", // Add flag to indicate this image should display at full height
+        },
+      };
+
+      const uploadTask = await uploadBytes(storageRef, file, metadata);
+      const imageUrl = await getDownloadURL(uploadTask.ref);
+
+      if (isSubcategory) {
+        const updatedSubs = [...category.subcategories];
+        if (!updatedSubs[subIndex]) {
+          throw new Error("Subcategory not found");
+        }
+        // Replace existing image instead of adding to array
+        updatedSubs[subIndex] = {
+          ...updatedSubs[subIndex],
+          imageUrls: [imageUrl], // Replace with single image
+          imageStoragePaths: [path], // Replace with single path
         };
 
-        const uploadTask = await uploadBytes(storageRef, file, metadata);
-        const imageUrl = await getDownloadURL(uploadTask.ref);
-
-        if (isSubcategory) {
-          const updatedSubs = [...category.subcategories];
-          if (!updatedSubs[subIndex]) {
-            throw new Error("Subcategory not found");
-          }
-          // Update to use imageUrls array for consistency
-          const currentSubImages = updatedSubs[subIndex].imageUrls || [];
-          updatedSubs[subIndex] = {
-            ...updatedSubs[subIndex],
-            imageUrls: [...currentSubImages, imageUrl],
-            imageStoragePaths: [...(updatedSubs[subIndex].imageStoragePaths || []), path],
-          };
-
-          console.log('Updating subcategory with new image:', updatedSubs[subIndex].imageUrls);
-          await handleUpdate(categoryId, {
-            ...category,
-            subcategories: updatedSubs,
-          });
-        } else {
-          // For categories, store multiple images as an array
-          const currentImages = category.imageUrls || [];
-          const updatedImages = [...currentImages, imageUrl];
-          console.log('Updating category with new image:', updatedImages);
-          await handleUpdate(categoryId, {
-            ...category,
-            imageUrls: updatedImages,
-            imageStoragePaths: [...(category.imageStoragePaths || []), path],
-          });
-        }
+        console.log('Updating subcategory with new image:', updatedSubs[subIndex].imageUrls);
+        await handleUpdate(categoryId, {
+          ...category,
+          subcategories: updatedSubs,
+        });
+      } else {
+        // For categories, replace existing image instead of adding to array
+        console.log('Updating category with new image:', [imageUrl]);
+        await handleUpdate(categoryId, {
+          ...category,
+          imageUrls: [imageUrl], // Replace with single image
+          imageStoragePaths: [path], // Replace with single path
+        });
       }
-      console.log('All uploads completed successfully');
-      safeToast.success(`${files.length} image(s) uploaded successfully!`);
+      console.log('Upload completed successfully');
+      safeToast.success("Image uploaded successfully!");
     } catch (error) {
       console.error("Upload error:", error);
       safeToast.error(`Upload failed: ${error.message}`);
@@ -487,6 +483,9 @@ const CourseCategories = () => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
+    // Only allow one file at a time
+    const file = files[0];
+
     try {
       setImageUpload(true);
 
@@ -495,54 +494,41 @@ const CourseCategories = () => {
         throw new Error("Topic not found");
       }
 
-      // Handle multiple files
-      const uploadedUrls = [];
-      const uploadedPaths = [];
+      const timestamp = Date.now();
+      const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const path = `coursetopics/${id}/${topicId}/${timestamp}_${safeFileName}`;
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const timestamp = Date.now();
-        const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-        const path = `coursetopics/${id}/${topicId}/${timestamp}_${safeFileName}`;
+      const storageRef = ref(storage, path);
 
-        const storageRef = ref(storage, path);
-
-        // Set proper metadata to ensure image is processed correctly
-        const metadata = {
-          contentType: file.type,
-          customMetadata: {
-            churchId: id,
-            topicId: topicId,
-            uploadedAt: new Date().toISOString(),
-            fullHeight: "true", // Add flag to indicate this image should display at full height
-          },
-        };
-
-        const uploadTask = await uploadBytes(storageRef, file, metadata);
-        const imageUrl = await getDownloadURL(uploadTask.ref);
-
-        uploadedUrls.push(imageUrl);
-        uploadedPaths.push(path);
-      }
-
-      // Update topic with multiple images
-      const currentImages = topic.imageUrls || [];
-      const currentPaths = topic.imageStoragePaths || [];
-
-      const updatedTopic = {
-        ...topic,
-        imageUrls: [...currentImages, ...uploadedUrls],
-        imageStoragePaths: [...currentPaths, ...uploadedPaths],
+      // Set proper metadata to ensure image is processed correctly
+      const metadata = {
+        contentType: file.type,
+        customMetadata: {
+          churchId: id,
+          topicId: topicId,
+          uploadedAt: new Date().toISOString(),
+          fullHeight: "true", // Add flag to indicate this image should display at full height
+        },
       };
 
-      console.log('Updating topic with new images:', updatedTopic.imageUrls);
+      const uploadTask = await uploadBytes(storageRef, file, metadata);
+      const imageUrl = await getDownloadURL(uploadTask.ref);
+
+      // Replace existing image instead of adding to array
+      const updatedTopic = {
+        ...topic,
+        imageUrls: [imageUrl], // Replace with single image
+        imageStoragePaths: [path], // Replace with single path
+      };
+
+      console.log('Updating topic with new image:', updatedTopic.imageUrls);
       await handleTopicUpdate(topicId, updatedTopic);
       
-      toast.success(`${files.length} topic image(s) uploaded successfully!`);
+      toast.success("Topic image uploaded successfully!");
       console.log('Topic upload completed successfully');
     } catch (error) {
       console.error("Upload error:", error);
-      toast.error("Failed to upload topic images");
+      toast.error("Failed to upload topic image");
     } finally {
       setImageUpload(false);
     }
@@ -1113,7 +1099,7 @@ const CourseCategories = () => {
   };
 
   const handleSubcategoryClick = (categoryId, subcategoryId) => {
-    navigate(`/church/${id}/course/${categoryId}/subcategory/${subcategoryId}`);
+    navigate(`/church/${id}/course/${categoryId}/subcategory/${subcategoryId}/settings`);
   };
 
   const onDragEnd = async (result) => {
@@ -1216,19 +1202,15 @@ const CourseCategories = () => {
             onChange={(e) => handleImageUpload(e, category.id)}
             className="input"
             disabled={isImageUpload}
-            multiple
           />
           {isImageUpload && <p className="upload-status">Uploading...</p>}
           {category.imageUrls && category.imageUrls.length > 0 && (
             <div style={{ marginTop: "10px" }}>
-              {category.imageUrls.map((url, index) => (
-                <img
-                  key={index}
-                  src={url}
-                  alt={`Preview ${index + 1}`}
-                  style={{ width: "100%", borderRadius: "8px", marginBottom: "10px" }}
-                />
-              ))}
+              <img
+                src={category.imageUrls[0]}
+                alt="Category Preview"
+                style={{ width: "100%", borderRadius: "8px", marginBottom: "10px" }}
+              />
             </div>
           )}
         </div>
@@ -1519,18 +1501,14 @@ const CourseCategories = () => {
             accept="image/*"
             onChange={(e) => handleTopicImageUpload(e, topic.id)}
             className="input"
-            multiple
           />
           {topic.imageUrls && topic.imageUrls.length > 0 && (
             <div style={{ marginTop: "10px" }}>
-              {topic.imageUrls.map((url, index) => (
-                <img
-                  key={index}
-                  src={url}
-                  alt={`Preview ${index + 1}`}
-                  style={{ width: "100%", borderRadius: "8px", marginBottom: "10px" }}
-                />
-              ))}
+              <img
+                src={topic.imageUrls[0]}
+                alt="Topic Preview"
+                style={{ width: "100%", borderRadius: "8px", marginBottom: "10px" }}
+              />
             </div>
           )}
         </div>
@@ -2310,7 +2288,7 @@ const CourseCategories = () => {
                         <div
                           className="category-card"
                           onClick={(e) => {
-                            if (e.target.tagName === 'BUTTON') {
+                            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'IMG') {
                               e.stopPropagation();
                               return;
                             }
@@ -2537,10 +2515,8 @@ const CourseCategories = () => {
                                                 {isImageUpload && <p className="upload-status">Uploading...</p>}
                                                 {sub.imageUrls && sub.imageUrls.length > 0 && (
                                                   <div className="current-image-preview">
-                                                    {sub.imageUrls.map((url, index) => (
-                                                      <img key={index} src={url} alt={`Current ${index + 1}`} className="image-preview" />
-                                                    ))}
-                                                    <span className="image-status">Current images</span>
+                                                    <img src={sub.imageUrls[0]} alt="Current" className="image-preview" />
+                                                    <span className="image-status">Current image</span>
                                                   </div>
                                                 )}
                                               </div>
@@ -2865,7 +2841,7 @@ const CourseCategories = () => {
                     <div
                       className="category-card"
                       onClick={(e) => {
-                        if (e.target.tagName === 'BUTTON') {
+                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'IMG') {
                           e.stopPropagation();
                           return;
                         }
@@ -2911,7 +2887,7 @@ const CourseCategories = () => {
                                     const fileInput = document.createElement('input');
                                     fileInput.type = 'file';
                                     fileInput.accept = 'image/*';
-                                    fileInput.multiple = true;
+                                    fileInput.multiple = false;
                                     fileInput.style.display = 'none';
                                     fileInput.onchange = (event) => {
                                       handleImageUpload(event, category.id);
@@ -3173,15 +3149,12 @@ const CourseCategories = () => {
                                           className="input file-input"
                                           style={{ display: "block" }}
                                           disabled={isImageUpload ? false : false}
-                                          multiple
                                         />
                                         {isImageUpload && <p className="upload-status">Uploading...</p>}
                                         {sub.imageUrls && sub.imageUrls.length > 0 && (
                                           <div className="current-image-preview">
-                                            {sub.imageUrls.map((url, index) => (
-                                              <img key={index} src={url} alt={`Current ${index + 1}`} className="image-preview" />
-                                            ))}
-                                            <span className="image-status">Current images</span>
+                                            <img src={sub.imageUrls[0]} alt="Current" className="image-preview" />
+                                            <span className="image-status">Current image</span>
                                           </div>
                                         )}
                                       </div>

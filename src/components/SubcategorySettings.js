@@ -195,6 +195,7 @@ const SubcategorySettings = () => {
   const [newVideoUrl, setNewVideoUrl] = useState("");
   const [editingVideoId, setEditingVideoId] = useState(null);
   const [editingVideoData, setEditingVideoData] = useState({ title: "", description: "", url: "" });
+  const [previewVideoId, setPreviewVideoId] = useState(null);
 
   // Add Video Link Handler (to be implemented in next step)
   const handleAddVideoLink = async () => {
@@ -209,6 +210,7 @@ const SubcategorySettings = () => {
         description: newVideoDescription.trim(),
         url: newVideoUrl.trim(),
         id: Date.now().toString(),
+        order: (subcategory.videoLinks || []).length + 1,
         addedAt: new Date().toISOString()
       };
 
@@ -298,6 +300,97 @@ const SubcategorySettings = () => {
     });
   };
 
+  const handleReorderVideoLinks = async (videoId, direction) => {
+    try {
+      const currentLinks = [...(subcategory.videoLinks || [])];
+      const currentIndex = currentLinks.findIndex(link => link.id === videoId);
+
+      if (currentIndex === -1) return;
+
+      let newIndex;
+      if (direction === 'up' && currentIndex > 0) {
+        newIndex = currentIndex - 1;
+      } else if (direction === 'down' && currentIndex < currentLinks.length - 1) {
+        newIndex = currentIndex + 1;
+      } else {
+        return; // Can't move further in that direction
+      }
+
+      // Swap the positions
+      [currentLinks[currentIndex], currentLinks[newIndex]] = [currentLinks[newIndex], currentLinks[currentIndex]];
+
+      // Update order numbers
+      const updatedLinks = currentLinks.map((link, index) => ({
+        ...link,
+        order: index + 1
+      }));
+
+      // Update in database
+      const updatedSubcategories = category.subcategories.map((sub) =>
+        sub.id === subcategoryId ? { ...sub, videoLinks: updatedLinks } : sub
+      );
+
+      await updateDoc(doc(db, "coursecategories", categoryId), {
+        subcategories: updatedSubcategories,
+      });
+
+      setSubcategory((prev) => ({ ...prev, videoLinks: updatedLinks }));
+      setCategory((prev) => ({
+        ...prev,
+        subcategories: updatedSubcategories,
+      }));
+
+      toast.success("Video order updated successfully!");
+    } catch (error) {
+      console.error("Error reordering video links:", error);
+      toast.error(`Failed to reorder videos: ${error.message}`);
+    }
+  };
+
+  const extractVideoId = (url) => {
+    if (!url) return null;
+
+    // YouTube patterns
+    const youtubeRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+    const youtubeMatch = url.match(youtubeRegex);
+    if (youtubeMatch) {
+      return { platform: 'youtube', id: youtubeMatch[1] };
+    }
+
+    // Vimeo patterns
+    const vimeoRegex = /(?:vimeo\.com\/)(?:.*#|.*\/videos\/|.*\/|channels\/.*\/|groups\/.*\/videos\/|album\/.*\/video\/|video\/)?([0-9]+)(?:$|\/|\?)/;
+    const vimeoMatch = url.match(vimeoRegex);
+    if (vimeoMatch) {
+      return { platform: 'vimeo', id: vimeoMatch[1] };
+    }
+
+    // Direct video files (mp4, webm, ogg)
+    if (url.match(/\.(mp4|webm|ogg)$/i)) {
+      return { platform: 'direct', url: url };
+    }
+
+    return null;
+  };
+
+  const getEmbedUrl = (videoInfo) => {
+    if (!videoInfo) return null;
+
+    switch (videoInfo.platform) {
+      case 'youtube':
+        return `https://www.youtube.com/embed/${videoInfo.id}`;
+      case 'vimeo':
+        return `https://player.vimeo.com/video/${videoInfo.id}`;
+      case 'direct':
+        return videoInfo.url;
+      default:
+        return null;
+    }
+  };
+
+  const handlePreviewVideo = (videoId) => {
+    setPreviewVideoId(previewVideoId === videoId ? null : videoId);
+  };
+
   const cancelEditingVideo = () => {
     setEditingVideoId(null);
     setEditingVideoData({ title: "", description: "", url: "" });
@@ -343,6 +436,7 @@ const SubcategorySettings = () => {
   const [editingInstance, setEditingInstance] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
   const [previewInstances, setPreviewInstances] = useState(0);
+  const [activeTab, setActiveTab] = useState('basic');
 
   // Form and Gallery state
   const [forms, setForms] = useState([]);
@@ -1176,8 +1270,57 @@ const SubcategorySettings = () => {
     return <div className="error">Subcategory not found</div>;
   }
 
+  const VideoEmbed = ({ link, onClose }) => {
+    const videoInfo = extractVideoId(link.url);
+    const embedUrl = getEmbedUrl(videoInfo);
+
+    return (
+      <div className="video-embed-container">
+        <div className="video-embed-header">
+          <h5>Video Preview</h5>
+          <button
+            onClick={onClose}
+            className="btn-icon close-embed"
+            title="Close preview"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="video-embed">
+          {videoInfo && embedUrl ? (
+            videoInfo.platform === 'direct' ? (
+              <video controls className="direct-video-player">
+                <source src={embedUrl} type={`video/${embedUrl.split('.').pop()}`} />
+                Your browser does not support the video tag.
+              </video>
+            ) : (
+              <iframe
+                src={embedUrl}
+                title={link.title}
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="video-iframe"
+              ></iframe>
+            )
+          ) : (
+            <div className="video-embed-error">
+              <p>Unable to preview this video. The URL format is not supported.</p>
+              <button
+                onClick={onClose}
+                className="btn-secondary"
+              >
+                Close
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div style={commonStyles.container}>
+    <div className="subcategory-settings">
       <ToastContainer
         position="top-right"
         autoClose={3000}
@@ -1191,1007 +1334,967 @@ const SubcategorySettings = () => {
         theme="light"
         limit={2}
       />
-      <div style={{ textAlign: "left", marginBottom: "2rem" }}>
-        <button
-          onClick={() => navigate(`/church/${churchId}/course-categories`)}
-          style={commonStyles.backButtonLink}
-        >
-          ← Back to Categories
-        </button>
+
+      {/* Header Section */}
+      <div className="settings-header">
+        <div className="header-content">
+          <button
+            onClick={() => navigate(`/church/${churchId}/course-categories`)}
+            className="back-button"
+          >
+            ← Back to Categories
+          </button>
+          <div className="header-info">
+            <h1 className="page-title">{subcategory.name}</h1>
+            <p className="page-subtitle">Manage subcategory settings and content</p>
+          </div>
+        </div>
       </div>
 
-      <div className="settings-container">
-        <h1 className="page-title">{subcategory.name} Settings</h1>
+      {/* Navigation Tabs */}
+      <div className="settings-navigation">
+        <nav className="nav-tabs">
+          <button
+            className={`nav-tab ${activeTab === 'basic' ? 'active' : ''}`}
+            onClick={() => setActiveTab('basic')}
+          >
+            <span className="tab-icon">⚙️</span>
+            Basic Settings
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'content' ? 'active' : ''}`}
+            onClick={() => setActiveTab('content')}
+          >
+            <span className="tab-icon">📄</span>
+            Content
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'events' ? 'active' : ''}`}
+            onClick={() => setActiveTab('events')}
+          >
+            <span className="tab-icon">📅</span>
+            Events
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'materials' ? 'active' : ''}`}
+            onClick={() => setActiveTab('materials')}
+          >
+            <span className="tab-icon">📚</span>
+            Materials
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'videos' ? 'active' : ''}`}
+            onClick={() => setActiveTab('videos')}
+          >
+            <span className="tab-icon">🎥</span>
+            Video Links
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'groups' ? 'active' : ''}`}
+            onClick={() => setActiveTab('groups')}
+          >
+            <span className="tab-icon">👥</span>
+            Groups
+          </button>
+        </nav>
+      </div>
 
-        {/* Basic Settings Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Basic Settings</h2>
-          <div className="section-content">
-            <div className="form-group">
-              <label>Name:</label>
-              <input
-                type="text"
-                value={subcategory.name}
-                onChange={(e) => handleUpdate({ name: e.target.value })}
-                className="form-control"
-              />
-            </div>
-            <div className="form-group">
-              <label>Description:</label>
-              <textarea
-                value={subcategory.description || ""}
-                onChange={(e) => handleUpdate({ description: e.target.value })}
-                className="form-control"
-              />
-            </div>
-            <div className="form-group">
-              <label>Order Number:</label>
-              <input
-                type="number"
-                min="1"
-                value={subcategory.order || 1}
-                onChange={(e) => handleUpdate({ order: parseInt(e.target.value) })}
-                className="form-control"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Content Settings Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Content Settings</h2>
-          <div className="section-content">
-            <div className="form-group">
-              <label>Associated Form:</label>
-              {loadingForms ? (
-                <div style={{ padding: '10px', color: '#666' }}>Loading forms...</div>
-              ) : (
-                <select
-                  value={subcategory.formId || ""}
-                  onChange={(e) => handleUpdate({ formId: e.target.value })}
-                  className="form-control"
-                  style={{ width: '100%' }}
-                >
-                  <option value="">No form selected</option>
-                  {forms.map((form) => (
-                    <option key={form.id} value={form.id}>
-                      {form.title || `Form ${form.id}`}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {subcategory.formId && (
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '5px', display: 'block' }}>
-                  Selected form will be displayed in the course detail view
-                </small>
-              )}
+      {/* Tab Content */}
+      <div className="tab-content">
+        {activeTab === 'basic' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Basic Information</h2>
+              <p>Configure the fundamental settings for this subcategory</p>
             </div>
 
-            <div className="form-group">
-              <label>Associated Gallery:</label>
-              {loadingGalleries ? (
-                <div style={{ padding: '10px', color: '#666' }}>Loading galleries...</div>
-              ) : (
-                <select
-                  value={subcategory.galleryId || ""}
-                  onChange={(e) => handleUpdate({ galleryId: e.target.value })}
-                  className="form-control"
-                  style={{ width: '100%' }}
-                >
-                  <option value="">No gallery selected</option>
-                  {galleries.map((gallery) => (
-                    <option key={gallery.id} value={gallery.id}>
-                      {gallery.title || gallery.name || `Gallery ${gallery.id}`}
-                      {gallery.images && ` (${gallery.images.length} images)`}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {subcategory.galleryId && (
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '5px', display: 'block' }}>
-                  Selected gallery will be displayed in the course detail view
-                </small>
-              )}
-            </div>
-          </div>
-        </div>
+            <div className="settings-grid">
+              <div className="setting-card">
+                <div className="card-header">
+                  <h3>Subcategory Details</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <label htmlFor="subcategory-name">Name</label>
+                    <input
+                      id="subcategory-name"
+                      type="text"
+                      value={subcategory.name}
+                      onChange={(e) => handleUpdate({ name: e.target.value })}
+                      className="form-input"
+                      placeholder="Enter subcategory name"
+                    />
+                  </div>
 
-        {/* Event Settings Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Event Settings</h2>
-          <div className="section-content">
-            <div className="form-group">
-              <div className="checkbox-container">
-                <input
-                  type="checkbox"
-                  id="isEvent"
-                  checked={subcategory.isEvent || false}
-                  onChange={(e) => handleUpdate({ isEvent: e.target.checked })}
-                  className="event-checkbox"
-                />
-                <label
-                  htmlFor="isEvent"
-                  className="checkbox-label"
-                  style={{ marginTop: "10px" }}
-                >
-                  Is this an event?
-                </label>
+                  <div className="form-group">
+                    <label htmlFor="subcategory-description">Description</label>
+                    <textarea
+                      id="subcategory-description"
+                      value={subcategory.description || ""}
+                      onChange={(e) => handleUpdate({ description: e.target.value })}
+                      className="form-textarea"
+                      placeholder="Enter subcategory description"
+                      rows={4}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="subcategory-order">Display Order</label>
+                    <input
+                      id="subcategory-order"
+                      type="number"
+                      min="1"
+                      value={subcategory.order || 1}
+                      onChange={(e) => handleUpdate({ order: parseInt(e.target.value) })}
+                      className="form-input"
+                    />
+                    <p className="form-help">Lower numbers appear first in the list</p>
+                  </div>
+                </div>
               </div>
             </div>
-            {subcategory.isEvent && (
-              <div className="event-fields">
-                <h4>Event Management</h4>
-                {subcategory.events && subcategory.events.length > 0 && (
-                  <div className="events-list">
-                    <h5>Scheduled Events</h5>
-                    {subcategory.events.map((event) => (
-                      <div key={event.id} className="event-item">
-                        {editingEvent?.id === event.id ? (
-                          <div className="event-edit-form">
-                            <div className="form-group">
-                              <label>Event Title:</label>
-                              <input
-                                type="text"
-                                value={editingEvent.title}
-                                onChange={(e) => setEditingEvent({...editingEvent, title: e.target.value})}
-                                className="form-control"
-                              />
-                            </div>
-                            <div className="form-group">
-                              <div className="checkbox-container">
-                                <input
-                                  type="checkbox"
-                                  id={`isRecurring-${event.id}`}
-                                  checked={editingEvent.isRecurring}
-                                  disabled={true}
-                                  className="event-checkbox"
-                                />
-                                <label htmlFor={`isRecurring-${event.id}`} className="checkbox-label">
-                                  {editingEvent.isRecurring ? "Recurring event" : "One-time event"}
-                                </label>
-                              </div>
-                              {editingEvent.isRecurring && (
-                                <div className="recurring-options">
-                                  <div className="form-group">
-                                    <label>Recurrence Pattern:</label>
-                                    <select
-                                      value={editingEvent.recurrencePattern}
-                                      onChange={(e) =>
-                                        setEditingEvent({
-                                          ...editingEvent,
-                                          recurrencePattern: e.target.value,
-                                        })
-                                      }
-                                      className="form-control"
-                                    >
-                                      <option value="daily">Daily</option>
-                                      <option value="weekly">Weekly</option>
-                                      <option value="biweekly">Bi-weekly</option>
-                                      <option value="monthly">Monthly</option>
-                                      <option value="yearly">Yearly</option>
-                                    </select>
+          </div>
+        )}
+
+        {activeTab === 'content' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Content Associations</h2>
+              <p>Link forms and galleries to enhance the learning experience</p>
+            </div>
+
+            <div className="settings-grid">
+              <div className="setting-card">
+                <div className="card-header">
+                  <h3>Form Integration</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <label htmlFor="associated-form">Associated Form</label>
+                    {loadingForms ? (
+                      <div className="loading-indicator">
+                        <Spinner animation="border" size="sm" />
+                        Loading forms...
+                      </div>
+                    ) : (
+                      <select
+                        id="associated-form"
+                        value={subcategory.formId || ""}
+                        onChange={(e) => handleUpdate({ formId: e.target.value })}
+                        className="form-select"
+                      >
+                        <option value="">No form selected</option>
+                        {forms.map((form) => (
+                          <option key={form.id} value={form.id}>
+                            {form.title || `Form ${form.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {subcategory.formId && (
+                      <p className="form-help">
+                        This form will be displayed when users access this subcategory
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="setting-card">
+                <div className="card-header">
+                  <h3>Gallery Integration</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <label htmlFor="associated-gallery">Associated Gallery</label>
+                    {loadingGalleries ? (
+                      <div className="loading-indicator">
+                        <Spinner animation="border" size="sm" />
+                        Loading galleries...
+                      </div>
+                    ) : (
+                      <select
+                        id="associated-gallery"
+                        value={subcategory.galleryId || ""}
+                        onChange={(e) => handleUpdate({ galleryId: e.target.value })}
+                        className="form-select"
+                      >
+                        <option value="">No gallery selected</option>
+                        {galleries.map((gallery) => (
+                          <option key={gallery.id} value={gallery.id}>
+                            {gallery.title || gallery.name || `Gallery ${gallery.id}`}
+                            {gallery.images && ` (${gallery.images.length} images)`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {subcategory.galleryId && (
+                      <p className="form-help">
+                        This gallery will be displayed when users access this subcategory
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'events' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Event Management</h2>
+              <p>Schedule and manage events for this subcategory</p>
+            </div>
+
+            <div className="settings-grid">
+              <div className="setting-card full-width">
+                <div className="card-header">
+                  <h3>Event Configuration</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <div className="checkbox-wrapper">
+                      <input
+                        type="checkbox"
+                        id="isEvent"
+                        checked={subcategory.isEvent || false}
+                        onChange={(e) => handleUpdate({ isEvent: e.target.checked })}
+                        className="form-checkbox"
+                      />
+                      <label htmlFor="isEvent" className="checkbox-label">
+                        Enable event functionality for this subcategory
+                      </label>
+                    </div>
+                  </div>
+
+                  {subcategory.isEvent && (
+                    <div className="event-management-section">
+                      {/* Existing Events */}
+                      {subcategory.events && subcategory.events.length > 0 && (
+                        <div className="existing-events">
+                          <h4>Scheduled Events</h4>
+                          <div className="events-grid">
+                            {subcategory.events.map((event) => (
+                              <div key={event.id} className="event-card">
+                                {editingEvent?.id === event.id ? (
+                                  <div className="event-edit-form">
+                                    <div className="form-group">
+                                      <label>Event Title</label>
+                                      <input
+                                        type="text"
+                                        value={editingEvent.title}
+                                        onChange={(e) => setEditingEvent({...editingEvent, title: e.target.value})}
+                                        className="form-input"
+                                      />
+                                    </div>
+                                    <div className="form-group">
+                                      <div className="checkbox-wrapper">
+                                        <input
+                                          type="checkbox"
+                                          id={`isRecurring-${event.id}`}
+                                          checked={editingEvent.isRecurring}
+                                          disabled={true}
+                                          className="form-checkbox"
+                                        />
+                                        <label htmlFor={`isRecurring-${event.id}`}>
+                                          {editingEvent.isRecurring ? "Recurring event" : "One-time event"}
+                                        </label>
+                                      </div>
+                                    </div>
+                                    {editingEvent.isRecurring && (
+                                      <div className="recurring-options">
+                                        <div className="form-group">
+                                          <label>Pattern</label>
+                                          <select
+                                            value={editingEvent.recurrencePattern}
+                                            onChange={(e) =>
+                                              setEditingEvent({
+                                                ...editingEvent,
+                                                recurrencePattern: e.target.value,
+                                              })
+                                            }
+                                            className="form-select"
+                                          >
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="biweekly">Bi-weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                            <option value="yearly">Yearly</option>
+                                          </select>
+                                        </div>
+                                        <div className="form-group">
+                                          <label>End Date</label>
+                                          <input
+                                            type="date"
+                                            value={editingEvent.recurrenceEndDate || ""}
+                                            onChange={(e) =>
+                                              setEditingEvent({
+                                                ...editingEvent,
+                                                recurrenceEndDate: e.target.value,
+                                              })
+                                            }
+                                            className="form-input"
+                                            min={editingEvent.dates[0].date}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                    {editingEvent?.dates?.map((date, index) => (
+                                      <div key={index} className="date-entry">
+                                        <label>Day {index + 1}</label>
+                                        <input
+                                          type="date"
+                                          value={date.date}
+                                          onChange={(e) => {
+                                            const newDates = [...editingEvent.dates];
+                                            newDates[index] = {...date, date: e.target.value};
+                                            setEditingEvent({...editingEvent, dates: newDates});
+                                          }}
+                                          className="form-input"
+                                        />
+                                        <div className="time-inputs">
+                                          <input
+                                            type="time"
+                                            value={date.startHour}
+                                            onChange={(e) => {
+                                              const newDates = [...editingEvent.dates];
+                                              if (date.endHour < e.target.value) {
+                                                newDates[index] = {
+                                                  ...date,
+                                                  startHour: e.target.value,
+                                                  endHour: e.target.value,
+                                                };
+                                              } else {
+                                                newDates[index] = {...date, startHour: e.target.value};
+                                              }
+                                              setEditingEvent({...editingEvent, dates: newDates});
+                                            }}
+                                            className="form-input time-input"
+                                          />
+                                          <input
+                                            type="time"
+                                            value={date.endHour}
+                                            min={date.startHour}
+                                            onChange={(e) => {
+                                              const newDates = [...editingEvent.dates];
+                                              if (e.target.value >= date.startHour) {
+                                                newDates[index] = {...date, endHour: e.target.value};
+                                                setEditingEvent({...editingEvent, dates: newDates});
+                                              }
+                                            }}
+                                            className="form-input time-input"
+                                          />
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <div className="form-actions">
+                                      <button onClick={() => handleSaveEventEdit(event.id)} className="btn-primary">
+                                        Save Changes
+                                      </button>
+                                      <button onClick={handleCancelEventEdit} className="btn-secondary">
+                                        Cancel
+                                      </button>
+                                    </div>
                                   </div>
-                                  <div className="form-group">
-                                    <label>Recurrence End Date:</label>
-                                    <input
-                                      type="date"
-                                      value={editingEvent.recurrenceEndDate || ""}
-                                      onChange={(e) =>
-                                        setEditingEvent({
-                                          ...editingEvent,
-                                          recurrenceEndDate: e.target.value,
-                                        })
-                                      }
-                                      className="form-control"
-                                      min={editingEvent.dates[0].date}
-                                    />
+                                ) : (
+                                  <div className="event-content">
+                                    <div className="event-header">
+                                      <h5>{event.title}</h5>
+                                      {event.isRecurring && (
+                                        <span className="recurring-badge">
+                                          🔄 {event.recurrencePattern}
+                                        </span>
+                                      )}
+                                      <div className="event-actions">
+                                        <button
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleEditEvent(event);
+                                          }}
+                                          className="btn-icon"
+                                          title="Edit event"
+                                        >
+                                          ✏️
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleDeleteEvent(event.id);
+                                          }}
+                                          className="btn-icon btn-danger"
+                                          title="Delete event"
+                                        >
+                                          🗑️
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="event-instances">
+                                      {(event.instances || []).slice(0, 3).map((instance) => (
+                                        <div key={instance.id} className="event-instance">
+                                          <div className="instance-info">
+                                            <span className="instance-date">{instance.startDate}</span>
+                                            <span className="instance-time">{instance.startHour} - {instance.endHour}</span>
+                                            <span className={`status-badge ${instance.status}`}>
+                                              {instance.status}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                      {(event.instances || []).length > 3 && (
+                                        <div className="more-instances">
+                                          +{(event.instances || []).length - 3} more instances
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                            {editingEvent?.dates?.map((date, index) => (
-                              <div key={index} className="date-edit-entry">
-                                <label>Day {index + 1}:</label>
-                                <input
-                                  type="date"
-                                  value={date.date}
-                                  onChange={(e) => {
-                                    const newDates = [...editingEvent.dates];
-                                    newDates[index] = {...date, date: e.target.value};
-                                    setEditingEvent({...editingEvent, dates: newDates});
-                                  }}
-                                  className="form-control"
-                                />
-                                <div className="time-inputs">
-                                  <input
-                                    type="time"
-                                    value={date.startHour}
-                                    onChange={(e) => {
-                                      const newDates = [...editingEvent.dates];
-                                      if (date.endHour < e.target.value) {
-                                        newDates[index] = {
-                                          ...date,
-                                          startHour: e.target.value,
-                                          endHour: e.target.value,
-                                        };
-                                      } else {
-                                        newDates[index] = {...date, startHour: e.target.value};
-                                      }
-                                      setEditingEvent({...editingEvent, dates: newDates});
-                                    }}
-                                    className="form-control"
-                                  />
-                                  <input
-                                    type="time"
-                                    value={date.endHour}
-                                    min={date.startHour}
-                                    onChange={(e) => {
-                                      const newDates = [...editingEvent.dates];
-                                      if (e.target.value >= date.startHour) {
-                                        newDates[index] = {...date, endHour: e.target.value};
-                                        setEditingEvent({...editingEvent, dates: newDates});
-                                      }
-                                    }}
-                                    className="form-control"
-                                  />
-                                </div>
+                                )}
                               </div>
                             ))}
-                            <div className="edit-actions">
-                              <button onClick={() => handleSaveEventEdit(event.id)} className="save-btn">
-                                Save Changes
-                              </button>
-                              <button onClick={handleCancelEventEdit} className="cancel-btn">
-                                Cancel
-                              </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Add New Event */}
+                      <div className="add-event-section">
+                        <h4>Add New Event</h4>
+                        <div className="event-form">
+                          <div className="form-group">
+                            <label htmlFor="event-title">Event Title</label>
+                            <input
+                              id="event-title"
+                              type="text"
+                              value={newEvent.title}
+                              onChange={(e) =>
+                                setNewEvent({ ...newEvent, title: e.target.value })
+                              }
+                              placeholder="Enter event title"
+                              className="form-input"
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <div className="checkbox-wrapper">
+                              <input
+                                type="checkbox"
+                                id="isRecurring"
+                                checked={newEvent.recurring}
+                                onChange={(e) =>
+                                  setNewEvent({ ...newEvent, recurring: e.target.checked })
+                                }
+                                className="form-checkbox"
+                              />
+                              <label htmlFor="isRecurring">
+                                Recurring event
+                              </label>
                             </div>
                           </div>
-                        ) : (
-                          <>
-                            <div className="event-item-header">
-                              <h6>
-                                {event.title}
-                                {event.isRecurring && (
-                                  <span className="recurring-badge">
-                                    🔄 {event.recurrencePattern}
-                                  </span>
-                                )}
-                              </h6>
-                              <div className="event-actions">
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleEditEvent(event);
-                                  }}
-                                  className="edit-event-btn"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleDeleteEvent(event.id);
-                                  }}
-                                  className="delete-event-btn"
-                                >
-                                  ✕
-                                </button>
+
+                          {newEvent.recurring && (
+                            <div className="recurring-config">
+                              <div className="form-row">
+                                <div className="form-group">
+                                  <label htmlFor="recurrence-pattern">Pattern</label>
+                                  <select
+                                    id="recurrence-pattern"
+                                    value={newEvent.recurrencePattern}
+                                    onChange={(e) => {
+                                      setNewEvent({ ...newEvent, recurrencePattern: e.target.value });
+                                      if (newEvent.recurrenceEndDate) {
+                                        const count = calculateInstances(
+                                          newEvent.dates[0].date,
+                                          newEvent.recurrenceEndDate,
+                                          e.target.value
+                                        );
+                                        setPreviewInstances(count);
+                                      }
+                                    }}
+                                    className="form-select"
+                                  >
+                                    <option value="weekly">Weekly</option>
+                                    <option value="biweekly">Bi-weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="yearly">Yearly</option>
+                                  </select>
+                                </div>
+                                <div className="form-group">
+                                  <label htmlFor="recurrence-end">End Date</label>
+                                  <input
+                                    id="recurrence-end"
+                                    type="date"
+                                    value={newEvent.recurrenceEndDate}
+                                    onChange={(e) =>
+                                      setNewEvent({ ...newEvent, recurrenceEndDate: e.target.value })
+                                    }
+                                    className="form-input"
+                                  />
+                                </div>
                               </div>
                             </div>
-                            <div className="event-instances">
-                              {(event.instances || []).map((instance) => (
-                                <div
-                                  key={instance.id}
-                                  className={`event-instance ${instance.isDeleted ? "deleted" : ""}`}
-                                  style={{
-                                    opacity: instance.isDeleted ? 0.6 : 1,
-                                    backgroundColor: instance.isDeleted ? "#fff5f5" : "#ffffff",
-                                  }}
-                                >
-                                  <div className="instance-details">
-                                    {editingEventId === event.id && editingInstance?.id === instance.id ? (
-                                      <>
-                                        <input
-                                          type="text"
-                                          value={editingInstance.instanceTitle || editingInstance.title}
-                                          onChange={(e) => setEditingInstance({
-                                            ...editingInstance,
-                                            instanceTitle: e.target.value
-                                          })}
-                                          className="form-control"
-                                          placeholder="Instance title"
-                                        />
-                                        <input
-                                          type="number"
-                                          value={editingInstance.order || 1}
-                                          onChange={(e) => setEditingInstance({
-                                            ...editingInstance,
-                                            order: parseInt(e.target.value)
-                                          })}
-                                          className="form-control"
-                                          min="1"
-                                          style={{ width: '80px' }}
-                                        />
-                                        <select
-                                          value={editingInstance.status || 'optional'}
-                                          onChange={(e) => setEditingInstance({
-                                            ...editingInstance,
-                                            status: e.target.value
-                                          })}
-                                          className="form-control"
-                                        >
-                                          <option value="required">Required</option>
-                                          <option value="optional">Optional</option>
-                                        </select>
-                                        <button onClick={() => handleUpdateInstance(event.id, instance.id, editingInstance)}>
-                                          Save
-                                        </button>
-                                        <button onClick={() => {
-                                          setEditingEventId(null);
-                                          setEditingInstance(null);
-                                        }}>
-                                          Cancel
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <span className="instance-order">#{instance.order}</span>
-                                        <span className="instance-title">{instance.instanceTitle || instance.title}</span>
-                                        <span>{instance.startDate} at {instance.startHour}</span>
-                                        <span>to</span>
-                                        <span>{instance.endHour}</span>
-                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                          <span className={`status-badge ${instance.status}`}>
-                                            {instance.status}
-                                          </span>
-                                          <span style={{
-                                            padding: '2px 8px',
-                                            borderRadius: '12px',
-                                            fontSize: '0.8em',
-                                            backgroundColor: '#e2e8f0',
-                                            color: '#4a5568'
-                                          }}>
-                                            Order: {instance.order}
-                                          </span>
-                                        </div>
-                                        <button
-                                          onClick={() => handleEditEventInstance(event, instance)}
-                                          className="edit-instance-btn"
-                                          disabled={instance.isDeleted}
-                                        >
-                                          Edit
-                                        </button>
-                                      </>
+                          )}
+
+                          <div className="form-group">
+                            <label>Schedule</label>
+                            <div className="schedule-builder">
+                              {newEvent.dates.map((date, index) => (
+                                <div key={index} className="schedule-item">
+                                  <div className="date-time-row">
+                                    <input
+                                      type="date"
+                                      value={date.date}
+                                      onChange={(e) => {
+                                        const newDates = [...newEvent.dates];
+                                        newDates[index] = { ...date, date: e.target.value };
+                                        setNewEvent({ ...newEvent, dates: newDates });
+                                      }}
+                                      className="form-input"
+                                    />
+                                    <div className="time-range">
+                                      <input
+                                        type="time"
+                                        value={date.startHour}
+                                        onChange={(e) => {
+                                          const newDates = [...newEvent.dates];
+                                          newDates[index] = { ...date, startHour: e.target.value };
+                                          setNewEvent({ ...newEvent, dates: newDates });
+                                        }}
+                                        className="form-input time-input"
+                                      />
+                                      <span className="time-separator">to</span>
+                                      <input
+                                        type="time"
+                                        value={date.endHour}
+                                        onChange={(e) => {
+                                          const newDates = [...newEvent.dates];
+                                          newDates[index] = { ...date, endHour: e.target.value };
+                                          setNewEvent({ ...newEvent, dates: newDates });
+                                        }}
+                                        className="form-input time-input"
+                                      />
+                                    </div>
+                                    {newEvent.dates.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const newDates = newEvent.dates.filter((_, i) => i !== index);
+                                          setNewEvent({ ...newEvent, dates: newDates });
+                                        }}
+                                        className="btn-icon btn-danger"
+                                        title="Remove date"
+                                      >
+                                        ×
+                                      </button>
                                     )}
                                   </div>
                                 </div>
                               ))}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="add-event-form">
-                  <h5>Add New Event</h5>
-                  <div className="form-group">
-                    <label>Event Title:</label>
-                    <input
-                      type="text"
-                      value={newEvent.title}
-                      onChange={(e) =>
-                        setNewEvent({ ...newEvent, title: e.target.value })
-                      }
-                      placeholder="Enter event title"
-                      className="form-control"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <div className="checkbox-container">
-                      <input
-                        type="checkbox"
-                        id="isRecurring"
-                        checked={newEvent.recurring}
-                        onChange={(e) =>
-                          setNewEvent({ ...newEvent, recurring: e.target.checked })
-                        }
-                        className="event-checkbox"
-                      />
-                      <label htmlFor="isRecurring" className="checkbox-label">
-                        Make this a recurring event
-                      </label>
-                    </div>
-                    {newEvent.recurring && (
-                      <div className="recurring-options">
-                        <div className="form-group">
-                          <label>Recurrence Pattern:</label>
-                          <select
-                            value={newEvent.recurrencePattern}
-                            onChange={(e) => {
-                              setNewEvent({ ...newEvent, recurrencePattern: e.target.value });
-                              if (newEvent.recurrenceEndDate) {
-                                const count = calculateInstances(
-                                  newEvent.dates[0].date,
-                                  newEvent.recurrenceEndDate,
-                                  e.target.value
-                                );
-                                setPreviewInstances(count);
-                              }
-                            }}
-                            className="form-control"
-                          >
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="biweekly">Bi-weekly</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="yearly">Yearly</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label>Recurrence End Date: <span className="required">*</span></label>
-                          <input
-                            type="date"
-                            value={newEvent.recurrenceEndDate}
-                            onChange={(e) => {
-                              setNewEvent({ ...newEvent, recurrenceEndDate: e.target.value });
-                              const count = calculateInstances(
-                                newEvent.dates[0].date,
-                                e.target.value,
-                                newEvent.recurrencePattern
-                              );
-                              setPreviewInstances(count);
-                            }}
-                            className="form-control"
-                            min={newEvent.dates[0].date}
-                            required
-                          />
-                        </div>
-                        {previewInstances > 0 && (
-                          <div className="instances-preview">
-                            This will create <strong>{previewInstances}</strong> event instances.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    className="event-dates"
-                    style={{ display: "flex", flexDirection: "column", gap: "20px" }}
-                  >
-                    {newEvent.dates.map((dateEntry, index) => (
-                      <div
-                        key={index}
-                        className="date-entry"
-                        style={{
-                          padding: "15px",
-                          border: "1px solid #eee",
-                          borderRadius: "8px",
-                          backgroundColor: "#fafafa",
-                          width: "100%",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            marginBottom: "15px",
-                          }}
-                        >
-                          <h6 style={{ margin: 0 }}>Day {index + 1}</h6>
-                          <div style={{ display: "flex", gap: "10px" }}>
-                            {editingIndex === index ? (
-                              <>
-                                <button
-                                  onClick={() => handleSaveEdit(index)}
-                                  style={{
-                                    border: "none",
-                                    background: "none",
-                                    color: "#28a745",
-                                    cursor: "pointer",
-                                    padding: "5px",
-                                  }}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  onClick={handleCancelEdit}
-                                  style={{
-                                    border: "none",
-                                    background: "none",
-                                    color: "#6c757d",
-                                    cursor: "pointer",
-                                    padding: "5px",
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => handleEditDate(index)}
-                                  style={{
-                                    border: "none",
-                                    background: "none",
-                                    color: "#007bff",
-                                    cursor: "pointer",
-                                    padding: "5px",
-                                  }}
-                                >
-                                  Edit
-                                </button>
-                                {index > 0 && (
-                                  <button
-                                    onClick={() => handleRemoveDate(index)}
-                                    style={{
-                                      border: "none",
-                                      background: "none",
-                                      color: "#dc3545",
-                                      cursor: "pointer",
-                                      padding: "5px",
-                                    }}
-                                  >
-                                    ✕
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ display: "grid", gap: "15px" }}>
-                          <div className="form-group">
-                            <label>Date:</label>
-                            <input
-                              type="date"
-                              value={
-                                editingIndex === index
-                                  ? editingEntry.date
-                                  : dateEntry.date
-                              }
-                              onChange={(e) =>
-                                editingIndex === index
-                                  ? handleEditingChange("date", e.target.value)
-                                  : handleDateTimeChange(index, "date", e.target.value)
-                              }
-                              disabled={editingIndex !== index && editingIndex !== -1}
-                              className="form-control"
-                            />
-                          </div>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
-                              gap: "15px",
-                            }}
-                          >
-                            <div className="form-group">
-                              <label>Start Time:</label>
-                              <input
-                                type="time"
-                                value={
-                                  editingIndex === index
-                                    ? editingEntry.startHour
-                                    : dateEntry.startHour
-                                }
-                                onChange={(e) =>
-                                  editingIndex === index
-                                    ? handleEditingChange("startHour", e.target.value)
-                                    : handleDateTimeChange(
-                                        index,
-                                        "startHour",
-                                        e.target.value
-                                      )
-                                }
-                                disabled={editingIndex !== index && editingIndex !== -1}
-                                className="form-control"
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>End Time:</label>
-                              <input
-                                type="time"
-                                value={
-                                  editingIndex === index
-                                    ? editingEntry.endHour
-                                    : dateEntry.endHour
-                                }
-                                min={editingIndex === index ? editingEntry.startHour : dateEntry.startHour}
-                                onChange={(e) => {
-                                  const newTime = e.target.value;
-                                  const startTime = editingIndex === index ? editingEntry.startHour : dateEntry.startHour;
-                                  
-                                  if (newTime >= startTime) {
-                                    editingIndex === index
-                                      ? handleEditingChange("endHour", newTime)
-                                      : handleDateTimeChange(index, "endHour", newTime);
-                                  }
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newDates = [...newEvent.dates, {
+                                    date: new Date().toISOString().split("T")[0],
+                                    startHour: "09:00",
+                                    endHour: "10:00",
+                                  }];
+                                  setNewEvent({ ...newEvent, dates: newDates });
                                 }}
-                                disabled={editingIndex !== index && editingIndex !== -1}
-                                className="form-control"
-                              />
+                                className="btn-secondary"
+                              >
+                                + Add Another Date
+                              </button>
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={handleAddDate}
-                      className="add-date-btn"
-                      style={{
-                        background: "#f8f9fa",
-                        border: "1px dashed #ccc",
-                        padding: "12px",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        width: "100%",
-                        marginTop: "10px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "8px",
-                      }}
-                    >
-                      <span style={{ fontSize: "20px" }}>+</span> Add Another Day
-                    </button>
-                  </div>
-                  <div className="form-group">
-                    <label>Event Image:</label>
-                    <div className="event-image-upload">
-                      <div className="checkbox-container mb-2">
-                        <input
-                          type="checkbox"
-                          id="use-subcategory-image"
-                          checked={newEvent.useSubcategoryImage}
-                          onChange={(e) =>
-                            setNewEvent({
-                              ...newEvent,
-                              useSubcategoryImage: e.target.checked,
-                              imageUrl: e.target.checked ? "" : newEvent.imageUrl,
-                            })
-                          }
-                          className="event-checkbox"
-                        />
-                        <label
-                          htmlFor="use-subcategory-image"
-                          className="checkbox-label"
-                        >
-                          Use subcategory image
-                        </label>
-                      </div>
-                      {!newEvent.useSubcategoryImage && (
-                        <div className="image-upload-container">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) =>
-                              handleEventImageUpload(e.target.files[0])
-                            }
-                            className="form-control"
-                            readOnly={uploadingImage}
-                          />
-                          {uploadingImage && (
-                            <div className="upload-progress">
-                              <div className="spinner"></div>
-                              <span>Uploading image...</span>
-                            </div>
-                          )}
-                          {newEvent.imageUrl && (
-                            <div className="image-preview">
-                              <img
-                                src={newEvent.imageUrl}
-                                alt="Event preview"
-                                style={{
-                                  maxWidth: "200px",
-                                  maxHeight: "200px",
-                                  objectFit: "cover",
-                                  marginTop: "10px",
-                                  borderRadius: "4px",
-                                }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleAddEvent}
-                    className="add-event-button"
-                    disabled={!newEvent.title || isAddingEvent}
-                  >
-                    {isAddingEvent ? "Adding..." : "Add Event"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Group Settings Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Group Settings</h2>
-          <div className="section-content">
-            {subcategory?.groupId ? (
-              <div className="group-verification-section">
-                <div className="verification-text">
-                  <span>Group Successfully Created & Verified</span>
-                  <span className="verification-badge">ACTIVE</span>
-                </div>
-                <div className="group-fields">
-                  <p>Group "{newGroupName || subcategory.name}" is active for this sub-category</p>
-                  {isDeletingGroup ? (
-                    <Spinner
-                      animation="border"
-                      style={{
-                        width: "24px",
-                        height: "24px",
-                        color: "#ac4343",
-                      }}
-                    />
-                  ) : (
-                    <MdDelete
-                      onClick={() => handleDeleteGroup(subcategory.groupId)}
-                      size={24}
-                      color="#ac4343"
-                      data-tooltip-id="delete-tooltip"
-                      data-tooltip-content="Delete Group"
-                      className="cursor-pointer"
-                    />
+                          <div className="form-actions">
+                            <button
+                              onClick={handleAddEvent}
+                              disabled={!newEvent.title.trim() || isAddingEvent}
+                              className="btn-primary"
+                            >
+                              {isAddingEvent ? "Creating Event..." : "Create Event"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                  <Tooltip id="delete-tooltip" place="top" effect="solid" />
                 </div>
               </div>
-            ) : (
-              <>
-                <div className="form-group">
-                  <div className="checkbox-container">
-                    <input
-                      type="checkbox"
-                      id="isGroup"
-                      checked={subcategory.isGroup || false}
-                      onChange={(e) => handleUpdate({ isGroup: e.target.checked })}
-                      className="event-checkbox"
-                    />
-                    <label
-                      htmlFor="isGroup"
-                      className="checkbox-label"
-                      style={{ marginTop: "10px" }}
-                    >
-                      Mark this as a Group Category
-                    </label>
-                  </div>
-                </div>
-                {subcategory.isGroup && (
-                  <div className="event-fields" style={{ textAlign: "start" }}>
-                    <div className="group-status-indicator">
-                      Group Mode Enabled
-                    </div>
-                    <div className="form-group">
-                      <label>Group Title:</label>
-                      <input
-                        type="text"
-                        value={newGroupName}
-                        onChange={(e) => setNewGroupName(e.target.value)}
-                        placeholder="Enter a descriptive name for your group"
-                        className="form-control"
-                      />
-                    </div>
-                    <button
-                      onClick={handleCreateGroup}
-                      style={{
-                        ...commonStyles.confirmButton,
-                        marginLeft: "10px",
-                        width: "200px",
-                      }}
-                      disabled={isCreatingGroup || !newGroupName.trim()}
-                    >
-                      {isCreatingGroup ? "Creating..." : "Create Group"}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* User Assignment Section */}
-        <div className="settings-section">
-          <h2 className="section-title">User Assignment</h2>
-          <div className="section-content">
-            <div className="form-group">
-              <label>Assign Users:</label>
-              <UsersDropdown
-                selectedUsers={subcategory.assignedUsers || []}
-                onChange={(selected) => handleUpdate({ assignedUsers: selected })}
-                isMulti={true}
-                idIglesia={churchId}
-              />
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Materials Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Materials</h2>
-          <div className="section-content">
-            <div className="materials-upload">
+        {activeTab === 'materials' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Materials Management</h2>
+              <p>Upload and organize learning materials for this subcategory</p>
+            </div>
+
+            <div className="materials-section">
               <div className="upload-section">
-                <label className="upload-label">
+                <div className="upload-area">
                   <input
                     type="file"
-                    onChange={(e) => {
-                      e.preventDefault();
-                      handleFileUpload(e.target.files);
-                    }}
-                    accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.mp4,.mp3,.zip,.rar,.jpg,.jpeg,.png,.gif"
-                    className="file-input"
-                    disabled={uploading}
                     multiple
+                    onChange={(e) => handleFileUpload(e.target.files)}
+                    className="file-input"
+                    id="file-upload"
                   />
-                  <span className="upload-button">
-                    {uploading ? "Uploading..." : "Upload Material"}
-                  </span>
-                </label>
+                  <label htmlFor="file-upload" className="upload-label">
+                    <div className="upload-icon">📁</div>
+                    <div className="upload-text">
+                      <strong>Click to upload</strong> or drag and drop
+                    </div>
+                    <div className="upload-subtext">
+                      PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, images, videos, audio files
+                    </div>
+                  </label>
+                </div>
                 {uploading && (
                   <div className="upload-progress">
-                    <div className="spinner"></div>
-                    <span>Uploading file...</span>
+                    <Spinner animation="border" />
+                    Uploading files...
                   </div>
                 )}
               </div>
+
+              {subcategory.materials && subcategory.materials.length > 0 && (
+                <div className="materials-list">
+                  <h4>Uploaded Materials</h4>
+                  <div className="materials-grid">
+                    {subcategory.materials.map((material, index) => (
+                      <div key={index} className="material-item">
+                        <div className="material-icon">
+                          {material.type === 'image' && '🖼️'}
+                          {material.type === 'video' && '🎥'}
+                          {material.type === 'audio' && '🎵'}
+                          {material.type === 'document' && '📄'}
+                        </div>
+                        <div className="material-info">
+                          <h5>{material.name}</h5>
+                          <p>{(material.size / 1024 / 1024).toFixed(2)} MB</p>
+                        </div>
+                        <div className="material-actions">
+                          <a
+                            href={material.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn-icon"
+                            title="View/Download"
+                          >
+                            👁️
+                          </a>
+                          <button
+                            onClick={() => {
+                              const updatedMaterials = subcategory.materials.filter((_, i) => i !== index);
+                              handleUpdate({ materials: updatedMaterials });
+                            }}
+                            className="btn-icon btn-danger"
+                            title="Delete"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            {subcategory.materials && subcategory.materials.length > 0 ? (
-              <div className="materials-list">
-                <h4>Current Materials</h4>
-                {subcategory.materials.map((material, index) => (
-                  <div key={index} className="material-item">
-                    <span className={`material-icon ${material.type}`}>
-                      {material.type === "document" && "📄"}
-                      {material.type === "image" && "🖼️"}
-                      {material.type === "video" && "🎥"}
-                      {material.type === "audio" && "🎵"}
-                    </span>
-                    <span className="material-name">{material.name}</span>
-                    <div className="material-actions">
-                      <a
-                        href={material.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="view-material"
-                      >
-                        View
-                      </a>
+          </div>
+        )}
+
+        {activeTab === 'videos' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Video Links</h2>
+              <p>Add and manage video links for this subcategory</p>
+            </div>
+
+            <div className="settings-grid">
+              <div className="setting-card full-width">
+                <div className="card-header">
+                  <h3>Add New Video Link</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <label htmlFor="video-title">Video Title</label>
+                    <input
+                      id="video-title"
+                      type="text"
+                      value={newVideoTitle}
+                      onChange={(e) => setNewVideoTitle(e.target.value)}
+                      placeholder="Enter video title"
+                      className="form-input"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="video-description">Description (Optional)</label>
+                    <textarea
+                      id="video-description"
+                      value={newVideoDescription}
+                      onChange={(e) => setNewVideoDescription(e.target.value)}
+                      placeholder="Enter video description"
+                      className="form-textarea"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="video-url">Video URL</label>
+                    <input
+                      id="video-url"
+                      type="url"
+                      value={newVideoUrl}
+                      onChange={(e) => setNewVideoUrl(e.target.value)}
+                      placeholder="https://example.com/video"
+                      className="form-input"
+                    />
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      onClick={handleAddVideoLink}
+                      disabled={!newVideoTitle.trim() || !newVideoUrl.trim()}
+                      className="btn-primary"
+                    >
+                      Add Video Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {(subcategory.videoLinks || []).length > 0 && (
+                <div className="setting-card full-width">
+                  <div className="card-header">
+                    <h3>Existing Video Links</h3>
+                  </div>
+                  <div className="card-body">
+                    <div className="video-links-list">
+                      {(subcategory.videoLinks || []).map((link, index) => (
+                        <div key={link.id || index} className="video-link-item">
+                          <div className="video-order">
+                            <span className="order-number">{link.order || (index + 1)}</span>
+                            <div className="order-controls">
+                              <button
+                                onClick={() => handleReorderVideoLinks(link.id, 'up')}
+                                disabled={index === 0}
+                                className="btn-icon order-btn"
+                                title="Move up"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                onClick={() => handleReorderVideoLinks(link.id, 'down')}
+                                disabled={index === (subcategory.videoLinks || []).length - 1}
+                                className="btn-icon order-btn"
+                                title="Move down"
+                              >
+                                ▼
+                              </button>
+                            </div>
+                          </div>
+                          <div className="video-link-info">
+                            <h4>{link.title}</h4>
+                            {link.description && <p>{link.description}</p>}
+                            <a
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="video-link-url"
+                            >
+                              {link.url}
+                            </a>
+                          </div>
+                          <div className="video-link-actions">
+                            <button
+                              onClick={() => handlePreviewVideo(link.id)}
+                              className={`btn-secondary btn-icon ${previewVideoId === link.id ? 'active' : ''}`}
+                              title="Preview video"
+                            >
+                              ▶️
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingVideoId(link.id);
+                                setEditingVideoData({
+                                  title: link.title,
+                                  description: link.description || '',
+                                  url: link.url
+                                });
+                              }}
+                              className="btn-secondary btn-icon"
+                              title="Edit video link"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => handleDeleteVideoLink(link.id)}
+                              className="btn-danger btn-icon"
+                              title="Delete video link"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {previewVideoId && (() => {
+                        const currentLink = (subcategory.videoLinks || []).find(link => link.id === previewVideoId);
+                        return currentLink ? (
+                          <VideoEmbed link={currentLink} onClose={() => setPreviewVideoId(null)} />
+                        ) : null;
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {editingVideoId && (
+                <div className="setting-card full-width">
+                  <div className="card-header">
+                    <h3>Edit Video Link</h3>
+                  </div>
+                  <div className="card-body">
+                    <div className="form-group">
+                      <label htmlFor="edit-video-title">Video Title</label>
+                      <input
+                        id="edit-video-title"
+                        type="text"
+                        value={editingVideoData.title}
+                        onChange={(e) => setEditingVideoData(prev => ({ ...prev, title: e.target.value }))}
+                        className="form-input"
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="edit-video-description">Description (Optional)</label>
+                      <textarea
+                        id="edit-video-description"
+                        value={editingVideoData.description}
+                        onChange={(e) => setEditingVideoData(prev => ({ ...prev, description: e.target.value }))}
+                        className="form-textarea"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="edit-video-url">Video URL</label>
+                      <input
+                        id="edit-video-url"
+                        type="url"
+                        value={editingVideoData.url}
+                        onChange={(e) => setEditingVideoData(prev => ({ ...prev, url: e.target.value }))}
+                        className="form-input"
+                      />
+                    </div>
+
+                    <div className="form-actions">
                       <button
-                        onClick={() => handleDeleteMaterial(index)}
-                        className="delete-material"
+                        onClick={() => handleEditVideoLink(editingVideoId)}
+                        disabled={!editingVideoData.title.trim() || !editingVideoData.url.trim()}
+                        className="btn-primary"
                       >
-                        Remove
+                        Update Video Link
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingVideoId(null);
+                          setEditingVideoData({ title: '', description: '', url: '' });
+                        }}
+                        className="btn-secondary"
+                      >
+                        Cancel
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="no-materials">
-                <p>No materials uploaded yet</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Video Links Section */}
-        <div className="settings-section">
-          <h2 className="section-title">Video Links</h2>
-          <div className="section-content">
-            <div className="video-links-upload">
-              <input
-                type="text"
-                placeholder="Video Title"
-                value={newVideoTitle || ''}
-                onChange={e => setNewVideoTitle(e.target.value)}
-                className="form-control"
-                style={{ marginBottom: 8 }}
-              />
-              <input
-                type="text"
-                placeholder="Video Description"
-                value={newVideoDescription || ''}
-                onChange={e => setNewVideoDescription(e.target.value)}
-                className="form-control"
-                style={{ marginBottom: 8 }}
-              />
-              <input
-                type="text"
-                placeholder="YouTube or Vimeo Link"
-                value={newVideoUrl || ''}
-                onChange={e => setNewVideoUrl(e.target.value)}
-                className="form-control"
-                style={{ marginBottom: 8 }}
-              />
-              <button
-                onClick={handleAddVideoLink}
-                className="add-video-link-btn"
-                style={{ marginBottom: 12 }}
-              >
-                Add Video Link
-              </button>
+                </div>
+              )}
             </div>
-            {subcategory.videoLinks && subcategory.videoLinks.length > 0 ? (
-              <div className="video-links-list">
-                <h4>Current Video Links</h4>
-                {subcategory.videoLinks.map((video, idx) => (
-                  <div key={video.id || idx} className="video-link-item">
-                    {editingVideoId === video.id ? (
-                      <div className="video-edit-form">
-                        <input
-                          type="text"
-                          value={editingVideoData.title}
-                          onChange={e => setEditingVideoData({...editingVideoData, title: e.target.value})}
-                          className="form-control"
-                          placeholder="Video Title"
-                          style={{ marginBottom: 8 }}
-                        />
-                        <input
-                          type="text"
-                          value={editingVideoData.description}
-                          onChange={e => setEditingVideoData({...editingVideoData, description: e.target.value})}
-                          className="form-control"
-                          placeholder="Video Description"
-                          style={{ marginBottom: 8 }}
-                        />
-                        <input
-                          type="text"
-                          value={editingVideoData.url}
-                          onChange={e => setEditingVideoData({...editingVideoData, url: e.target.value})}
-                          className="form-control"
-                          placeholder="Video URL"
-                          style={{ marginBottom: 8 }}
-                        />
-                        <div className="video-edit-actions">
-                          <button onClick={saveEditingVideo} className="save-btn">Save</button>
-                          <button onClick={cancelEditingVideo} className="cancel-btn">Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="video-link-info">
-                          <span className="video-link-title">{video.title}</span>
-                          <span className="video-link-description">{video.description}</span>
-                          <a href={video.url} target="_blank" rel="noopener noreferrer" className="video-link-url">
-                            {video.url}
-                          </a>
-                        </div>
-                        <div className="video-link-actions">
-                          <button
-                            onClick={() => startEditingVideo(video)}
-                            className="edit-video-btn"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteVideoLink(video.id)}
-                            className="delete-video-btn"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="no-video-links">
-                <p>No video links added yet</p>
-              </div>
-            )}
           </div>
-        </div>
+        )}
+
+        {activeTab === 'groups' && (
+          <div className="tab-panel">
+            <div className="panel-header">
+              <h2>Group Management</h2>
+              <p>Create and manage study groups for this subcategory</p>
+            </div>
+
+            <div className="settings-grid">
+              <div className="setting-card full-width">
+                <div className="card-header">
+                  <h3>Group Configuration</h3>
+                </div>
+                <div className="card-body">
+                  <div className="form-group">
+                    <div className="checkbox-wrapper">
+                      <input
+                        type="checkbox"
+                        id="isGroup"
+                        checked={subcategory.isGroup || false}
+                        onChange={(e) => handleUpdate({ isGroup: e.target.checked })}
+                        className="form-checkbox"
+                      />
+                      <label htmlFor="isGroup" className="checkbox-label">
+                        Enable group functionality for this subcategory
+                      </label>
+                    </div>
+                  </div>
+
+                  {subcategory.isGroup && (
+                    <div className="group-management-section">
+                      {subcategory.groupId ? (
+                        <div className="existing-group">
+                          <div className="group-info">
+                            <h4>Active Group</h4>
+                            <p>This subcategory is associated with a study group.</p>
+                            <div className="group-actions">
+                              <button
+                                onClick={() => handleDeleteGroup(subcategory.groupId)}
+                                disabled={isDeletingGroup}
+                                className="btn-danger"
+                              >
+                                {isDeletingGroup ? "Deleting..." : "Delete Group"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="create-group">
+                          <h4>Create Study Group</h4>
+                          <div className="form-group">
+                            <label htmlFor="group-name">Group Name</label>
+                            <input
+                              id="group-name"
+                              type="text"
+                              value={newGroupName}
+                              onChange={(e) => setNewGroupName(e.target.value)}
+                              placeholder="Enter group name"
+                              className="form-input"
+                            />
+                          </div>
+                          <div className="form-actions">
+                            <button
+                              onClick={handleCreateGroup}
+                              disabled={!newGroupName.trim() || isCreatingGroup}
+                              className="btn-primary"
+                            >
+                              {isCreatingGroup ? "Creating Group..." : "Create Group"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

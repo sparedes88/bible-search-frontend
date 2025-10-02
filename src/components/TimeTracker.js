@@ -770,7 +770,8 @@ const TimeTracker = () => {
     description: '',
     priority: 'medium',
     dueDate: '',
-    status: 'pending'
+    status: 'not-started',
+    forecastedHours: 0
   });
   
   const [newSubmission, setNewSubmission] = useState({
@@ -2183,7 +2184,8 @@ const TimeTracker = () => {
         description: '',
         priority: 'medium',
         dueDate: '',
-        status: 'pending'
+        status: 'not-started',
+        forecastedHours: 0
       });
       setEditingTask(null);
       setShowTaskModal(false);
@@ -3596,7 +3598,8 @@ const TimeTracker = () => {
       description: task.description,
       priority: task.priority,
       dueDate: task.dueDate,
-      status: task.status
+      status: task.status,
+      forecastedHours: task.forecastedHours || 0
     });
     setEditingTask(task);
     setShowTaskModal(true);
@@ -4427,10 +4430,10 @@ const TimeTracker = () => {
                           onChange={(e) => updateTaskStatus(task.id, e.target.value)}
                           className="status-select"
                         >
-                          <option value="pending">Pending</option>
+                          <option value="not-started">Not Started</option>
                           <option value="in-progress">In Progress</option>
-                          <option value="completed">Completed</option>
-                          <option value="on-hold">On Hold</option>
+                          <option value="complete">Complete</option>
+                          <option value="in-review">In Review</option>
                         </select>
                         <button onClick={() => editTask(task)} className="edit-btn">Edit</button>
                         <button onClick={() => deleteTask(task.id)} className="delete-btn">Delete</button>
@@ -4441,6 +4444,11 @@ const TimeTracker = () => {
                       <span className={`priority ${task.priority}`}>
                         {task.priority} priority
                       </span>
+                      {task.forecastedHours && (
+                        <span className="forecasted-hours">
+                          Forecast: {task.forecastedHours}h
+                        </span>
+                      )}
                       {task.dueDate && (
                         <span className="due-date">Due: {task.dueDate}</span>
                       )}
@@ -4529,6 +4537,66 @@ const TimeTracker = () => {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+
+            {/* Task Summary */}
+            <div className="task-summary-section">
+              <h3>Task Summary</h3>
+              <div className="summary-grid">
+                <div className="summary-card">
+                  <h4>Total Forecasted Hours</h4>
+                  <div className="summary-value">
+                    {tasks.reduce((total, task) => total + (task.forecastedHours || 0), 0)}h
+                  </div>
+                </div>
+                <div className="summary-card">
+                  <h4>Status Breakdown</h4>
+                  <div className="status-stats">
+                    <div className="status-stat">
+                      <span className="status-label">Not Started:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'not-started').length}</span>
+                    </div>
+                    <div className="status-stat">
+                      <span className="status-label">In Progress:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'in-progress').length}</span>
+                    </div>
+                    <div className="status-stat">
+                      <span className="status-label">Complete:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'complete').length}</span>
+                    </div>
+                    <div className="status-stat">
+                      <span className="status-label">In Review:</span>
+                      <span className="status-count">{tasks.filter(task => task.status === 'in-review').length}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Task List with Forecasted Hours */}
+              <div className="forecasted-hours-list">
+                <h4>All Tasks with Forecasted Hours</h4>
+                <div className="forecast-table">
+                  <div className="forecast-header">
+                    <span>Task</span>
+                    <span>Status</span>
+                    <span>Forecasted Hours</span>
+                  </div>
+                  {tasks.filter(task => task.forecastedHours > 0).map(task => (
+                    <div key={task.id} className="forecast-row">
+                      <span className="task-title">{task.title}</span>
+                      <span className={`task-status ${task.status}`}>
+                        {task.status.replace('-', ' ')}
+                      </span>
+                      <span className="forecast-hours">{task.forecastedHours}h</span>
+                    </div>
+                  ))}
+                  {tasks.filter(task => task.forecastedHours > 0).length === 0 && (
+                    <div className="no-forecasts">
+                      No tasks with forecasted hours yet.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -6131,7 +6199,8 @@ const TimeTracker = () => {
                     description: '',
                     priority: 'medium',
                     dueDate: '',
-                    status: 'pending'
+                    status: 'not-started',
+                    forecastedHours: 0
                   });
                 }}
               >
@@ -6183,17 +6252,31 @@ const TimeTracker = () => {
                 </div>
               </div>
               
-              <div className="form-group">
-                <label>Status</label>
-                <select
-                  value={newTask.status}
-                  onChange={(e) => setNewTask({...newTask, status: e.target.value})}
-                >
-                  <option value="pending">Pending</option>
-                  <option value="in-progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="on-hold">On Hold</option>
-                </select>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Status</label>
+                  <select
+                    value={newTask.status}
+                    onChange={(e) => setNewTask({...newTask, status: e.target.value})}
+                  >
+                    <option value="not-started">Not Started</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="complete">Complete</option>
+                    <option value="in-review">In Review</option>
+                  </select>
+                </div>
+                
+                <div className="form-group">
+                  <label>Forecasted Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={newTask.forecastedHours}
+                    onChange={(e) => setNewTask({...newTask, forecastedHours: parseFloat(e.target.value) || 0})}
+                    placeholder="0"
+                  />
+                </div>
               </div>
               
               <div className="modal-actions">
