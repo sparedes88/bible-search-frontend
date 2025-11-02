@@ -206,9 +206,9 @@
 }
 
 .form-group {
-  padding: 0.5rem;
+  padding: 0.5rem 2rem;
   width: 100%;
-  max-width: 600px;
+  max-width: 100%;
   margin: 0 auto;
 }
 
@@ -225,9 +225,10 @@
   flex-direction: column;
   gap: 0.5rem;
   width: 100%;
-  max-width: 600px;
+  max-width: 100%;
   margin: 0 auto;
   background: white;
+  padding: 0 2rem;
 }
 
 /* Updated responsive styles */

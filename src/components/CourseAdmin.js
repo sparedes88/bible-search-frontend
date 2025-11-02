@@ -416,7 +416,7 @@ const UserCourseProgress = ({ churchId, onSubcategoryClick, upcomingEvents }) =>
                           )}
                           {nextEvent && nextEvent.startDate && (
                             <Link
-                              to={`/church/${churchId}/event/${nextEvent.id}`}
+                              to={`/organization/${churchId}/event/${nextEvent.id}`}
                               style={{
                                 display: 'block',
                                 marginLeft: '8px',
@@ -897,7 +897,7 @@ const CourseAdmin = () => {
                   </td>
                   <td>
                     <Link
-                      to={`/church/${id}/event/${event.id}`}
+                      to={`/organization/${id}/event/${event.id}`}
                       className="text-primary"
                     >
                       View Details →
@@ -967,7 +967,7 @@ const CourseAdmin = () => {
                 <div className="section-header">
                   <h2 className="section-title">Upcoming Events</h2>
                   <Link
-                    to={`/church/${id}/all-events`}
+                    to={`/organization/${id}/all-events`}
                     style={{ ...commonStyles.backButtonLink }}
                     className="view-all-link"
                   >

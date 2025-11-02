@@ -1111,6 +1111,321 @@ exports.analyzeLeadership = functions.https.onRequest((req, res) => {
 });
 
 /**
+ * Analyze form entries using OpenAI for pastoral insights
+ */
+exports.analyzeFormEntries = functions.https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const { formTitle, fields, entries, pastoralContext, previousAnalysis } = req.body;
+      
+      if (!formTitle || !fields || !entries) {
+        return res.status(400).json({ error: 'Missing required form data in request body' });
+      }
+      
+      // Get OpenAI API key from environment variables
+      const openAIApiKey = functions.config().openai?.apikey || process.env.OPENAI_API_KEY;
+      
+      if (!openAIApiKey) {
+        console.error('OpenAI API key not configured');
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured'
+        });
+      }
+
+      // Format entries for AI analysis
+      const formattedEntries = entries.map(entry => {
+        const formattedEntry = {};
+        fields.forEach(field => {
+          formattedEntry[field.label] = entry[field.name];
+        });
+        return formattedEntry;
+      });
+
+      // Build context section if provided
+      let contextSection = '';
+      if (pastoralContext && pastoralContext.specificQuestions) {
+        contextSection = `
+
+PASTOR'S SPECIFIC QUESTIONS TO ADDRESS:
+${pastoralContext.specificQuestions}
+
+IMPORTANT: Make sure to directly address these questions in your analysis, providing clear answers and insights.
+`;
+      }
+
+      // Build comparison section if previous analysis exists
+      let comparisonSection = '';
+      if (previousAnalysis && previousAnalysis.healthMetrics) {
+        comparisonSection = `
+
+PREVIOUS ANALYSIS (for comparison):
+Date: ${previousAnalysis.createdAt || 'Unknown'}
+Overall Health Score: ${previousAnalysis.healthMetrics.overall}
+Previous Metrics: ${JSON.stringify(previousAnalysis.healthMetrics)}
+
+IMPORTANT: Compare current responses with previous analysis to identify:
+- Improvements (what's getting better)
+- Regressions (what's declining)
+- Trends (patterns over time)
+- Progress toward stated goals
+`;
+      }
+
+  const prompt = `You are an expert church consultant advising a senior pastor who is deeply committed to leadership development, building a healthy church, creating a long-lasting legacy, and ensuring the best outcomes for their congregation.
+
+Your goal is to help the pastor CLEARLY UNDERSTAND what their people are saying and what improvements are needed.
+
+Adopt a tone of excellence and servanthood: be clear, honoring, and action-oriented. Emphasize doing our best with humility and accountability.
+
+Analyze the following form data collected from their church: "${formTitle}"
+${contextSection}
+${comparisonSection}
+
+FORM CONTEXT - These are the actual questions this form asks:
+${fields.map(f => `- ${f.label} (${f.type})`).join('\n')}
+
+Based on these questions, interpret responses in the proper context. For example:
+- If asking about satisfaction, provide insights on satisfaction levels
+- If asking about interests, identify patterns in what people want
+- If asking about needs, prioritize unmet needs
+- If asking for feedback, categorize and prioritize suggestions
+
+Responses (${entries.length} total):
+${JSON.stringify(formattedEntries, null, 2)}
+
+ANALYSIS REQUIREMENTS:
+1. INTERPRET THE DATA: Explain what the responses mean in context of the form questions
+2. Use DIRECT QUOTES from responses to show what people actually said
+3. Identify common themes and sentiments (positive, negative, concerned, hopeful)
+4. Highlight specific improvements needed based on actual feedback
+5. Connect insights to the pastor's stated concerns and goals
+6. Provide SPECIFIC NEXT STEPS for individual respondents based on their answers
+7. Give PASTORAL AND APOSTOLIC GUIDANCE specific to this form's purpose:
+   - Pastoral (care/shepherding): How to care for and support these people
+   - Apostolic (mission/vision): How to mobilize and empower them toward church mission
+8. Answer the pastor's specific questions directly with clear, evidence-based answers
+9. If comparing to previous analysis, explicitly state what changed with numeric deltas
+10. Include numbers that reflect growth or decline in key areas and explain why
+11. Be specific and actionable - avoid generic advice
+12. Maintain an attitude of excellence and servanthood throughout
+
+Please provide a comprehensive analysis in the following JSON format:
+{
+  "executiveSummary": "Brief 2-3 sentence overview of key findings addressing pastor's concerns and interpreting what the data reveals",
+  "dataInterpretation": {
+    "whatTheDataTells": "Clear explanation of what these responses mean in context of the form questions",
+    "underlyingPatterns": ["Hidden patterns or trends not immediately obvious"],
+    "surprisingFindings": ["Unexpected insights that need attention"]
+  },
+  "whatPeopleAreSaying": {
+    "positiveThemes": ["Theme with quote: 'actual quote'"],
+    "concernsRaised": ["Concern with quote: 'actual quote'"],
+    "commonRequests": ["Request with quote: 'actual quote'"],
+    "emotionalTone": "overall sentiment (hopeful, concerned, frustrated, etc.)"
+  },
+  "improvementsNeeded": [
+    {
+      "area": "Specific area needing improvement",
+      "issue": "Clear description of the problem based on feedback",
+      "evidenceQuotes": ["quote 1", "quote 2"],
+      "impact": "Why this matters for church health",
+      "priority": "High/Medium/Low"
+    }
+  ],
+  "responsesToYourSpecificQuestions": [
+    {
+      "question": "Exact question parsed from pastor's input",
+      "answer": "Direct, clear answer in 2-4 sentences",
+      "evidenceQuotes": ["quote 1", "quote 2"],
+      "confidence": "High/Medium/Low"
+    }
+  ],
+  "nextStepsForRespondents": [
+    {
+      "personProfile": "Description based on their responses (e.g., 'New visitor interested in small groups')",
+      "responsesSummary": "Brief summary of what they said",
+      "recommendedAction": "Specific action pastor should take with this person",
+      "urgency": "High/Medium/Low",
+      "suggestedFollowUp": "How and when to follow up"
+    }
+  ],
+  "growthAndTrends": {
+    "overallChangeNumeric": 0,
+    "byArea": [
+      {"area": "engagement", "previous": 72, "current": 80, "delta": 8, "trend": "up"},
+      {"area": "leadership", "previous": 65, "current": 61, "delta": -4, "trend": "down"}
+    ],
+    "notes": ["Brief explanations for the most important movements"]
+  },
+  "pastoralAndApostolicGuidance": {
+    "pastoral": [
+      {
+        "area": "Care/shepherding area (e.g., 'Disconnected members', 'Struggling families')",
+        "guidance": "How to care for and support based on responses",
+        "practicalSteps": ["Specific caring actions to take"],
+        "scriptureRelevance": "Biblical foundation for this approach"
+      }
+    ],
+    "apostolic": [
+      {
+        "area": "Mission/mobilization area (e.g., 'Gifted volunteers', 'Emerging leaders')",
+        "guidance": "How to mobilize and empower toward church mission",
+        "practicalSteps": ["Specific mobilization actions"],
+        "visionAlignment": "How this advances church vision"
+      }
+    ]
+  },
+  "leadershipLenses": [
+    {
+      "lens": "Communication & Impact (e.g., TD Jakes)",
+      "guidance": "How to communicate vision and address felt needs based on this data",
+      "nextStep": "One high-impact next step tailored to this lens"
+    },
+    {
+      "lens": "Kingdom Purpose & Principles (e.g., Myles Munroe)",
+      "guidance": "How to align responses with purpose, identity, and governance principles",
+      "nextStep": "One principle-driven step"
+    },
+    {
+      "lens": "Church Health & Structures (e.g., Frank Damazio)",
+      "guidance": "How to build systems and leadership pipelines that address findings",
+      "nextStep": "One structural improvement"
+    },
+    {
+      "lens": "Practical Discipleship & Encouragement (e.g., Joyce Meyer)",
+      "guidance": "How to disciple through practical habits addressing common concerns",
+      "nextStep": "One discipleship action"
+    },
+    {
+      "lens": "Faith & Momentum Building (e.g., Steven Furtick)",
+      "guidance": "How to mobilize faith and momentum in response to the data",
+      "nextStep": "One momentum step"
+    },
+    {
+      "lens": "Purpose-Driven Alignment (e.g., Rick Warren)",
+      "guidance": "How to align outcomes to worship, fellowship, discipleship, ministry, and mission",
+      "nextStep": "One PD-driven step"
+    }
+  ],
+  "keyInsights": [
+    "Insight 1 about leadership opportunities with supporting data",
+    "Insight 2 about church health with specific examples",
+    "Insight 3 about congregation engagement with quotes",
+    "Insight 4 about legacy building connected to responses"
+  ],
+  "pastoralRecommendations": [
+    {
+      "recommendation": "Specific actionable step",
+      "reasoning": "Why this addresses the feedback",
+      "timeline": "Suggested timeframe",
+      "successMetric": "How to measure success"
+    }
+  ],
+  "excellenceAndServanthood": {
+    "standards": [
+      "Be early, prepared, and prayerful",
+      "Close the loop on follow-ups within 48 hours",
+      "Measure what matters and iterate weekly"
+    ],
+    "quickWins": [
+      "Tighten communication templates (email/SMS) for clarity and warmth",
+      "Add a simple 'You matter' follow-up step for first-time responders"
+    ],
+    "qualityChecklist": [
+      "Is this loving and excellent?",
+      "Is it simple for people to act on?",
+      "Can we measure the outcome?"
+    ]
+  },
+  "healthMetrics": {
+    "overall": 85,
+    "leadership": 78,
+    "engagement": 92,
+    "spiritual": 88,
+    "community": 85
+  },
+  "progressComparison": ${previousAnalysis ? `{
+    "overallChange": "+5 or -3 points",
+    "improvements": ["What got better with evidence"],
+    "regressions": ["What declined with evidence"],
+    "trendAnalysis": "Overall trajectory and patterns"
+  }` : 'null'},
+  "statistics": {
+    "totalResponses": ${entries.length},
+    "completionRate": 95,
+    "averageResponseTime": "3 minutes",
+    "topThemes": ["theme1", "theme2", "theme3"]
+  },
+  "chartData": [
+    {
+      "title": "Response Distribution by Category",
+      "type": "bar",
+      "data": [
+        {"label": "Category 1", "value": 45},
+        {"label": "Category 2", "value": 30}
+      ]
+    }
+  ],
+  "warningFlags": [
+    "Any concerning patterns or areas needing immediate attention"
+  ],
+  "strengthAreas": [
+    "Areas where the church is doing exceptionally well"
+  ]
+}
+
+Provide specific, actionable insights based on the actual data. Focus on helping the pastor make strategic decisions for leadership development, church health, legacy building, and member care. Remember to interpret responses in context of the actual form questions and provide both pastoral (care) and apostolic (mission) guidance. Avoid imitating any individual's voice; provide lens-aligned guidance that is original and respectful.`;
+      
+      // Call OpenAI API
+      try {
+        const openaiResponse = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            model: 'gpt-4o',
+            messages: [
+              { 
+                role: 'system', 
+                content: 'You are an expert church consultant and data analyst specializing in helping senior pastors build healthy, thriving churches with strong leadership and lasting impact.'
+              },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${openAIApiKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        // Parse JSON response from OpenAI
+        const content = openaiResponse.data.choices[0].message.content;
+        const analysis = JSON.parse(content);
+        
+        return res.status(200).json(analysis);
+      } catch (openAIError) {
+        console.error('OpenAI API Error:', openAIError.response?.data || openAIError.message);
+        return res.status(500).json({
+          error: 'Failed to analyze form entries',
+          details: openAIError.response?.data || openAIError.message
+        });
+      }
+    } catch (error) {
+      console.error('Server Error:', error);
+      return res.status(500).json({ error: 'Internal server error', message: error.message });
+    }
+  });
+});
+
+/**
  * Analyze location data using OpenAI
  */
 exports.analyzeLocations = functions.https.onRequest((req, res) => {
@@ -1583,6 +1898,56 @@ exports.getDatabaseOverview = functions.https.onRequest(async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// Planning Center API Proxy
+exports.planningCenterProxy = functions.https.onRequest(async (req, res) => {
+  // Handle CORS preflight
+  if (handleCors(req, res)) return;
+
+  try {
+    const { appId, secret, endpoint, method = 'GET', body } = req.body;
+
+    if (!appId || !secret || !endpoint) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters: appId, secret, and endpoint are required'
+      });
+    }
+
+    // Create Basic Auth token
+    const authToken = Buffer.from(`${appId}:${secret}`).toString('base64');
+
+    // Make request to Planning Center API
+    const url = `https://api.planningcenteronline.com${endpoint}`;
+    
+    const config = {
+      method: method,
+      url: url,
+      headers: {
+        'Authorization': `Basic ${authToken}`,
+        'Content-Type': 'application/json',
+      }
+    };
+
+    if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+      config.data = body;
+    }
+
+    const response = await axios(config);
+
+    res.json({
+      success: true,
+      data: response.data
+    });
+  } catch (error) {
+    console.error('Planning Center API Error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.errors?.[0]?.detail || error.message,
+      status: error.response?.status
     });
   }
 });

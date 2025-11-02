@@ -1,0 +1,2 @@
+# Ignore corrupted/legacy file replaced by MemberSignup.clean.js
+src/components/MemberSignup.js

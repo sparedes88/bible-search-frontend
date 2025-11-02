@@ -61,6 +61,17 @@ service firebase.storage {
         && (isGlobalAdmin() || isChurchAdmin(churchId));
     }
 
+    // Event images - allow public read, admins can write per church
+    match /events/{churchId}/{eventId}/{fileName} {
+      allow read: if true;  // Publicly viewable event images
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
     // Quick cards images - allow public read access
     match /quick_cards/{churchId}/{fileName} {
       allow read: if true;

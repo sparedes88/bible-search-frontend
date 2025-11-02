@@ -14,6 +14,8 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   border: 1px solid #e5e7eb;
   transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
 }
 
 .form-card:hover {
@@ -26,6 +28,42 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 1rem;
+}
+
+/* Decorative gradient cover for each form card */
+.form-card-cover {
+  height: 140px;
+  margin: -1.5rem -1.5rem 1rem;
+  border-radius: 12px 12px 0 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--card-gradient, linear-gradient(135deg, #6366F1 0%, #14B8A6 100%));
+}
+
+.form-card-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(1200px 300px at -10% 0%, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 60%),
+              radial-gradient(600px 200px at 120% 100%, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0) 60%);
+  pointer-events: none;
+}
+
+.form-cover-initial {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.28);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(2px);
 }
 
 .form-title {

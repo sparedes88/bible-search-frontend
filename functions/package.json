@@ -16,6 +16,7 @@
   "dependencies": {
     "@jest/core": "^29.7.0",
     "@jest/types": "^29.6.3",
+    "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "firebase-admin": "^12.1.0",

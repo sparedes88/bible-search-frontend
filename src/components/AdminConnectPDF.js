@@ -179,7 +179,29 @@ const styles = StyleSheet.create({
 });
 
 // PDF Document component
-const AdminConnectPDF = ({ data, activeTab, filters }) => (
+const AdminConnectPDF = ({ data, activeTab, filters }) => {
+  const toText = (val) => {
+    try {
+      if (val === undefined || val === null) return '-';
+      // Firestore Timestamp support
+      if (val && typeof val === 'object' && typeof val.toDate === 'function') {
+        const d = val.toDate();
+        return isNaN(d) ? '-' : `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+      }
+      // Date instance
+      if (val instanceof Date) {
+        return `${val.toLocaleDateString()} ${val.toLocaleTimeString()}`;
+      }
+      // Objects are not allowed as text nodes; stringify safely
+      if (typeof val === 'object') return '-';
+      const s = String(val);
+      return s.trim() === '' ? '-' : s;
+    } catch (_) {
+      return '-';
+    }
+  };
+
+  return (
   <Document>
     <Page size="A4" style={styles.page}>
       <View style={styles.header}>
@@ -208,7 +230,7 @@ const AdminConnectPDF = ({ data, activeTab, filters }) => (
                 : `Phone (${filters.sortConfig.direction === 'asc' ? 'A-Z' : 'Z-A'})`
           }
         </Text>
-        <Text style={styles.filterItem}>Total Items: {data.length}</Text>
+        <Text style={styles.filterItem}>Total Items: {toText(data.length)}</Text>
       </View>
 
       {/* Table */}
@@ -239,13 +261,13 @@ const AdminConnectPDF = ({ data, activeTab, filters }) => (
         {data.map((item) => (
           <View key={item.id} style={styles.tableRow}>
             <View style={styles.tableCellName}>
-              <Text style={styles.tableCell}>{item.name}</Text>
+              <Text style={styles.tableCell}>{toText(item.name)}</Text>
             </View>
             <View style={styles.tableCellLastName}>
-              <Text style={styles.tableCell}>{item.lastName}</Text>
+              <Text style={styles.tableCell}>{toText(item.lastName)}</Text>
             </View>
             <View style={styles.tableCellPhone}>
-              <Text style={styles.tableCell}>{item.phone}</Text>
+              <Text style={styles.tableCell}>{toText(item.phone)}</Text>
             </View>
             <View style={styles.tableCellStatus}>
               {item.isMember && item.isMigrated ? (
@@ -257,10 +279,10 @@ const AdminConnectPDF = ({ data, activeTab, filters }) => (
               )}
             </View>
             <View style={styles.tableCellTags}>
-              <Text style={styles.tableCell}>{item.tags?.join(', ') || ''}</Text>
+              <Text style={styles.tableCell}>{item.tags && item.tags.length ? item.tags.join(', ') : '-'}</Text>
             </View>
             <View style={styles.tableCellDate}>
-              <Text style={styles.tableCell}>{item.createdAt}</Text>
+              <Text style={styles.tableCell}>{toText(item.createdAt)}</Text>
             </View>
           </View>
         ))}
@@ -279,7 +301,8 @@ const AdminConnectPDF = ({ data, activeTab, filters }) => (
       />
     </Page>
   </Document>
-);
+  );
+};
 
 // Export component with PDFDownloadLink wrapper
 const AdminConnectPDFLink = ({ data, activeTab, filters, filename }) => (

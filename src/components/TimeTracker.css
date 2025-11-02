@@ -4933,7 +4933,7 @@ input:required:valid, select:required:valid, textarea:required:valid {
 .search-container {
   position: relative;
   flex: 1;
-  max-width: 300px;
+  max-width: 90%;
 }
 
 .search-input {

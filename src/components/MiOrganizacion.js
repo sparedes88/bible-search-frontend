@@ -282,7 +282,7 @@ const MiOrganizacion = () => {
 
       try {
         setLoading(true);
-        const organizationRef = doc(db, "organizations", id);
+        const organizationRef = doc(db, "churches", id);
         const organizationSnap = await getDoc(organizationRef);
         
         if (organizationSnap.exists()) {
@@ -294,6 +294,8 @@ const MiOrganizacion = () => {
             email: data.email || "",
             phone: data.phone || "",
           });
+        } else {
+          setError("Organization not found");
         }
       } catch (err) {
         console.error("Error fetching data:", err);
@@ -388,7 +390,7 @@ const MiOrganizacion = () => {
 
     try {
       setLoading(true);
-      const organizationRef = doc(db, "organizations", id);
+      const organizationRef = doc(db, "churches", id);
       await updateDoc(organizationRef, {
         address: formData.address,
         website: formData.website,

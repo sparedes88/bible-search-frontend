@@ -95,6 +95,7 @@ import CreateTeamPage from './pages/ChurchSubPages/CreateTeamPage'; // Update im
 import TeamDetailPage from './pages/ChurchSubPages/TeamDetailPage';
 import EventRegistration from "./components/EventRegistration";
 import EventRegistrationAdmin from "./components/EventRegistrationAdmin"; // Import EventRegistrationAdmin component
+import MemberSignup from "./components/MemberSignup.clean";
 import BuildMyChurch from './components/BuildMyChurch';
 import Messages from './components/Messages';
 import BalanceManager from "./components/BalanceManager"; // Import BalanceManager component
@@ -115,6 +116,7 @@ import UserRoleAssignment from "./components/UserRoleAssignment"; // Import User
 import Forms from "./components/Forms"; // Import Forms component
 import FormViewer from "./components/FormViewer"; // Import FormViewer component
 import FormEmbed from "./components/FormEmbed"; // Import FormEmbed component
+import FormEntriesPage from "./components/FormEntriesPage"; // Import FormEntriesPage component
 import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
 import TimerPage from "./components/TimerPage"; // Import TimerPage component
 import GlobalOrganizationManager from "./components/GlobalOrganizationManager";
@@ -401,6 +403,7 @@ const App = () => {
           <Route path="/organization/:id/maintenance" element={<Maintenance />} />
           <Route path="/organization/:id/teams/:teamId" element={<TeamDetailPage />} />
           <Route path="/organization/:id/event/:eventId/register" element={<EventRegistration />} />
+          <Route path="/organization/:id/member-signup" element={<MemberSignup />} />
           <Route 
             path="/organization/:id/event/:eventId/registrations" 
             element={
@@ -558,6 +561,16 @@ const App = () => {
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <Forms />
+              </PrivateRoute>
+            } 
+          />
+          
+          {/* Form Entries Route */}
+          <Route 
+            path="/organization/:id/forms/:formId/entries" 
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <FormEntriesPage />
               </PrivateRoute>
             } 
           />

@@ -20,6 +20,8 @@ import commonStyles from '../pages/commonStyles';
 import ChurchHeader from './ChurchHeader';
 import 'react-toastify/dist/ReactToastify.css';
 import Skeleton from 'react-loading-skeleton';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import RegistrationsPDF from './RegistrationsPDF';
 
 const EventRegistrationAdmin = () => {
   const { id, eventId } = useParams();
@@ -284,20 +286,48 @@ const EventRegistrationAdmin = () => {
           </h2>
           
           {!isAddingNew && (
-            <button
-              onClick={handleAddNew}
-              style={{
-                backgroundColor: '#4F46E5',
-                color: 'white',
-                padding: '0.5rem 1rem',
-                borderRadius: '0.375rem',
-                fontWeight: '500',
-                border: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              Add New Registration
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <PDFDownloadLink
+                document={(
+                  <RegistrationsPDF
+                    event={eventDetails}
+                    registrations={(registrations || []).map(r => ({
+                      id: r.id,
+                      name: r.name,
+                      lastName: r.lastName,
+                      email: r.email,
+                      phone: r.phone,
+                      registeredAt: r.registeredAt?.toLocaleString ? r.registeredAt.toLocaleString() : String(r.registeredAt || '')
+                    }))}
+                  />
+                )}
+                fileName={`event-${eventId}-registrations.pdf`}
+                style={{
+                  backgroundColor: '#10B981',
+                  color: 'white',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.375rem',
+                  fontWeight: '500',
+                  textDecoration: 'none'
+                }}
+              >
+                Export PDF
+              </PDFDownloadLink>
+              <button
+                onClick={handleAddNew}
+                style={{
+                  backgroundColor: '#4F46E5',
+                  color: 'white',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.375rem',
+                  fontWeight: '500',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                Add New Registration
+              </button>
+            </div>
           )}
         </div>
         

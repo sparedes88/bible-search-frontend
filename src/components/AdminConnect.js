@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import ChurchHeader from "./ChurchHeader";
-import { SafeToastContainer } from "../utils/toastUtils";
 import safeToast from "../utils/toastUtils";
 import "./Admin.css";
 import { db } from "../firebase";
@@ -22,9 +21,10 @@ import {
   writeBatch,
   onSnapshot,
   getDoc,
+  startAfter,
 } from "firebase/firestore";
-import { FiSearch, FiEdit2, FiSave, FiX, FiFilter, FiTrash2, FiMessageCircle, FiCheck, FiDownload } from "react-icons/fi";
-import { IoMdClose, IoIosAdd } from "react-icons/io";
+import { FiEdit2, FiSave, FiX, FiTrash2, FiMessageCircle, FiCheck, FiDownload } from "react-icons/fi";
+import { IoIosAdd } from "react-icons/io";
 import { FaRegEye, FaFilePdf, FaChartPie, FaArrowLeft } from "react-icons/fa6";
 import commonStyles from "../pages/commonStyles";
 import "./AdminConnect.css";
@@ -32,6 +32,8 @@ import "../styles/printStyles.css";
 import { getBalance, deductBalance, calculateMessageAllowance } from "../services/balanceService";
 import UserResponseLog from './UserResponseLog';
 import AdminConnectPDFLink from './AdminConnectPDF';
+import planningCenterService from '../services/planningCenterService';
+import { FaSync, FaCheckCircle } from 'react-icons/fa';
 
 const formatPhoneNumber = (value) => {
   if (!value) return value;
@@ -118,6 +120,66 @@ const AdminConnect = () => {
     members: {}
   });
 
+  // Planning Center sync states
+  const [pcConnected, setPcConnected] = useState(false);
+  const [pcSyncing, setPcSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({});
+  const [showPcConfigModal, setShowPcConfigModal] = useState(false);
+  const [pcAppId, setPcAppId] = useState('');
+  const [pcSecret, setPcSecret] = useState('');
+  const [pcTesting, setPcTesting] = useState(false);
+  const [pcLastSync, setPcLastSync] = useState(null);
+  const [pcLastSyncResults, setPcLastSyncResults] = useState(null);
+  const [showPcOnly, setShowPcOnly] = useState(false);
+  const [showLastSyncOnly, setShowLastSyncOnly] = useState(false);
+  // Sync preview modal
+  const [showPcPreviewModal, setShowPcPreviewModal] = useState(false);
+  const [pcPreviewLoading, setPcPreviewLoading] = useState(false);
+  const [pcPreviewCounts, setPcPreviewCounts] = useState(null);
+  const [pcPreviewPeople, setPcPreviewPeople] = useState([]);
+  const [pcPreviewPeopleLoading, setPcPreviewPeopleLoading] = useState(false);
+  // Preferred locations (no fallback chains)
+  const [locationPrefs, setLocationPrefs] = useState({
+    email: 'home',
+    phone: 'mobile',
+    address: 'home'
+  });
+
+  // No fallback options needed; we use fixed location preferences
+  // Sync logs state
+  const [pcLogs, setPcLogs] = useState([]);
+  const [pcLogsPageSize, setPcLogsPageSize] = useState(3); // Changed to 3 per page
+  const [pcLogsCursors, setPcLogsCursors] = useState([]); // stack of cursors for pagination
+  const [pcLogsHasMore, setPcLogsHasMore] = useState(true);
+  const [pcLogsLoading, setPcLogsLoading] = useState(false);
+  const [showSyncHistory, setShowSyncHistory] = useState(false); // Toggle for showing history
+  const [showPcLogEntriesModal, setShowPcLogEntriesModal] = useState(false);
+  const [pcLogEntries, setPcLogEntries] = useState([]);
+  const [pcLogEntriesHasMore, setPcLogEntriesHasMore] = useState(true);
+  const [pcLogEntriesLoading, setPcLogEntriesLoading] = useState(false);
+  const [pcLogEntriesCursor, setPcLogEntriesCursor] = useState(null);
+  const [selectedLog, setSelectedLog] = useState(null);
+  // Field mapping modal
+  const [showFieldMappingModal, setShowFieldMappingModal] = useState(false);
+  // Sync issues state
+  const [showSyncIssuesModal, setShowSyncIssuesModal] = useState(false);
+  const [syncIssues, setSyncIssues] = useState([]);
+  const [fieldMappings, setFieldMappings] = useState({
+    firstName: 'first_name',         // maps to visitorData.name
+    lastName: 'last_name',
+    email: 'primary_contact_email',
+    phone: 'primary_contact_phone',
+    birthdate: 'birthdate',          // maps to visitorData.dateOfBirth
+    gender: 'sex',                   // Planning Center uses 'sex', maps to visitorData.gender
+    maritalStatus: 'marital_status', // maps to visitorData.maritalStatus
+    avatar: 'avatar',
+    street: 'street',                // maps to visitorData.address.street
+    city: 'city',                    // maps to visitorData.address.city
+    state: 'state',                  // maps to visitorData.address.state
+    zip: 'zip',                      // maps to visitorData.address.zipCode
+    country: 'country'               // maps to visitorData.address.country
+  });
+
   const dateFilterOptions = [
     { value: 'all', label: 'All Dates' },
     { value: 'today', label: 'Today' },
@@ -129,11 +191,11 @@ const AdminConnect = () => {
   useEffect(() => {
     // Redirect members to their profile page
     if (user?.role === "member") {
-      navigate(`/church/${id}/mi-perfil`);
+      navigate(`/organization/${id}/mi-perfil`);
     }
     // Make sure admin and global_admin users are allowed
     if (user && user.role !== 'admin' && user.role !== 'global_admin') {
-      navigate(`/church/${id}/mi-perfil`);
+      navigate(`/organization/${id}/mi-perfil`);
       safeToast.error("You need admin privileges to access this page");
     }
   }, [id, user, navigate]);
@@ -171,6 +233,193 @@ const AdminConnect = () => {
 
     fetchRecentVisitors();
   }, [id, user]);
+
+  // Check Planning Center connection
+  useEffect(() => {
+    const checkPlanningCenterConnection = async () => {
+      if (!id) return;
+      
+      try {
+        const credentials = await planningCenterService.getCredentials(id);
+        setPcConnected(!!credentials?.connected);
+        if (credentials?.appId) {
+          setPcAppId(credentials.appId);
+        }
+        if (credentials?.secret) {
+          setPcSecret(credentials.secret);
+        }
+        // Load last sync metadata if available
+        if (credentials?.lastSync) {
+          setPcLastSync(credentials.lastSync);
+        }
+        if (credentials?.lastSyncResults) {
+          setPcLastSyncResults(credentials.lastSyncResults);
+        }
+        // Don't auto-load logs - wait for user to click "Sync History"
+      } catch (error) {
+        console.error('Error checking Planning Center connection:', error);
+      }
+    };
+    
+    checkPlanningCenterConnection();
+  }, [id]);
+
+  const loadPcLogs = async (mode = 'next') => {
+    try {
+      if (!id || pcLogsLoading) return;
+      setPcLogsLoading(true);
+      const logsCol = collection(db, 'churches', id, 'pcSyncLogs');
+      let qRef = query(logsCol, orderBy('startAt', 'desc'), limit(pcLogsPageSize));
+      if (mode === 'next' && pcLogsCursors.length > 0) {
+        qRef = query(logsCol, orderBy('startAt', 'desc'), startAfter(pcLogsCursors[pcLogsCursors.length - 1]), limit(pcLogsPageSize));
+      }
+      if (mode === 'reset') {
+        setPcLogs([]);
+        setPcLogsCursors([]);
+        setPcLogsHasMore(true);
+      }
+      const snap = await getDocs(qRef);
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+      if (mode === 'reset') {
+        setPcLogs(items);
+      } else {
+        setPcLogs(prev => [...prev, ...items]);
+      }
+      if (snap.docs.length < pcLogsPageSize) {
+        setPcLogsHasMore(false);
+      } else {
+        setPcLogsCursors(prev => [...prev, snap.docs[snap.docs.length - 1]]);
+      }
+    } catch (err) {
+      console.error('Error loading sync logs:', err);
+    } finally {
+      setPcLogsLoading(false);
+    }
+  };
+
+  const openLogEntries = async (log) => {
+    try {
+      setSelectedLog(log);
+      setShowPcLogEntriesModal(true);
+      setPcLogEntries([]);
+      setPcLogEntriesCursor(null);
+      setPcLogEntriesHasMore(true);
+      await loadLogEntries(log, 'reset');
+    } catch (e) {
+      console.error('Error opening log entries:', e);
+    }
+  };
+
+  const loadSyncIssues = async () => {
+    try {
+      if (!id) return;
+      // Get the most recent sync log
+      const logsCol = collection(db, 'churches', id, 'pcSyncLogs');
+      const logsQuery = query(logsCol, orderBy('startAt', 'desc'), limit(1));
+      const logsSnap = await getDocs(logsQuery);
+      
+      if (logsSnap.empty) {
+        safeToast.info('No sync logs found');
+        return;
+      }
+
+      const latestLog = { id: logsSnap.docs[0].id, ...logsSnap.docs[0].data() };
+      
+      // Get all entries with missing fields or warnings
+      const entriesCol = collection(db, 'churches', id, 'pcSyncLogs', latestLog.id, 'entries');
+      const entriesSnap = await getDocs(entriesCol);
+      
+      const issues = [];
+      entriesSnap.docs.forEach(doc => {
+        const entry = doc.data();
+        if (entry.syncReport) {
+          const hasMissingFields = entry.syncReport.fieldsMissing && entry.syncReport.fieldsMissing.length > 0;
+          const hasWarnings = entry.syncReport.warnings && entry.syncReport.warnings.length > 0;
+          
+          if (hasMissingFields || hasWarnings) {
+            issues.push({
+              id: doc.id,
+              name: entry.name,
+              email: entry.email,
+              phone: entry.phone,
+              isVisitor: entry.isVisitor,
+              fieldsMissing: entry.syncReport.fieldsMissing || [],
+              warnings: entry.syncReport.warnings || [],
+              fieldsSynced: entry.syncReport.fieldsSynced || []
+            });
+          }
+        }
+      });
+
+      setSyncIssues(issues);
+      setShowSyncIssuesModal(true);
+      
+      if (issues.length === 0) {
+        safeToast.success('No sync issues found! All fields migrated successfully.');
+      }
+    } catch (e) {
+      console.error('Error loading sync issues:', e);
+      safeToast.error('Failed to load sync issues');
+    }
+  };
+
+  const loadLogEntries = async (log, mode = 'next') => {
+    try {
+      if (!id || !log || pcLogEntriesLoading) return;
+      setPcLogEntriesLoading(true);
+      const entriesCol = collection(db, 'churches', id, 'pcSyncLogs', log.id, 'entries');
+      let qRef = query(entriesCol, orderBy('at', 'desc'), limit(20));
+      if (mode === 'next' && pcLogEntriesCursor) {
+        qRef = query(entriesCol, orderBy('at', 'desc'), startAfter(pcLogEntriesCursor), limit(20));
+      }
+      if (mode === 'reset') {
+        setPcLogEntries([]);
+      }
+      const snap = await getDocs(qRef);
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+      if (mode === 'reset') {
+        setPcLogEntries(items);
+      } else {
+        setPcLogEntries(prev => [...prev, ...items]);
+      }
+      if (snap.docs.length < 20) {
+        setPcLogEntriesHasMore(false);
+      } else {
+        setPcLogEntriesCursor(snap.docs[snap.docs.length - 1]);
+      }
+    } catch (err) {
+      console.error('Error loading log entries:', err);
+    } finally {
+      setPcLogEntriesLoading(false);
+    }
+  };
+
+  // Load sync statuses for visible items
+  useEffect(() => {
+    const loadSyncStatuses = async () => {
+      if (!pcConnected) return;
+      
+      const items = activeTab === 'visitors' ? recentVisitors : users;
+      const statuses = {};
+      
+      for (const item of items) {
+        try {
+          const status = await planningCenterService.checkSyncStatus(
+            id,
+            item.id,
+            activeTab === 'visitors'
+          );
+          statuses[item.id] = status;
+        } catch (error) {
+          console.error('Error loading sync status:', item.id, error);
+        }
+      }
+      
+      setSyncStatus(statuses);
+    };
+    
+    loadSyncStatuses();
+  }, [pcConnected, activeTab, recentVisitors, users, id]);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -428,6 +677,15 @@ const AdminConnect = () => {
     // For the visitors tab, filter out migrated visitors
     if (activeTab === 'visitors') {
       currentData = currentData.filter(visitor => !visitor.hasUserAccount);
+
+      // Planning Center quick filters
+      if (showPcOnly) {
+        currentData = currentData.filter(v => (v.tags || []).some(t => String(t).toLowerCase() === 'planning_center'));
+      }
+      if (showLastSyncOnly && pcLastSync) {
+        const lastSyncTime = new Date(pcLastSync).getTime();
+        currentData = currentData.filter(v => v.syncedAt && new Date(v.syncedAt).getTime() >= lastSyncTime);
+      }
     }
     
     // Apply filtering based on search and other criteria
@@ -618,7 +876,7 @@ const AdminConnect = () => {
 
   const handleEdit = (visitor) => {
     if (visitor.hasUserAccount) {
-      navigate(`/church/${id}/admin-connect/member/${visitor.migratedToUserId}`);
+      navigate(`/organization/${id}/admin-connect/member/${visitor.migratedToUserId}`);
       return;
     }
     
@@ -689,16 +947,7 @@ const AdminConnect = () => {
     setEditingTags((prev) => prev.filter((tag) => tag !== tagToRemove));
   };
 
-  const handleAddTagFilter = () => {
-    if (tagFilter.trim() && !tagFilters.includes(tagFilter.trim())) {
-      setTagFilters((prev) => [...prev, tagFilter.trim()]);
-      setTagFilter("");
-    }
-  };
-
-  const handleRemoveTagFilter = (tagToRemove) => {
-    setTagFilters((prev) => prev.filter((tag) => tag !== tagToRemove));
-  };
+  
 
   const handleDelete = async (visitorId) => {
     if (window.confirm('Are you sure you want to delete this visitor?')) {
@@ -780,11 +1029,257 @@ const AdminConnect = () => {
 
   const handleViewMember = (item) => {
     if (item.isMember) {
-      navigate(`/church/${id}/member/${item.id}`);
+      navigate(`/organization/${id}/member/${item.id}`);
     } else if (item.hasUserAccount) {
-      navigate(`/church/${id}/member/${item.migratedToUserId}`);
+      navigate(`/organization/${id}/member/${item.migratedToUserId}`);
     } else {
-      navigate(`/church/${id}/admin-connect/${item.id}`);
+      navigate(`/organization/${id}/admin-connect/${item.id}`);
+    }
+  };
+
+  const handlePlanningCenterSync = async () => {
+    if (!pcConnected) {
+      safeToast.info('Please connect Planning Center first in organization settings');
+      return;
+    }
+
+    setPcSyncing(true);
+    try {
+      const credentials = await planningCenterService.getCredentials(id);
+      if (!credentials?.appId || !credentials?.secret) {
+        safeToast.error('Planning Center credentials not found');
+        return;
+      }
+
+      safeToast.info('Starting Planning Center sync...');
+      
+      const results = await planningCenterService.syncAllPeople(
+        id,
+        credentials.appId,
+        credentials.secret,
+        (progress) => {
+          console.log('Sync progress:', progress);
+        }
+      );
+
+      safeToast.success(
+        `Sync complete! New Visitors: ${results.createdVisitors || 0}, Updated Visitors: ${results.updatedVisitors || 0}, Errors: ${results.errors}`
+      );
+
+      // Reload data
+      window.location.reload();
+    } catch (error) {
+      console.error('Planning Center sync error:', error);
+      safeToast.error('Failed to sync with Planning Center');
+    } finally {
+      setPcSyncing(false);
+    }
+  };
+
+  const handleOpenPreview = async () => {
+    if (!pcConnected) {
+      safeToast.info('Please connect Planning Center first');
+      return;
+    }
+    try {
+      setPcPreviewLoading(true);
+      setShowPcPreviewModal(true);
+      const credentials = await planningCenterService.getCredentials(id);
+      if (!credentials?.appId || !credentials?.secret) {
+        safeToast.error('Planning Center credentials not found');
+        setPcPreviewLoading(false);
+        return;
+      }
+      const counts = await planningCenterService.previewSync(id, credentials.appId, credentials.secret);
+      setPcPreviewCounts(counts);
+      // Load saved mappings/preferences if present
+      const saved = await planningCenterService.getMappings(id);
+      if (saved.fieldMappings && Object.keys(saved.fieldMappings).length) {
+        setFieldMappings(prev => ({ ...prev, ...saved.fieldMappings }));
+      }
+      if (saved.locationPrefs) {
+        setLocationPrefs(prev => ({ ...prev, ...saved.locationPrefs }));
+      }
+      // Optionally preload a small sample immediately
+      await loadPcPreviewPeople(credentials.appId, credentials.secret);
+    } catch (e) {
+      console.error('Preview error:', e);
+      safeToast.error('Failed to load preview');
+    } finally {
+      setPcPreviewLoading(false);
+    }
+  };
+
+  const buildPcFlatObject = (person, details) => {
+    // Flatten attributes and enrich with derived values similar to sync
+    const attrs = person.attributes || {};
+    // Address
+    let street = '', city = '', state = '', zipCode = '', country = 'US';
+    if (Array.isArray(details?.addresses) && details.addresses.length > 0) {
+      const primaryAddr = details.addresses.find(a => a.attributes?.primary) || details.addresses[0];
+      const a = primaryAddr?.attributes || {};
+      street = a.street || a.line1 || a.line_1 || '';
+      city = a.city || '';
+      state = a.state || '';
+      zipCode = a.zip || a.postal_code || '';
+      country = a.country || 'US';
+    }
+    // Email
+    let primaryEmail = '';
+    if (Array.isArray(details?.emails) && details.emails.length > 0) {
+      const e = details.emails.find(e => e.attributes?.primary) || details.emails[0];
+      primaryEmail = e?.attributes?.address || '';
+    }
+    // Phone
+    let primaryPhone = '';
+    if (Array.isArray(details?.phones) && details.phones.length > 0) {
+      const mobile = details.phones.find(p => (p.attributes?.location || '').toLowerCase() === 'mobile');
+      const p = details.phones.find(p => p.attributes?.primary) || mobile || details.phones[0];
+      primaryPhone = p?.attributes?.number || '';
+    }
+
+    const gender = (attrs.gender || attrs.sex || '').toLowerCase();
+
+    const flat = {
+      ...attrs,
+      gender,
+      street, city, state, zipCode, country,
+      primaryEmail,
+      primaryPhone
+    };
+
+    // Expand per-location keys so preview can pick strictly by location
+    if (Array.isArray(details?.emails)) {
+      details.emails.forEach((e, idx) => {
+        const addr = e?.attributes?.address || '';
+        const loc = (e?.attributes?.location || '').toLowerCase();
+        flat[`email_${idx}`] = addr;
+        if (loc) flat[`email_${loc}`] = flat[`email_${loc}`] || addr;
+      });
+    }
+    if (Array.isArray(details?.phones)) {
+      details.phones.forEach((p, idx) => {
+        const num = p?.attributes?.number || '';
+        const loc = (p?.attributes?.location || '').toLowerCase();
+        flat[`phone_${idx}`] = num;
+        if (loc) flat[`phone_${loc}`] = flat[`phone_${loc}`] || num;
+      });
+    }
+    if (Array.isArray(details?.addresses)) {
+      details.addresses.forEach((a) => {
+        const at = a?.attributes || {};
+        const loc = (at.location || '').toLowerCase();
+        if (!loc) return;
+        if (!flat[`street_${loc}`]) flat[`street_${loc}`] = at.street || at.line1 || at.line_1 || '';
+        if (!flat[`city_${loc}`]) flat[`city_${loc}`] = at.city || '';
+        if (!flat[`state_${loc}`]) flat[`state_${loc}`] = at.state || '';
+        if (!flat[`zip_${loc}`]) flat[`zip_${loc}`] = at.zip || at.postal_code || '';
+        if (!flat[`country_${loc}`]) flat[`country_${loc}`] = at.country || '';
+      });
+    }
+
+    return flat;
+  };
+
+  const applyFieldMappings = (pcFlat, mappings) => {
+    const get = (key) => pcFlat?.[key] ?? '';
+    const emailLoc = (locationPrefs.email || '').toLowerCase();
+    const phoneLoc = (locationPrefs.phone || '').toLowerCase();
+    const addrLoc = (locationPrefs.address || '').toLowerCase();
+    return {
+      name: get(mappings.firstName || 'first_name'),
+      lastName: get(mappings.lastName || 'last_name'),
+      email: get(`email_${emailLoc}`),
+      phone: get(`phone_${phoneLoc}`),
+      dateOfBirth: get(mappings.birthdate || 'birthdate'),
+      gender: (get(mappings.gender || 'sex') || '').toLowerCase(),
+      maritalStatus: get(mappings.maritalStatus || 'marital_status') || '',
+      address: {
+        street: get(`street_${addrLoc}`) || get(mappings.street || 'street'),
+        city: get(`city_${addrLoc}`) || get(mappings.city || 'city'),
+        state: get(`state_${addrLoc}`) || get(mappings.state || 'state'),
+        zipCode: get(`zip_${addrLoc}`) || get(mappings.zip || 'zip'),
+        country: get(`country_${addrLoc}`) || get(mappings.country || 'country') || 'US',
+      }
+    };
+  };
+
+  const findExistingRecordForPreview = (pcPerson) => {
+    // Try by planningCenterId in recent visitors or users
+    const pcId = pcPerson.id;
+    const inVisitors = recentVisitors.find(v => v.planningCenterId === pcId);
+    if (inVisitors) return { type: 'visitor', record: inVisitors };
+    const inUsers = users.find(u => u.planningCenterId === pcId && (u.churchId === id || !u.churchId));
+    if (inUsers) return { type: 'member', record: inUsers };
+    // Fallback: match by name and email
+    const attrs = pcPerson.attributes || {};
+    const fullNameMatch = (r) => r.name === attrs.first_name && r.lastName === attrs.last_name;
+    const email = attrs.primary_contact_email;
+    const byVisitor = recentVisitors.find(r => fullNameMatch(r) && (!email || r.email === email));
+    if (byVisitor) return { type: 'visitor', record: byVisitor };
+    const byUser = users.find(r => (r.churchId === id || !r.churchId) && fullNameMatch(r) && (!email || r.email === email));
+    if (byUser) return { type: 'member', record: byUser };
+    return null;
+  };
+
+  const loadPcPreviewPeople = async (appId, secret) => {
+    try {
+      setPcPreviewPeopleLoading(true);
+      const peopleData = await planningCenterService.fetchPeople(appId, secret, { perPage: 5, offset: 0 });
+      const people = peopleData?.data || [];
+      const enriched = [];
+      for (const p of people) {
+        const details = await planningCenterService.fetchPersonDetails(appId, secret, p.id, p);
+        const pcFlat = buildPcFlatObject(p, details);
+        const preview = applyFieldMappings(pcFlat, fieldMappings);
+        const existing = findExistingRecordForPreview(p);
+        enriched.push({ id: p.id, name: `${p.attributes?.first_name || ''} ${p.attributes?.last_name || ''}`.trim(), pcFlat, preview, existing });
+      }
+      setPcPreviewPeople(enriched);
+    } catch (err) {
+      console.error('Failed to load PC preview people:', err);
+      safeToast.error('Failed to load sample Planning Center people');
+    } finally {
+      setPcPreviewPeopleLoading(false);
+    }
+  };
+
+  const handleTestPcConnection = async () => {
+    if (!pcAppId || !pcSecret) {
+      safeToast.error('Please enter both App ID and Secret');
+      return;
+    }
+
+    setPcTesting(true);
+    try {
+      const isValid = await planningCenterService.testConnection(pcAppId, pcSecret);
+      if (isValid) {
+        safeToast.success('Connection successful!');
+      } else {
+        safeToast.error('Connection failed. Please check your credentials.');
+      }
+    } catch (error) {
+      console.error('Planning Center test error:', error);
+      safeToast.error('Connection test failed');
+    } finally {
+      setPcTesting(false);
+    }
+  };
+
+  const handleSavePcConfig = async () => {
+    if (!pcAppId || !pcSecret) {
+      safeToast.error('Please enter both App ID and Secret');
+      return;
+    }
+
+    try {
+      await planningCenterService.saveCredentials(id, pcAppId, pcSecret);
+      setPcConnected(true);
+      setShowPcConfigModal(false);
+      safeToast.success('Planning Center configured successfully!');
+    } catch (error) {
+      console.error('Error saving Planning Center config:', error);
+      safeToast.error('Failed to save configuration');
     }
   };
 
@@ -1175,9 +1670,9 @@ const AdminConnect = () => {
     sessionStorage.setItem('adminConnectReturnPath', window.location.pathname);
     
     if (activeTab === 'visitors') {
-      navigate(`/church/${id}/visitor/${item.id}/messages`);
+      navigate(`/organization/${id}/visitor/${item.id}/messages`);
     } else {
-      navigate(`/church/${id}/member/${item.id}/messages`);
+      navigate(`/organization/${id}/member/${item.id}/messages`);
     }
   };
 
@@ -1242,9 +1737,9 @@ const AdminConnect = () => {
     sessionStorage.setItem('adminConnectReturnPath', window.location.pathname);
     
     if (activeTab === 'visitors') {
-      navigate(`/church/${id}/visitor-messages/${itemId}`);
+      navigate(`/organization/${id}/visitor-messages/${itemId}`);
     } else {
-      navigate(`/church/${id}/member-messages/${itemId}`);
+      navigate(`/organization/${id}/member-messages/${itemId}`);
     }
   };
 
@@ -1254,19 +1749,6 @@ const AdminConnect = () => {
 
   return (
     <div className="admin-connect-container">
-      <SafeToastContainer
-        position="top-right"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={true}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss={false}
-        draggable={true}
-        pauseOnHover={true}
-        theme="light"
-        limit={3}
-      />
       <ChurchHeader id={id} />
 
       <div className="content-box">
@@ -1369,7 +1851,7 @@ const AdminConnect = () => {
         {(recentVisitors.length > 0 || users.length > 0) && (
           <div className="recent-visitors" style={{ marginTop: "0px" }}>
             <div className="header-with-tabs">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                 <button 
                   onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
                   className="back-button" 
@@ -1388,10 +1870,16 @@ const AdminConnect = () => {
                 >
                   <FaArrowLeft /> Back to Organization
                 </button>
-                <h3>Recent Submissions</h3>
-                <Link to={`/church/${id}/bi-dashboard`} className="bi-dashboard-button">
+                <h3 style={{ margin: 0 }}>Recent Submissions</h3>
+                <Link to={`/organization/${id}/bi-dashboard`} className="bi-dashboard-button">
                   <FaChartPie /> Business Intelligence
                 </Link>
+                {pcConnected && (
+                  <div className="pc-status-badge">
+                    <FaCheckCircle style={{ color: '#10B981' }} />
+                    <span>Planning Center Connected</span>
+                  </div>
+                )}
               </div>
               <div className="tabs">
                 <button
@@ -1407,129 +1895,220 @@ const AdminConnect = () => {
                   Members ({users.length})
                 </button>
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                {!pcConnected && (
+                  <button
+                    onClick={() => setShowPcConfigModal(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#3B82F6',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}
+                    title="Configure Planning Center"
+                  >
+                    <FiEdit2 />
+                    Configure Planning Center
+                  </button>
+                )}
+                {pcConnected && (
+                  <>
+                    <button
+                      onClick={() => setShowPcConfigModal(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
+                        backgroundColor: '#6B7280',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: '500'
+                      }}
+                      title="Edit Planning Center Configuration"
+                    >
+                      <FiEdit2 />
+                    </button>
+                    <button
+                      onClick={() => setShowFieldMappingModal(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
+                        backgroundColor: '#8B5CF6',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: '500'
+                      }}
+                      title="Configure Field Mappings"
+                    >
+                      Field Mapping
+                    </button>
+                    <button
+                      onClick={handleOpenPreview}
+                      disabled={pcSyncing}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
+                        backgroundColor: pcSyncing ? '#9CA3AF' : '#10B981',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: pcSyncing ? 'not-allowed' : 'pointer',
+                        fontSize: '14px',
+                        fontWeight: '500'
+                      }}
+                      title="Sync with Planning Center"
+                    >
+                      <FaSync className={pcSyncing ? 'spinning' : ''} />
+                      {pcSyncing ? 'Syncing...' : 'Sync Planning Center'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className="search-box">
-              <div className="sf-container">
-                <div className="search-container" style={{ width: "100%" }}>
-                  <FiSearch size={20} color="#6B7280" className="search-icon" />
-                  <input
-                    type="text"
-                    placeholder="Search by name or phone..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="search-input"
-                  />
-                  {searchTerm && (
-                    <IoMdClose
-                      size={20}
-                      onClick={() => setSearchTerm("")}
-                      className="clear-filter-btn"
-                    />
-                  )}
+            {/* Planning Center Sync Summary */}
+            {pcConnected && (
+              <div style={{ marginBottom: '1rem' }}>
+                <div className="pc-sync-summary">
+                  <div className="pc-sync-stat">
+                    <div className="pc-sync-stat-label">Synced Visitors</div>
+                    <div className="pc-sync-stat-value">
+                      {recentVisitors.filter(v => v.isSynced).length} / {recentVisitors.length}
+                    </div>
+                  </div>
+                  <div className="pc-sync-stat">
+                    <div className="pc-sync-stat-label">Synced Members</div>
+                    <div className="pc-sync-stat-value">
+                      {users.filter(u => u.isSynced).length} / {users.length}
+                    </div>
+                  </div>
+                  <div className="pc-sync-stat">
+                    <div className="pc-sync-stat-label">Total Synced</div>
+                    <div className="pc-sync-stat-value" style={{ color: '#ECFDF5', fontWeight: '700' }}>
+                      {recentVisitors.filter(v => v.isSynced).length + users.filter(u => u.isSynced).length} / {recentVisitors.length + users.length}
+                    </div>
+                  </div>
                 </div>
-
-                <div className="search-container" style={{ width: "100%" }}>
-                  <FiFilter size={20} color="#6B7280" className="filter-icon" />
-                  <input
-                    type="text"
-                    placeholder="Filter by tag..."
-                    value={tagFilter}
-                    onChange={(e) => setTagFilter(e.target.value)}
-                    className="search-input"
-                  />
-                  {tagFilter && (
-                    <IoIosAdd
-                      size={26}
-                      onClick={handleAddTagFilter}
-                      className="add-filter-btn"
-                      title="Add tag filter"
-                    />
-                  )}
+                <div className="pc-sync-legend">
+                  <FaCheckCircle style={{ color: '#10B981', fontSize: '14px' }} />
+                  <span>Green checkmark indicates the person has been synced with Planning Center</span>
                 </div>
-
-                <div className="search-container" style={{ width: "100%" }}>
-                  <FiFilter size={20} color="#6B7280" className="filter-icon" />
-                  <select 
-                    value={dateFilter}
-                    onChange={(e) => {
-                      if (e.target.value === 'custom') {
-                        setCustomDateFilter(true);
-                        setDateFilter('all');
-                      } else {
-                        setCustomDateFilter(false);
-                        setDateFilter(e.target.value);
-                      }
-                    }}
-                    className="search-input"
-                    style={{ paddingLeft: '2rem' }}
-                  >
-                    <option value="all">All Dates</option>
-                    <option value="today">Today</option>
-                    <option value="week">This Week</option>
-                    <option value="month">This Month</option>
-                    <option value="year">This Year</option>
-                    <option value="custom">Custom Date</option>
-                  </select>
-                </div>
-
-                {customDateFilter && (
-                  <div className="search-container" style={{ width: "100%" }}>
-                    <input
-                      type="date"
-                      value={selectedDate}
-                      onChange={(e) => setSelectedDate(e.target.value)}
-                      className="search-input"
-                    />
+                {pcLastSyncResults && (
+                  <div className="pc-last-sync">
+                    <div><strong>Last Sync:</strong> {pcLastSync ? new Date(pcLastSync).toLocaleString() : 'N/A'}</div>
+                    <div><strong>New Visitors:</strong> {pcLastSyncResults.createdVisitors || 0}</div>
+                    <div><strong>Updated Visitors:</strong> {pcLastSyncResults.updatedVisitors || 0}</div>
+                    <div><strong>Updated Members:</strong> {pcLastSyncResults.updatedMembers || 0}</div>
+                    <div><strong>Errors:</strong> {pcLastSyncResults.errors || 0}</div>
                   </div>
                 )}
-
-                <div className="search-container" style={{ width: "100%" }}>
-                  <FiFilter size={20} color="#6B7280" className="filter-icon" />
-                  <select 
-                    value={`${sortConfig.field}-${sortConfig.direction}`}
-                    onChange={(e) => {
-                      const [field, direction] = e.target.value.split('-');
-                      setSortConfig({ field, direction });
-                    }}
-                    className="search-input"
-                    style={{ paddingLeft: '2rem' }}
-                  >
-                    <option value="createdAt-desc">Date (Newest First)</option>
-                    <option value="createdAt-asc">Date (Oldest First)</option>
-                    <option value="fullName-asc">Name (A-Z)</option>
-                    <option value="fullName-desc">Name (Z-A)</option>
-                    <option value="phone-asc">Phone (A-Z)</option>
-                    <option value="phone-desc">Phone (Z-A)</option>
-                  </select>
-                </div>
               </div>
+            )}
 
-              {tagFilters.length > 0 && (
-                <div className="active-filters">
-                  <p>Applied tag filters : </p>
-                  {tagFilters.map((tag, index) => (
-                    <span key={index} className="filter-tag">
-                      {tag}
-                      <button
-                        onClick={() => handleRemoveTagFilter(tag)}
-                        className="remove-filter-tag"
-                      >
-                        <IoMdClose size={16} />
-                      </button>
-                    </span>
-                  ))}
-                  {tagFilters.length > 0 && (
+            {pcConnected && (
+              <div className="pc-sync-history">
+                <div className="pc-sync-history-header">
+                  <h4 style={{ margin: 0 }}>Sync History</h4>
+                  <div style={{ display: 'flex', gap: '8px' }}>
                     <button
-                      onClick={() => setTagFilters([])}
-                      className="clear-all-filters"
+                      onClick={loadSyncIssues}
+                      className="pc-button"
+                      style={{ backgroundColor: '#F59E0B', color: 'white' }}
+                      title="View fields that failed to migrate"
                     >
-                      Clear all
+                      ⚠️ Sync Issues
                     </button>
-                  )}
+                    <button
+                      onClick={() => {
+                        setShowSyncHistory(!showSyncHistory);
+                        if (!showSyncHistory && pcLogs.length === 0) {
+                          loadPcLogs('reset');
+                        }
+                      }}
+                      className="pc-button pc-button-test"
+                    >
+                      {showSyncHistory ? '🔼 Hide History' : '🔽 View History'}
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
+                {showSyncHistory && (
+                  <>
+                <div style={{ marginTop: '12px' }}>
+                  <button
+                    onClick={() => loadPcLogs(pcLogs.length ? 'next' : 'reset')}
+                    disabled={!pcLogsHasMore || pcLogsLoading}
+                    className="pc-button pc-button-test"
+                    style={{ width: '100%' }}
+                  >
+                    {pcLogsLoading ? 'Loading...' : (pcLogsHasMore ? 'Load More (Page ' + (Math.floor(pcLogs.length / pcLogsPageSize) + 1) + ')' : 'No More Logs')}
+                  </button>
+                </div>
+                <div className="pc-sync-history-list">
+                  {pcLogs.length === 0 && <div className="pc-sync-empty">No syncs yet.</div>}
+                  {pcLogs.map(log => (
+                    <div key={log.id} className="pc-sync-history-item">
+                      <div style={{ flex: 1 }}>
+                        <div className="pc-sync-history-title">
+                          {log.status === 'completed' ? '✅ Completed' : '🔄 Running'} · {log.startAt?.toDate ? log.startAt.toDate().toLocaleString() : (log.startAt || 'Unknown')}
+                        </div>
+                        <div className="pc-sync-history-sub" style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                            <span style={{ color: '#10B981', fontWeight: '600' }}>
+                              ➕ New Visitors: {log.results?.createdVisitors || 0}
+                            </span>
+                            <span style={{ color: '#3B82F6', fontWeight: '600' }}>
+                              🔄 Updated Visitors: {log.results?.updatedVisitors || 0}
+                            </span>
+                            <span style={{ color: '#8B5CF6', fontWeight: '600' }}>
+                              👥 Updated Members: {log.results?.updatedMembers || 0}
+                            </span>
+                            {(log.results?.errors || 0) > 0 && (
+                              <span style={{ color: '#EF4444', fontWeight: '600' }}>
+                                ⚠️ Errors: {log.results?.errors}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
+                            Total processed: {(log.results?.createdVisitors || 0) + (log.results?.updatedVisitors || 0) + (log.results?.updatedMembers || 0)} people
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <button
+                          className="pc-button pc-button-cancel"
+                          onClick={() => openLogEntries(log)}
+                          style={{ whiteSpace: 'nowrap' }}
+                        >
+                          View Details
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            
 
             <div className="visitor-log" style={{ overflowX: "auto" }}>
               {/* Group Messaging Action Bar */}
@@ -1561,7 +2140,7 @@ const AdminConnect = () => {
                 </div>
                 <div style={{ display: "flex", gap: "10px" }}>
                   <button
-                    onClick={() => navigate(`/church/${id}/bi-dashboard`)}
+                    onClick={() => navigate(`/organization/${id}/bi-dashboard`)}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -1657,7 +2236,15 @@ const AdminConnect = () => {
                         />
                       </td>
                       <td style={{ padding: "0.75rem", whiteSpace: 'nowrap' }}>
-                        {item.name}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {item.name}
+                          {pcConnected && syncStatus[item.id]?.isSynced && (
+                            <FaCheckCircle 
+                              style={{ color: '#10B981', fontSize: '14px' }}
+                              title={`Synced with Planning Center on ${new Date(syncStatus[item.id].syncedAt).toLocaleDateString()}`}
+                            />
+                          )}
+                        </div>
                       </td>
                       <td style={{ padding: "0.75rem", whiteSpace: 'nowrap' }}>
                         {item.lastName}
@@ -1816,13 +2403,13 @@ const AdminConnect = () => {
                                 <FiEdit2 />
                               </button>
                               <button
-                                onClick={() => navigate(`/church/${id}/admin-connect/${item.id}`)}
+                                onClick={() => navigate(`/organization/${id}/admin-connect/${item.id}`)}
                                 className="btn btn-info btn-sm"
                               >
                                 <FaRegEye />
                               </button>
                               <button
-                                onClick={() => navigate(`/church/${id}/message-log/visitor/${item.id}`)}
+                                onClick={() => navigate(`/organization/${id}/message-log/visitor/${item.id}`)}
                                 className="btn btn-primary btn-sm"
                                 title="View message log"
                                 style={{ background: '#0ea5e9' }}
@@ -1882,6 +2469,38 @@ const AdminConnect = () => {
                       justifyContent: "space-between"
                     }}>
                       <span>{item.name} {item.lastName}</span>
+
+                {/* Planning Center quick toggles */}
+                {activeTab === 'visitors' && (
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowPcOnly(v => !v)}
+                      className="pc-button"
+                      style={{
+                        flex: '0 0 auto',
+                        backgroundColor: showPcOnly ? '#3B82F6' : '#E5E7EB',
+                        color: showPcOnly ? '#FFFFFF' : '#374151'
+                      }}
+                      title="Show only Planning Center visitors"
+                    >
+                      {showPcOnly ? 'Showing Planning Center' : 'Show Planning Center Only'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowLastSyncOnly(v => !v)}
+                      className="pc-button"
+                      style={{
+                        flex: '0 0 auto',
+                        backgroundColor: showLastSyncOnly ? '#10B981' : '#E5E7EB',
+                        color: showLastSyncOnly ? '#FFFFFF' : '#374151'
+                      }}
+                      title="Show only records changed in last sync"
+                    >
+                      {showLastSyncOnly ? 'Showing Last Sync Changes' : 'Show Last Sync Changes'}
+                    </button>
+                  </div>
+                )}
                       <span style={{ color: "#6B7280" }}>{formatPhoneDisplay(item.phone)}</span>
                     </li>
                   ))}
@@ -2044,7 +2663,7 @@ const AdminConnect = () => {
                     messageText: groupMessage,
                     returnRoute: window.location.pathname
                   }));
-                  navigate(`/church/${id}/recharge`);
+                  navigate(`/organization/${id}/recharge`);
                 }}
                 style={{
                   backgroundColor: "#10B981",
@@ -2129,6 +2748,723 @@ const AdminConnect = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Planning Center Configuration Modal */}
+      {showPcConfigModal && (
+        <div className="pc-modal-overlay" onClick={() => setShowPcConfigModal(false)}>
+          <div className="pc-modal-container" onClick={(e) => e.stopPropagation()}>
+            <h2 className="pc-modal-title">Configure Planning Center</h2>
+            <p className="pc-modal-subtitle">
+              Enter your Planning Center API credentials to enable syncing.
+            </p>
+            
+            <div className="pc-form-group">
+              <label htmlFor="pcAppId" className="pc-label">
+                Application ID
+              </label>
+              <input
+                id="pcAppId"
+                type="text"
+                value={pcAppId}
+                onChange={(e) => setPcAppId(e.target.value)}
+                placeholder="Enter your Planning Center App ID"
+                className="pc-input"
+                disabled={pcTesting}
+              />
+            </div>
+
+            <div className="pc-form-group">
+              <label htmlFor="pcSecret" className="pc-label">
+                Secret
+              </label>
+              <input
+                id="pcSecret"
+                type="password"
+                value={pcSecret}
+                onChange={(e) => setPcSecret(e.target.value)}
+                placeholder="Enter your Planning Center Secret"
+                className="pc-input"
+                disabled={pcTesting}
+              />
+            </div>
+
+            <div className="pc-modal-actions">
+              <button
+                onClick={handleTestPcConnection}
+                disabled={pcTesting || !pcAppId || !pcSecret}
+                className="pc-button pc-button-test"
+              >
+                {pcTesting ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
+                onClick={handleSavePcConfig}
+                disabled={!pcAppId || !pcSecret}
+                className="pc-button pc-button-save"
+              >
+                Save Configuration
+              </button>
+              <button
+                onClick={() => {
+                  setShowPcConfigModal(false);
+                  setShowFieldMappingModal(true);
+                }}
+                className="pc-button"
+                style={{ backgroundColor: '#8B5CF6' }}
+              >
+                Field Mapping
+              </button>
+              <button
+                onClick={() => setShowPcConfigModal(false)}
+                className="pc-button pc-button-cancel"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Planning Center Sync Preview Modal */}
+      {showPcPreviewModal && (
+        <div className="pc-modal-overlay" onClick={() => setShowPcPreviewModal(false)}>
+          <div className="pc-modal-container" onClick={(e) => e.stopPropagation()}>
+            <h2 className="pc-modal-title">Planning Center Sync Preview</h2>
+            <p className="pc-modal-subtitle">Review what will be imported and adjust mappings here before starting.</p>
+
+            {pcPreviewLoading && <div>Loading preview...</div>}
+            {pcPreviewCounts && !pcPreviewLoading && (
+              <div className="pc-last-sync" style={{ marginTop: 0 }}>
+                <div><strong>Total Contacts in Planning Center:</strong> {pcPreviewCounts.total}</div>
+                <div><strong>New Visitors to Add:</strong> {pcPreviewCounts.toCreate}</div>
+                <div><strong>Existing Visitors to Update:</strong> {pcPreviewCounts.toUpdate}</div>
+                <div><em>Note: All contacts are imported as Visitors and tagged with "planning_center".</em></div>
+              </div>
+            )}
+
+            {/* Live Field Mapping Controls for Preview */}
+            <div style={{ margin: '12px 0', background: '#EFF6FF', padding: '12px', borderRadius: '8px', border: '1px solid #93C5FD' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, color: '#1E3A8A' }}>Field Mapping</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 28px 1fr', gap: '8px', alignItems: 'center' }}>
+                {Object.entries({
+                  'name': 'firstName',
+                  'lastName': 'lastName',
+                  'email': 'email',
+                  'phone': 'phone',
+                  'dateOfBirth': 'birthdate',
+                  'gender': 'gender',
+                  'maritalStatus': 'maritalStatus',
+                  'address.street': 'street',
+                  'address.city': 'city',
+                  'address.state': 'state',
+                  'address.zipCode': 'zip',
+                  'address.country': 'country',
+                }).map(([label, key]) => (
+                  <React.Fragment key={key}>
+                    <div style={{ fontWeight: 500 }}>{label}</div>
+                    <div style={{ textAlign: 'center', color: '#6B7280' }}>→</div>
+                    <select
+                      value={fieldMappings[key] || ''}
+                      onChange={(e) => {
+                        const updated = { ...fieldMappings, [key]: e.target.value };
+                        setFieldMappings(updated);
+                        // Recompute preview values for any loaded sample rows
+                        setPcPreviewPeople(prev => prev.map(row => ({ ...row, preview: applyFieldMappings(row.pcFlat, updated) })));
+                      }}
+                      className="pc-input"
+                      style={{ margin: 0, fontSize: '14px', fontFamily: 'monospace', cursor: 'pointer' }}
+                    >
+                      <option value="">-- Select Field --</option>
+                      <optgroup label="Common">
+                        <option value="first_name">first_name</option>
+                        <option value="last_name">last_name</option>
+                        <option value="primary_contact_email">primary_contact_email</option>
+                        <option value="primary_contact_phone">primary_contact_phone</option>
+                        <option value="birthdate">birthdate</option>
+                        <option value="sex">sex</option>
+                        <option value="gender">gender</option>
+                      </optgroup>
+                      <optgroup label="Address">
+                        <option value="street">street</option>
+                        <option value="city">city</option>
+                        <option value="state">state</option>
+                        <option value="zip">zip</option>
+                        <option value="postal_code">postal_code</option>
+                        <option value="country">country</option>
+                      </optgroup>
+                      <optgroup label="Extras">
+                        <option value="nickname">nickname</option>
+                        <option value="middle_name">middle_name</option>
+                        <option value="anniversary">anniversary</option>
+                        <option value="marital_status">marital_status</option>
+                        <option value="marital_status">marital_status</option>
+                        <option value="avatar">avatar</option>
+                        <option value="status">status</option>
+                      </optgroup>
+                    </select>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            {/* Preferred Locations (no fallbacks) */}
+            <div style={{ margin: '12px 0', background: '#FFF7ED', padding: '12px', borderRadius: '8px', border: '1px solid #FDBA74' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, color: '#9A3412' }}>Preferred Locations</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 220px 1fr', gap: 8, alignItems: 'center' }}>
+                <div style={{ fontWeight: 500 }}>Email</div>
+                <select
+                  className="pc-input"
+                  value={locationPrefs.email}
+                  onChange={(e) => {
+                    const next = { ...locationPrefs, email: e.target.value };
+                    setLocationPrefs(next);
+                    setPcPreviewPeople(prev => prev.map(row => ({ ...row, preview: applyFieldMappings(row.pcFlat, fieldMappings) })));
+                  }}
+                >
+                  <option value="home">home</option>
+                  <option value="work">work</option>
+                  <option value="other">other</option>
+                </select>
+                <div style={{ fontWeight: 500 }}>Phone</div>
+                <select
+                  className="pc-input"
+                  value={locationPrefs.phone}
+                  onChange={(e) => {
+                    const next = { ...locationPrefs, phone: e.target.value };
+                    setLocationPrefs(next);
+                    setPcPreviewPeople(prev => prev.map(row => ({ ...row, preview: applyFieldMappings(row.pcFlat, fieldMappings) })));
+                  }}
+                >
+                  <option value="mobile">mobile</option>
+                  <option value="home">home</option>
+                  <option value="work">work</option>
+                  <option value="other">other</option>
+                </select>
+                <div style={{ fontWeight: 500 }}>Address</div>
+                <select
+                  className="pc-input"
+                  value={locationPrefs.address}
+                  onChange={(e) => {
+                    const next = { ...locationPrefs, address: e.target.value };
+                    setLocationPrefs(next);
+                    setPcPreviewPeople(prev => prev.map(row => ({ ...row, preview: applyFieldMappings(row.pcFlat, fieldMappings) })));
+                  }}
+                >
+                  <option value="home">home</option>
+                  <option value="work">work</option>
+                  <option value="other">other</option>
+                </select>
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                <button
+                  className="pc-button pc-button-test"
+                  onClick={() => {
+                    const defaults = { email: 'home', phone: 'mobile', address: 'home' };
+                    setLocationPrefs(defaults);
+                    setPcPreviewPeople(prev => prev.map(row => ({ ...row, preview: applyFieldMappings(row.pcFlat, fieldMappings) })));
+                  }}
+                >Use Defaults</button>
+                <button
+                  className="pc-button pc-button-save"
+                  onClick={async () => {
+                    try {
+                      await planningCenterService.saveMappings(id, fieldMappings, locationPrefs);
+                      safeToast.success('Preferences saved');
+                    } catch (e) {
+                      console.error('Save preferences failed', e);
+                      safeToast.error('Failed to save preferences');
+                    }
+                  }}
+                >Save Preferences</button>
+              </div>
+            </div>
+
+            {/* Sample People Preview */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ fontWeight: 600 }}>Sample People</div>
+              <button
+                className="pc-button pc-button-test"
+                onClick={async () => {
+                  try {
+                    setPcPreviewPeople([]);
+                    setPcPreviewPeopleLoading(true);
+                    const credentials = await planningCenterService.getCredentials(id);
+                    await loadPcPreviewPeople(credentials.appId, credentials.secret);
+                  } finally {
+                    setPcPreviewPeopleLoading(false);
+                  }
+                }}
+              >
+                {pcPreviewPeopleLoading ? 'Loading…' : 'Reload Sample'}
+              </button>
+            </div>
+
+            {pcPreviewPeopleLoading && <div>Loading sample people…</div>}
+            {!pcPreviewPeopleLoading && pcPreviewPeople.length === 0 && (
+              <div style={{ color: '#6B7280', marginBottom: 12 }}>No sample loaded yet.</div>
+            )}
+            {pcPreviewPeople.length > 0 && (
+              <div style={{ maxHeight: '45vh', overflowY: 'auto', border: '1px solid #E5E7EB', borderRadius: 8, padding: 8, marginBottom: 12 }}>
+                {pcPreviewPeople.map((row) => (
+                  <div key={row.id} style={{ padding: 12, marginBottom: 8, background: '#FFFFFF', borderRadius: 8, border: '1px solid #E5E7EB' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700 }}>{row.name}</div>
+                      {row.existing && (
+                        <div style={{ fontSize: 12, color: '#059669' }}>
+                          Matches existing {row.existing.type === 'visitor' ? 'Visitor' : 'Member'}: {row.existing.record.email || ''}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+                      <div style={{ background: '#F9FAFB', borderRadius: 6, padding: 10 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 6 }}>Planning Center</div>
+                        <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+                          <div>first_name: {row.pcFlat.first_name || '-'}</div>
+                          <div>last_name: {row.pcFlat.last_name || '-'}</div>
+                          <div>primaryEmail: {row.pcFlat.primaryEmail || '-'}</div>
+                          <div>primaryPhone: {row.pcFlat.primaryPhone || '-'}</div>
+                          <div>birthdate: {row.pcFlat.birthdate || '-'}</div>
+                          <div>gender/sex: {row.pcFlat.gender || '-'}</div>
+                          <div>marital_status: {row.pcFlat.marital_status || '-'}</div>
+                          <div>street: {row.pcFlat.street || '-'}</div>
+                          <div>city: {row.pcFlat.city || '-'}</div>
+                          <div>state: {row.pcFlat.state || '-'}</div>
+                          <div>zipCode: {row.pcFlat.zipCode || '-'}</div>
+                          <div>country: {row.pcFlat.country || '-'}</div>
+                        </div>
+                      </div>
+                      <div style={{ background: '#ECFDF5', borderRadius: 6, padding: 10 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 6 }}>Will import as</div>
+                        <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+                          <div>name: {row.preview.name || '-'}</div>
+                          <div>lastName: {row.preview.lastName || '-'}</div>
+                          <div>email: {row.preview.email || '-'}</div>
+                          <div>phone: {row.preview.phone || '-'}</div>
+                          <div>dateOfBirth: {row.preview.dateOfBirth || '-'}</div>
+                          <div>gender: {row.preview.gender || '-'}</div>
+                          <div>maritalStatus: {row.preview.maritalStatus || '-'}</div>
+                          <div>address.street: {row.preview.address.street || '-'}</div>
+                          <div>address.city: {row.preview.address.city || '-'}</div>
+                          <div>address.state: {row.preview.address.state || '-'}</div>
+                          <div>address.zipCode: {row.preview.address.zipCode || '-'}</div>
+                          <div>address.country: {row.preview.address.country || '-'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pc-modal-actions">
+              <button
+                onClick={() => { setShowPcPreviewModal(false); handlePlanningCenterSync(); }}
+                disabled={pcPreviewLoading}
+                className="pc-button pc-button-save"
+              >
+                Start Sync
+              </button>
+              <button
+                onClick={() => setShowPcPreviewModal(false)}
+                className="pc-button pc-button-cancel"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Planning Center Sync Log Entries Modal */}
+      {showPcLogEntriesModal && selectedLog && (
+        <div className="pc-modal-overlay" onClick={() => setShowPcLogEntriesModal(false)}>
+          <div className="pc-modal-container" onClick={(e) => e.stopPropagation()}>
+            <h2 className="pc-modal-title">Sync Entries</h2>
+            <p className="pc-modal-subtitle">
+              {selectedLog.startAt?.toDate ? selectedLog.startAt.toDate().toLocaleString() : 'Sync'} · Status: {selectedLog.status}
+            </p>
+
+            <div className="pc-log-entries">
+              {pcLogEntries.length === 0 && !pcLogEntriesLoading && (
+                <div className="pc-sync-empty">No entries.</div>
+              )}
+              {pcLogEntries.map(entry => (
+                <div key={entry.id} className="pc-log-entry-row">
+                  <div className="pc-log-entry-main">
+                    <div className={`pc-log-entry-badge ${entry.action}`}>{entry.action}</div>
+                    <div className="pc-log-entry-text">
+                      <div className="pc-log-entry-title">
+                        {entry.name || entry.personId}
+                        {entry.isVisitor === true && <span className="pc-log-type-badge visitor">Visitor</span>}
+                        {entry.isVisitor === false && <span className="pc-log-type-badge member">Member</span>}
+                      </div>
+                      <div className="pc-log-entry-sub">{entry.email || ''} {entry.phone ? `· ${entry.phone}` : ''}</div>
+                      
+                      {/* Sync Report Details */}
+                      {entry.syncReport && (
+                        <div className="pc-sync-report">
+                          {entry.syncReport.fieldsSynced && entry.syncReport.fieldsSynced.length > 0 && (
+                            <div className="pc-sync-report-section">
+                              <strong>✓ Synced:</strong> {entry.syncReport.fieldsSynced.join(', ')}
+                            </div>
+                          )}
+                          {entry.syncReport.fieldsMissing && entry.syncReport.fieldsMissing.length > 0 && (
+                            <div className="pc-sync-report-section warning">
+                              <strong>⚠ Missing:</strong> {entry.syncReport.fieldsMissing.join(', ')}
+                            </div>
+                          )}
+                          {entry.syncReport.warnings && entry.syncReport.warnings.length > 0 && (
+                            <div className="pc-sync-report-section error">
+                              <strong>⚠ Warnings:</strong>
+                              <ul>
+                                {entry.syncReport.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {entry.error && (
+                        <div className="pc-sync-report-section error">
+                          <strong>Error:</strong> {entry.error}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="pc-log-entry-time">
+                    {entry.at?.toDate ? entry.at.toDate().toLocaleString() : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="pc-modal-actions">
+              <button
+                onClick={() => loadLogEntries(selectedLog, 'next')}
+                disabled={!pcLogEntriesHasMore || pcLogEntriesLoading}
+                className="pc-button pc-button-test"
+              >
+                {pcLogEntriesLoading ? 'Loading...' : (pcLogEntriesHasMore ? 'Load More' : 'No More')}
+              </button>
+              <button
+                onClick={() => setShowPcLogEntriesModal(false)}
+                className="pc-button pc-button-cancel"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Mapping Configuration Modal */}
+      {showFieldMappingModal && (
+        <div className="pc-modal-overlay" onClick={() => setShowFieldMappingModal(false)}>
+          <div className="pc-modal-container" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px' }}>
+            <h2 className="pc-modal-title">Field Mapping Configuration</h2>
+            <p className="pc-modal-subtitle">
+              Map Planning Center fields to your Firebase fields. Default mappings are shown below.
+            </p>
+            
+            <div style={{ 
+              maxHeight: '60vh', 
+              overflowY: 'auto', 
+              padding: '20px',
+              backgroundColor: '#f9fafb',
+              borderRadius: '8px',
+              marginBottom: '20px'
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '0 8px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#e5e7eb' }}>
+                    <th style={{ padding: '12px', textAlign: 'left', borderRadius: '8px 0 0 8px', fontWeight: '600' }}>Firebase Field</th>
+                    <th style={{ padding: '12px', textAlign: 'center', width: '50px' }}>→</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderRadius: '0 8px 8px 0', fontWeight: '600' }}>Planning Center Field</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries({
+                    'name': 'firstName',
+                    'lastName': 'lastName',
+                    'email': 'email',
+                    'phone': 'phone',
+                    'dateOfBirth': 'birthdate',
+                    'gender': 'gender',
+                    'maritalStatus': 'maritalStatus',
+                    'avatar': 'avatar',
+                    'address.street': 'street',
+                    'address.city': 'city',
+                    'address.state': 'state',
+                    'address.zipCode': 'zip',
+                    'address.country': 'country'
+                  }).map(([label, key]) => (
+                    <tr key={key} style={{ backgroundColor: 'white' }}>
+                      <td style={{ padding: '12px', fontWeight: '500', borderRadius: '8px 0 0 8px' }}>{label}</td>
+                      <td style={{ padding: '12px', textAlign: 'center', color: '#6B7280' }}>→</td>
+                      <td style={{ padding: '12px', borderRadius: '0 8px 8px 0' }}>
+                        <select
+                          value={fieldMappings[key] || ''}
+                          onChange={(e) => setFieldMappings({ ...fieldMappings, [key]: e.target.value })}
+                          className="pc-input"
+                          style={{ margin: 0, fontSize: '14px', fontFamily: 'monospace', cursor: 'pointer' }}
+                        >
+                          <option value="">-- Select Field --</option>
+                          <optgroup label="Personal Info">
+                            <option value="first_name">first_name</option>
+                            <option value="last_name">last_name</option>
+                            <option value="nickname">nickname</option>
+                            <option value="middle_name">middle_name</option>
+                            <option value="sex">sex (Male/Female)</option>
+                            <option value="gender">gender</option>
+                            <option value="birthdate">birthdate</option>
+                            <option value="anniversary">anniversary</option>
+                            <option value="marital_status">marital_status</option>
+                            <option value="grade">grade</option>
+                            <option value="child">child (boolean)</option>
+                          </optgroup>
+                          <optgroup label="Contact Info">
+                            <option value="primary_contact_email">primary_contact_email</option>
+                            <option value="primary_contact_phone">primary_contact_phone</option>
+                            <option value="avatar">avatar</option>
+                          </optgroup>
+                          <optgroup label="Address Fields">
+                            <option value="street">street</option>
+                            <option value="city">city</option>
+                            <option value="state">state</option>
+                            <option value="zip">zip</option>
+                            <option value="country">country</option>
+                            <option value="location">location (full address)</option>
+                          </optgroup>
+                          <optgroup label="Status & Metadata">
+                            <option value="status">status</option>
+                            <option value="membership">membership</option>
+                            <option value="created_at">created_at</option>
+                            <option value="updated_at">updated_at</option>
+                            <option value="medical_notes">medical_notes</option>
+                            <option value="school_type">school_type</option>
+                          </optgroup>
+                          <optgroup label="Other">
+                            <option value="accounting_administrator">accounting_administrator</option>
+                            <option value="given_name">given_name</option>
+                            <option value="name">name (full)</option>
+                          </optgroup>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ 
+                marginTop: '20px', 
+                padding: '15px', 
+                backgroundColor: '#FEF3C7', 
+                borderRadius: '8px',
+                border: '1px solid #F59E0B'
+              }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#92400E', lineHeight: '1.6' }}>
+                  <strong>Planning Center API Field Names:</strong>
+                  <br />• Personal: <code>first_name</code>, <code>last_name</code>, <code>sex</code> (not gender), <code>birthdate</code>, <code>marital_status</code>
+                  <br />• Contact: <code>primary_contact_email</code>, <code>primary_contact_phone</code>, <code>avatar</code>
+                  <br />• Address: <code>street</code>, <code>city</code>, <code>state</code>, <code>zip</code>, <code>country</code>
+                  <br /><br />
+                  <strong>Your Firebase structure:</strong> Visitor profiles use <code>name</code>, <code>lastName</code>, <code>email</code>, <code>phone</code>, <code>dateOfBirth</code>, <code>gender</code>, <code>maritalStatus</code>, and <code>address.street/city/state/zipCode/country</code>
+                </p>
+              </div>
+            </div>
+
+            <div className="pc-modal-actions">
+              <button
+                onClick={() => {
+                  safeToast.success('Field mappings saved!');
+                  setShowFieldMappingModal(false);
+                }}
+                className="pc-button pc-button-save"
+              >
+                Save Mappings
+              </button>
+              <button
+                onClick={() => {
+                  // Reset to defaults
+                  setFieldMappings({
+                    firstName: 'first_name',
+                    lastName: 'last_name',
+                    email: 'primary_contact_email',
+                    phone: 'primary_contact_phone',
+                    birthdate: 'birthdate',
+                    gender: 'sex',
+                    maritalStatus: 'marital_status',
+                    avatar: 'avatar',
+                    street: 'street',
+                    city: 'city',
+                    state: 'state',
+                    zip: 'zip',
+                    country: 'country'
+                  });
+                  safeToast.info('Reset to default mappings');
+                }}
+                className="pc-button"
+                style={{ backgroundColor: '#6B7280' }}
+              >
+                Reset to Defaults
+              </button>
+              <button
+                onClick={() => setShowFieldMappingModal(false)}
+                className="pc-button pc-button-cancel"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sync Issues Modal */}
+      {showSyncIssuesModal && (
+        <div className="pc-modal-overlay" onClick={() => setShowSyncIssuesModal(false)}>
+          <div className="pc-modal-container" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
+            <h2 className="pc-modal-title">⚠️ Sync Issues & Missing Fields</h2>
+            <p className="pc-modal-subtitle">
+              {syncIssues.length} {syncIssues.length === 1 ? 'person has' : 'people have'} fields that failed to migrate. Review and fix field mappings below.
+            </p>
+            
+            <div style={{ 
+              maxHeight: '60vh', 
+              overflowY: 'auto', 
+              marginBottom: '20px'
+            }}>
+              {syncIssues.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#6B7280' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
+                  <h3 style={{ margin: '0 0 8px 0', color: '#059669' }}>No Issues Found!</h3>
+                  <p>All fields migrated successfully from Planning Center.</p>
+                </div>
+              ) : (
+                syncIssues.map((issue, idx) => (
+                  <div 
+                    key={issue.id} 
+                    style={{ 
+                      padding: '20px', 
+                      marginBottom: '16px', 
+                      background: '#FEF3C7', 
+                      border: '2px solid #F59E0B', 
+                      borderRadius: '12px' 
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                      <div>
+                        <div style={{ fontWeight: '700', fontSize: '16px', color: '#92400E', marginBottom: '4px' }}>
+                          {issue.name}
+                          <span style={{ 
+                            marginLeft: '8px', 
+                            padding: '4px 8px', 
+                            background: issue.isVisitor ? '#DBEAFE' : '#E0E7FF', 
+                            color: issue.isVisitor ? '#1E40AF' : '#5B21B6', 
+                            borderRadius: '12px', 
+                            fontSize: '12px', 
+                            fontWeight: '600' 
+                          }}>
+                            {issue.isVisitor ? 'Visitor' : 'Member'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '14px', color: '#78350F' }}>
+                          {issue.email && <span>📧 {issue.email}</span>}
+                          {issue.phone && <span style={{ marginLeft: '12px' }}>📱 {issue.phone}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {issue.fieldsMissing.length > 0 && (
+                      <div style={{ marginTop: '12px', padding: '12px', background: 'white', borderRadius: '8px' }}>
+                        <div style={{ fontWeight: '600', fontSize: '14px', color: '#DC2626', marginBottom: '8px' }}>
+                          ❌ Missing Fields ({issue.fieldsMissing.length}):
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          {issue.fieldsMissing.map(field => (
+                            <span 
+                              key={field} 
+                              style={{ 
+                                padding: '6px 12px', 
+                                background: '#FEE2E2', 
+                                color: '#991B1B', 
+                                borderRadius: '6px', 
+                                fontSize: '13px', 
+                                fontFamily: 'monospace',
+                                fontWeight: '600'
+                              }}
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#78350F' }}>
+                          💡 These fields had no data in Planning Center. Check if they use different field names or if data needs to be added.
+                        </div>
+                      </div>
+                    )}
+
+                    {issue.warnings.length > 0 && (
+                      <div style={{ marginTop: '12px', padding: '12px', background: 'white', borderRadius: '8px' }}>
+                        <div style={{ fontWeight: '600', fontSize: '14px', color: '#D97706', marginBottom: '8px' }}>
+                          ⚠️ Warnings ({issue.warnings.length}):
+                        </div>
+                        {issue.warnings.map((warning, wIdx) => (
+                          <div key={wIdx} style={{ fontSize: '13px', color: '#92400E', marginBottom: '4px' }}>
+                            • {warning}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {issue.fieldsSynced.length > 0 && (
+                      <div style={{ marginTop: '12px', padding: '12px', background: 'white', borderRadius: '8px' }}>
+                        <div style={{ fontWeight: '600', fontSize: '14px', color: '#059669', marginBottom: '8px' }}>
+                          ✅ Successfully Synced ({issue.fieldsSynced.length}):
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {issue.fieldsSynced.map(field => (
+                            <span 
+                              key={field} 
+                              style={{ 
+                                padding: '4px 8px', 
+                                background: '#D1FAE5', 
+                                color: '#065F46', 
+                                borderRadius: '4px', 
+                                fontSize: '12px', 
+                                fontFamily: 'monospace'
+                              }}
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pc-modal-actions">
+              <button
+                onClick={() => {
+                  setShowSyncIssuesModal(false);
+                  setShowFieldMappingModal(true);
+                }}
+                className="pc-button"
+                style={{ backgroundColor: '#8B5CF6', color: 'white' }}
+              >
+                Fix Field Mapping
+              </button>
+              <button
+                onClick={() => setShowSyncIssuesModal(false)}
+                className="pc-button pc-button-cancel"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

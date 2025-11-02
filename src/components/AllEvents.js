@@ -8,6 +8,10 @@ import {
   getDocs,
   doc,
   getDoc,
+  addDoc,
+  deleteDoc,
+  writeBatch,
+  serverTimestamp,
 } from "firebase/firestore";
 import Skeleton from "react-loading-skeleton";
 import ChurchHeader from "./ChurchHeader";
@@ -15,6 +19,7 @@ import commonStyles from "../pages/commonStyles";
 import "./AllEvents.css";
 import { IoMdSearch } from "react-icons/io";
 import { MdCheckBox, MdCheckBoxOutlineBlank } from "react-icons/md";
+import { toast } from 'react-toastify';
 
 // Function to format date from MM-DD-YYYY to Month Day, Year
 const formatDisplayDate = (dateStr) => {
@@ -72,6 +77,19 @@ const AllEvents = () => {
   const [eventsPerPage] = useState(10);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    startDate: '', // YYYY-MM-DD from input
+    startHour: '', // HH:MM
+    endHour: '',   // HH:MM
+    location: '',
+    isRecurring: false,
+    recurrenceType: 'weekly', // daily | weekly | monthly
+    recurrenceEndDate: '' // YYYY-MM-DD
+  });
   
   // Check if we're coming from card edit/creation
   const isFromCardEdit = location.state?.fromCardEdit || false;
@@ -117,7 +135,7 @@ const AllEvents = () => {
 
   // Function to apply selection and return to card edit
   const applySelection = () => {
-    navigate(`/church/${id}`, { 
+    navigate(`/organization/${id}`, { 
       state: { 
         selectedEventIds: selectedEvents.map(event => event.id),
         eventTitles: selectedEvents.map(event => event.title || event.instanceTitle),
@@ -130,10 +148,10 @@ const AllEvents = () => {
   const handleBackClick = () => {
     if (isFromCardEdit) {
       // Return to ChurchApp.js when coming from card edit/creation
-      navigate(`/church/${id}`);
+      navigate(`/organization/${id}`);
     } else {
       // Default back behavior
-      navigate(`/church/${id}/course-admin`);
+      navigate(`/organization/${id}/course-admin`);
     }
   };
 
@@ -187,11 +205,147 @@ const AllEvents = () => {
   }, [id]);
 
   const handleViewEvent = (id, eventId) => {
-    navigate(`/church/${id}/event/${eventId}`);
+    navigate(`/organization/${id}/event/${eventId}`);
   };
 
   const handleEventCoordination = (id, eventId) => {
-    navigate(`/church/${id}/event/${eventId}/coordination`);
+    navigate(`/organization/${id}/event/${eventId}/coordination`);
+  };
+
+  const handleDeleteEvent = async (eventId) => {
+    if (!window.confirm('Delete this event permanently? This cannot be undone.')) return;
+    try {
+      await deleteDoc(doc(db, 'eventInstances', eventId));
+      setEvents(prev => prev.filter(e => e.id !== eventId));
+      toast.success('Event deleted');
+    } catch (err) {
+      console.error('Delete event failed:', err);
+      toast.error('Failed to delete event');
+    }
+  };
+
+  const handleDeleteAllEvents = async () => {
+    if (!window.confirm('Delete ALL upcoming events for this organization?')) return;
+    setBulkDeleting(true);
+    try {
+      const qAll = query(collection(db, 'eventInstances'), where('churchId', '==', id));
+      const snap = await getDocs(qAll);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(doc(db, 'eventInstances', d.id)));
+      await batch.commit();
+      setEvents([]);
+      toast.success('All events deleted');
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+      toast.error('Failed to delete all events');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const handleCreateEvent = async (e) => {
+    e.preventDefault();
+    if (creating) return;
+    if (!newEvent.title || !newEvent.startDate || !newEvent.startHour) {
+      toast.error('Title, date and start time are required');
+      return;
+    }
+    if (newEvent.isRecurring && !newEvent.recurrenceEndDate) {
+      toast.error('Please select an end date for the recurring series');
+      return;
+    }
+    setCreating(true);
+    try {
+      // Helper to format dates to MM-DD-YYYY
+      const toMMDDYYYY = (dateObj) => dateObj
+        .toLocaleDateString('en-US', { year:'numeric', month:'2-digit', day:'2-digit' })
+        .replace(/(\d+)\/(\d+)\/(\d+)/, '$1-$2-$3');
+
+      const start = new Date(newEvent.startDate + 'T00:00:00');
+      if (!newEvent.isRecurring) {
+        const payload = {
+          title: newEvent.title,
+          instanceTitle: newEvent.title,
+          startDate: toMMDDYYYY(start),
+          startHour: newEvent.startHour,
+          endHour: newEvent.endHour || '',
+          location: newEvent.location || '',
+          churchId: id,
+          status: 'optional',
+          createdAt: serverTimestamp(),
+          isRecurring: false
+        };
+        const ref = await addDoc(collection(db, 'eventInstances'), payload);
+        setEvents(prev => [{ id: ref.id, ...payload }, ...prev]);
+        toast.success('Event created');
+      } else {
+        // Build a list of dates from start until recurrenceEndDate inclusive
+        const end = new Date(newEvent.recurrenceEndDate + 'T00:00:00');
+        const dates = [];
+        let cursor = new Date(start);
+        const maxCount = 366; // safety cap
+
+        const pushIfInRange = () => {
+          if (cursor <= end) dates.push(new Date(cursor));
+        };
+
+        let count = 0;
+        while (cursor <= end && count < maxCount) {
+          pushIfInRange();
+          count++;
+          if (newEvent.recurrenceType === 'daily') {
+            cursor.setDate(cursor.getDate() + 1);
+          } else if (newEvent.recurrenceType === 'weekly') {
+            cursor.setDate(cursor.getDate() + 7);
+          } else if (newEvent.recurrenceType === 'monthly') {
+            const day = cursor.getDate();
+            const nextMonth = new Date(cursor);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            // If next month has fewer days, clamp to last day
+            const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
+            nextMonth.setDate(Math.min(day, lastDay));
+            cursor = nextMonth;
+          } else {
+            // default weekly
+            cursor.setDate(cursor.getDate() + 7);
+          }
+        }
+
+        // Create all instances in a batch
+        const payloads = dates.map(d => ({
+          title: newEvent.title,
+          instanceTitle: newEvent.title,
+          startDate: toMMDDYYYY(d),
+          startHour: newEvent.startHour,
+          endHour: newEvent.endHour || '',
+          location: newEvent.location || '',
+          churchId: id,
+          status: 'optional',
+          createdAt: serverTimestamp(),
+          isRecurring: true,
+          recurrenceType: newEvent.recurrenceType,
+          recurrenceEndDate: toMMDDYYYY(end)
+        }));
+
+        // Using sequential adds to preserve createdAt serverTimestamp accuracy
+        const created = [];
+        for (const p of payloads) {
+          const ref = await addDoc(collection(db, 'eventInstances'), p);
+          created.push({ id: ref.id, ...p });
+        }
+        // Prepend newly created to state
+        setEvents(prev => [...created, ...prev]);
+        toast.success(`Created ${created.length} recurring events`);
+      }
+
+      setShowAddForm(false);
+      setNewEvent({ title:'', startDate:'', startHour:'', endHour:'', location:'', isRecurring:false, recurrenceType:'weekly', recurrenceEndDate:'' });
+    } catch (err) {
+      console.error('Create event failed:', err);
+      toast.error('Failed to create event');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const filteredEvents = events.filter((event) => {
@@ -364,6 +518,93 @@ const AllEvents = () => {
           </div>
           <IoMdSearch size={20} className="search-icon-event" />
         </div>
+
+        {/* Actions row */}
+        <div style={{ display:'flex', gap:12, marginTop:12, flexWrap:'wrap' }}>
+          <button
+            onClick={() => setShowAddForm(s => !s)}
+            style={{ padding:'8px 14px', background:'#4F46E5', color:'#fff', border:'none', borderRadius:6, cursor:'pointer' }}
+          >
+            {showAddForm ? 'Close' : 'Add New Event'}
+          </button>
+          <button
+            onClick={handleDeleteAllEvents}
+            disabled={bulkDeleting || events.length === 0}
+            style={{ padding:'8px 14px', background:'#DC2626', color:'#fff', border:'none', borderRadius:6, cursor: bulkDeleting ? 'not-allowed' : 'pointer' }}
+          >
+            {bulkDeleting ? 'Deleting…' : 'Delete All Events'}
+          </button>
+        </div>
+
+        {showAddForm && (
+          <form onSubmit={handleCreateEvent} style={{ marginTop:12, padding:12, border:'1px solid #e5e7eb', borderRadius:8, background:'#f8fafc', maxWidth:720 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr', gap:12 }}>
+              <input
+                placeholder="Title"
+                value={newEvent.title}
+                onChange={(e)=>setNewEvent(prev=>({...prev, title:e.target.value}))}
+              />
+              <input
+                type="date"
+                value={newEvent.startDate}
+                onChange={(e)=>setNewEvent(prev=>({...prev, startDate:e.target.value}))}
+              />
+              <input
+                type="time"
+                value={newEvent.startHour}
+                onChange={(e)=>setNewEvent(prev=>({...prev, startHour:e.target.value}))}
+              />
+              <input
+                type="time"
+                value={newEvent.endHour}
+                onChange={(e)=>setNewEvent(prev=>({...prev, endHour:e.target.value}))}
+              />
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, marginTop:12 }}>
+              <input
+                placeholder="Location (optional)"
+                value={newEvent.location}
+                onChange={(e)=>setNewEvent(prev=>({...prev, location:e.target.value}))}
+              />
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, alignItems:'center' }}>
+                <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <input
+                    type="checkbox"
+                    checked={newEvent.isRecurring}
+                    onChange={(e)=>setNewEvent(prev=>({...prev, isRecurring: e.target.checked }))}
+                  />
+                  Recurring event
+                </label>
+                {newEvent.isRecurring && (
+                  <select
+                    value={newEvent.recurrenceType}
+                    onChange={(e)=>setNewEvent(prev=>({...prev, recurrenceType:e.target.value}))}
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                )}
+                {newEvent.isRecurring && (
+                  <input
+                    type="date"
+                    value={newEvent.recurrenceEndDate}
+                    onChange={(e)=>setNewEvent(prev=>({...prev, recurrenceEndDate:e.target.value}))}
+                    placeholder="End date"
+                  />
+                )}
+              </div>
+            </div>
+            <div style={{ marginTop:12, display:'flex', gap:12 }}>
+              <button type="submit" disabled={creating} style={{ padding:'8px 14px', background:'#10B981', color:'#fff', border:'none', borderRadius:6 }}>
+                {creating ? 'Creating…' : 'Create Event'}
+              </button>
+              <button type="button" onClick={()=>setShowAddForm(false)} style={{ ...commonStyles.backButtonLink }}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       {loading ? (
@@ -527,11 +768,21 @@ const AllEvents = () => {
                             className="view-more-link"
                             onClick={(e) => {
                               e.stopPropagation();
-                              navigate(`/church/${id}/event/${event.id}/registrations`);
+                              navigate(`/organization/${id}/event/${event.id}/registrations`);
                             }}
                             style={{ color: '#10B981' }}
                           >
                             <span>Manage Registration →</span>
+                          </div>
+                          <div
+                            className="view-more-link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEvent(event.id);
+                            }}
+                            style={{ color: '#DC2626' }}
+                          >
+                            <span>Delete Event</span>
                           </div>
                         </div>
                       )}

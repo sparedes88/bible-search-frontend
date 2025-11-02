@@ -36,6 +36,7 @@ import idiomas from "./idiomas";
 import habilidades from "./habilidades";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { states, majorCities, countries, validatePostalCode, formatPostalCode } from './data/locations';
+import planningCenterService from "../services/planningCenterService";
 
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return '';
@@ -121,6 +122,15 @@ const VisitorDetails = () => {
     }
   });
   const [cityOptions, setCityOptions] = useState([]);
+  const [showSyncDataModal, setShowSyncDataModal] = useState(false);
+  const [syncDataToEdit, setSyncDataToEdit] = useState({
+    field: '',
+    currentValue: '',
+    pcValue: '',
+    type: 'text',
+    availableFields: []
+  });
+  const [syncDataLoading, setSyncDataLoading] = useState(false);
 
   const filteredNotes = useMemo(() => {
     if (!visitorData?.notes) return [];
@@ -143,14 +153,19 @@ const VisitorDetails = () => {
 
   useEffect(() => {
     const fetchVisitorDetails = async () => {
+      console.log("VisitorDetails - id:", id, "visitorId:", visitorId);
       if (!id || !visitorId) {
+        console.error("Missing required parameters - id:", id, "visitorId:", visitorId);
         showToast("Missing required parameters", "error");
         return;
       }
 
       try {
+        const visitorPath = `visitors/${id}/visitors/${visitorId}`;
+        console.log("Fetching visitor from path:", visitorPath);
         const visitorDocRef = doc(db, "visitors", id, "visitors", visitorId);
         const visitorSnapshot = await getDoc(visitorDocRef);
+        console.log("Visitor exists:", visitorSnapshot.exists());
         console.log("Visitor >>", visitorSnapshot.data());
         if (visitorSnapshot.exists()) {
           setVisitorData(visitorSnapshot.data());
@@ -169,6 +184,29 @@ const VisitorDetails = () => {
 
   useEffect(() => {
     if (visitorData) {
+      // Debug logging for Planning Center synced data
+      if (visitorData.isSynced) {
+        console.log('=== Planning Center Sync Debug ===');
+        console.log('Visitor Name:', visitorData.name, visitorData.lastName);
+        console.log('Email from visitorData:', visitorData.email);
+        console.log('Email from PC data:', visitorData.planningCenterData?.primary_contact_email);
+        console.log('Phone from visitorData:', visitorData.phone);
+        console.log('Phone from PC data:', visitorData.planningCenterData?.primary_contact_phone);
+        console.log('Gender from visitorData:', visitorData.gender);
+        console.log('Gender from PC data (sex):', visitorData.planningCenterData?.sex);
+        console.log('Gender from PC data (gender):', visitorData.planningCenterData?.gender);
+        console.log('Address from visitorData:', visitorData.address);
+        console.log('Address from PC data:', {
+          street: visitorData.planningCenterData?.street,
+          city: visitorData.planningCenterData?.city,
+          state: visitorData.planningCenterData?.state,
+          zipCode: visitorData.planningCenterData?.zipCode,
+          country: visitorData.planningCenterData?.country
+        });
+        console.log('Full visitorData object:', visitorData);
+        console.log('Full planningCenterData:', visitorData.planningCenterData);
+      }
+      
       setPersonalInfo({
         dateOfBirth: visitorData.dateOfBirth || '',
         gender: visitorData.gender || '',
@@ -484,6 +522,153 @@ const VisitorDetails = () => {
     // Only update address through debounce
     if (field === 'address') {
       handleUpdateVisitor(field, value);
+    }
+  };
+
+  const handleOpenSyncDataModal = async (field, pcFieldName, currentValue, pcValue, type = 'text') => {
+    // Seed modal with whatever we already have locally
+    const initialFields = [];
+
+    if (visitorData.planningCenterData || visitorData.address) {
+      const pcData = visitorData.planningCenterData || {};
+
+      const formatFieldName = (key) => key
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+      const formatValue = (value) => {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+        if (typeof value === 'object' && !Array.isArray(value)) return '';
+        return String(value);
+      };
+
+      Object.keys(pcData).forEach(key => {
+        const value = pcData[key];
+        if (value !== null && value !== undefined && value !== '' && !(typeof value === 'object' && Object.keys(value).length === 0)) {
+          const formattedValue = formatValue(value);
+          if (formattedValue) {
+            initialFields.push({ label: formatFieldName(key), value: formattedValue, key, rawValue: value });
+          }
+        }
+      });
+
+      if (visitorData.isSynced && visitorData.address) {
+        const addr = visitorData.address;
+        if (addr.street && !initialFields.find(f => f.key === 'street')) initialFields.push({ label: 'Street Address', value: addr.street, key: 'street', rawValue: addr.street });
+        if (addr.city && !initialFields.find(f => f.key === 'city')) initialFields.push({ label: 'City', value: addr.city, key: 'city', rawValue: addr.city });
+        if (addr.state && !initialFields.find(f => f.key === 'state')) initialFields.push({ label: 'State', value: addr.state, key: 'state', rawValue: addr.state });
+        if (addr.zipCode && !initialFields.find(f => f.key === 'zipCode')) initialFields.push({ label: 'Zip Code', value: addr.zipCode, key: 'zipCode', rawValue: addr.zipCode });
+        if (addr.country && !initialFields.find(f => f.key === 'country')) initialFields.push({ label: 'Country', value: addr.country, key: 'country', rawValue: addr.country });
+      }
+    }
+
+    // Open the modal with initial fields
+    setSyncDataToEdit({ field, pcFieldName, currentValue: currentValue || '', pcValue: pcValue || '', type, availableFields: initialFields });
+    setShowSyncDataModal(true);
+
+    // If this is an address field, fetch latest addresses from Planning Center live
+    if (field.startsWith('address')) {
+      try {
+        setSyncDataLoading(true);
+        if (!visitorData?.planningCenterId || !id) {
+          console.warn('Missing planningCenterId or organization id; cannot fetch addresses.');
+          setSyncDataLoading(false);
+          return;
+        }
+
+        const creds = await planningCenterService.getCredentials(id);
+        if (!creds?.appId || !creds?.secret) {
+          console.warn('Planning Center credentials not configured.');
+          setSyncDataLoading(false);
+          return;
+        }
+
+        const details = await planningCenterService.fetchPersonDetails(creds.appId, creds.secret, visitorData.planningCenterId, { attributes: {} });
+        const addrOptions = [];
+        if (Array.isArray(details?.addresses)) {
+          details.addresses.forEach((a, idx) => {
+            const attrs = a?.attributes || {};
+            const street = attrs.street || attrs.line1 || attrs.line_1 || '';
+            const city = attrs.city || '';
+            const state = attrs.state || '';
+            const zip = attrs.zip || attrs.postal_code || '';
+            const country = attrs.country || '';
+
+            if (street) addrOptions.push({ label: `Street Address (${city || 'Unknown City'})`, value: street, key: `street_${idx}` });
+            if (city) addrOptions.push({ label: `City`, value: city, key: `city_${idx}` });
+            if (state) addrOptions.push({ label: `State`, value: state, key: `state_${idx}` });
+            if (zip) addrOptions.push({ label: `Zip Code`, value: zip, key: `zip_${idx}` });
+            if (country) addrOptions.push({ label: `Country`, value: country, key: `country_${idx}` });
+          });
+        }
+
+        // Merge new address options, avoid duplicates by label+value
+        setSyncDataToEdit(prev => {
+          const existing = prev.availableFields || [];
+          const merged = [...existing];
+          addrOptions.forEach(opt => {
+            if (!merged.find(m => m.label === opt.label && m.value === opt.value)) merged.push(opt);
+          });
+          // Sort for readability
+          merged.sort((a, b) => a.label.localeCompare(b.label));
+          return { ...prev, availableFields: merged };
+        });
+      } catch (e) {
+        console.error('Failed to fetch addresses from Planning Center:', e);
+      } finally {
+        setSyncDataLoading(false);
+      }
+    }
+  };
+
+  const handleApplySyncData = async () => {
+    try {
+      const { field, pcValue } = syncDataToEdit;
+      
+      // Update based on field type
+      if (field === 'address.street') {
+        const newAddress = {
+          ...personalInfo.address,
+          street: pcValue
+        };
+        await handleUpdateVisitor('address', newAddress);
+        setPersonalInfo(prev => ({
+          ...prev,
+          address: newAddress
+        }));
+      } else if (field.startsWith('address.')) {
+        const addressField = field.split('.')[1];
+        const newAddress = {
+          ...personalInfo.address,
+          [addressField]: pcValue
+        };
+        await handleUpdateVisitor('address', newAddress);
+        setPersonalInfo(prev => ({
+          ...prev,
+          address: newAddress
+        }));
+      } else {
+        await handleUpdateVisitor(field, pcValue);
+        if (field === 'email' || field === 'phone') {
+          setVisitorData(prev => ({
+            ...prev,
+            [field]: pcValue
+          }));
+        } else {
+          setPersonalInfo(prev => ({
+            ...prev,
+            [field]: pcValue
+          }));
+        }
+      }
+      
+      toast.success(`${syncDataToEdit.field} updated from Planning Center!`);
+      setShowSyncDataModal(false);
+    } catch (error) {
+      console.error("Error applying sync data:", error);
+      toast.error("Failed to update field");
     }
   };
 
@@ -1072,10 +1257,56 @@ const VisitorDetails = () => {
               <div className="cards-container">
                 <div className="visitor-card">
                   <div className="visitor-profile">
-                    <div className="visitor-avatar">
-                      {visitorData.name && visitorData.lastName
-                        ? `${visitorData.name[0]}${visitorData.lastName[0]}`
-                        : "V"}
+                    <div 
+                      className="visitor-avatar"
+                      style={{ position: 'relative' }}
+                      title={visitorData.isSynced && visitorData.avatar ? '✅ Avatar from Planning Center' : ''}
+                    >
+                      {visitorData.avatar ? (
+                        <>
+                          <img 
+                            src={visitorData.avatar} 
+                            alt={`${visitorData.name || 'Visitor'} avatar`}
+                            style={{ 
+                              width: '100%', 
+                              height: '100%', 
+                              objectFit: 'cover',
+                              borderRadius: '50%'
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.parentElement.textContent = visitorData.name && visitorData.lastName
+                                ? `${visitorData.name[0]}${visitorData.lastName[0]}`
+                                : "V";
+                            }}
+                          />
+                          {visitorData.isSynced && (
+                            <div 
+                              style={{ 
+                                position: 'absolute', 
+                                bottom: '0', 
+                                right: '0', 
+                                background: '#10B981', 
+                                borderRadius: '50%', 
+                                width: '28px', 
+                                height: '28px', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                border: '3px solid white',
+                                fontSize: '12px'
+                              }}
+                              title="✅ Avatar synced from Planning Center"
+                            >
+                              ✓
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        visitorData.name && visitorData.lastName
+                          ? `${visitorData.name[0]}${visitorData.lastName[0]}`
+                          : "V"
+                      )}
                     </div>
                     <div className="visitor-main-info">
                       {isEditing ? (
@@ -1116,11 +1347,68 @@ const VisitorDetails = () => {
                         </div>
                       ) : (
                         <>
-                          <h3>{visitorData.name} {visitorData.lastName}</h3>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            <h3 style={{ margin: 0 }}>{visitorData.name} {visitorData.lastName}</h3>
+                            {visitorData.isSynced && (
+                              <div 
+                                style={{ 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: '6px', 
+                                  padding: '6px 12px', 
+                                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
+                                  color: 'white', 
+                                  borderRadius: '20px', 
+                                  fontSize: '13px', 
+                                  fontWeight: '600',
+                                  cursor: 'help'
+                                }}
+                                title={`Synced from Planning Center${visitorData.syncedAt ? `\nLast sync: ${new Date(visitorData.syncedAt).toLocaleString()}` : ''}`}
+                              >
+                                <i className="fas fa-sync-alt"></i>
+                                Planning Center
+                              </div>
+                            )}
+                          </div>
                           {visitorData.email && (
-                            <div className="info-item">
+                            <div className="info-item" style={{ position: 'relative' }}>
                               <i className="fas fa-envelope"></i>
                               <span>{visitorData.email}</span>
+                              {visitorData.isSynced && (
+                                visitorData.planningCenterData?.primary_contact_email ? (
+                                  <span 
+                                    style={{ 
+                                      marginLeft: '8px', 
+                                      color: '#10B981', 
+                                      fontSize: '12px',
+                                      cursor: 'help'
+                                    }}
+                                    title="✅ Synced from Planning Center"
+                                  >
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span 
+                                    style={{ 
+                                      marginLeft: '8px', 
+                                      color: '#EF4444', 
+                                      fontSize: '12px',
+                                      cursor: 'pointer',
+                                      textDecoration: 'underline'
+                                    }}
+                                    title="❌ Not available in Planning Center - Click to manually add"
+                                    onClick={() => handleOpenSyncDataModal(
+                                      'email',
+                                      'Email',
+                                      visitorData.email,
+                                      '',
+                                      'email'
+                                    )}
+                                  >
+                                    ✗
+                                  </span>
+                                )
+                              )}
                             </div>
                           )}
                         </>
@@ -1138,7 +1426,44 @@ const VisitorDetails = () => {
                               maxLength={14}
                             />
                           ) : (
-                            <span>{formatPhoneNumber(visitorData.phone) || "No phone provided"}</span>
+                            <>
+                              <span>{formatPhoneNumber(visitorData.phone) || "No phone provided"}</span>
+                              {visitorData.isSynced && (
+                                visitorData.planningCenterData?.primary_contact_phone ? (
+                                  <span 
+                                    style={{ 
+                                      marginLeft: '8px', 
+                                      color: '#10B981', 
+                                      fontSize: '12px',
+                                      cursor: 'help'
+                                    }}
+                                    title="✅ Synced from Planning Center"
+                                  >
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span 
+                                    style={{ 
+                                      marginLeft: '8px', 
+                                      color: '#EF4444', 
+                                      fontSize: '12px',
+                                      cursor: 'pointer',
+                                      textDecoration: 'underline'
+                                    }}
+                                    title="❌ Not available in Planning Center - Click to manually add"
+                                    onClick={() => handleOpenSyncDataModal(
+                                      'phone',
+                                      'Phone',
+                                      visitorData.phone,
+                                      '',
+                                      'tel'
+                                    )}
+                                  >
+                                    ✗
+                                  </span>
+                                )
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -1147,13 +1472,79 @@ const VisitorDetails = () => {
                   {renderVisitorStatus()}
                 </div>
 
+                {/* Planning Center Sync Details */}
+                {visitorData.isSynced && (
+                  <div className="visitor-card" style={{ background: 'linear-gradient(135deg, #f5f7fa 0%, #e8eef7 100%)' }}>
+                    <div style={{ padding: '16px' }}>
+                      <h4 style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '8px', 
+                        margin: '0 0 16px 0',
+                        color: '#667eea',
+                        fontSize: '16px',
+                        fontWeight: '700'
+                      }}>
+                        <i className="fas fa-sync-alt"></i>
+                        Planning Center Sync Details
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '14px' }}>
+                        <div>
+                          <strong style={{ color: '#4a5568' }}>Last Synced:</strong>
+                          <div style={{ color: '#667eea', marginTop: '4px' }}>
+                            {visitorData.syncedAt ? new Date(visitorData.syncedAt).toLocaleString() : 'Unknown'}
+                          </div>
+                        </div>
+                        <div>
+                          <strong style={{ color: '#4a5568' }}>Planning Center ID:</strong>
+                          <div style={{ color: '#667eea', marginTop: '4px', fontFamily: 'monospace' }}>
+                            {visitorData.planningCenterId || 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <strong style={{ color: '#4a5568' }}>Synced Fields:</strong>
+                          <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {visitorData.name && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>name</span>}
+                            {visitorData.lastName && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>lastName</span>}
+                            {visitorData.email && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>email</span>}
+                            {visitorData.phone && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>phone</span>}
+                            {visitorData.dateOfBirth && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>dateOfBirth</span>}
+                            {visitorData.gender && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>gender</span>}
+                            {visitorData.avatar && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>avatar</span>}
+                            {(visitorData.address?.street || visitorData.address?.city) && <span style={{ padding: '2px 6px', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontSize: '11px' }}>address</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {visitorData.tags && visitorData.tags.length > 0 && (
                   <div className="visitor-card">
                     <div className="visitor-tags">
-                      <h4>Tags :</h4>
+                      <h4>
+                        Tags :
+                        {visitorData.isSynced && visitorData.tags.includes('planning_center') && (
+                          <span 
+                            style={{ 
+                              marginLeft: '8px',
+                              fontSize: '13px',
+                              color: '#667eea',
+                              fontWeight: 'normal'
+                            }}
+                            title="✅ Tagged as synced from Planning Center"
+                          >
+                            <i className="fas fa-sync-alt"></i>
+                          </span>
+                        )}
+                      </h4>
                       <div className="tags-container">
                         {visitorData.tags.map((item, i) => (
-                          <span key={i} className="tag">
+                          <span 
+                            key={i} 
+                            className="tag"
+                            title={item === 'planning_center' ? '✅ Auto-added by Planning Center sync' : ''}
+                          >
                             {item}
                           </span>
                         ))}
@@ -1305,10 +1696,62 @@ const VisitorDetails = () => {
                 </div>
 
                 <div className="personal-info-section">
-                  <h3>Personal Information</h3>
+                  <h3>
+                    Personal Information
+                    {visitorData.isSynced && (
+                      <span 
+                        style={{ 
+                          marginLeft: '12px',
+                          fontSize: '14px',
+                          color: '#667eea',
+                          fontWeight: 'normal'
+                        }}
+                        title={`Last synced: ${visitorData.syncedAt ? new Date(visitorData.syncedAt).toLocaleString() : 'Unknown'}`}
+                      >
+                        <i className="fas fa-sync-alt"></i> Synced
+                      </span>
+                    )}
+                  </h3>
                   <div className="form-grid">
                     <div className="form-group">
-                      <label>Date of Birth:</label>
+                      <label>
+                        Date of Birth:
+                        {visitorData.isSynced && (
+                          visitorData.planningCenterData?.birthdate ? (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#10B981', 
+                                fontSize: '12px',
+                                cursor: 'help'
+                              }}
+                              title="✅ Synced from Planning Center"
+                            >
+                              ✓
+                            </span>
+                          ) : (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#EF4444', 
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                textDecoration: 'underline'
+                              }}
+                              title="❌ Not available in Planning Center - Click to manually add"
+                              onClick={() => handleOpenSyncDataModal(
+                                'dateOfBirth',
+                                'Date of Birth',
+                                personalInfo.dateOfBirth,
+                                '',
+                                'date'
+                              )}
+                            >
+                              ✗
+                            </span>
+                          )
+                        )}
+                      </label>
                       <input
                         type="date"
                         value={personalInfo.dateOfBirth}
@@ -1329,7 +1772,44 @@ const VisitorDetails = () => {
                     </div>
                     
                     <div className="form-group">
-                      <label>Gender:</label>
+                      <label>
+                        Gender:
+                        {visitorData.isSynced && (
+                          (visitorData.planningCenterData?.sex || visitorData.planningCenterData?.gender) ? (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#10B981', 
+                                fontSize: '12px',
+                                cursor: 'help'
+                              }}
+                              title="✅ Synced from Planning Center"
+                            >
+                              ✓
+                            </span>
+                          ) : (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#EF4444', 
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                textDecoration: 'underline'
+                              }}
+                              title="❌ Not available in Planning Center - Click to manually add"
+                              onClick={() => handleOpenSyncDataModal(
+                                'gender',
+                                'Gender',
+                                personalInfo.gender,
+                                '',
+                                'select'
+                              )}
+                            >
+                              ✗
+                            </span>
+                          )
+                        )}
+                      </label>
                       <select
                         value={personalInfo.gender}
                         onChange={(e) => handlePersonalInfoChange('gender', e.target.value)}
@@ -1343,7 +1823,44 @@ const VisitorDetails = () => {
                     </div>
 
                     <div className="form-group">
-                      <label>Marital Status:</label>
+                      <label>
+                        Marital Status:
+                        {visitorData.isSynced && (
+                          visitorData.planningCenterData?.marital_status ? (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#10B981', 
+                                fontSize: '12px',
+                                cursor: 'help'
+                              }}
+                              title="✅ Synced from Planning Center"
+                            >
+                              ✓
+                            </span>
+                          ) : (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#EF4444', 
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                textDecoration: 'underline'
+                              }}
+                              title="❌ Not available in Planning Center - Click to manually add"
+                              onClick={() => handleOpenSyncDataModal(
+                                'maritalStatus',
+                                'Marital Status',
+                                personalInfo.maritalStatus,
+                                '',
+                                'select'
+                              )}
+                            >
+                              ✗
+                            </span>
+                          )
+                        )}
+                      </label>
                       <select
                         value={personalInfo.maritalStatus}
                         onChange={(e) => handlePersonalInfoChange('maritalStatus', e.target.value)}
@@ -1359,10 +1876,62 @@ const VisitorDetails = () => {
                     </div>
                   </div>
 
-                  <h3>Address Information</h3>
+                  <h3>
+                    Address Information
+                    {visitorData.isSynced && visitorData.address && (visitorData.address.street || visitorData.address.city) && (
+                      <span 
+                        style={{ 
+                          marginLeft: '12px',
+                          fontSize: '14px',
+                          color: '#667eea',
+                          fontWeight: 'normal'
+                        }}
+                        title="✅ Address synced from Planning Center"
+                      >
+                        <i className="fas fa-sync-alt"></i> Synced
+                      </span>
+                    )}
+                  </h3>
                   <div className="form-grid">
                     <div className="form-group full-width">
-                      <label>Street Address:</label>
+                      <label>
+                        Street Address:
+                        {visitorData.isSynced && (
+                          (visitorData.planningCenterData?.street || visitorData.address?.street) ? (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#10B981', 
+                                fontSize: '12px',
+                                cursor: 'help'
+                              }}
+                              title="✅ Synced from Planning Center"
+                            >
+                              ✓
+                            </span>
+                          ) : (
+                            <span 
+                              style={{ 
+                                marginLeft: '6px', 
+                                color: '#EF4444', 
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                textDecoration: 'underline'
+                              }}
+                              title="❌ Not available in Planning Center - Click to manually add"
+                              onClick={() => handleOpenSyncDataModal(
+                                'address.street',
+                                'Street Address',
+                                personalInfo.address.street,
+                                '',
+                                'text'
+                              )}
+                            >
+                              ✗
+                            </span>
+                          )
+                        )}
+                      </label>
                       <input
                         type="text"
                         value={personalInfo.address.street}
@@ -1539,6 +2108,183 @@ const VisitorDetails = () => {
           )}
         </div>
       </div>
+
+      {/* Sync Data Modal */}
+      {showSyncDataModal && (
+        <div className="modal-overlay" onClick={() => setShowSyncDataModal(false)}>
+          <div className="modal-content-sync" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>
+                <i className="fas fa-edit" style={{ marginRight: '8px', color: '#667eea' }}></i>
+                Update {syncDataToEdit.pcFieldName}
+              </h3>
+              <button onClick={() => setShowSyncDataModal(false)} className="close-button">
+                <FaTimes />
+              </button>
+            </div>
+            
+            <div className="modal-body">
+              <div style={{ marginBottom: '20px', padding: '12px', background: '#EFF6FF', borderRadius: '8px', border: '1px solid #3B82F6' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#1E3A8A', fontWeight: '600' }}>
+                  <i className="fas fa-info-circle" style={{ marginRight: '6px' }}></i>
+                  Select a field from Planning Center to sync to this visitor field
+                </p>
+                {syncDataToEdit.availableFields.length > 0 && (
+                  <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#1E40AF' }}>
+                    Found {syncDataToEdit.availableFields.length} available fields in Planning Center
+                  </p>
+                )}
+                {syncDataLoading && (
+                  <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: '#1D4ED8' }}>
+                    Fetching latest Planning Center values...
+                  </p>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#374151' }}>
+                  Current Value in Visitor Profile:
+                </label>
+                <div style={{ padding: '12px', background: '#F3F4F6', borderRadius: '6px', color: '#6B7280', fontSize: '14px' }}>
+                  {syncDataToEdit.currentValue || '(empty)'}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#374151' }}>
+                  Select Planning Center Field to Sync:
+                </label>
+                {syncDataToEdit.availableFields.length > 0 ? (
+                  <select
+                    value={syncDataToEdit.pcValue}
+                    onChange={(e) => setSyncDataToEdit(prev => ({ ...prev, pcValue: e.target.value }))}
+                    style={{ 
+                      width: '100%', 
+                      padding: '12px', 
+                      border: '2px solid #667eea', 
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      background: 'white'
+                    }}
+                  >
+                    <option value="">-- Select a field --</option>
+                    {syncDataToEdit.availableFields.map((field) => (
+                      <option key={field.key} value={field.value}>
+                        {field.label}: {field.value}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ padding: '12px', background: '#FEF2F2', borderRadius: '6px', border: '1px solid #EF4444' }}>
+                    {syncDataLoading ? (
+                      <p style={{ margin: 0, fontSize: '14px', color: '#1D4ED8' }}>
+                        <i className="fas fa-sync fa-spin" style={{ marginRight: '6px' }}></i>
+                        Loading Planning Center values...
+                      </p>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: '14px', color: '#991B1B' }}>
+                        <i className="fas fa-exclamation-triangle" style={{ marginRight: '6px' }}></i>
+                        No fields available in Planning Center data. You can manually enter a value below.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {syncDataToEdit.availableFields.length === 0 && !syncDataLoading && (
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#374151' }}>
+                    Or Enter Manually:
+                  </label>
+                {syncDataToEdit.type === 'select' && syncDataToEdit.field === 'gender' ? (
+                  <select
+                    value={syncDataToEdit.pcValue}
+                    onChange={(e) => setSyncDataToEdit(prev => ({ ...prev, pcValue: e.target.value }))}
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px', 
+                      border: '2px solid #667eea', 
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="">Select gender</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                ) : syncDataToEdit.type === 'select' && syncDataToEdit.field === 'maritalStatus' ? (
+                  <select
+                    value={syncDataToEdit.pcValue}
+                    onChange={(e) => setSyncDataToEdit(prev => ({ ...prev, pcValue: e.target.value }))}
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px', 
+                      border: '2px solid #667eea', 
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="">Select marital status</option>
+                    <option value="single">Single</option>
+                    <option value="married">Married</option>
+                    <option value="divorced">Divorced</option>
+                    <option value="widowed">Widowed</option>
+                  </select>
+                ) : (
+                  <input
+                    type={syncDataToEdit.type}
+                    value={syncDataToEdit.pcValue}
+                    onChange={(e) => setSyncDataToEdit(prev => ({ ...prev, pcValue: e.target.value }))}
+                    placeholder={`Enter ${syncDataToEdit.pcFieldName.toLowerCase()}`}
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px', 
+                      border: '2px solid #667eea', 
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  />
+                )}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button 
+                onClick={() => setShowSyncDataModal(false)}
+                style={{
+                  padding: '10px 20px',
+                  background: '#E5E7EB',
+                  color: '#374151',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleApplySyncData}
+                disabled={!syncDataToEdit.pcValue}
+                style={{
+                  padding: '10px 20px',
+                  background: syncDataToEdit.pcValue ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#D1D5DB',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: syncDataToEdit.pcValue ? 'pointer' : 'not-allowed',
+                  fontWeight: '600'
+                }}
+              >
+                <i className="fas fa-check" style={{ marginRight: '6px' }}></i>
+                Apply Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ToastContainer
         position="top-right"
         autoClose={3000}

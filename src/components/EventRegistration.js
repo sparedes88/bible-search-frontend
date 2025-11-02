@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
-import { collection, addDoc, serverTimestamp, getDoc, doc } from 'firebase/firestore';
-import { useNavigate, useParams } from 'react-router-dom';
+import { collection, addDoc, serverTimestamp, getDoc, doc, setDoc, query, where, getDocs } from 'firebase/firestore';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import commonStyles from '../pages/commonStyles';
 import ChurchHeader from './ChurchHeader';
@@ -10,6 +10,7 @@ import 'react-toastify/dist/ReactToastify.css';
 
 const EventRegistration = () => {
   const { id, eventId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [eventDetails, setEventDetails] = useState(null);
@@ -22,6 +23,19 @@ const EventRegistration = () => {
     phone: '',
     comments: ''
   });
+  // Prefill from MemberSignup "Continue as Visitor"
+  useEffect(() => {
+    const prefill = location.state && location.state.prefill;
+    if (prefill) {
+      setFormData(prev => ({
+        ...prev,
+        name: prefill.name || prev.name,
+        lastName: prefill.lastName || prev.lastName,
+        email: prefill.email || prev.email,
+        phone: prefill.phone || prev.phone,
+      }));
+    }
+  }, [location.state]);
   const [submitting, setSubmitting] = useState(false);
 
   // Detect if coming from external source like Facebook
@@ -58,7 +72,7 @@ const EventRegistration = () => {
           setEventDetails(eventDoc.data());
         } else {
           toast.error("Event not found");
-          navigate(`/church/${id}/event/${eventId}`);
+       navigate(`/organization/${id}/event/${eventId}`);
         }
       } catch (error) {
         console.error('Error fetching event:', error);
@@ -83,19 +97,63 @@ const EventRegistration = () => {
 
     setSubmitting(true);
     try {
+      // If this is a visitor (no authenticated user), upsert a visitor record in Admin Connect
+      if (!user?.uid) {
+        const visitorsRef = collection(db, 'visitors', id, 'visitors');
+        const lowerEmail = (formData.email || '').trim().toLowerCase();
+        const cleanPhone = (formData.phone || '').replace(/\D/g, '');
+
+        let existingVisitorId = null;
+        // Prefer matching by email when available
+        if (lowerEmail) {
+          const emailQ = query(visitorsRef, where('email', '==', lowerEmail));
+          const emailSnap = await getDocs(emailQ);
+          if (!emailSnap.empty) existingVisitorId = emailSnap.docs[0].id;
+        }
+        // Fallback to phone match
+        if (!existingVisitorId && cleanPhone) {
+          const phoneQ = query(visitorsRef, where('phone', '==', cleanPhone));
+          const phoneSnap = await getDocs(phoneQ);
+          if (!phoneSnap.empty) existingVisitorId = phoneSnap.docs[0].id;
+        }
+
+        const visitorPayload = {
+          name: formData.name || '',
+          lastName: formData.lastName || '',
+          email: lowerEmail || '',
+          phone: cleanPhone || '',
+          source: 'eventregistration',
+          lastEventId: eventId,
+          lastEventName: eventDetails?.title || '',
+          lastEventDate: eventDetails?.startDate || '',
+          lastVisitedAt: serverTimestamp(),
+        };
+
+        if (existingVisitorId) {
+          await setDoc(doc(db, 'visitors', id, 'visitors', existingVisitorId), visitorPayload, { merge: true });
+        } else {
+          await addDoc(visitorsRef, {
+            ...visitorPayload,
+            createdAt: serverTimestamp(),
+            status: 'active',
+          });
+        }
+      }
+
       await addDoc(collection(db, 'eventRegistrations'), {
         eventId,
         churchId: id,
         userId: user?.uid || null,
         ...formData,
         status: 'registered',
+        source: 'eventregistration',
         registeredAt: serverTimestamp(),
         eventName: eventDetails?.title || '',
         eventDate: eventDetails?.startDate || ''
       });
 
       toast.success('Registration successful!');
-      navigate(`/church/${id}/event/${eventId}`);
+  navigate(`/organization/${id}/event/${eventId}`);
     } catch (error) {
       console.error('Registration error:', error);
       toast.error('Failed to register for event');
@@ -117,7 +175,7 @@ const EventRegistration = () => {
   return (
     <div className="page-container">
       <button
-        onClick={() => navigate(`/church/${id}/event/${eventId}`)}
+  onClick={() => navigate(`/organization/${id}/event/${eventId}`)}
         style={commonStyles.backButtonLink}
       >
         ← Back to Event

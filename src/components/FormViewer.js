@@ -7,11 +7,14 @@ import {
   getDoc, 
   collection, 
   addDoc, 
-  serverTimestamp 
+  serverTimestamp,
+  getDocs
 } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import commonStyles from '../pages/commonStyles';
 import './Forms.css';
+import { getChurchData } from '../api/church';
+import { FiCheckCircle, FiGrid } from 'react-icons/fi';
 
 const FormViewer = () => {
   const { id, formId } = useParams();
@@ -21,10 +24,85 @@ const FormViewer = () => {
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
+  const [churchLogo, setChurchLogo] = useState(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [countdown, setCountdown] = useState(15);
+  const [showSwitcher, setShowSwitcher] = useState(false);
+  const [formsList, setFormsList] = useState([]);
+  const [formsLoading, setFormsLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchForm();
   }, [id, formId]);
+
+  // Load available active forms for quick switching
+  useEffect(() => {
+    const fetchForms = async () => {
+      try {
+        if (!id) return;
+        setFormsLoading(true);
+        const formsRef = collection(db, 'churches', id, 'forms');
+        // Query only active forms to comply with security rules and avoid permission errors
+        const q = window?.firebase?.firestoreQuery
+          ? window.firebase.firestoreQuery(formsRef, window.firebase.firestoreWhere('isActive', '==', true))
+          : (await import('firebase/firestore')).query(formsRef, (await import('firebase/firestore')).where('isActive', '==', true));
+        const snap = await getDocs(q);
+        const items = [];
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          items.push({ id: docSnap.id, title: data.title || 'Untitled', description: data.description || '' });
+        });
+        // Sort by title for nicer UX
+        items.sort((a, b) => a.title.localeCompare(b.title));
+        setFormsList(items);
+      } catch (e) {
+        console.warn('Failed to load forms list for switcher', e);
+      } finally {
+        setFormsLoading(false);
+      }
+    };
+    fetchForms();
+  }, [id]);
+
+  useEffect(() => {
+    const fetchChurch = async () => {
+      try {
+        if (!id) return;
+        const church = await getChurchData(id);
+        if (church?.logo) {
+          setChurchLogo(church.logo);
+        } else {
+          setChurchLogo('/img/logo-fallback.svg');
+        }
+      } catch (e) {
+        console.warn('Failed to load church data for logo:', e);
+        setChurchLogo('/img/logo-fallback.svg');
+      }
+    };
+    fetchChurch();
+  }, [id]);
+
+  // Handle post-submit countdown and auto-refresh
+  useEffect(() => {
+    let timer;
+    if (submitted) {
+      timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            // Refresh the page to allow a new submission flow
+            window.location.reload();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [submitted]);
 
   useEffect(() => {
     if (form) {
@@ -161,21 +239,9 @@ const FormViewer = () => {
       const entriesRef = collection(db, 'churches', id, 'forms', form.id, 'entries');
       await addDoc(entriesRef, submissionData);
       
+      // Show thank you screen with countdown and auto-refresh
+      setSubmitted(true);
       toast.success('Form submitted successfully!');
-      
-      // Reset form
-      const initialData = {};
-      form.fields.forEach(field => {
-        if (field.type === 'checkbox') {
-          initialData[field.name] = [];
-        } else if (field.type === 'boolean') {
-          initialData[field.name] = false;
-        } else {
-          initialData[field.name] = '';
-        }
-      });
-      setFormData(initialData);
-      setErrors({});
       
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -377,74 +443,199 @@ const FormViewer = () => {
   }
 
   return (
-    <div style={commonStyles.container}>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px'
+    }}>
       <div style={{ 
-        maxWidth: '600px', 
+        width: '100%',
+        maxWidth: '720px', 
         margin: '0 auto',
         backgroundColor: 'white',
-        padding: '2rem',
-        borderRadius: '12px',
-        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+        padding: '2.25rem',
+        borderRadius: '16px',
+        border: '1px solid #E5E7EB',
+        boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
       }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={() => setShowSwitcher(true)}
+            className="form-input"
+            style={{
+              backgroundColor: '#111827',
+              color: 'white',
+              padding: '0.5rem 0.875rem',
+              borderRadius: 10,
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 700,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            <FiGrid />
+            Switch Form
+          </button>
+        </div>
         <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
-          <h1 style={{ ...commonStyles.title, marginBottom: '1rem' }}>{form.title}</h1>
+          {churchLogo && (
+            <div style={{ marginBottom: '1rem' }}>
+              <img 
+                src={churchLogo}
+                alt="Church Logo"
+                style={{ height: 64, maxWidth: '100%', objectFit: 'contain', filter: 'none' }}
+                onError={(e) => { e.currentTarget.src = '/img/logo-fallback.svg'; }}
+              />
+            </div>
+          )}
+          <h1 style={{ ...commonStyles.title, marginBottom: '0.75rem', fontSize: '1.75rem' }}>{form.title}</h1>
           {form.description && (
             <p style={{ color: '#6b7280', fontSize: '1.1rem', lineHeight: '1.6' }}>
               {form.description}
             </p>
           )}
         </div>
-
-        <form onSubmit={handleSubmit}>
-          {form.fields.map(field => (
-            <div key={field.name} className="form-group" style={{ marginBottom: '1.5rem' }}>
-              <label className="form-label" style={{ 
-                display: 'block', 
-                marginBottom: '0.5rem',
-                fontWeight: '600',
-                color: '#374151'
-              }}>
-                {field.label} {field.required && <span style={{ color: '#ef4444' }}>*</span>}
-              </label>
-              
-              {renderFormField(field)}
-              
-              {errors[field.name] && (
-                <div style={{ 
-                  color: '#ef4444', 
-                  fontSize: '0.875rem', 
-                  marginTop: '0.25rem' 
+        {!submitted ? (
+          <form onSubmit={handleSubmit}>
+            {form.fields.map(field => (
+              <div key={field.name} className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label" style={{ 
+                  display: 'block', 
+                  marginBottom: '0.5rem',
+                  fontWeight: '600',
+                  color: '#111827'
                 }}>
-                  {errors[field.name]}
+                  {field.label} {field.required && <span style={{ color: '#ef4444' }}>*</span>}
+                </label>
+                
+                {renderFormField(field)}
+                
+                {errors[field.name] && (
+                  <div style={{ 
+                    color: '#ef4444', 
+                    fontSize: '0.875rem', 
+                    marginTop: '0.25rem' 
+                  }}>
+                    {errors[field.name]}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div style={{ 
+              marginTop: '2rem', 
+              paddingTop: '2rem', 
+              borderTop: '1px solid #e5e7eb' 
+            }}>
+              <button
+                type="submit"
+                disabled={submitting}
+                style={{
+                  backgroundColor: submitting ? '#9ca3af' : '#4f46e5',
+                  color: 'white',
+                  padding: '0.9rem 2rem',
+                  borderRadius: '10px',
+                  border: 'none',
+                  cursor: submitting ? 'not-allowed' : 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '700',
+                  width: '100%',
+                  boxShadow: '0 8px 16px rgba(79, 70, 229, 0.25)'
+                }}
+              >
+                {submitting ? 'Submitting…' : 'Submit Form'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '2rem 1rem 1rem' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 72, width: 72, borderRadius: '50%', backgroundColor: '#ECFDF5', marginBottom: 16 }}>
+              <FiCheckCircle size={40} color="#10B981" />
+            </div>
+            <h2 style={{ margin: 0, marginBottom: 8, fontSize: '1.5rem', color: '#111827' }}>Thank you!</h2>
+            <p style={{ margin: 0, marginBottom: 8, color: '#374151' }}>Your response has been recorded.</p>
+            <p style={{ marginTop: 8, color: '#6B7280' }}>Refreshing in <strong>{countdown}s</strong>…</p>
+            <div style={{ marginTop: 16 }}>
+              <button
+                className="form-input"
+                onClick={() => window.location.reload()}
+                style={{
+                  backgroundColor: '#111827',
+                  color: 'white',
+                  padding: '0.6rem 1.25rem',
+                  borderRadius: 10,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 700
+                }}
+              >
+                Refresh now
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Switcher Modal */}
+        {showSwitcher && (
+          <div className="modal-overlay" onClick={() => setShowSwitcher(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <h3>Switch Form</h3>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <input
+                  type="text"
+                  placeholder="Search forms..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="form-input"
+                  style={{ width: '100%' }}
+                />
+              </div>
+              {formsLoading ? (
+                <div>Loading forms…</div>
+              ) : (
+                <div style={{ maxHeight: '50vh', overflowY: 'auto', display: 'grid', gap: '0.5rem' }}>
+                  {formsList
+                    .filter(f => f.title.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => { setShowSwitcher(false); window.location.href = `/church/${id}/form/${f.id}`; }}
+                        style={{
+                          textAlign: 'left',
+                          padding: '0.75rem 1rem',
+                          borderRadius: 8,
+                          border: '1px solid #e5e7eb',
+                          backgroundColor: f.id === formId ? '#EEF2FF' : '#ffffff',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, color: '#111827' }}>{f.title}</div>
+                        {f.description && (
+                          <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>{f.description}</div>
+                        )}
+                      </button>
+                    ))}
+                  {formsList.filter(f => f.title.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+                    <div style={{ color: '#6b7280' }}>No forms found.</div>
+                  )}
                 </div>
               )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+                <button
+                  onClick={() => setShowSwitcher(false)}
+                  style={{ backgroundColor: '#6b7280', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          ))}
-
-          <div style={{ 
-            marginTop: '2rem', 
-            paddingTop: '2rem', 
-            borderTop: '1px solid #e5e7eb' 
-          }}>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{
-                backgroundColor: submitting ? '#9ca3af' : '#4f46e5',
-                color: 'white',
-                padding: '0.75rem 2rem',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: submitting ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                fontWeight: '600',
-                width: '100%'
-              }}
-            >
-              {submitting ? 'Submitting...' : 'Submit Form'}
-            </button>
           </div>
-        </form>
+        )}
       </div>
     </div>
   );

@@ -32,6 +32,7 @@ const FormBuilder = ({ churchId, form, onSave, onCancel }) => {
     title: '',
     description: '',
     isActive: true,
+    badgeEligible: false,
     fields: []
   });
   const [editingField, setEditingField] = useState(null);
@@ -52,6 +53,7 @@ const FormBuilder = ({ churchId, form, onSave, onCancel }) => {
         title: form.title || '',
         description: form.description || '',
         isActive: form.isActive !== undefined ? form.isActive : true,
+        badgeEligible: !!form.badgeEligible,
         fields: form.fields || []
       });
     }
@@ -226,7 +228,7 @@ const FormBuilder = ({ churchId, form, onSave, onCancel }) => {
   const requiresOptions = ['select', 'radio', 'checkbox'].includes(newField.type);
 
   return (
-    <div style={commonStyles.container}>
+    <div style={commonStyles.fullWidthContainer}>
       <div className="form-builder">
         <div className="form-builder-header">
           <h1 style={commonStyles.title}>
@@ -257,14 +259,64 @@ const FormBuilder = ({ churchId, form, onSave, onCancel }) => {
             />
           </div>
 
-          <div className="form-checkbox">
-            <input
-              type="checkbox"
-              id="isActive"
-              checked={formData.isActive}
-              onChange={(e) => handleFormDataChange('isActive', e.target.checked)}
-            />
-            <label htmlFor="isActive" className="form-label">Form is active</label>
+          <div style={{ 
+            padding: '1.25rem', 
+            background: '#F9FAFB', 
+            borderRadius: '8px', 
+            border: '1px solid #E5E7EB',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem'
+          }}>
+            <div className="form-checkbox" style={{ 
+              padding: '0.75rem', 
+              background: 'white', 
+              borderRadius: '6px',
+              border: '2px solid #E5E7EB',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}>
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={formData.isActive}
+                onChange={(e) => handleFormDataChange('isActive', e.target.checked)}
+                style={{ width: '20px', height: '20px', cursor: 'pointer', marginRight: '12px' }}
+              />
+              <label htmlFor="isActive" className="form-label" style={{ 
+                cursor: 'pointer', 
+                fontWeight: '600', 
+                fontSize: '1rem',
+                margin: 0
+              }}>
+                ✓ Form is active and accepting submissions
+              </label>
+            </div>
+
+            <div className="form-checkbox" style={{ 
+              padding: '0.75rem', 
+              background: 'white', 
+              borderRadius: '6px',
+              border: '2px solid #E5E7EB',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}>
+              <input
+                type="checkbox"
+                id="badgeEligible"
+                checked={formData.badgeEligible}
+                onChange={(e) => handleFormDataChange('badgeEligible', e.target.checked)}
+                style={{ width: '20px', height: '20px', cursor: 'pointer', marginRight: '12px' }}
+              />
+              <label htmlFor="badgeEligible" className="form-label" style={{ 
+                cursor: 'pointer', 
+                fontWeight: '600', 
+                fontSize: '1rem',
+                margin: 0
+              }}>
+                ⭐ Counts toward Cool Techy Badge
+              </label>
+            </div>
           </div>
         </div>
 

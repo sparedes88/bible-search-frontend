@@ -45,10 +45,9 @@ service cloud.firestore {
                   (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == request.query.filters.churchId[0] || 
                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'global_admin');
 
-      // Allow querying users by phone number for login purposes
-      // This is needed for the phone-based login flow
-      allow list: if request.query.limit <= 1 && 
-                   'phone' in request.query.filters;
+      // Allow querying users by phone or email for lookup purposes (event check-in, login, etc)
+      allow list: if isAuthenticated() && 
+                   (('phone' in request.query.filters) || ('email' in request.query.filters));
 
       allow read: if isAuthenticated() && isMember() && isOwner();
 
@@ -57,7 +56,8 @@ service cloud.firestore {
                       isOwner() &&
                       !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
 
-      allow create, delete: if false;
+      // Allow authenticated users to create their own profile during signup
+      allow create: if isAuthenticated() && request.auth.uid == userId;
 
       allow read: if isAuthenticated() &&
         (userId == request.auth.uid ||
@@ -207,8 +207,17 @@ service cloud.firestore {
     }
 
     // ✅ Visitors Collection (Top-level)
-    match /visitors/{churchId}/{path=**} {
-      allow read, write: if isChurchAdmin(churchId);
+    match /visitors/{churchId}/visitors/{visitorId} {
+      // Allow admins and authenticated users to read/query visitors in their church
+      allow read, list: if isAuthenticated() && 
+        (isChurchAdmin(churchId) || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == churchId);
+      // Allow admins and authenticated users to create/update visitors
+      allow create, update: if isAuthenticated() && 
+        (isChurchAdmin(churchId) || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == churchId);
+      // Only admins can delete
+      allow delete: if isChurchAdmin(churchId);
     }
 
     // ✅ Completion Logs

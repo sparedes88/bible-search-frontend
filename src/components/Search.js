@@ -100,11 +100,20 @@ const Search = () => {
           ...doc.data() 
         }));
         
+        // Debug: Log first church to see field structure
+        if (churchData.length > 0) {
+          console.log('Church data structure:', churchData[0]);
+          console.log('Header image field:', churchData[0].headerImage);
+          console.log('Logo field:', churchData[0].logo);
+          console.log('Brand field:', churchData[0].brand);
+        }
+        
         // Filter out inactive churches
         const activeChurches = churchData.filter(church => {
           // Handle different possible values for isActive
           return church.isActive === true || church.isActive === "true";
         });
+        console.log(`Filtered ${churchData.length} total churches to ${activeChurches.length} active churches`);
         
         setChurches(activeChurches);
         firebaseDebug(`Successfully fetched ${activeChurches.length} active churches`);
@@ -130,11 +139,14 @@ const Search = () => {
   useEffect(() => {
     const fetchBrands = async () => {
       try {
+        console.log('Fetching brands from Firestore...');
         const brandsSnapshot = await getDocs(collection(db, "brands"));
         const brandsData = brandsSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
+        console.log('Brands fetched successfully:', brandsData.length, 'brands');
+        console.log('Brands data:', brandsData);
         setBrands(brandsData);
         
         // Preload brand logos
@@ -142,6 +154,8 @@ const Search = () => {
         for (const brand of brandsData) {
           if (brand.imageUrl || brand.logo) { // Check both imageUrl and logo fields
             try {
+              console.log(`Loading logo for brand ${brand.name || brand.id}: ${brand.imageUrl || brand.logo}`);
+              
               // Use the same logic as GlobalOrganizationManager
               let logoUrl = brand.imageUrl || brand.logo;
               if (!logoUrl.startsWith('http')) {
@@ -156,9 +170,22 @@ const Search = () => {
               }
               
               logos[brand.id] = logoUrl;
+              console.log(`Logo loaded for ${brand.name || brand.id}: ${logoUrl}`);
             } catch (error) {
               console.warn(`Failed to preload logo for brand ${brand.id}:`, error);
             }
+          }
+        }
+        setBrandLogos(logos);
+        console.log('Brand logos loaded:', logos);
+        
+        // TEMP: Add test logos for debugging
+        if (brandsData.length > 0) {
+          console.log('TEMP: Adding test logos for debugging');
+          // Add a test logo for the first brand if it doesn't have one
+          if (!logos[brandsData[0].id] && (!brandsData[0].imageUrl && !brandsData[0].logo)) {
+            logos[brandsData[0].id] = '/logo.png'; // Use the default logo as test
+            console.log(`TEMP: Added test logo for ${brandsData[0].name}: /logo.png`);
           }
         }
         setBrandLogos(logos);
@@ -170,6 +197,13 @@ const Search = () => {
 
     fetchBrands();
   }, []);
+
+  // Debug: Log when selectedBrand or brandLogos change
+  useEffect(() => {
+    console.log('Selected brand changed:', selectedBrand);
+    console.log('Available brand logos:', Object.keys(brandLogos));
+    console.log('Current logo URL:', selectedBrand ? brandLogos[selectedBrand] : 'none');
+  }, [selectedBrand, brandLogos]);
 
   // Handle URL parameter changes for brand
   useEffect(() => {
@@ -210,6 +244,7 @@ const Search = () => {
       }
       
       setImageUrls(urls);
+      console.log('Preloaded image URLs:', urls);
     };
     
     preloadImageUrls();
@@ -227,14 +262,24 @@ const Search = () => {
   // Filter churches based on search query and brand
   useEffect(() => {
     let filtered = churches;
+    console.log('Filtering churches - selectedBrand:', selectedBrand, 'searchQuery:', searchQuery);
+    console.log('Total churches before filtering:', churches.length);
 
     // Filter by brand first
     if (selectedBrand) {
+      console.log('Filtering by brand:', selectedBrand, 'type:', typeof selectedBrand);
+      console.log('Available brands:', brands.map(b => ({id: b.id, name: b.name})));
+      
+      // Debug: Show churches with any brand field
+      const churchesWithBrands = churches.filter(church => church.brand || church.brandId || church.brand_id);
+      console.log('Churches with any brand field:', churchesWithBrands.length, churchesWithBrands.map(c => `${c.nombre}: ${c.brand || c.brandId || c.brand_id}`));
+      
       if (selectedBrand === 'unassigned') {
         // Show churches without brand assignments
         filtered = churches.filter(church => {
           const churchBrand = church.brand || church.brandId || church.brand_id || '';
           const hasNoBrand = !churchBrand || String(churchBrand).trim() === '';
+          console.log(`Church ${church.nombre}: brand=${church.brand}, hasNoBrand=${hasNoBrand}`);
           return hasNoBrand;
         });
       } else {
@@ -246,9 +291,11 @@ const Search = () => {
           const churchBrand = church.brand || church.brandId || church.brand_id || '';
           const brandMatch = String(churchBrand).toLowerCase() === String(selectedBrand).toLowerCase() ||
                             String(churchBrand).toLowerCase() === String(selectedBrandName).toLowerCase();
+          console.log(`Church ${church.nombre}: brand='${churchBrand}', selectedId='${selectedBrand}', selectedName='${selectedBrandName}', matches=${brandMatch}`);
           return brandMatch;
         });
       }
+      console.log('Churches after brand filter:', filtered.length);
     }
 
     // Then filter by search query
@@ -261,6 +308,7 @@ const Search = () => {
       filtered = [];
     }
 
+    console.log('Final filtered churches:', filtered.length);
     setFilteredChurches(filtered);
   }, [searchQuery, churches, selectedBrand]);
 
@@ -376,6 +424,8 @@ const Search = () => {
   };
 
   const handleBrandChange = (brandId) => {
+    console.log('handleBrandChange called with:', brandId, 'type:', typeof brandId);
+    console.log('Available brand logos:', brandLogos);
     setSelectedBrand(brandId);
     setCurrentPage(1); // Reset to first page
     
@@ -394,6 +444,14 @@ const Search = () => {
         {/* Logo - changes based on selected brand */}
         <div className="search-logo-container" key={`logo-${selectedBrand}`}>
           {(() => {
+            console.log('=== LOGO DISPLAY DEBUG ===');
+            console.log('selectedBrand:', selectedBrand);
+            console.log('brandLogos keys:', Object.keys(brandLogos));
+            console.log('brandLogos[selectedBrand]:', brandLogos[selectedBrand]);
+            console.log('brands array:', brands.map(b => ({id: b.id, name: b.name, logo: b.logo, imageUrl: b.imageUrl})));
+            console.log('condition check:', selectedBrand && brandLogos[selectedBrand]);
+            console.log('========================');
+            
             return selectedBrand && brandLogos[selectedBrand] ? (
               <img 
                 src={brandLogos[selectedBrand]} 
@@ -445,6 +503,11 @@ const Search = () => {
             </select>
           </div>
         )}
+
+        {/* Debug info */}
+        <div style={{ marginBottom: '20px', textAlign: 'center', fontSize: '11px', color: '#999', maxHeight: '60px', overflow: 'hidden' }}>
+          <p>Debug: {churches.length} churches, {filteredChurches.length} filtered, {brands.length} brands, Selected: {selectedBrand || 'none'}</p>
+        </div>
       </div>
 
       {/* Church Cards Below Search */}
@@ -478,6 +541,7 @@ const Search = () => {
                     alt={`${church.nombre} header`} 
                     className="header-image" 
                     onError={(e) => {
+                      console.log('Header image failed to load for church:', church.nombre, 'Using fallback');
                       e.target.src = "/img/banner-fallback.svg";
                     }}
                   />
@@ -494,6 +558,7 @@ const Search = () => {
                       alt={`${church.nombre} logo`} 
                       className="card-logo" 
                       onError={(e) => {
+                        console.log('Logo image failed to load for church:', church.nombre, 'Using fallback');
                         e.target.src = "/img/logo-fallback.svg";
                       }}
                     />
@@ -768,9 +833,7 @@ const styles = {
     padding: "20px",
     backgroundColor: "#fff",
     borderRadius: "8px",
-    boxShadow: "0px 4px 6px rgba(0,0,0,0.1)",
-    maxWidth: "500px",
-    width: "100%"
+    boxShadow: "0px 4px 6px rgba(0,0,0,0.1)"
   },
   formInput: {
     width: "100%",

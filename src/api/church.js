@@ -151,3 +151,40 @@ export const analyzeLocations = async (data, prompt) => {
     throw error;
   }
 };
+
+/**
+ * Analyzes form entries using AI for pastoral insights
+ * @param {string} formTitle - The title of the form
+ * @param {Array} fields - The form fields
+ * @param {Array} entries - The form entries
+ * @param {Object} pastoralContext - Pastor's context and questions
+ * @param {Object} previousAnalysis - Previous analysis for comparison
+ * @returns {Promise<Object>} - The AI analysis results
+ */
+export const analyzeFormEntries = async (formTitle, fields, entries, pastoralContext = null, previousAnalysis = null) => {
+  try {
+    const response = await fetch('https://us-central1-igletechv1.cloudfunctions.net/analyzeFormEntries', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        formTitle,
+        fields,
+        entries,
+        pastoralContext,
+        previousAnalysis
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error analyzing form entries:', error);
+    throw error;
+  }
+};

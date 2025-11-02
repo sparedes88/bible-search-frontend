@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, Link, useParams } from "react-router-dom";
+import { useNavigate, Link, useParams, useLocation } from "react-router-dom";
 import { db, storage } from "../firebase";
 import { 
   doc, 
@@ -186,6 +186,7 @@ const renderEventDetails = (event) => {
 const EventDetails = () => {
   const { id, eventId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -256,31 +257,33 @@ const EventDetails = () => {
   const fetchAllLogs = async () => {
     if (!user) return;
     
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef);
-    
     try {
-      const snapshot = await getDocs(q);
-      const attendanceLogs = [];
+      // Fetch event registrations
+      const registrationsRef = collection(db, 'eventRegistrations');
+      const regQuery = query(registrationsRef, where('eventId', '==', eventId));
+      const regSnap = await getDocs(regQuery);
+      
+      const attendanceLogs = regSnap.docs.map(doc => ({
+        id: doc.id,
+        userId: doc.data().userId,
+        firstName: doc.data().name,
+        lastName: doc.data().lastName,
+        email: doc.data().email,
+        phone: doc.data().phone,
+        timestamp: doc.data().registeredAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+        source: doc.data().source || 'unknown',
+        ...doc.data()
+      }));
+
+      // Fetch child care logs from users collection
+      const usersRef = collection(db, 'users');
+      const usersSnap = await getDocs(usersRef);
       const childCareLogs = [];
       const completionLogs = [];
 
-      snapshot.docs.forEach(doc => {
+      usersSnap.docs.forEach(doc => {
         const userData = doc.data();
         
-        if (userData.attendance) {
-          userData.attendance
-            .filter(log => log.eventId === eventId)
-            .forEach(log => {
-              attendanceLogs.push({
-                ...log,
-                userId: doc.id,
-                firstName: userData.name,
-                lastName: userData.lastName
-              });
-            });
-        }
-
         if (userData.childCare) {
           userData.childCare
             .filter(log => log.eventId === eventId)
@@ -307,7 +310,11 @@ const EventDetails = () => {
         }
       });
 
-      setScanLogs(attendanceLogs.sort((a, b) => b.timestamp - a.timestamp));
+      setScanLogs(attendanceLogs.sort((a, b) => {
+        const aTime = new Date(a.timestamp).getTime();
+        const bTime = new Date(b.timestamp).getTime();
+        return bTime - aTime;
+      }));
       setChildCheckInLogs(childCareLogs.sort((a, b) => b.checkInTime - a.checkInTime));
       setCourseCompletionLogs(completionLogs.sort((a, b) => b.startedAt - a.startedAt));
     } catch (error) {
@@ -317,36 +324,23 @@ const EventDetails = () => {
   };
 
   const handleRemoveScan = async (scanId, userId) => {
-    if (!window.confirm('Are you sure you want to remove this attendance record?')) {
+    if (!window.confirm('Are you sure you want to remove this registration record?')) {
       return;
     }
 
     try {
-      if (!userId) {
-        toast.error('User ID is required');
+      if (!scanId) {
+        toast.error('Registration ID is required');
         return;
       }
 
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await getDoc(userRef);
-      
-      if (!userDoc.exists()) {
-        toast.error('User not found');
-        return;
-      }
-
-      const userData = userDoc.data();
-      const updatedAttendance = userData.attendance?.filter(record => record.id !== scanId) || [];
-
-      await updateDoc(userRef, {
-        attendance: updatedAttendance,
-        lastUpdated: serverTimestamp()
-      });
+      // Delete from eventRegistrations collection
+      await deleteDoc(doc(db, 'eventRegistrations', scanId));
 
       await fetchAllLogs();
-      toast.success('Attendance record removed successfully');
+      toast.success('Registration record removed successfully');
     } catch (err) {
-      console.error('Error removing attendance:', err);
+      console.error('Error removing registration:', err);
       toast.error('Failed to remove attendance record');
     }
   };
@@ -502,6 +496,48 @@ const EventDetails = () => {
     }
   };
 
+  // Try to extract a userId from various QR payload formats
+  const extractUserIdFromScan = (text) => {
+    try {
+      if (!text || typeof text !== 'string') return null;
+
+      const trimmed = text.trim();
+
+      // Case 1: JSON payload { uid: "..." } or { userId: "..." }
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+        try {
+          const obj = JSON.parse(trimmed);
+          const cand = obj.uid || obj.userId || obj.id;
+          if (typeof cand === 'string' && cand.length >= 20) return cand;
+        } catch (_) { /* ignore parse errors */ }
+      }
+
+      // Case 2: URL with uid/userId param or uid in path
+      if (/^https?:\/\//i.test(trimmed)) {
+        try {
+          const u = new URL(trimmed);
+          const cand = u.searchParams.get('uid') || u.searchParams.get('userId') || u.searchParams.get('id');
+          if (cand && cand.length >= 20) return cand;
+          // Try last path segment if it looks like an id
+          const segs = u.pathname.split('/').filter(Boolean);
+          const last = segs[segs.length - 1] || '';
+          if (last.length >= 20) return last;
+        } catch (_) { /* ignore URL errors */ }
+      }
+
+      // Case 3: Prefixed string like user:UID or uid:UID
+      const prefixMatch = trimmed.match(/^(?:user|uid|id)[:=]([A-Za-z0-9_-]{20,})$/i);
+      if (prefixMatch) return prefixMatch[1];
+
+      // Case 4: Raw UID-looking string (Firebase UIDs are ~28 chars base64url-ish)
+      if (/^[A-Za-z0-9_-]{20,}$/.test(trimmed)) return trimmed;
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
   const startScanner = () => {
     try {
       const html5QrcodeScanner = new Html5QrcodeScanner(
@@ -561,23 +597,41 @@ const EventDetails = () => {
       const firstName = userData.name || '';
       const lastName = userData.lastName || '';
 
-      const timestamp = new Date();
-      
-      await updateDoc(doc(db, 'users', userId), {
-        attendance: arrayUnion({
-          id: Date.now().toString(),
-          eventId,
-          eventName: event.title,
-          churchId: id,
-          timestamp: timestamp.toISOString(),
-          createdAt: timestamp.toISOString()
-        })
+      // Check if already registered
+      const registrationsRef = collection(db, 'eventRegistrations');
+      const existingQuery = query(
+        registrationsRef,
+        where('eventId', '==', eventId),
+        where('userId', '==', userId)
+      );
+      const existingSnap = await getDocs(existingQuery);
+
+      if (!existingSnap.empty) {
+        toast.info(`${firstName} ${lastName} is already registered`);
+        if (source === 'manual') setManualInput('');
+        return true;
+      }
+
+      // Create event registration
+      await addDoc(collection(db, 'eventRegistrations'), {
+        eventId,
+        churchId: id,
+        userId,
+        name: firstName,
+        lastName: lastName || '',
+        email: userData.email || '',
+        phone: userData.phone || '',
+        status: 'registered',
+        registeredAt: serverTimestamp(),
+        eventName: event?.title || '',
+        eventDate: event?.startDate || '',
+        source: source === 'scan' ? 'qr-scan' : 'manual-checkin'
       });
 
       await fetchAllLogs();
 
       if (source === 'manual') setManualInput('');
-      toast.success(`Attendance recorded for ${firstName} ${lastName}!`);
+      toast.success(`${firstName} ${lastName} registered for event!`);
       setSelectedChild({ userId, firstName, lastName });
       setShowChildCheckIn(true);
       return true;
@@ -936,14 +990,29 @@ const EventDetails = () => {
 
     setAttendanceLoading(true);
     try {
-      const success = await handleAttendanceRecord(result.text, 'scan');
-      if (success) {
-        if (scanner) {
-          await scanner.stop();
-          setShowScanner(false);
-        }
+      const scannedText = String(result.text || '').trim();
+      const extractedUserId = extractUserIdFromScan(scannedText);
+      if (!extractedUserId) {
+        toast.error('Invalid QR code. Could not determine user ID.');
+      } else {
+        await handleAttendanceRecord(extractedUserId, 'scan');
       }
     } finally {
+      // Always stop/close scanner after scan attempt
+      if (scanner) {
+        try {
+          await scanner.clear();
+        } catch (err) {
+          console.error('Error clearing scanner:', err);
+        }
+        try {
+          await scanner.stop();
+        } catch (err) {
+          // Some implementations throw if already stopped; ignore
+        }
+        setShowScanner(false);
+        setScanner(null);
+      }
       setAttendanceLoading(false);
     }
   };
@@ -956,15 +1025,67 @@ const EventDetails = () => {
       const q = query(usersRef, where('phone', '==', cleanedPhone));
       const querySnapshot = await getDocs(q);
 
-      if (querySnapshot.empty) {
-        setScannerError('No user found with this phone number');
+      if (!querySnapshot.empty) {
+        const userDoc = querySnapshot.docs[0];
+        return handleAttendanceRecord(userDoc.id, 'manual');
+      }
+
+      // If not found in members, check visitors under this organization
+      const visitorsRef = collection(db, 'visitors', id, 'visitors');
+      const vq = query(visitorsRef, where('phone', '==', cleanedPhone));
+      const vSnap = await getDocs(vq);
+
+      if (!vSnap.empty) {
+        const vDoc = vSnap.docs[0];
+        const v = vDoc.data();
+        // Redirect to member signup with prefilled data and event context
+        navigate(`/organization/${id}/member-signup?eventId=${encodeURIComponent(eventId)}&phone=${encodeURIComponent(cleanedPhone)}&firstName=${encodeURIComponent(v.name || '')}&lastName=${encodeURIComponent(v.lastName || '')}&email=${encodeURIComponent(v.email || '')}&visitorId=${encodeURIComponent(vDoc.id)}`);
         return false;
       }
 
-      const userDoc = querySnapshot.docs[0];
-      return handleAttendanceRecord(userDoc.id, 'manual');
+      // Not found anywhere → send to member signup with phone prefilled
+      navigate(`/organization/${id}/member-signup?eventId=${encodeURIComponent(eventId)}&phone=${encodeURIComponent(cleanedPhone)}`);
+      return false;
     } catch (error) {
       console.error('Error looking up user by phone:', error);
+      setScannerError('Error looking up user');
+      return false;
+    }
+  };
+
+  const handleUserLookupByEmail = async (email) => {
+    try {
+      const trimmed = (email || '').trim().toLowerCase();
+      if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+        setScannerError('Please enter a valid email');
+        return false;
+      }
+
+      // Look in members
+      const usersRef = collection(db, 'users');
+      const uq = query(usersRef, where('email', '==', trimmed));
+      const uSnap = await getDocs(uq);
+      if (!uSnap.empty) {
+        const userDoc = uSnap.docs[0];
+        return handleAttendanceRecord(userDoc.id, 'manual');
+      }
+
+      // Look in visitors for prefill
+      const visitorsRef = collection(db, 'visitors', id, 'visitors');
+      const vq = query(visitorsRef, where('email', '==', trimmed));
+      const vSnap = await getDocs(vq);
+      if (!vSnap.empty) {
+        const vDoc = vSnap.docs[0];
+        const v = vDoc.data();
+        navigate(`/organization/${id}/member-signup?eventId=${encodeURIComponent(eventId)}&email=${encodeURIComponent(trimmed)}&firstName=${encodeURIComponent(v.name || '')}&lastName=${encodeURIComponent(v.lastName || '')}&phone=${encodeURIComponent((v.phone || '').replace(/\D/g, ''))}&visitorId=${encodeURIComponent(vDoc.id)}`);
+        return false;
+      }
+
+      // Not found → send to signup with email prefilled
+      navigate(`/organization/${id}/member-signup?eventId=${encodeURIComponent(eventId)}&email=${encodeURIComponent(trimmed)}`);
+      return false;
+    } catch (error) {
+      console.error('Error looking up user by email:', error);
       setScannerError('Error looking up user');
       return false;
     }
@@ -974,20 +1095,52 @@ const EventDetails = () => {
     e.preventDefault();
     setAttendanceLoading(true);
     try {
-      if (/^[\d\s\(\)\-]+$/.test(manualInput)) {
-        await handleUserLookupByPhone(manualInput);
+      const val = manualInput.trim();
+      let success = false;
+      if (/^[\d\s\(\)\-\+]+$/.test(val)) {
+        success = await handleUserLookupByPhone(val);
+      } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+        success = await handleUserLookupByEmail(val);
       } else {
-        await handleAttendanceRecord(manualInput, 'manual');
+        // Fallback: treat as QR/user id
+        success = await handleAttendanceRecord(val, 'manual');
+      }
+      
+      // Close scanner if it's open and submission was successful
+      if (success && scanner && showScanner) {
+        try {
+          await scanner.clear();
+          await scanner.stop();
+        } catch (err) {
+          console.error('Error stopping scanner:', err);
+        }
+        setShowScanner(false);
+        setScanner(null);
       }
     } finally {
       setAttendanceLoading(false);
     }
   };
 
+  // Auto check-in after signup flow redirects back with state
+  useEffect(() => {
+    if (location.state && location.state.autoCheckIn && user?.uid) {
+      (async () => {
+        const success = await handleAttendanceRecord(user.uid, 'manual');
+        if (success) {
+          navigate(location.pathname, { replace: true, state: {} });
+        }
+      })();
+    }
+  }, [location.state, user?.uid]);
+
   useEffect(() => {
     return () => {
       if (scanner) {
         scanner.clear().catch(console.error);
+        if (scanner.stop) {
+          try { scanner.stop(); } catch (_) {}
+        }
       }
     };
   }, [scanner]);
@@ -1002,24 +1155,20 @@ const EventDetails = () => {
       if (!event || !event.imageUrl) return;
       
       try {
-        if (event.imageUrl.startsWith('http')) {
-          // If it's already a full URL, use it directly
+        if (typeof event.imageUrl === 'string' && event.imageUrl.startsWith('http')) {
+          // Already a full URL
           setEventImage(event.imageUrl);
-        } else {
-          // Format the storage path and get download URL
-          const storagePath = event.imageUrl.replace(/^\//, ''); // Remove leading slash if present
-          const formattedUrl = `https://firebasestorage.googleapis.com/v0/b/mychurch-a8aae.appspot.com/o/${encodeURIComponent(storagePath)}?alt=media`;
-          
-          // Try to fetch the image to validate it exists
-          const response = await fetch(formattedUrl, { method: 'HEAD' });
-          
-          if (response.ok) {
-            setEventImage(formattedUrl);
-          } else {
-            console.warn('Image could not be loaded from path:', event.imageUrl);
-            setEventImage(null);
-          }
+          return;
         }
+        // Resolve Firebase Storage path via SDK using configured bucket
+        const storagePath = String(event.imageUrl).replace(/^\//, '');
+        if (!storage) {
+          console.warn('Storage not initialized; cannot resolve image URL');
+          return;
+        }
+        const fileRef = ref(storage, storagePath);
+        const url = await getDownloadURL(fileRef);
+        setEventImage(url);
       } catch (error) {
         console.error('Error fetching event image:', error);
         setEventImage(null);
@@ -1556,7 +1705,7 @@ const EventDetails = () => {
   };
 
   const handleBackClick = (churchId) => {
-    navigate(`/church/${churchId}/all-events`);
+  navigate(`/organization/${churchId}/all-events`);
   };
 
   const renderRoomsSection = () => {
@@ -1884,7 +2033,7 @@ const EventDetails = () => {
   }
 
   return (
-    <div style={commonStyles.container}>
+    <div style={commonStyles.fullWidthContainer}>
       {!user && (
         <div
           style={{
@@ -1894,7 +2043,7 @@ const EventDetails = () => {
           }}
         >
           <button
-            onClick={() => navigate(`/church/${id}/login`)}
+            onClick={() => navigate(`/organization/${id}/login`)}
             style={{
               ...commonStyles.backButton,
               width: "120px",
@@ -2307,7 +2456,7 @@ const EventDetails = () => {
                   flexWrap: 'wrap'
                 }}>
                   <button
-                    onClick={() => navigate(`/church/${id}/event/${eventId}/coordination`)} 
+                    onClick={() => navigate(`/organization/${id}/event/${eventId}/coordination`)} 
                     style={{
                       backgroundColor: '#8B5CF6',
                       color: 'white',
@@ -2326,7 +2475,7 @@ const EventDetails = () => {
                   </button>
                   
                   <button
-                    onClick={() => navigate(`/church/${id}/event/${eventId}/registrations`)} 
+                    onClick={() => navigate(`/organization/${id}/event/${eventId}/registrations`)} 
                     style={{
                       backgroundColor: '#10B981',
                       color: 'white',

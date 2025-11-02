@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -12,7 +12,8 @@ import {
   where,
   addDoc,
   updateDoc,
-  getDoc
+  getDoc,
+  onSnapshot
 } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import commonStyles from '../pages/commonStyles';
@@ -21,6 +22,7 @@ import FormBuilder from './FormBuilder';
 import FormEntries from './FormEntries';
 import { hasPermission, canManageModule, hasFormPermission, getUserAccessibleForms } from '../utils/enhancedPermissions';
 import './Forms.css';
+import { QRCodeCanvas as QRCode } from 'qrcode.react';
 
 const Forms = () => {
   const { id } = useParams();
@@ -33,6 +35,9 @@ const Forms = () => {
   const [editingForm, setEditingForm] = useState(null);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [selectedFormForEmbed, setSelectedFormForEmbed] = useState(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [selectedFormForShare, setSelectedFormForShare] = useState(null);
+  const qrRef = useRef(null);
   
   // Permission states
   const [canCreate, setCanCreate] = useState(false);
@@ -155,8 +160,8 @@ const Forms = () => {
       return;
     }
     
-    setSelectedForm(form);
-    setShowEntries(true);
+    // Navigate to dedicated entries page using router
+    window.location.href = `/organization/${id}/forms/${form.id}/entries`;
   };
 
   const handleCopyFormLink = (formId) => {
@@ -177,6 +182,11 @@ const Forms = () => {
   const handleShowEmbedCode = (form) => {
     setSelectedFormForEmbed(form);
     setShowEmbedModal(true);
+  };
+
+  const handleShowShare = (form) => {
+    setSelectedFormForShare(form);
+    setShowShareModal(true);
   };
 
   const getEmbedCode = (form) => {
@@ -208,18 +218,7 @@ const Forms = () => {
     );
   }
 
-  if (showEntries && selectedForm) {
-    return (
-      <FormEntries
-        churchId={id}
-        form={selectedForm}
-        onBack={() => {
-          setShowEntries(false);
-          setSelectedForm(null);
-        }}
-      />
-    );
-  }
+  // FormEntries now has its own route - removed inline render
 
   if (loading || permissionsLoading) {
     return (
@@ -247,21 +246,43 @@ const Forms = () => {
   }
 
   return (
-    <div style={commonStyles.container}>
-      <Link to={`/church/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
-        ← Back to Mi Organización
-      </Link>
-      
-      <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
-      
-      <div style={{ marginTop: "-30px" }}>
-        <div style={{ 
-          display: "flex", 
-          justifyContent: "space-between", 
-          alignItems: "center", 
-          marginBottom: "2rem" 
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+      padding: '24px'
+    }}>
+      <div style={{
+        maxWidth: '100%',
+        margin: '0 auto',
+        backgroundColor: 'white',
+        padding: '2rem',
+        borderRadius: '16px',
+        border: '1px solid #E5E7EB',
+        boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
+      }}>
+        <Link to={`/church/${id}/mi-organizacion`} style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          color: '#4f46e5',
+          textDecoration: 'none',
+          fontSize: '0.875rem',
+          fontWeight: '500',
+          marginBottom: '1rem'
         }}>
-          <h1 style={commonStyles.title}>Forms Management</h1>
+          ← Back to Mi Organización
+        </Link>
+        
+        <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
+        
+        <div style={{ marginTop: "-30px" }}>
+          <div style={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            alignItems: "center", 
+            marginBottom: "2rem" 
+          }}>
+            <h1 style={{ ...commonStyles.title, fontSize: '1.75rem' }}>Forms Management</h1>
           
           {canCreate && (
             <button
@@ -333,6 +354,7 @@ const Forms = () => {
                 onDelete={() => handleDeleteForm(form.id)}
                 onViewEntries={() => handleViewEntries(form)}
                 onShowEmbed={() => handleShowEmbedCode(form)}
+                onShare={() => handleShowShare(form)}
               />
             ))}
           </div>
@@ -469,38 +491,168 @@ const Forms = () => {
           </div>
         </div>
       )}
+
+      {/* Share Modal */}
+      {showShareModal && selectedFormForShare && (
+        <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Share Form: {selectedFormForShare.title}</h3>
+            <p style={{ color: '#6b7280', marginBottom: '1rem' }}>
+              Share this form using a QR code or direct link.
+            </p>
+
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#f9fafb' }}>
+                <QRCode
+                  ref={qrRef}
+                  value={`${window.location.origin}/church/${id}/form/${selectedFormForShare.id}`}
+                  size={160}
+                  level="H"
+                  includeMargin
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <label style={{ display: 'block', fontWeight: '600', marginBottom: '0.5rem' }}>Form Link:</label>
+                <input
+                  readOnly
+                  value={`${window.location.origin}/church/${id}/form/${selectedFormForShare.id}`}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '6px',
+                    fontFamily: 'monospace',
+                    fontSize: '0.875rem',
+                    backgroundColor: '#f9fafb'
+                  }}
+                  onClick={(e) => e.target.select()}
+                />
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                  <button
+                    onClick={() => {
+                      const link = `${window.location.origin}/church/${id}/form/${selectedFormForShare.id}`;
+                      navigator.clipboard.writeText(link).then(() => toast.success('Link copied!')).catch(() => toast.error('Copy failed'));
+                    }}
+                    style={{ backgroundColor: '#4f46e5', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+                  >
+                    Copy Link
+                  </button>
+                  <button
+                    onClick={() => {
+                      const link = `${window.location.origin}/church/${id}/form/${selectedFormForShare.id}`;
+                      window.open(link, '_blank', 'noopener');
+                    }}
+                    style={{ backgroundColor: '#10b981', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+                  >
+                    Open Form
+                  </button>
+                  <button
+                    onClick={() => {
+                      try {
+                        // Download QR as PNG (works for canvas render)
+                        const canvas = document.querySelector('.modal-content canvas');
+                        if (!canvas) throw new Error('QR not ready');
+                        const url = canvas.toDataURL('image/png');
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${selectedFormForShare.title || 'form'}-qr.png`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                      } catch (e) {
+                        toast.error('Failed to download QR');
+                      }
+                    }}
+                    style={{ backgroundColor: '#111827', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+                  >
+                    Download QR
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowShareModal(false)}
+                style={{ backgroundColor: '#6b7280', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 };
 
-const FormCard = ({ form, user, canEdit, canDelete, onEdit, onDelete, onViewEntries, onShowEmbed }) => {
+const FormCard = ({ form, user, canEdit, canDelete, onEdit, onDelete, onViewEntries, onShowEmbed, onShare }) => {
   const [entryCount, setEntryCount] = useState(0);
   const [loadingCount, setLoadingCount] = useState(true);
+  const { id: churchId } = useParams();
+
+  // Deterministic gradient selection per form
+  const gradients = [
+    'linear-gradient(135deg, #6366F1 0%, #14B8A6 100%)',
+    'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
+    'linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)',
+    'linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)',
+    'linear-gradient(135deg, #10B981 0%, #3B82F6 100%)',
+    'linear-gradient(135deg, #F43F5E 0%, #8B5CF6 100%)',
+    'linear-gradient(135deg, #22C55E 0%, #14B8A6 100%)',
+    'linear-gradient(135deg, #0EA5E9 0%, #6366F1 100%)'
+  ];
+  const getGradient = () => {
+    const key = `${form?.id || ''}${form?.title || ''}`;
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+    }
+    return gradients[hash % gradients.length];
+  };
 
   useEffect(() => {
-    const fetchEntryCount = async () => {
-      try {
-        const entriesRef = collection(db, 'churches', form.churchId, 'forms', form.id, 'entries');
-        const snapshot = await getDocs(entriesRef);
+    // Live subscription to entries count for this form
+    try {
+      if (!churchId || !form?.id) return;
+      const entriesRef = collection(db, 'churches', churchId, 'forms', form.id, 'entries');
+      const unsubscribe = onSnapshot(entriesRef, (snapshot) => {
         setEntryCount(snapshot.size);
-      } catch (error) {
-        console.error('Error fetching entry count:', error);
-      } finally {
         setLoadingCount(false);
-      }
-    };
-
-    fetchEntryCount();
-  }, [form.id, form.churchId]);
+      }, (err) => {
+        console.error('Error subscribing to entry count:', err);
+        setLoadingCount(false);
+      });
+      return () => unsubscribe && unsubscribe();
+    } catch (e) {
+      console.error('Entry count setup error:', e);
+      setLoadingCount(false);
+    }
+  }, [churchId, form?.id]);
 
   return (
     <div className="form-card">
+      <div className="form-card-cover" style={{ background: getGradient() }}>
+        <div className="form-cover-initial">
+          {(form.title || 'F').trim().charAt(0).toUpperCase()}
+        </div>
+      </div>
       <div className="form-card-header">
         <h3 className="form-title">{form.title}</h3>
         <div className="form-status">
           <span className={`status-badge ${form.isActive ? 'active' : 'inactive'}`}>
             {form.isActive ? 'Active' : 'Inactive'}
           </span>
+          {form.badgeEligible && (
+            <span className="status-badge" style={{ 
+              backgroundColor: '#FEF3C7', 
+              color: '#92400E',
+              marginLeft: '0.5rem'
+            }}>
+              ⭐ Badge
+            </span>
+          )}
         </div>
       </div>
       
@@ -534,18 +686,11 @@ const FormCard = ({ form, user, canEdit, canDelete, onEdit, onDelete, onViewEntr
         </button>
         
         <button
-          onClick={() => {
-            const formLink = `${window.location.origin}/church/${form.churchId || window.location.pathname.split('/')[2]}/form/${form.id}`;
-            navigator.clipboard.writeText(formLink).then(() => {
-              toast.success('Form link copied to clipboard!');
-            }).catch(() => {
-              toast.error('Failed to copy link');
-            });
-          }}
+          onClick={onShare}
           className="action-btn share-btn"
           style={{ backgroundColor: "#10b981", color: "white" }}
         >
-          Share Link
+          Share
         </button>
         
         <button

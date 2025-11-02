@@ -488,22 +488,64 @@ const Sobre = () => {
   }
 
   return (
-    <div style={{ ...commonStyles.container, textAlign: "left" }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <button
-          onClick={() => window.history.back()}
-          style={commonStyles.backButton}
-        >
-          ⬅ Volver
-        </button>
-        <button onClick={handleHelpClick} style={commonStyles.backButton}>
-          Help
-        </button>
-      </div>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+      padding: '24px'
+    }}>
+      <div style={{
+        maxWidth: '100%',
+        margin: '0 auto',
+        backgroundColor: 'white',
+        padding: '2rem',
+        borderRadius: '16px',
+        border: '1px solid #E5E7EB',
+        boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: '1rem' }}>
+          <button
+            onClick={() => window.history.back()}
+            style={{
+              ...commonStyles.backButton,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            ⬅ Back
+          </button>
+          <button 
+            onClick={handleHelpClick} 
+            style={{
+              ...commonStyles.backButton,
+              backgroundColor: '#10B981'
+            }}
+          >
+            Help
+          </button>
+        </div>
 
-      <ChurchHeader id={id} applyShadow={false} />
+        <ChurchHeader id={id} applyShadow={false} />
 
-      <h2 className="sobre-heading">Sobre Mi</h2>
+        <div style={{ 
+          textAlign: 'center', 
+          marginTop: '-20px',
+          marginBottom: '2rem'
+        }}>
+          <h1 style={{ 
+            fontSize: '2rem', 
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>
+            About Me
+          </h1>
+          <p style={{ color: '#6B7280', fontSize: '1rem' }}>
+            Complete your profile to unlock the I'm So Cool Badge 😎
+          </p>
+        </div>
 
       {userData ? (
         <div>
@@ -873,14 +915,30 @@ const Sobre = () => {
           <button
             onClick={handleSave}
             disabled={!isUpdated}
-            className={`sobre-save-button ${isUpdated ? "active" : ""}`}
+            style={{
+              width: '100%',
+              maxWidth: '400px',
+              margin: '2rem auto 0',
+              display: 'block',
+              backgroundColor: isUpdated ? '#8B5CF6' : '#9CA3AF',
+              color: 'white',
+              padding: '1rem 2rem',
+              borderRadius: '12px',
+              border: 'none',
+              cursor: isUpdated ? 'pointer' : 'not-allowed',
+              fontSize: '1.1rem',
+              fontWeight: '700',
+              boxShadow: isUpdated ? '0 8px 16px rgba(139, 92, 246, 0.3)' : 'none',
+              transition: 'all 0.3s ease'
+            }}
           >
-            Save
+            {isUpdated ? '💾 Save Changes' : 'No Changes'}
           </button>
         </div>
       ) : (
         <p>No user data available</p>
       )}
+      </div>
     </div>
   );
 };
