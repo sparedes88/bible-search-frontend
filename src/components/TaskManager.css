@@ -13,9 +13,46 @@
   border-bottom: 2px solid #e9ecef;
 }
 
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .task-manager-header h2 {
   margin: 0;
   color: #333;
+}
+
+.status-summary {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.status-count {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: white;
+}
+
+.status-count.todo {
+  background: #6c757d;
+}
+
+.status-count.in-progress {
+  background: #ffc107;
+  color: #212529;
+}
+
+.status-count.review {
+  background: #17a2b8;
+}
+
+.status-count.completed {
+  background: #28a745;
 }
 
 .task-manager-content {
@@ -560,6 +597,12 @@
     padding: 5px 10px;
     font-size: 11px;
   }
+}
+
+.assigned-user {
+  color: #495057;
+  font-size: 0.85rem;
+  margin-left: 8px;
 }
 
 @media (max-width: 480px) {

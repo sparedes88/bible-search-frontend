@@ -45,7 +45,8 @@ const HistoryTooltip = ({ history, users }) => {
       project: 'Project',
       areaOfFocus: 'Area of Focus',
       costCode: 'Cost Code',
-      userId: 'User'
+      userId: 'User',
+      taskId: 'Task'
     };
     return fieldNames[field] || field;
   };
@@ -73,6 +74,12 @@ const HistoryTooltip = ({ history, users }) => {
       if (!isNaN(duration)) {
         return `${duration.toFixed(2)}h`;
       }
+    }
+    
+    // Format task
+    if (field === 'taskId' && value) {
+      const task = tasks.find(t => t.id === value);
+      return task ? task.title : 'Unknown Task';
     }
     
     return value;
@@ -279,7 +286,7 @@ const createChangeHistory = (originalEntry, updatedData, changedBy) => {
   // Fields to track changes for
   const trackableFields = [
     'startTime', 'endTime', 'duration', 'note', 'date', 
-    'project', 'areaOfFocus', 'costCode', 'userId'
+    'project', 'areaOfFocus', 'costCode', 'userId', 'taskId'
   ];
 
   trackableFields.forEach(field => {
@@ -360,13 +367,14 @@ const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCode
       projects.find(p => p.id === entry.project)?.name || 'Unknown Project',
       areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area',
       costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code',
+      entry.taskId ? tasks.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-',
       entry.note || '-'
     ];
   });
   
   // Add table
   doc.autoTable({
-    head: [['Date', 'User', 'Start Time', 'End Time', 'Duration', 'Project', 'Area of Focus', 'Cost Code', 'Notes']],
+    head: [['Date', 'User', 'Start Time', 'End Time', 'Duration', 'Project', 'Area of Focus', 'Cost Code', 'Task', 'Notes']],
     body: tableData,
     startY: yPosition,
     styles: {
@@ -391,7 +399,8 @@ const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCode
       5: { cellWidth: 25 }, // Project
       6: { cellWidth: 25 }, // Area of Focus
       7: { cellWidth: 20 }, // Cost Code
-      8: { cellWidth: 'auto' }, // Notes
+      8: { cellWidth: 25 }, // Task
+      9: { cellWidth: 'auto' }, // Notes
     },
     margin: { top: 10 },
   });
@@ -741,7 +750,8 @@ const TimeTracker = () => {
       costCode: '',
       duration: '',
       durationMode: 'start', // 'start' = start + duration, 'end' = end + duration
-      userId: user?.uid || '' // Default to current user
+      userId: user?.uid || '', // Default to current user
+      taskId: '' // Add task association
     };
   });
   
@@ -754,7 +764,8 @@ const TimeTracker = () => {
     areaOfFocus: '',
     costCode: '',
     duration: '',
-    userId: ''
+    userId: '',
+    taskId: '' // Add task association
   });
 
   // Validation state for time inputs
@@ -1940,6 +1951,7 @@ const TimeTracker = () => {
         areaOfFocus: newRowData.areaOfFocus,
         costCode: newRowData.costCode,
         userId: newRowData.userId || user.uid, // Use selected user or default to current user
+        taskId: newRowData.taskId || null, // Add task association
         createdAt: serverTimestamp()
       };
 
@@ -2019,7 +2031,8 @@ const TimeTracker = () => {
       areaOfFocus: entry.areaOfFocus || '',
       costCode: entry.costCode || '',
       duration: entry.duration ? (entry.duration / 3600).toFixed(2) : '',
-      userId: entry.userId || ''
+      userId: entry.userId || '',
+      taskId: entry.taskId || '' // Add task association
     });
   };
 
@@ -2091,7 +2104,8 @@ const TimeTracker = () => {
         project: editRowData.project,
         areaOfFocus: editRowData.areaOfFocus,
         costCode: editRowData.costCode,
-        userId: editRowData.userId
+        userId: editRowData.userId,
+        taskId: editRowData.taskId || null // Add task association
       };
 
       // Track changes for history
@@ -3635,35 +3649,7 @@ const TimeTracker = () => {
     }
   };
 
-  // Update task forecasted hours
-  const updateTaskForecastedHours = async (taskId, forecastedHours) => {
-    try {
-      // Immediately update local state for instant feedback
-      setTasks(prev => prev.map(task => 
-        task.id === taskId 
-          ? { ...task, forecastedHours, updatedAt: new Date() }
-          : task
-      ));
 
-      // Update in Firestore
-      await updateDoc(doc(db, `churches/${churchId}/tasks`, taskId), {
-        forecastedHours,
-        updatedAt: serverTimestamp()
-      });
-      
-      toast.success('Task forecasted hours updated!');
-    } catch (error) {
-      console.error('Error updating task forecasted hours:', error);
-      toast.error('Failed to update forecasted hours');
-      
-      // Revert the optimistic update on error
-      setTasks(prev => prev.map(task => 
-        task.id === taskId 
-          ? { ...task, forecastedHours: tasks.find(t => t.id === taskId)?.forecastedHours || 0 }
-          : task
-      ));
-    }
-  };
 
   // Create/Update submission
   const saveSubmission = async (e) => {
@@ -3963,6 +3949,9 @@ const TimeTracker = () => {
                       <th onClick={() => handleSort('costCode')} className="sortable">
                         Cost Code {sortField === 'costCode' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
+                      <th onClick={() => handleSort('taskId')} className="sortable">
+                        Task {sortField === 'taskId' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </th>
                       <th>Note</th>
                       <th>Actions</th>
                     </tr>
@@ -4163,6 +4152,18 @@ const TimeTracker = () => {
                               </select>
                             </td>
                             <td>
+                              <select
+                                value={editRowData.taskId}
+                                onChange={(e) => setEditRowData({...editRowData, taskId: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Task (Optional)</option>
+                                {tasks.map(task => (
+                                  <option key={task.id} value={task.id}>{task.title}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
                               <input
                                 type="text"
                                 value={editRowData.note}
@@ -4191,6 +4192,7 @@ const TimeTracker = () => {
                             <td>{projects.find(p => p.id === entry.project)?.name || 'Unknown Project'}</td>
                             <td>{areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area'}</td>
                             <td>{costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code'}</td>
+                            <td>{entry.taskId ? tasks.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-'}</td>
                             <td>{entry.note || '-'}</td>
                             <td>
                               <div className="action-buttons">
@@ -4368,6 +4370,18 @@ const TimeTracker = () => {
                           </select>
                         </td>
                         <td>
+                          <select
+                            value={newRowData.taskId}
+                            onChange={(e) => setNewRowData({...newRowData, taskId: e.target.value})}
+                            className="inline-edit-select"
+                          >
+                            <option value="">Select Task (Optional)</option>
+                            {tasks.map(task => (
+                              <option key={task.id} value={task.id}>{task.title}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
                           <input
                             type="text"
                             value={newRowData.note}
@@ -4406,9 +4420,9 @@ const TimeTracker = () => {
                       <span className="forecast-value">{tasks.reduce((total, task) => total + (task.forecastedHours || 0), 0)}h</span>
                     </div>
                     <div className="status-summary">
-                      <span className="status-count started">Started: {tasks.filter(task => task.status === 'started').length}</span>
-                      <span className="status-count in-progress">In Progress: {tasks.filter(task => task.status === 'in-progress').length}</span>
-                      <span className="status-count completed">Completed: {tasks.filter(task => task.status === 'completed').length}</span>
+                      <span className="status-count started">Started: {tasks.filter(task => task.status === 'started').length} ({tasks.filter(task => task.status === 'started').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+                      <span className="status-count in-progress">In Progress: {tasks.filter(task => task.status === 'in-progress').length} ({tasks.filter(task => task.status === 'in-progress').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+                      <span className="status-count completed">Completed: {tasks.filter(task => task.status === 'completed').length} ({tasks.filter(task => task.status === 'completed').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
                     </div>
                   </div>
                 </div>
@@ -4445,19 +4459,9 @@ const TimeTracker = () => {
                       <span className={`priority ${task.priority}`}>
                         {task.priority} priority
                       </span>
-                      <div className="forecasted-hours-section">
-                        <label>Forecast:</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          value={task.forecastedHours || 0}
-                          onChange={(e) => updateTaskForecastedHours(task.id, parseFloat(e.target.value) || 0)}
-                          placeholder="0"
-                          className="forecast-input"
-                        />
-                        <span>h</span>
-                      </div>
+                      {task.assignedTo && (
+                        <span className="assigned-user">👤 {task.assignedTo}</span>
+                      )}
                       {task.dueDate && (
                         <span className="due-date">Due: {task.dueDate}</span>
                       )}
@@ -6159,12 +6163,13 @@ const TimeTracker = () => {
             
             <form onSubmit={saveTask} className="task-form">
               <div className="form-group">
-                <label>Task Title</label>
+                <label>Task Title *</label>
                 <input
                   type="text"
                   value={newTask.title}
                   onChange={(e) => setNewTask({...newTask, title: e.target.value})}
                   required
+                  placeholder="Enter task title"
                 />
               </div>
               
@@ -6174,7 +6179,34 @@ const TimeTracker = () => {
                   value={newTask.description}
                   onChange={(e) => setNewTask({...newTask, description: e.target.value})}
                   rows="3"
+                  placeholder="Enter task description (optional)"
                 />
+              </div>
+              
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Forecasted Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={newTask.forecastedHours}
+                    onChange={(e) => setNewTask({...newTask, forecastedHours: parseFloat(e.target.value) || 0})}
+                    placeholder="0.0"
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label>Status</label>
+                  <select
+                    value={newTask.status}
+                    onChange={(e) => setNewTask({...newTask, status: e.target.value})}
+                  >
+                    <option value="started">Started</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
               </div>
               
               <div className="form-row">
@@ -6197,32 +6229,6 @@ const TimeTracker = () => {
                     type="date"
                     value={newTask.dueDate}
                     onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
-                  />
-                </div>
-              </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Status</label>
-                  <select
-                    value={newTask.status}
-                    onChange={(e) => setNewTask({...newTask, status: e.target.value})}
-                  >
-                    <option value="started">Started</option>
-                    <option value="in-progress">In Progress</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                </div>
-                
-                <div className="form-group">
-                  <label>Forecasted Hours</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={newTask.forecastedHours}
-                    onChange={(e) => setNewTask({...newTask, forecastedHours: parseFloat(e.target.value) || 0})}
-                    placeholder="0"
                   />
                 </div>
               </div>

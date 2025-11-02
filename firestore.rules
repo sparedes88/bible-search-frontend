@@ -315,6 +315,12 @@ service cloud.firestore {
         (isChurchAdmin(resource.data.churchId) || isGlobalAdmin());
     }
 
+    // ✅ Brands (for filtering churches)
+    match /brands/{brandId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
     // ✅ Global Admin Override
     match /{document=**} {
       allow read, write, delete: if isGlobalAdmin();

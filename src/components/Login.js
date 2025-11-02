@@ -369,7 +369,7 @@ const Login = () => {
       {/* Back Button */}
       <div style={{display:"flex", justifyContent:"space-between"}}>
         <button
-          onClick={() => navigate('/search')}
+          onClick={() => navigate('/')}
           style={commonStyles.backButton}
         >
           ⬅ Volver

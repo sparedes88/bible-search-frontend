@@ -44,7 +44,8 @@ const TaskManager = () => {
     priority: 'medium',
     status: 'todo',
     dueDate: '',
-    assignedTo: ''
+    assignedTo: '',
+    forecastedHours: 0
   });
   const [newTask, setNewTask] = useState({
     title: '',
@@ -52,7 +53,8 @@ const TaskManager = () => {
     priority: 'medium',
     status: 'todo',
     dueDate: '',
-    assignedTo: ''
+    assignedTo: '',
+    forecastedHours: 0
   });
   const fileInputRef = useRef(null);
   const [loading, setLoading] = useState(true);
@@ -128,7 +130,8 @@ const TaskManager = () => {
         priority: 'medium',
         status: 'todo',
         dueDate: '',
-        assignedTo: ''
+        assignedTo: '',
+        forecastedHours: 0
       });
       setShowAddTask(false);
       toast.success('Task created successfully!');
@@ -161,7 +164,8 @@ const TaskManager = () => {
       priority: task.priority || 'medium',
       status: task.status || 'todo',
       dueDate: task.dueDate || '',
-      assignedTo: task.assignedTo || ''
+      assignedTo: task.assignedTo || '',
+      forecastedHours: task.forecastedHours || 0
     });
   };
 
@@ -179,7 +183,8 @@ const TaskManager = () => {
         priority: 'medium',
         status: 'todo',
         dueDate: '',
-        assignedTo: ''
+        assignedTo: '',
+        forecastedHours: 0
       });
     } catch (error) {
       console.error('Error saving edited task:', error);
@@ -399,7 +404,15 @@ const TaskManager = () => {
   return (
     <div className="task-manager">
       <div className="task-manager-header">
-        <h2>Task Management</h2>
+        <div className="header-left">
+          <h2>Task Management</h2>
+          <div className="status-summary">
+            <span className="status-count todo">To Do: {tasks.filter(task => task.status === 'todo').length} ({tasks.filter(task => task.status === 'todo').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+            <span className="status-count in-progress">In Progress: {tasks.filter(task => task.status === 'in-progress').length} ({tasks.filter(task => task.status === 'in-progress').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+            <span className="status-count review">Review: {tasks.filter(task => task.status === 'review').length} ({tasks.filter(task => task.status === 'review').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+            <span className="status-count completed">Completed: {tasks.filter(task => task.status === 'completed').length} ({tasks.filter(task => task.status === 'completed').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
+          </div>
+        </div>
         <button
           className="btn btn-primary"
           onClick={() => setShowAddTask(true)}
@@ -467,6 +480,14 @@ const TaskManager = () => {
                     <span className="task-date">
                       Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date'}
                     </span>
+                    {task.assignedTo && (
+                      <span className="assigned-user">
+                        👤 {task.assignedTo}
+                      </span>
+                    )}
+                    <span className="forecast-hours">
+                      ⏱️ {task.forecastedHours || 0}h
+                    </span>
                     <span className="comment-count">
                       💬 {task.commentCount || 0}
                     </span>
@@ -514,6 +535,7 @@ const TaskManager = () => {
                 <div className="task-meta-info">
                   <p><strong>Created:</strong> {selectedTask.createdAt.toLocaleString()}</p>
                   <p><strong>Due Date:</strong> {selectedTask.dueDate ? new Date(selectedTask.dueDate).toLocaleDateString() : 'Not set'}</p>
+                  <p><strong>Forecasted Hours:</strong> {selectedTask.forecastedHours || 0}h</p>
                   <p><strong>Assigned to:</strong> {selectedTask.assignedTo || 'Not assigned'}</p>
                 </div>
               </div>
@@ -669,6 +691,18 @@ const TaskManager = () => {
 
               <div className="form-row">
                 <div className="form-group">
+                  <label>Forecasted Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={newTask.forecastedHours}
+                    onChange={(e) => setNewTask({...newTask, forecastedHours: parseFloat(e.target.value) || 0})}
+                    placeholder="0.0"
+                  />
+                </div>
+
+                <div className="form-group">
                   <label>Priority</label>
                   <select
                     value={newTask.priority}
@@ -679,7 +713,9 @@ const TaskManager = () => {
                     <option value="high">High</option>
                   </select>
                 </div>
+              </div>
 
+              <div className="form-row">
                 <div className="form-group">
                   <label>Status</label>
                   <select
@@ -692,15 +728,15 @@ const TaskManager = () => {
                     <option value="completed">Completed</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="form-group">
-                <label>Due Date</label>
-                <input
-                  type="date"
-                  value={newTask.dueDate}
-                  onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
-                />
+                <div className="form-group">
+                  <label>Due Date</label>
+                  <input
+                    type="date"
+                    value={newTask.dueDate}
+                    onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
+                  />
+                </div>
               </div>
 
               <div className="form-group">
@@ -752,6 +788,18 @@ const TaskManager = () => {
 
               <div className="form-row">
                 <div className="form-group">
+                  <label>Forecasted Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={editTaskData.forecastedHours}
+                    onChange={(e) => setEditTaskData({...editTaskData, forecastedHours: parseFloat(e.target.value) || 0})}
+                    placeholder="0.0"
+                  />
+                </div>
+
+                <div className="form-group">
                   <label>Priority</label>
                   <select
                     value={editTaskData.priority}
@@ -762,7 +810,9 @@ const TaskManager = () => {
                     <option value="high">High</option>
                   </select>
                 </div>
+              </div>
 
+              <div className="form-row">
                 <div className="form-group">
                   <label>Status</label>
                   <select
@@ -775,15 +825,15 @@ const TaskManager = () => {
                     <option value="completed">Completed</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="form-group">
-                <label>Due Date</label>
-                <input
-                  type="date"
-                  value={editTaskData.dueDate}
-                  onChange={(e) => setEditTaskData({...editTaskData, dueDate: e.target.value})}
-                />
+                <div className="form-group">
+                  <label>Due Date</label>
+                  <input
+                    type="date"
+                    value={editTaskData.dueDate}
+                    onChange={(e) => setEditTaskData({...editTaskData, dueDate: e.target.value})}
+                  />
+                </div>
               </div>
 
               <div className="form-group">
