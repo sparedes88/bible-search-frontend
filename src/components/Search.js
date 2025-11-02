@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { db, auth, firebaseDebug, storage } from "../firebase";
 import { ref, getDownloadURL } from "firebase/storage";
 import "./Search.css";
@@ -15,6 +15,7 @@ import { onAuthStateChanged } from "firebase/auth";
 
 const Search = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [churches, setChurches] = useState([]);
   const [filteredChurches, setFilteredChurches] = useState([]);
@@ -32,6 +33,11 @@ const Search = () => {
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [churchesPerPage] = useState(12);
+
+  // Brand filtering state
+  const [brands, setBrands] = useState([]);
+  const [selectedBrand, setSelectedBrand] = useState(searchParams.get('brand') || '');
+  const [brandLogos, setBrandLogos] = useState({});
 
   // Function to get Firebase Storage download URL
   const getImageUrl = async (imagePath) => {
@@ -69,13 +75,13 @@ const Search = () => {
 
   // Calculate pagination
   const getCurrentChurches = () => {
-    const churchesToPaginate = searchQuery ? filteredChurches : churches;
+    const churchesToPaginate = (searchQuery || selectedBrand) ? filteredChurches : churches;
     const startIndex = (currentPage - 1) * churchesPerPage;
     const endIndex = startIndex + churchesPerPage;
     return churchesToPaginate.slice(startIndex, endIndex);
   };
 
-  const totalPages = Math.ceil((searchQuery ? filteredChurches.length : churches.length) / churchesPerPage);
+  const totalPages = Math.ceil(((searchQuery || selectedBrand) ? filteredChurches.length : churches.length) / churchesPerPage);
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -94,19 +100,11 @@ const Search = () => {
           ...doc.data() 
         }));
         
-        // Debug: Log first church to see field structure
-        if (churchData.length > 0) {
-          console.log('Church data structure:', churchData[0]);
-          console.log('Header image field:', churchData[0].headerImage);
-          console.log('Logo field:', churchData[0].logo);
-        }
-        
         // Filter out inactive churches
         const activeChurches = churchData.filter(church => {
           // Handle different possible values for isActive
           return church.isActive === true || church.isActive === "true";
         });
-        console.log(`Filtered ${churchData.length} total churches to ${activeChurches.length} active churches`);
         
         setChurches(activeChurches);
         firebaseDebug(`Successfully fetched ${activeChurches.length} active churches`);
@@ -127,6 +125,60 @@ const Search = () => {
 
     fetchChurches();
   }, []);
+
+  // Fetch brands
+  useEffect(() => {
+    const fetchBrands = async () => {
+      try {
+        const brandsSnapshot = await getDocs(collection(db, "brands"));
+        const brandsData = brandsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setBrands(brandsData);
+        
+        // Preload brand logos
+        const logos = {};
+        for (const brand of brandsData) {
+          if (brand.imageUrl || brand.logo) { // Check both imageUrl and logo fields
+            try {
+              // Use the same logic as GlobalOrganizationManager
+              let logoUrl = brand.imageUrl || brand.logo;
+              if (!logoUrl.startsWith('http')) {
+                if (logoUrl.startsWith('/')) {
+                  const encodedPath = encodeURIComponent(logoUrl.substring(1));
+                  logoUrl = `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodedPath}?alt=media`;
+                } else {
+                  // Try to get download URL from Firebase Storage
+                  const logoRef = ref(storage, logoUrl);
+                  logoUrl = await getDownloadURL(logoRef);
+                }
+              }
+              
+              logos[brand.id] = logoUrl;
+            } catch (error) {
+              console.warn(`Failed to preload logo for brand ${brand.id}:`, error);
+            }
+          }
+        }
+        setBrandLogos(logos);
+      } catch (error) {
+        console.error("Error fetching brands:", error);
+        // Don't set error state for brands as it's not critical
+      }
+    };
+
+    fetchBrands();
+  }, []);
+
+  // Handle URL parameter changes for brand
+  useEffect(() => {
+    const brandParam = searchParams.get('brand');
+    if (brandParam !== selectedBrand) {
+      setSelectedBrand(brandParam || '');
+      setCurrentPage(1); // Reset to first page when brand changes
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const preloadImageUrls = async () => {
@@ -158,7 +210,6 @@ const Search = () => {
       }
       
       setImageUrls(urls);
-      console.log('Preloaded image URLs:', urls);
     };
     
     preloadImageUrls();
@@ -173,17 +224,45 @@ const Search = () => {
     return () => unsubscribe();
   }, []);
 
-  // Filter churches based on search query
+  // Filter churches based on search query and brand
   useEffect(() => {
-    if (searchQuery.trim() === "") {
-      setFilteredChurches([]);
-    } else {
-      const filtered = churches.filter(church =>
+    let filtered = churches;
+
+    // Filter by brand first
+    if (selectedBrand) {
+      if (selectedBrand === 'unassigned') {
+        // Show churches without brand assignments
+        filtered = churches.filter(church => {
+          const churchBrand = church.brand || church.brandId || church.brand_id || '';
+          const hasNoBrand = !churchBrand || String(churchBrand).trim() === '';
+          return hasNoBrand;
+        });
+      } else {
+        // Show churches with specific brand - match against both ID and name
+        const selectedBrandData = brands.find(b => b.id === selectedBrand);
+        const selectedBrandName = selectedBrandData?.name || '';
+        
+        filtered = churches.filter(church => {
+          const churchBrand = church.brand || church.brandId || church.brand_id || '';
+          const brandMatch = String(churchBrand).toLowerCase() === String(selectedBrand).toLowerCase() ||
+                            String(churchBrand).toLowerCase() === String(selectedBrandName).toLowerCase();
+          return brandMatch;
+        });
+      }
+    }
+
+    // Then filter by search query
+    if (searchQuery.trim() !== "") {
+      filtered = filtered.filter(church =>
         church.nombre && church.nombre.toLowerCase().includes(searchQuery.toLowerCase())
       );
-      setFilteredChurches(filtered);
+    } else if (!selectedBrand) {
+      // If no search query and no brand selected, show no results (only show when searching or brand selected)
+      filtered = [];
     }
-  }, [searchQuery, churches]);
+
+    setFilteredChurches(filtered);
+  }, [searchQuery, churches, selectedBrand]);
 
   const formatAddress = (church) => {
     const addressParts = [];
@@ -296,49 +375,90 @@ const Search = () => {
     }
   };
 
+  const handleBrandChange = (brandId) => {
+    setSelectedBrand(brandId);
+    setCurrentPage(1); // Reset to first page
+    
+    // Update URL parameters
+    if (brandId) {
+      setSearchParams({ brand: brandId });
+    } else {
+      setSearchParams({});
+    }
+  };
+
   return (
     <div className="search-container">
-      {/* Logo */}
-      <div className="search-logo-container">
-        <img src="/logo.png" alt="Iglesia Tech Logo" className="search-logo" />
-      </div>
-
-      <h2 className="search-title">🔍 Search Organization</h2>
-      {error && (
-        <div className="error-container">
-          <p className="error-text">{error}</p>
-          {!isAuthenticated && (
-            <button 
-              onClick={() => navigate('/login')} 
-              className="login-button"
-            >
-              Login to Continue
-            </button>
-          )}
+      {/* Header Section */}
+      <div className="search-header">
+        {/* Logo - changes based on selected brand */}
+        <div className="search-logo-container" key={`logo-${selectedBrand}`}>
+          {(() => {
+            return selectedBrand && brandLogos[selectedBrand] ? (
+              <img 
+                src={brandLogos[selectedBrand]} 
+                alt={`${brands.find(b => b.id === selectedBrand)?.name || 'Brand'} Logo`} 
+                className="search-logo" 
+                onError={(e) => {
+                  console.error('Logo failed to load:', brandLogos[selectedBrand]);
+                  e.target.style.display = 'none'; // Hide broken image
+                }}
+              />
+            ) : (
+              <img src="/logo.png" alt="Iglesia Tech Logo" className="search-logo" />
+            );
+          })()}
         </div>
-      )}
-      <div className="search-input-container">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSearch(searchQuery)}
-          placeholder="Type the organization name..."
-          className="search-input"
-        />
-        <button onClick={() => handleSearch(searchQuery)} className="search-button">Search</button>
-      </div>
 
-      {/* Debug info */}
-      <div style={{ marginBottom: '20px', textAlign: 'center', fontSize: '12px', color: '#666' }}>
-        <p>Debug: {churches.length} churches loaded, {filteredChurches.length} filtered, Page {currentPage}/{totalPages}, Auth: {isAuthenticated ? 'Yes' : 'No'}</p>
+        <h2 className="search-title">🔍 Search Organization</h2>
+        
+        <div className="search-input-container">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSearch(searchQuery)}
+            placeholder="Type the organization name..."
+            className="search-input"
+          />
+          <button onClick={() => handleSearch(searchQuery)} className="search-button">Search</button>
+        </div>
+
+        {/* Brand Filter - Moved after title for better visibility */}
+        {brands.length > 0 && (
+          <div className="brand-filter-container">
+            <label style={{ marginRight: '10px', fontWeight: '600', fontSize: '16px' }}>
+              Filter by Brand:
+            </label>
+            <select
+              value={selectedBrand}
+              onChange={(e) => handleBrandChange(e.target.value)}
+              className="brand-select"
+            >
+              <option value="">All Brands</option>
+              <option value="unassigned">Unassigned</option>
+              {brands.map(brand => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.name || brand.id}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Church Cards Below Search */}
-      {(searchQuery || churches.length > 0) && (
+      {(searchQuery || selectedBrand || churches.length > 0) && (
         <>
           <h3 className="churches-title">
-            {searchQuery ? `📋 Registered Organizations (${filteredChurches.length} results)` : `📋 All Organizations (${churches.length})`}
+            {selectedBrand && searchQuery ? 
+              `📋 ${brands.find(b => b.id === selectedBrand)?.name || 'Brand'} Organizations (${filteredChurches.length} results for "${searchQuery}")` :
+              selectedBrand ? 
+                `📋 ${brands.find(b => b.id === selectedBrand)?.name || 'Brand'} Organizations (${filteredChurches.length})` :
+                searchQuery ? 
+                  `📋 Registered Organizations (${filteredChurches.length} results)` : 
+                  `📋 All Organizations (${churches.length})`
+            }
           </h3>
           <div className="churches-grid">
             {getCurrentChurches().map((church) => (
@@ -358,7 +478,6 @@ const Search = () => {
                     alt={`${church.nombre} header`} 
                     className="header-image" 
                     onError={(e) => {
-                      console.log('Header image failed to load for church:', church.nombre, 'Using fallback');
                       e.target.src = "/img/banner-fallback.svg";
                     }}
                   />
@@ -375,7 +494,6 @@ const Search = () => {
                       alt={`${church.nombre} logo`} 
                       className="card-logo" 
                       onError={(e) => {
-                        console.log('Logo image failed to load for church:', church.nombre, 'Using fallback');
                         e.target.src = "/img/logo-fallback.svg";
                       }}
                     />
@@ -512,13 +630,6 @@ const Search = () => {
 
 // Replace the entire styles object with this clean version
 const styles = {
-  container: {
-    maxWidth: "1200px",
-    margin: "auto",
-    padding: "20px",
-    fontFamily: "'Nunito', sans-serif",
-    textAlign: "center"
-  },
   logoContainer: {
     display: "flex",
     justifyContent: "center",
@@ -657,7 +768,9 @@ const styles = {
     padding: "20px",
     backgroundColor: "#fff",
     borderRadius: "8px",
-    boxShadow: "0px 4px 6px rgba(0,0,0,0.1)"
+    boxShadow: "0px 4px 6px rgba(0,0,0,0.1)",
+    maxWidth: "500px",
+    width: "100%"
   },
   formInput: {
     width: "100%",
