@@ -975,8 +975,8 @@ const MiPerfil = () => {
                             {days == null ? 'Never submitted' : `Last submission: ${days} day${days === 1 ? '' : 's'} ago (expired)`}
                           </div>
                           <div style={{ marginTop: 8 }}>
-                            <a
-                              href={`/church/${id}/form/${f.id}`}
+                            <Link
+                              to={`/church/${id}/form/${f.id}`}
                               style={{
                                 display: 'inline-block',
                                 background: '#DC2626',
@@ -989,7 +989,7 @@ const MiPerfil = () => {
                               }}
                             >
                               Fill out now →
-                            </a>
+                            </Link>
                           </div>
                         </div>
                       );

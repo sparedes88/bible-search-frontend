@@ -32,9 +32,19 @@ const FormViewer = () => {
   const [formsLoading, setFormsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Check authentication
   useEffect(() => {
-    fetchForm();
-  }, [id, formId]);
+    if (!user) {
+      console.log('No user found, redirecting to login');
+      window.location.href = `/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`;
+    }
+  }, [user, id]);
+
+  useEffect(() => {
+    if (user) {
+      fetchForm();
+    }
+  }, [id, formId, user]);
 
   // Load available active forms for quick switching
   useEffect(() => {
@@ -123,6 +133,14 @@ const FormViewer = () => {
   const fetchForm = async () => {
     try {
       setLoading(true);
+      
+      if (!id || !formId) {
+        console.error('Missing required parameters:', { id, formId });
+        toast.error('Invalid form URL');
+        setLoading(false);
+        return;
+      }
+
       const formRef = doc(db, 'churches', id, 'forms', formId);
       const formDoc = await getDoc(formRef);
       
@@ -138,7 +156,7 @@ const FormViewer = () => {
       }
     } catch (error) {
       console.error('Error fetching form:', error);
-      toast.error('Failed to load form');
+      toast.error(`Failed to load form: ${error.message}`);
     } finally {
       setLoading(false);
     }
