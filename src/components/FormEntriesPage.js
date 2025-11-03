@@ -85,22 +85,6 @@ const FormEntriesPage = () => {
   const [selectedHistoryAnalysis, setSelectedHistoryAnalysis] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Check authentication
-  useEffect(() => {
-    if (!user) {
-      console.log('No user found in FormEntriesPage, redirecting to login');
-      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
-    }
-  }, [user, id, navigate]);
-
-  useEffect(() => {
-    if (user && id && formId) {
-      fetchForm();
-      fetchEntries();
-      loadAnalysisHistory();
-    }
-  }, [id, formId, user]);
-
   const fetchForm = async () => {
     try {
       if (!id || !formId) {
@@ -187,6 +171,32 @@ const FormEntriesPage = () => {
       setLoadingHistory(false);
     }
   };
+
+  // Check authentication and load data
+  useEffect(() => {
+    const loadData = async () => {
+      // Check if user is authenticated
+      if (!user) {
+        console.log('No user found in FormEntriesPage, redirecting to login');
+        navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
+        return;
+      }
+
+      // Check if we have required params
+      if (!id || !formId) {
+        console.error('Missing required parameters');
+        toast.error('Invalid form URL');
+        return;
+      }
+
+      // Load all data
+      await fetchForm();
+      await fetchEntries();
+      await loadAnalysisHistory();
+    };
+
+    loadData();
+  }, [id, formId, user, navigate]);
 
   const handleOpenQuestionnaire = () => {
     setShowQuestionnaireModal(true);
@@ -317,6 +327,22 @@ const FormEntriesPage = () => {
       return false;
     });
   });
+
+  // Show loading state
+  if (!user) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }}>
+        <div>Checking authentication...</div>
+      </div>
+    );
+  }
 
   if (loading || !form) {
     return (
