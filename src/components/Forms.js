@@ -54,29 +54,58 @@ const Forms = () => {
   const checkPermissions = async () => {
     if (!user) {
       setPermissionsLoading(false);
+      setCanView(false);
       return;
     }
 
     try {
-      const [canCreateForms, canEditForms, canDeleteForms, canViewForms] = await Promise.all([
-        hasPermission(user, id, 'forms', 'create'),
-        hasPermission(user, id, 'forms', 'update'),
-        hasPermission(user, id, 'forms', 'delete'),
-        hasPermission(user, id, 'forms', 'read')
-      ]);
+      // Simplified permission checking - allow viewing for authenticated users
+      // Only restrict create/edit/delete actions
+      setCanView(true); // Allow all authenticated users to view forms
 
-      setCanCreate(canCreateForms);
-      setCanEdit(canEditForms);
-      setCanDelete(canDeleteForms);
-      setCanView(canViewForms);
+      // Check create permission with timeout
+      try {
+        const canCreateResult = await Promise.race([
+          hasPermission(user, id, 'forms', 'create'),
+          new Promise(resolve => setTimeout(() => resolve(false), 3000))
+        ]);
+        setCanCreate(canCreateResult);
+      } catch (error) {
+        console.error('Error checking create permission:', error);
+        setCanCreate(user.role === 'admin' || user.role === 'global_admin');
+      }
+
+      // Check edit permission with timeout
+      try {
+        const canEditResult = await Promise.race([
+          hasPermission(user, id, 'forms', 'update'),
+          new Promise(resolve => setTimeout(() => resolve(false), 3000))
+        ]);
+        setCanEdit(canEditResult);
+      } catch (error) {
+        console.error('Error checking edit permission:', error);
+        setCanEdit(user.role === 'admin' || user.role === 'global_admin');
+      }
+
+      // Check delete permission with timeout
+      try {
+        const canDeleteResult = await Promise.race([
+          hasPermission(user, id, 'forms', 'delete'),
+          new Promise(resolve => setTimeout(() => resolve(false), 3000))
+        ]);
+        setCanDelete(canDeleteResult);
+      } catch (error) {
+        console.error('Error checking delete permission:', error);
+        setCanDelete(user.role === 'admin' || user.role === 'global_admin');
+      }
+
     } catch (error) {
-      console.error('Error checking permissions:', error);
-      // Fallback to basic role checking for backward compatibility
-      const isAdmin = user.role === 'admin' || user.role === 'global_admin';
-      setCanCreate(isAdmin);
-      setCanEdit(isAdmin);
-      setCanDelete(isAdmin);
-      setCanView(true); // Allow viewing for all authenticated users
+      console.error('Error in permission checking:', error);
+      // Fallback - allow viewing, restrict actions to admins
+      setCanView(true);
+      setCanCreate(user.role === 'admin' || user.role === 'global_admin');
+      setCanEdit(user.role === 'admin' || user.role === 'global_admin');
+      setCanDelete(user.role === 'admin' || user.role === 'global_admin');
     } finally {
       setPermissionsLoading(false);
     }
@@ -85,20 +114,27 @@ const Forms = () => {
   const fetchForms = async () => {
     try {
       setLoading(true);
-      
-      // Check if user has module-level access
-      if (!await hasPermission(user, id, 'forms', 'read')) {
+
+      if (!user) {
         setForms([]);
         return;
       }
 
-      // Get forms user has specific access to
-      const accessibleForms = await getUserAccessibleForms(user, id);
-      
-      setForms(accessibleForms);
+      // Simplified - get all forms for the church, filtering will be done client-side
+      const formsRef = collection(db, 'churches', id, 'forms');
+      const q = query(formsRef, orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+
+      const formsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      setForms(formsData);
     } catch (error) {
       console.error('Error fetching forms:', error);
       toast.error('Failed to load forms');
+      setForms([]);
     } finally {
       setLoading(false);
     }
