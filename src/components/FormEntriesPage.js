@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -32,12 +32,12 @@ const FormEntriesPage = () => {
   const [debugInfo, setDebugInfo] = useState([]);
   const [hasError, setHasError] = useState(false);
 
-  // Add debug log
-  const addDebug = (message, data = null) => {
+  // Add debug log - memoized to prevent dependency issues
+  const addDebug = useCallback((message, data = null) => {
     const logEntry = `[${new Date().toISOString()}] ${message}`;
     console.log(logEntry, data || '');
     setDebugInfo(prev => [...prev, { message, data, timestamp: new Date().toISOString() }]);
-  };
+  }, []);
   
   // AI Analysis states
   const [aiAnalysis, setAiAnalysis] = useState(null);
@@ -194,29 +194,24 @@ const FormEntriesPage = () => {
     }
   };
 
-  // Check authentication and load data
+  // Initialize and load data
   useEffect(() => {
+    addDebug('FormEntriesPage mounted', { id, formId, hasUser: !!user });
+    
+    if (!user) {
+      addDebug('No user found, redirecting to login');
+      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
+
+    if (!id || !formId) {
+      addDebug('Missing parameters');
+      return;
+    }
+
     const loadData = async () => {
       try {
-        addDebug('FormEntriesPage mounted', { id, formId, hasUser: !!user });
-
-        // Check if user is authenticated
-        if (!user) {
-          addDebug('No user found, redirecting to login');
-          navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
-          return;
-        }
-
-        // Check if we have required params
-        if (!id || !formId) {
-          addDebug('Missing required parameters', { id, formId });
-          toast.error('Invalid form URL');
-          setHasError(true);
-          return;
-        }
-
         addDebug('Starting data load');
-        // Load all data
         await fetchForm();
         await fetchEntries();
         await loadAnalysisHistory();
@@ -231,7 +226,8 @@ const FormEntriesPage = () => {
     };
 
     loadData();
-  }, [id, formId, user, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, id, formId, navigate, addDebug]);
 
   const handleOpenQuestionnaire = () => {
     setShowQuestionnaireModal(true);
