@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import NotAuthorized from './NotAuthorized';
 
 const PrivateRoute = ({ children, roles = [] }) => {
   const { user } = useAuth();
@@ -9,11 +10,11 @@ const PrivateRoute = ({ children, roles = [] }) => {
   const churchId = pathParts[2];
 
   if (!user) {
-    return <Navigate to={`/${routeType}/${churchId}/login`} state={{ from: location }} replace />;
+    return <NotAuthorized message="Please sign in to access this page." />;
   }
 
   if (roles.length > 0 && !roles.includes(user.role)) {
-    return <Navigate to={`/${routeType}/${churchId}`} replace />;
+    return <NotAuthorized message="You don't have permission to access this page." showLogin={false} />;
   }
 
   return children;

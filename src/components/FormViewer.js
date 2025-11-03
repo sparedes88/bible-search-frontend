@@ -15,12 +15,15 @@ import commonStyles from '../pages/commonStyles';
 import './Forms.css';
 import { getChurchData } from '../api/church';
 import { FiCheckCircle, FiGrid } from 'react-icons/fi';
+import NotAuthorized from './NotAuthorized';
+import DebugPanel from './DebugPanel';
 
 const FormViewer = () => {
   const { id, formId } = useParams();
   const { user } = useAuth();
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
@@ -36,12 +39,17 @@ const FormViewer = () => {
   useEffect(() => {
     if (!user) {
       console.log('No user found, redirecting to login');
-      window.location.href = `/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`;
+      setError({ type: 'auth', message: 'Authentication required' });
+      setLoading(false);
+      // Delay redirect to show error state
+      setTimeout(() => {
+        window.location.href = `/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`;
+      }, 2000);
     }
   }, [user, id]);
 
   useEffect(() => {
-    if (user) {
+    if (user && !error) {
       fetchForm();
     }
   }, [id, formId, user]);
@@ -133,29 +141,43 @@ const FormViewer = () => {
   const fetchForm = async () => {
     try {
       setLoading(true);
-      
+      setError(null);
+
       if (!id || !formId) {
         console.error('Missing required parameters:', { id, formId });
+        setError({ type: 'params', message: 'Invalid form URL - missing parameters' });
         toast.error('Invalid form URL');
-        setLoading(false);
         return;
       }
 
+      console.log('Fetching form:', { id, formId, user: user?.email });
+
       const formRef = doc(db, 'churches', id, 'forms', formId);
       const formDoc = await getDoc(formRef);
-      
+
       if (formDoc.exists()) {
         const formData = formDoc.data();
+        console.log('Form data loaded:', formData);
+
         if (!formData.isActive) {
+          setError({ type: 'inactive', message: 'This form is no longer accepting submissions' });
           toast.error('This form is no longer accepting submissions');
           return;
         }
+
         setForm({ id: formDoc.id, ...formData });
       } else {
+        console.error('Form not found:', formId);
+        setError({ type: 'not_found', message: 'Form not found' });
         toast.error('Form not found');
       }
     } catch (error) {
       console.error('Error fetching form:', error);
+      setError({
+        type: 'fetch_error',
+        message: `Failed to load form: ${error.message}`,
+        details: error
+      });
       toast.error(`Failed to load form: ${error.message}`);
     } finally {
       setLoading(false);
@@ -439,11 +461,118 @@ const FormViewer = () => {
     }
   };
 
+  if (error) {
+    if (error.type === 'auth') {
+      return <NotAuthorized message="Please sign in to view this form." />;
+    }
+
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }}>
+        <div style={{
+          maxWidth: '500px',
+          margin: '0 auto',
+          backgroundColor: 'white',
+          padding: '3rem',
+          borderRadius: '16px',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚠️</div>
+          <h1 style={{ ...commonStyles.title, marginBottom: '1rem', color: '#ef4444' }}>
+            Error Loading Form
+          </h1>
+          <p style={{ color: '#6b7280', marginBottom: '2rem', fontSize: '1.1rem' }}>
+            {error.message}
+          </p>
+
+          <div style={{ marginBottom: '2rem' }}>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                backgroundColor: '#4F46E5',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: '500',
+                marginRight: '1rem'
+              }}
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => window.history.back()}
+              style={{
+                backgroundColor: '#6b7280',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+            >
+              Go Back
+            </button>
+          </div>
+
+          <DebugPanel
+            data={{
+              errorType: error.type,
+              churchId: id,
+              formId: formId,
+              userEmail: user?.email,
+              userRole: user?.role,
+              timestamp: new Date().toISOString(),
+              errorDetails: error.details
+            }}
+            title="Debug Information"
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div style={commonStyles.container}>
-        <div style={{ textAlign: 'center', padding: '3rem' }}>
-          <div>Loading form...</div>
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }}>
+        <div style={{
+          textAlign: 'center',
+          padding: '3rem',
+          backgroundColor: 'white',
+          borderRadius: '16px',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
+        }}>
+          <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
+          <div style={{ fontSize: '1.1rem', color: '#6b7280' }}>Loading form...</div>
+
+          <DebugPanel
+            data={{
+              churchId: id,
+              formId: formId,
+              userEmail: user?.email,
+              userRole: user?.role,
+              timestamp: new Date().toISOString()
+            }}
+            title="Loading Debug Info"
+          />
         </div>
       </div>
     );
@@ -451,10 +580,59 @@ const FormViewer = () => {
 
   if (!form) {
     return (
-      <div style={commonStyles.container}>
-        <div style={{ textAlign: 'center', padding: '3rem' }}>
-          <h3>Form not found</h3>
-          <p>The form you're looking for doesn't exist or is no longer available.</p>
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }}>
+        <div style={{
+          maxWidth: '500px',
+          margin: '0 auto',
+          backgroundColor: 'white',
+          padding: '3rem',
+          borderRadius: '16px',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🔍</div>
+          <h1 style={{ ...commonStyles.title, marginBottom: '1rem' }}>
+            Form Not Found
+          </h1>
+          <p style={{ color: '#6b7280', marginBottom: '2rem', fontSize: '1.1rem' }}>
+            The form you're looking for doesn't exist or is no longer available.
+          </p>
+
+          <div style={{ marginBottom: '2rem' }}>
+            <button
+              onClick={() => window.history.back()}
+              style={{
+                backgroundColor: '#4F46E5',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+            >
+              Go Back
+            </button>
+          </div>
+
+          <DebugPanel
+            data={{
+              churchId: id,
+              formId: formId,
+              userEmail: user?.email,
+              userRole: user?.role,
+              timestamp: new Date().toISOString()
+            }}
+            title="Form Not Found Debug Info"
+          />
         </div>
       </div>
     );
