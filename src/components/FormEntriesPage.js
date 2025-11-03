@@ -197,8 +197,7 @@ const FormEntriesPage = () => {
     };
 
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, id, formId, navigate]);
+  }, [user, id, formId, navigate]); // eslint-disable-line
 
   const handleOpenQuestionnaire = () => {
     setShowQuestionnaireModal(true);
