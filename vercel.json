@@ -12,11 +12,24 @@
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "/static/$1"
+      "dest": "/static/$1",
+      "headers": {
+        "x-vercel-protection-bypass": "true"
+      }
     },
     {
       "src": "/manifest.json",
-      "dest": "/manifest.json"
+      "dest": "/manifest.json",
+      "headers": {
+        "x-vercel-protection-bypass": "true"
+      }
+    },
+    {
+      "src": "/asset-manifest.json",
+      "dest": "/asset-manifest.json",
+      "headers": {
+        "x-vercel-protection-bypass": "true"
+      }
     },
     {
       "src": "/(.*)",
