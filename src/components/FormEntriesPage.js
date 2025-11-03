@@ -29,15 +29,6 @@ const FormEntriesPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [churchLogoUrl, setChurchLogoUrl] = useState(null);
   const [churchName, setChurchName] = useState('');
-  const [debugInfo, setDebugInfo] = useState([]);
-  const [hasError, setHasError] = useState(false);
-
-  // Add debug log - memoized to prevent dependency issues
-  const addDebug = useCallback((message, data = null) => {
-    const logEntry = `[${new Date().toISOString()}] ${message}`;
-    console.log(logEntry, data || '');
-    setDebugInfo(prev => [...prev, { message, data, timestamp: new Date().toISOString() }]);
-  }, []);
   
   // AI Analysis states
   const [aiAnalysis, setAiAnalysis] = useState(null);
@@ -96,29 +87,21 @@ const FormEntriesPage = () => {
 
   const fetchForm = async () => {
     try {
-      addDebug('fetchForm started', { id, formId });
-      
       if (!id || !formId) {
-        addDebug('fetchForm: Missing parameters', { id, formId });
         toast.error('Invalid form URL');
         return;
       }
 
       const formRef = doc(db, 'churches', id, 'forms', formId);
-      addDebug('fetchForm: Getting form document');
       const formDoc = await getDoc(formRef);
       
       if (formDoc.exists()) {
-        const formData = { id: formDoc.id, ...formDoc.data() };
-        addDebug('fetchForm: Form found', { title: formData.title });
-        setForm(formData);
+        setForm({ id: formDoc.id, ...formDoc.data() });
       } else {
-        addDebug('fetchForm: Form not found');
         toast.error('Form not found');
         navigate(`/organization/${id}/forms`);
       }
     } catch (error) {
-      addDebug('fetchForm: Error', error);
       console.error('Error fetching form:', error);
       toast.error(`Failed to load form: ${error.message}`);
       throw error;
@@ -127,17 +110,14 @@ const FormEntriesPage = () => {
 
   const fetchEntries = async () => {
     try {
-      addDebug('fetchEntries started');
       setLoading(true);
       
       if (!id || !formId) {
-        addDebug('fetchEntries: Missing parameters', { id, formId });
         return;
       }
 
       const entriesRef = collection(db, 'churches', id, 'forms', formId, 'entries');
       const q = query(entriesRef, orderBy('createdAt', 'desc'));
-      addDebug('fetchEntries: Querying database');
       const snapshot = await getDocs(q);
       
       const entriesData = snapshot.docs.map(doc => ({
@@ -145,10 +125,8 @@ const FormEntriesPage = () => {
         ...doc.data()
       }));
       
-      addDebug('fetchEntries: Entries loaded', { count: entriesData.length });
       setEntries(entriesData);
     } catch (error) {
-      addDebug('fetchEntries: Error', error);
       console.error('Error fetching entries:', error);
       toast.error(`Failed to load entries: ${error.message}`);
       throw error;
@@ -196,38 +174,31 @@ const FormEntriesPage = () => {
 
   // Initialize and load data
   useEffect(() => {
-    addDebug('FormEntriesPage mounted', { id, formId, hasUser: !!user });
-    
     if (!user) {
-      addDebug('No user found, redirecting to login');
       navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
       return;
     }
 
     if (!id || !formId) {
-      addDebug('Missing parameters');
+      toast.error('Invalid form URL');
       return;
     }
 
     const loadData = async () => {
       try {
-        addDebug('Starting data load');
         await fetchForm();
         await fetchEntries();
         await loadAnalysisHistory();
-        addDebug('Data load complete');
       } catch (error) {
-        addDebug('Error in loadData', error);
-        console.error('Error in FormEntriesPage loadData:', error);
+        console.error('Error loading FormEntriesPage:', error);
         toast.error(`Error loading page: ${error.message}`);
-        setHasError(true);
         setLoading(false);
       }
     };
 
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, id, formId, navigate, addDebug]);
+  }, [user, id, formId, navigate]);
 
   const handleOpenQuestionnaire = () => {
     setShowQuestionnaireModal(true);
@@ -359,78 +330,6 @@ const FormEntriesPage = () => {
     });
   });
 
-  // Show error state with debug info
-  if (hasError) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
-        padding: '24px'
-      }}>
-        <div style={{
-          maxWidth: '800px',
-          margin: '0 auto',
-          backgroundColor: 'white',
-          padding: '2rem',
-          borderRadius: '16px',
-          border: '2px solid #EF4444'
-        }}>
-          <h2 style={{ color: '#DC2626', marginBottom: '1rem' }}>⚠️ Error Loading Page</h2>
-          <p style={{ marginBottom: '1.5rem' }}>There was an error loading this page. Debug information:</p>
-          
-          <div style={{
-            backgroundColor: '#FEF2F2',
-            padding: '1rem',
-            borderRadius: '8px',
-            maxHeight: '400px',
-            overflow: 'auto',
-            fontFamily: 'monospace',
-            fontSize: '0.875rem'
-          }}>
-            {debugInfo.map((log, idx) => (
-              <div key={idx} style={{ marginBottom: '0.5rem', borderBottom: '1px solid #FEE2E2', paddingBottom: '0.5rem' }}>
-                <strong>{log.timestamp}</strong>: {log.message}
-                {log.data && <pre style={{ margin: '0.25rem 0 0 0', color: '#991B1B' }}>{JSON.stringify(log.data, null, 2)}</pre>}
-              </div>
-            ))}
-          </div>
-
-          <div style={{ marginTop: '1.5rem' }}>
-            <button 
-              onClick={() => window.location.reload()} 
-              style={{
-                backgroundColor: '#3B82F6',
-                color: 'white',
-                padding: '0.75rem 1.5rem',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: '600',
-                marginRight: '1rem'
-              }}
-            >
-              Reload Page
-            </button>
-            <button 
-              onClick={() => navigate(`/church/${id}/forms`)} 
-              style={{
-                backgroundColor: '#6B7280',
-                color: 'white',
-                padding: '0.75rem 1.5rem',
-                borderRadius: '8px',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: '600'
-              }}
-            >
-              Back to Forms
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Show loading state
   if (!user) {
     return (
@@ -438,17 +337,11 @@ const FormEntriesPage = () => {
         minHeight: '100vh',
         background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px'
       }}>
-        <div style={{ marginBottom: '1rem' }}>Checking authentication...</div>
-        {debugInfo.length > 0 && (
-          <div style={{ fontSize: '0.75rem', color: '#6B7280', maxWidth: '400px' }}>
-            Last: {debugInfo[debugInfo.length - 1].message}
-          </div>
-        )}
+        <div>Checking authentication...</div>
       </div>
     );
   }
@@ -459,19 +352,11 @@ const FormEntriesPage = () => {
         minHeight: '100vh',
         background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px'
       }}>
-        <div style={{ marginBottom: '1rem' }}>Loading entries...</div>
-        {debugInfo.length > 0 && (
-          <div style={{ fontSize: '0.75rem', color: '#6B7280', maxWidth: '400px', textAlign: 'center' }}>
-            {debugInfo.slice(-3).map((log, idx) => (
-              <div key={idx}>{log.message}</div>
-            ))}
-          </div>
-        )}
+        <div>Loading entries...</div>
       </div>
     );
   }
