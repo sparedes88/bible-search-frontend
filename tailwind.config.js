@@ -1,8 +1,10 @@
 module.exports = {
-  // ...existing config
+  content: [
+    "./src/**/*.{js,jsx,ts,tsx}",
+    "./public/index.html",
+  ],
   theme: {
     extend: {
-      // ...existing extensions
       animation: {
         'spin': 'spin 1s linear infinite',
       },
