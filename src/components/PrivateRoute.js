@@ -4,14 +4,16 @@ import { useAuth } from '../contexts/AuthContext';
 const PrivateRoute = ({ children, roles = [] }) => {
   const { user } = useAuth();
   const location = useLocation();
-  const churchId = location.pathname.split('/')[2];
+  const pathParts = location.pathname.split('/');
+  const routeType = pathParts[1]; // 'organization' or 'church'
+  const churchId = pathParts[2];
 
   if (!user) {
-    return <Navigate to={`/church/${churchId}/login`} state={{ from: location }} replace />;
+    return <Navigate to={`/${routeType}/${churchId}/login`} state={{ from: location }} replace />;
   }
 
   if (roles.length > 0 && !roles.includes(user.role)) {
-    return <Navigate to={`/church/${churchId}`} replace />;
+    return <Navigate to={`/${routeType}/${churchId}`} replace />;
   }
 
   return children;
