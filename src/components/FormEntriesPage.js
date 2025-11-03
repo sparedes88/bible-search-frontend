@@ -85,14 +85,30 @@ const FormEntriesPage = () => {
   const [selectedHistoryAnalysis, setSelectedHistoryAnalysis] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Check authentication
   useEffect(() => {
-    fetchForm();
-    fetchEntries();
-    loadAnalysisHistory();
-  }, [id, formId]);
+    if (!user) {
+      console.log('No user found in FormEntriesPage, redirecting to login');
+      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
+    }
+  }, [user, id, navigate]);
+
+  useEffect(() => {
+    if (user && id && formId) {
+      fetchForm();
+      fetchEntries();
+      loadAnalysisHistory();
+    }
+  }, [id, formId, user]);
 
   const fetchForm = async () => {
     try {
+      if (!id || !formId) {
+        console.error('Missing parameters:', { id, formId });
+        toast.error('Invalid form URL');
+        return;
+      }
+
       const formRef = doc(db, 'churches', id, 'forms', formId);
       const formDoc = await getDoc(formRef);
       
@@ -104,13 +120,19 @@ const FormEntriesPage = () => {
       }
     } catch (error) {
       console.error('Error fetching form:', error);
-      toast.error('Failed to load form');
+      toast.error(`Failed to load form: ${error.message}`);
     }
   };
 
   const fetchEntries = async () => {
     try {
       setLoading(true);
+      
+      if (!id || !formId) {
+        console.error('Missing parameters for fetchEntries:', { id, formId });
+        return;
+      }
+
       const entriesRef = collection(db, 'churches', id, 'forms', formId, 'entries');
       const q = query(entriesRef, orderBy('createdAt', 'desc'));
       const snapshot = await getDocs(q);
@@ -123,7 +145,7 @@ const FormEntriesPage = () => {
       setEntries(entriesData);
     } catch (error) {
       console.error('Error fetching entries:', error);
-      toast.error('Failed to load entries');
+      toast.error(`Failed to load entries: ${error.message}`);
     } finally {
       setLoading(false);
     }
