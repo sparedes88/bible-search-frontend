@@ -1287,6 +1287,12 @@ const BuildMyChurch = () => {
           >
             👥 Manage Assignees
           </button>
+          <button
+            className={`tab-button ${activeTab === 'progress' ? 'active' : ''}`}
+            onClick={() => setActiveTab('progress')}
+          >
+            📊 Progress Status
+          </button>
         </div>
 
         {activeTab === 'tasks' && (
@@ -1966,6 +1972,66 @@ const BuildMyChurch = () => {
                   />
                 ))
               )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'progress' && (
+          <div className="progress-content">
+            <div className="progress-header">
+              <h2 className="section-title">Task Progress Overview</h2>
+              <p className="progress-description">
+                View all tasks organized by their current progress status.
+              </p>
+            </div>
+            <div className="progress-grid">
+              {STATUS_OPTIONS.map(status => {
+                const statusTasks = tasks.filter(task => task.status === status.value);
+                return (
+                  <div key={status.value} className="status-column">
+                    <div className="status-header">
+                      <h3 className="status-title">{status.label}</h3>
+                      <span className="status-count">{statusTasks.length}</span>
+                    </div>
+                    <div className="status-tasks">
+                      {statusTasks.length === 0 ? (
+                        <div className="empty-status">
+                          <div className="empty-icon">📝</div>
+                          <p>No tasks in this status</p>
+                        </div>
+                      ) : (
+                        statusTasks.map(task => (
+                          <div
+                            key={task.id}
+                            className="progress-task-card"
+                            onClick={() => handleTaskClick(task)}
+                          >
+                            <div className="progress-task-header">
+                              <h4 className="progress-task-title">{task.title}</h4>
+                              <span className={`progress-priority ${task.priority}`}>
+                                {task.priority}
+                              </span>
+                            </div>
+                            <p className="progress-task-description">
+                              {task.description.length > 100
+                                ? `${task.description.substring(0, 100)}...`
+                                : task.description}
+                            </p>
+                            <div className="progress-task-meta">
+                              <span className="progress-assignee">
+                                {task.assignee ? `👤 ${task.assignee}` : 'Unassigned'}
+                              </span>
+                              <span className="progress-due-date">
+                                {task.dueDate ? `📅 ${new Date(task.dueDate).toLocaleDateString()}` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
