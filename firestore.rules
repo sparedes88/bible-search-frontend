@@ -181,6 +181,17 @@ service cloud.firestore {
           (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
       }
       
+      // Build Tasks - Church members can access tasks for their church
+      match /buildTasks/{taskId} {
+        allow read, write, create, update, delete: if isAuthenticated() && 
+          isUserInChurch(resource.data.churchId);
+        // Allow subcollections like comments
+        match /comments/{commentId} {
+          allow read, write, create, update, delete: if isAuthenticated() && 
+            isUserInChurch(get(/databases/$(database)/documents/buildTasks/$(taskId)).data.churchId);
+        }
+      }
+      
       // Task Progress - Users can CRUD their own progress entries
       match /taskProgress/{progressId} {
         allow read, write, create, update, delete: if isAuthenticated() && 

@@ -23,6 +23,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TaskQRLabel from './TaskQRLabel';
 import './BuildMyChurch.css';
+import AssigneeManagementItem from './AssigneeManagementItem';
 
 // Utility function to convert URLs in text to clickable links
 const convertUrlsToLinks = (text) => {
@@ -86,6 +87,7 @@ const BuildMyChurch = () => {
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editingCommentText, setEditingCommentText] = useState('');
   const [church, setChurch] = useState(null);
+  const [activeTab, setActiveTab] = useState('tasks');
   const tasksPerPage = 5;
 
   const STATUS_OPTIONS = [
@@ -446,6 +448,48 @@ const BuildMyChurch = () => {
         console.error('Error deleting task:', error);
         safeToast.error('Failed to delete task');
       }
+    }
+  };
+
+  const handleRemoveAssignee = async (assigneeId) => {
+    try {
+      // Remove assignee from all tasks
+      const tasksToUpdate = tasks.filter(task => task.assignee === assigneeId);
+      const updatePromises = tasksToUpdate.map(task =>
+        updateDoc(doc(db, 'buildTasks', task.id), { assignee: null })
+      );
+      await Promise.all(updatePromises);
+
+      // Update local state
+      setTasks(prev => prev.map(task =>
+        task.assignee === assigneeId ? { ...task, assignee: null } : task
+      ));
+
+      safeToast.success('Assignee removed successfully');
+    } catch (error) {
+      console.error('Error removing assignee:', error);
+      safeToast.error('Failed to remove assignee');
+    }
+  };
+
+  const handleReassignTasks = async (fromAssigneeId, toAssigneeId) => {
+    try {
+      // Reassign all tasks from one assignee to another
+      const tasksToUpdate = tasks.filter(task => task.assignee === fromAssigneeId);
+      const updatePromises = tasksToUpdate.map(task =>
+        updateDoc(doc(db, 'buildTasks', task.id), { assignee: toAssigneeId })
+      );
+      await Promise.all(updatePromises);
+
+      // Update local state
+      setTasks(prev => prev.map(task =>
+        task.assignee === fromAssigneeId ? { ...task, assignee: toAssigneeId } : task
+      ));
+
+      safeToast.success('Tasks reassigned successfully');
+    } catch (error) {
+      console.error('Error reassigning tasks:', error);
+      safeToast.error('Failed to reassign tasks');
     }
   };
 
@@ -1229,7 +1273,24 @@ const BuildMyChurch = () => {
           </div>
         </div>
 
-        <div className="task-grid">
+        {/* Tabs */}
+        <div className="tabs-container">
+          <button
+            className={`tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tasks')}
+          >
+            📋 Tasks
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'assignees' ? 'active' : ''}`}
+            onClick={() => setActiveTab('assignees')}
+          >
+            👥 Manage Assignees
+          </button>
+        </div>
+
+        {activeTab === 'tasks' && (
+          <div className="task-grid">
           <div className="task-form-container">
             <h2 className="section-title">Create New Task</h2>
             <form onSubmit={handleSubmit}>
@@ -1876,6 +1937,38 @@ const BuildMyChurch = () => {
             )}
           </div>
         </div>
+        )}
+
+        {activeTab === 'assignees' && (
+          <div className="assignees-content">
+            <div className="assignees-header">
+              <h2 className="section-title">Manage Assignees</h2>
+              <p className="assignees-description">
+                Manage team members and reassign their tasks when needed.
+              </p>
+            </div>
+            <div className="assignees-list">
+              {assignees.length === 0 ? (
+                <div className="no-assignees">
+                  <div className="empty-icon">👥</div>
+                  <h3>No Assignees Yet</h3>
+                  <p>Assignees will appear here when you assign them to tasks.</p>
+                </div>
+              ) : (
+                assignees.map(assignee => (
+                  <AssigneeManagementItem
+                    key={assignee.id}
+                    assignee={assignee}
+                    allAssignees={assignees}
+                    tasks={tasks}
+                    onRemove={handleRemoveAssignee}
+                    onReassign={handleReassignTasks}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {selectedTask && <DetailView task={selectedTask} />}
