@@ -55,6 +55,7 @@ import ErrorBoundary from "./components/ErrorBoundary"; // Import ErrorBoundary 
 import ProcessConfigPage from "./pages/ProcessConfigPage"; // Add this import
 import PrivateRoute from "./components/PrivateRoute"; // Import PrivateRoute component
 import AdminConnect from "./components/AdminConnect"; // Import AdminConnect component
+import AddVisitor from "./components/AddVisitor"; // Import AddVisitor component
 import SubcategorySettings from "./components/SubcategorySettings"; // Import SubcategorySettings component
 import MiOrganizacion from "./components/MiOrganizacion"; // Import MiOrganizacion component
 import AllEvents from "./components/AllEvents"; // Import AllEvents component
@@ -281,6 +282,14 @@ const App = () => {
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <AdminConnect />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/add-visitor"
+            element={
+              <PrivateRoute roles={["admin", "global_admin"]}>
+                <AddVisitor />
               </PrivateRoute>
             }
           />

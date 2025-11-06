@@ -3,9 +3,10 @@
   background: white;
   padding: 2rem;
   border-radius: 8px;
-  /* box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); */
   border: 1px solid #dddddd;
   margin-top: -30px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .create-group-container h3 {
@@ -54,6 +55,8 @@
   border-radius: 8px;
   border: 1px solid #dddddd;
   margin-top: 20px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .group-list-container h3 {
@@ -65,6 +68,13 @@
   padding-bottom: 20px;
 }
 
+.group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 1.5rem;
+  width: 100%;
+}
+
 .group-card {
   padding: 15px;
   background-color: #f8f9fa;
@@ -73,44 +83,282 @@
   position: relative;
   z-index: 5;
   margin-bottom: 10px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.group-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .group-card h4 {
   font-size: 18px;
   font-weight: bold;
+  margin-bottom: 10px;
+  color: #333;
 }
+
 .group-card p {
   padding: 0;
-  margin: 0;
+  margin: 0 0 5px 0;
   font-size: 14px;
+  color: #666;
 }
+
+.group-info {
+  flex: 1;
+}
+
+.group-address {
+  display: flex;
+  align-items: flex-start;
+  color: #007bff !important;
+  font-weight: 500;
+  margin-top: 5px;
+}
+
+.full-address {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.full-address div {
+  margin: 0;
+  font-size: 12px;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .group-card-body {
   display: flex;
-  align-items: end;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 15px;
 }
 
 .icon-button {
   background-color: transparent;
-  margin-left: 10px;
-  padding: 0;
+  margin-left: 0;
+  padding: 8px;
   border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+@media screen and (max-width: 1024px) {
+  .create-group-container {
+    padding: 1.5rem;
+    margin-top: -20px;
+  }
+
+  .group-list-container {
+    padding: 1.5rem;
+  }
+
+  .group-grid {
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .group-card {
+    padding: 12px;
+  }
+
+  .group-card-body {
+    gap: 12px;
+  }
 }
 
 @media screen and (max-width: 768px) {
   .create-group-container {
-    padding: 20px;
+    padding: 1.25rem;
+    margin-top: -15px;
   }
+
+  .create-group-container h3 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
   .group-list-container {
-    padding: 20px;
+    padding: 1.25rem;
+    margin-top: 15px;
+  }
+
+  .group-list-container h3 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    padding-bottom: 15px;
+  }
+
+  .group-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+  }
+
+  .group-card {
+    padding: 10px;
+  }
+
+  .group-card h4 {
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+
+  .group-card p {
+    font-size: 13px;
+  }
+
+  .group-card-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .group-actions {
+    align-self: flex-end;
+    gap: 6px;
+  }
+
+  .icon-button {
+    padding: 6px;
   }
 }
 
-@media screen and (max-width: 440px) {
-  .group-card-body {
-    flex-direction: column;
-    align-items: start;
-    gap: 10px;
+@media screen and (max-width: 640px) {
+  .create-group-container {
+    padding: 1rem;
+    margin-top: -10px;
+  }
+
+  .create-group-container h3 {
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .create-group-container input {
+    padding: 0.6rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+  }
+
+  .create-group-btn {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.9rem;
+  }
+
+  .group-list-container {
+    padding: 1rem;
+    margin-top: 10px;
+  }
+
+  .group-list-container h3 {
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 10px;
+  }
+
+  .group-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .group-card {
+    padding: 8px;
+  }
+
+  .group-card h4 {
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+
+  .group-card p {
+    font-size: 12px;
+  }
+
+  .group-address {
+    font-size: 12px;
+  }
+
+  .group-actions {
+    gap: 4px;
+  }
+
+  .icon-button {
+    padding: 4px;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .create-group-container {
+    padding: 0.75rem;
+    margin-top: -5px;
+  }
+
+  .create-group-container h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .create-group-container input {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .create-group-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+  }
+
+  .group-list-container {
+    padding: 0.75rem;
+    margin-top: 8px;
+  }
+
+  .group-list-container h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    padding-bottom: 8px;
+  }
+
+  .group-card {
+    padding: 6px;
+  }
+
+  .group-card h4 {
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+
+  .group-card p {
+    font-size: 11px;
+    margin-bottom: 3px;
+  }
+
+  .group-address {
+    font-size: 11px;
+  }
+
+  .group-address {
+    font-size: 11px;
+  }
+
+  .full-address div {
+    font-size: 11px;
   }
 }
 
@@ -149,6 +397,7 @@
 .modal-header h3 {
   margin: 0;
   color: #333;
+  font-size: 1.25rem;
 }
 
 .close-button {
@@ -157,10 +406,19 @@
   font-size: 1.5rem;
   cursor: pointer;
   color: #666;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
 }
 
 .close-button:hover {
   color: #333;
+  background-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-body {
@@ -184,6 +442,7 @@
   margin-bottom: 0.5rem;
   font-weight: 500;
   color: #333;
+  font-size: 0.9rem;
 }
 
 .form-group input,
@@ -194,6 +453,15 @@
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 1rem;
+  transition: border-color 0.2s ease;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
 .form-group textarea {
@@ -213,6 +481,7 @@
   background-color: #f8f9fa;
   border-radius: 4px;
   margin-bottom: 0.5rem;
+  border: 1px solid #e9ecef;
 }
 
 .remove-meeting-time-btn {
@@ -222,21 +491,30 @@
   font-size: 1.2rem;
   cursor: pointer;
   padding: 0 0.5rem;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease;
 }
 
 .remove-meeting-time-btn:hover {
   color: #c82333;
+  background-color: rgba(220, 53, 69, 0.1);
 }
 
 .add-meeting-time {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .add-meeting-time input {
   flex: 1;
-  min-width: 0;
+  min-width: 120px;
 }
 
 .add-meeting-time-btn {
@@ -247,6 +525,7 @@
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.2s ease;
 }
 
 .add-meeting-time-btn:hover {
@@ -260,6 +539,7 @@
   padding: 0.75rem 1.5rem;
   border-radius: 4px;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .cancel-btn:hover {
@@ -273,8 +553,122 @@
   padding: 0.75rem 1.5rem;
   border-radius: 4px;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
-.save-btn:hover {
-  background-color: #218838;
+.address-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.address-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.address-row input {
+  flex: 1;
+}
+
+/* Modal Responsive Styles */
+@media screen and (max-width: 768px) {
+  .modal-content {
+    width: 95%;
+    max-width: none;
+    margin: 1rem;
+  }
+
+  .modal-header {
+    padding: 1rem;
+  }
+
+  .modal-header h3 {
+    font-size: 1.1rem;
+  }
+
+  .modal-body {
+    padding: 1rem;
+  }
+
+  .modal-footer {
+    padding: 1rem;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+  }
+
+  .modal-footer button {
+    width: 100%;
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .add-meeting-time {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .address-row {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .address-row input {
+    width: 100%;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .modal-content {
+    width: calc(100vw - 1rem);
+    margin: 0.5rem;
+    max-height: calc(100vh - 1rem);
+  }
+
+  .modal-header {
+    padding: 0.75rem;
+  }
+
+  .modal-header h3 {
+    font-size: 1rem;
+  }
+
+  .close-button {
+    width: 24px;
+    height: 24px;
+    font-size: 1.2rem;
+  }
+
+  .modal-body {
+    padding: 0.75rem;
+  }
+
+  .modal-footer {
+    padding: 0.75rem;
+  }
+
+  .form-group input,
+  .form-group textarea,
+  .form-group select {
+    padding: 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  .form-group label {
+    font-size: 0.85rem;
+  }
+
+  .meeting-time-item {
+    padding: 0.4rem;
+    font-size: 0.85rem;
+  }
+
+  .add-meeting-time-btn,
+  .cancel-btn,
+  .save-btn {
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+  }
 }

@@ -70,15 +70,6 @@ const AdminConnect = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    name: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    tags: [],
-  });
-  const [currentTag, setCurrentTag] = useState("");
   const [recentVisitors, setRecentVisitors] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -158,6 +149,8 @@ const AdminConnect = () => {
   const [pcLogEntriesHasMore, setPcLogEntriesHasMore] = useState(true);
   const [pcLogEntriesLoading, setPcLogEntriesLoading] = useState(false);
   const [pcLogEntriesCursor, setPcLogEntriesCursor] = useState(null);
+  const [logEntriesSearchTerm, setLogEntriesSearchTerm] = useState("");
+  const [filteredLogEntries, setFilteredLogEntries] = useState([]);
   const [selectedLog, setSelectedLog] = useState(null);
   // Field mapping modal
   const [showFieldMappingModal, setShowFieldMappingModal] = useState(false);
@@ -310,6 +303,12 @@ const AdminConnect = () => {
     }
   };
 
+  const closeLogEntriesModal = () => {
+    setShowPcLogEntriesModal(false);
+    setLogEntriesSearchTerm("");
+    setFilteredLogEntries([]);
+  };
+
   const loadSyncIssues = async () => {
     try {
       if (!id) return;
@@ -393,6 +392,24 @@ const AdminConnect = () => {
       setPcLogEntriesLoading(false);
     }
   };
+
+  // Filter log entries based on search term
+  useEffect(() => {
+    if (!logEntriesSearchTerm.trim()) {
+      setFilteredLogEntries(pcLogEntries);
+    } else {
+      const filtered = pcLogEntries.filter(entry => {
+        const searchLower = logEntriesSearchTerm.toLowerCase();
+        return (
+          (entry.name && entry.name.toLowerCase().includes(searchLower)) ||
+          (entry.email && entry.email.toLowerCase().includes(searchLower)) ||
+          (entry.phone && entry.phone.includes(searchLower)) ||
+          (entry.personId && entry.personId.toLowerCase().includes(searchLower))
+        );
+      });
+      setFilteredLogEntries(filtered);
+    }
+  }, [pcLogEntries, logEntriesSearchTerm]);
 
   // Load sync statuses for visible items
   useEffect(() => {
@@ -693,7 +710,8 @@ const AdminConnect = () => {
       const matchesSearch =
         item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.phone?.includes(searchTerm);
+        item.phone?.includes(searchTerm) ||
+        item.email?.toLowerCase().includes(searchTerm.toLowerCase());
   
       const matchesTags =
         tagFilters.length === 0 ||
@@ -1087,7 +1105,6 @@ const AdminConnect = () => {
       const credentials = await planningCenterService.getCredentials(id);
       if (!credentials?.appId || !credentials?.secret) {
         safeToast.error('Planning Center credentials not found');
-        setPcPreviewLoading(false);
         return;
       }
       const counts = await planningCenterService.previewSync(id, credentials.appId, credentials.secret);
@@ -1101,7 +1118,7 @@ const AdminConnect = () => {
         setLocationPrefs(prev => ({ ...prev, ...saved.locationPrefs }));
       }
       // Optionally preload a small sample immediately
-      await loadPcPreviewPeople(credentials.appId, credentials.secret);
+      // await loadPcPreviewPeople(credentials.appId, credentials.secret);
     } catch (e) {
       console.error('Preview error:', e);
       safeToast.error('Failed to load preview');
@@ -1763,89 +1780,27 @@ const AdminConnect = () => {
         </div>
 
         {renderTabs()}
-        
-        <h2>Add New Visitor</h2>
 
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="name">Name *</label>
-            <input
-              type="text"
-              id="name"
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              placeholder="Enter name"
-              pattern="[A-Za-zÀ-ÿ\s]+"
-              title="Only letters and spaces allowed"
-              required
-            />
-          </div>
-
-          <div>
-            <label htmlFor="lastName">Last Name *</label>
-            <input
-              type="text"
-              id="lastName"
-              name="lastName"
-              value={formData.lastName}
-              onChange={handleChange}
-              placeholder="Enter last name"
-              pattern="[A-Za-zÀ-ÿ\s]+"
-              title="Only letters and spaces allowed"
-              required
-            />
-          </div>
-
-          <div>
-            <label htmlFor="phone">Phone Number *</label>
-            <input
-              type="tel"
-              id="phone"
-              name="phone"
-              value={formatPhoneDisplay(formData.phone)}
-              onChange={handleChange}
-              placeholder="(123) 456-7890"
-              maxLength={14}
-              required
-            />
-          </div>
-
-          <div>
-            <label>Tags</label>
-            <div className="tags-input-container">
-              <input
-                type="text"
-                value={currentTag}
-                onChange={(e) => setCurrentTag(e.target.value)}
-                placeholder="Add a tag"
-                style={{ flex: 1 }}
-              />
-              <button type="button" onClick={handleAddTag}>
-                Add Tag
-              </button>
-            </div>
-
-            <div className="tags-container">
-              {formData.tags.map((tag, index) => (
-                <span key={index} className="tag">
-                  {tag}
-                  <button type="button" onClick={() => handleRemoveTag(tag)}>
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-
+        <div style={{ marginBottom: '2rem' }}>
           <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={loading || !formData.name || !formData.phone}
+            onClick={() => navigate(`/organization/${id}/add-visitor`)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.75rem 1.5rem',
+              backgroundColor: '#10B981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '1rem',
+              fontWeight: '500'
+            }}
           >
-            {loading ? "Adding..." : "Add Visitor"}
+            + Add New Visitor
           </button>
-        </form>
+        </div>
       </div>
       <div className="content-box">
         {(recentVisitors.length > 0 || users.length > 0) && (
@@ -1966,6 +1921,26 @@ const AdminConnect = () => {
                         alignItems: 'center',
                         gap: '0.5rem',
                         padding: '0.5rem 1rem',
+                        backgroundColor: '#6B7280',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: pcSyncing ? 'not-allowed' : 'pointer',
+                        fontSize: '14px',
+                        fontWeight: '500'
+                      }}
+                      title="Preview sync before starting"
+                    >
+                      Preview Sync
+                    </button>
+                    <button
+                      onClick={handlePlanningCenterSync}
+                      disabled={pcSyncing}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
                         backgroundColor: pcSyncing ? '#9CA3AF' : '#10B981',
                         color: 'white',
                         border: 'none',
@@ -1974,7 +1949,7 @@ const AdminConnect = () => {
                         fontSize: '14px',
                         fontWeight: '500'
                       }}
-                      title="Sync with Planning Center"
+                      title="Start sync with Planning Center"
                     >
                       <FaSync className={pcSyncing ? 'spinning' : ''} />
                       {pcSyncing ? 'Syncing...' : 'Sync Planning Center'}
@@ -2123,6 +2098,21 @@ const AdminConnect = () => {
                 border: "1px solid #e5e7eb"
               }}>
                 <div style={{ display: "flex", alignItems: "center" }}>
+                  <div style={{ marginRight: "15px" }}>
+                    <input
+                      type="text"
+                      placeholder="Search by name, phone, or email..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      style={{
+                        padding: "6px 12px",
+                        border: "1px solid #d1d5db",
+                        borderRadius: "4px",
+                        fontSize: "0.875rem",
+                        width: "250px"
+                      }}
+                    />
+                  </div>
                   <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginRight: "10px" }}>
                     <input 
                       type="checkbox" 
@@ -2206,6 +2196,7 @@ const AdminConnect = () => {
                     <th style={{ whiteSpace: 'nowrap' }}>
                       Phone {sortConfig.field === 'phone' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                     </th>
+                    <th style={{ whiteSpace: 'nowrap' }}>Email</th>
                     <th style={{ whiteSpace: 'nowrap' }}>Status</th>
                     <th style={{ whiteSpace: 'nowrap' }}>Tags</th>
                     <th style={{ whiteSpace: 'nowrap' }}>
@@ -2251,6 +2242,9 @@ const AdminConnect = () => {
                       </td>
                       <td style={{ padding: "0.75rem", whiteSpace: 'nowrap' }}>
                         {formatPhoneDisplay(item.phone)}
+                      </td>
+                      <td style={{ padding: "0.75rem", whiteSpace: 'nowrap' }}>
+                        {item.email || '-'}
                       </td>
                       <td style={{ padding: "0.75rem", whiteSpace: 'nowrap' }}>
                         {item.isMember && (
@@ -2724,6 +2718,7 @@ const AdminConnect = () => {
               <th>Name</th>
               <th>Last Name</th>
               <th>Phone</th>
+              <th>Email</th>
               <th>Status</th>
               <th>Tags</th>
               <th>Date Added</th>
@@ -2735,6 +2730,7 @@ const AdminConnect = () => {
                 <td>{item.name}</td>
                 <td>{item.lastName}</td>
                 <td>{formatPhoneDisplay(item.phone)}</td>
+                <td>{item.email || '-'}</td>
                 <td>
                   {item.isMember && (
                     item.isMigrated ? "Migrated Member" : "Direct Member"
@@ -3076,18 +3072,43 @@ const AdminConnect = () => {
 
       {/* Planning Center Sync Log Entries Modal */}
       {showPcLogEntriesModal && selectedLog && (
-        <div className="pc-modal-overlay" onClick={() => setShowPcLogEntriesModal(false)}>
+        <div className="pc-modal-overlay" onClick={() => closeLogEntriesModal()}>
           <div className="pc-modal-container" onClick={(e) => e.stopPropagation()}>
             <h2 className="pc-modal-title">Sync Entries</h2>
             <p className="pc-modal-subtitle">
               {selectedLog.startAt?.toDate ? selectedLog.startAt.toDate().toLocaleString() : 'Sync'} · Status: {selectedLog.status}
             </p>
 
-            <div className="pc-log-entries">
-              {pcLogEntries.length === 0 && !pcLogEntriesLoading && (
-                <div className="pc-sync-empty">No entries.</div>
+            {/* Search Input */}
+            <div className="pc-search-container" style={{ marginBottom: '16px' }}>
+              <input
+                type="text"
+                placeholder="Search by name, email, phone, or person ID..."
+                value={logEntriesSearchTerm}
+                onChange={(e) => setLogEntriesSearchTerm(e.target.value)}
+                className="pc-search-input"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+              />
+              {logEntriesSearchTerm && (
+                <span style={{ fontSize: '12px', color: '#666', marginTop: '4px', display: 'block' }}>
+                  Showing {filteredLogEntries.length} of {pcLogEntries.length} entries
+                </span>
               )}
-              {pcLogEntries.map(entry => (
+            </div>
+
+            <div className="pc-log-entries">
+              {filteredLogEntries.length === 0 && !pcLogEntriesLoading && (
+                <div className="pc-sync-empty">
+                  {logEntriesSearchTerm ? 'No entries match your search.' : 'No entries.'}
+                </div>
+              )}
+              {filteredLogEntries.map(entry => (
                 <div key={entry.id} className="pc-log-entry-row">
                   <div className="pc-log-entry-main">
                     <div className={`pc-log-entry-badge ${entry.action}`}>{entry.action}</div>
@@ -3146,7 +3167,7 @@ const AdminConnect = () => {
                 {pcLogEntriesLoading ? 'Loading...' : (pcLogEntriesHasMore ? 'Load More' : 'No More')}
               </button>
               <button
-                onClick={() => setShowPcLogEntriesModal(false)}
+                onClick={() => closeLogEntriesModal()}
                 className="pc-button pc-button-cancel"
               >
                 Close

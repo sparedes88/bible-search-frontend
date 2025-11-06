@@ -501,14 +501,14 @@ const FinancesPage = () => {
   const categoryTotals = calculateTotalsByCategory(filteredFinances);
 
   return (
-    <div style={commonStyles.container}>
+    <div style={{...commonStyles.fullWidthContainer}} className="finances-container">
       <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
       <h2 style={commonStyles.title}>Financial Management</h2>
 
-      <div style={styles.toolbar}>
-        <div style={styles.searchContainer}>
+      <div style={styles.toolbar} className="finances-toolbar">
+        <div style={styles.searchContainer} className="finances-search-container">
           <FaSearch style={styles.searchIcon} />
           <input
             type="text"
@@ -519,11 +519,12 @@ const FinancesPage = () => {
           />
         </div>
         
-        <div style={styles.filters}>
+        <div style={styles.filters} className="finances-filters">
           <select
             value={filters.type}
             onChange={(e) => setFilters({...filters, type: e.target.value})}
             style={styles.filterSelect}
+            className="finances-filter-select"
           >
             <option value="all">All Types</option>
             <option value="income">Income</option>
@@ -534,6 +535,7 @@ const FinancesPage = () => {
             value={filters.category}
             onChange={(e) => setFilters({...filters, category: e.target.value})}
             style={styles.filterSelect}
+            className="finances-filter-select"
           >
             <option value="all">All Categories</option>
             {categories.map(category => (
@@ -546,26 +548,29 @@ const FinancesPage = () => {
             value={filters.startDate}
             onChange={(e) => setFilters({...filters, startDate: e.target.value})}
             style={styles.filterDate}
+            className="finances-filter-date"
           />
           <input
             type="date"
             value={filters.endDate}
             onChange={(e) => setFilters({...filters, endDate: e.target.value})}
             style={styles.filterDate}
+            className="finances-filter-date"
           />
         </div>
 
-        <div style={{ display: "flex", gap: "1rem" }}>
+        <div style={{ display: "flex", gap: "1rem" }} className="finances-actions">
           <button 
             onClick={exportToPDF}
             style={{
               ...styles.addButton,
               backgroundColor: "#2563eb"
             }}
+            className="finances-add-button"
           >
             <FaFilePdf /> Export to PDF
           </button>
-          <button onClick={() => setShowModal(true)} style={styles.addButton}>
+          <button onClick={() => setShowModal(true)} style={styles.addButton} className="finances-add-button">
             <FaPlus /> Add New Entry
           </button>
         </div>
@@ -578,10 +583,10 @@ const FinancesPage = () => {
           <p>No financial entries yet</p>
         ) : (
           paginatedFinances.map(finance => (
-            <div key={finance.id} style={styles.entry}>
-              <div style={styles.entryHeader}>
+            <div key={finance.id} style={styles.entry} className="finances-entry">
+              <div style={styles.entryHeader} className="finances-entry-header">
                 <h3>{finance.title}</h3>
-                <div style={styles.actions}>
+                <div style={styles.actions} className="finances-entry-actions">
                   <button
                     onClick={() => {
                       setSelectedFinanceId(finance.id);
@@ -595,16 +600,16 @@ const FinancesPage = () => {
                   <button onClick={() => handleDelete(finance.id)} style={styles.deleteButton}>Delete</button>
                 </div>
               </div>
-              <div style={styles.entryContent}>
+              <div style={styles.entryContent} className="finances-entry-content">
                 <div style={styles.mainInfo}>
                   <p style={styles.description}>{finance.description}</p>
                   <span style={styles.category}>{finance.category}</span>
                 </div>
-                <div style={styles.metadata}>
+                <div style={styles.metadata} className="finances-metadata">
                   <span style={{
                     ...styles.amount,
                     color: finance.type === 'income' ? '#059669' : '#DC2626'
-                  }}>
+                  }} className="finances-amount">
                     {finance.type === 'income' ? '+' : '-'} ${finance.amount}
                   </span>
                   <span style={styles.date}>
@@ -679,23 +684,23 @@ const FinancesPage = () => {
         )}
       </div>
 
-      <div style={styles.summarySection}>
+      <div style={styles.summarySection} className="finances-summary-section">
         <h3 style={styles.summaryTitle}>Financial Summary</h3>
         
-        <div style={styles.totalsByType}>
-          <div style={styles.totalItem}>
+        <div style={styles.totalsByType} className="finances-totals-by-type">
+          <div style={styles.totalItem} className="finances-total-item">
             <span>Total Income:</span>
             <span style={{ ...styles.totalAmount, color: '#059669' }}>
               ${totals.income.toFixed(2)}
             </span>
           </div>
-          <div style={styles.totalItem}>
+          <div style={styles.totalItem} className="finances-total-item">
             <span>Total Expenses:</span>
             <span style={{ ...styles.totalAmount, color: '#DC2626' }}>
               ${totals.expense.toFixed(2)}
             </span>
           </div>
-          <div style={styles.totalItem}>
+          <div style={styles.totalItem} className="finances-total-item">
             <span>Net Balance:</span>
             <span style={{
               ...styles.totalAmount,
@@ -707,7 +712,7 @@ const FinancesPage = () => {
         </div>
 
         <h4 style={styles.subtotalsTitle}>Category Breakdown</h4>
-        <div style={styles.categoryTotals}>
+        <div style={styles.categoryTotals} className="finances-category-totals finances-summary-grid">
           {Object.entries(categoryTotals).map(([category, amounts]) => (
             <div key={category} style={styles.categoryTotal}>
               <h5 style={styles.categoryName}>{category}</h5>
@@ -729,7 +734,7 @@ const FinancesPage = () => {
         </div>
       </div>
 
-      <div style={styles.pagination}>
+      <div style={styles.pagination} className="finances-pagination">
         {[...Array(totalPages)].map((_, index) => (
           <button
             key={index}
@@ -746,9 +751,9 @@ const FinancesPage = () => {
       </div>
 
       {showModal && (
-        <Modal onClose={() => setShowModal(false)}>
+        <Modal onClose={() => setShowModal(false)} className="finances-modal">
           <h3 style={styles.modalTitle}>{editingId ? 'Edit Entry' : 'Add New Entry'}</h3>
-          <form onSubmit={handleSubmit} style={styles.form}>
+          <form onSubmit={handleSubmit} style={styles.form} className="finances-modal-form">
             <div style={styles.formGroup}>
               <label style={styles.label}>Title *</label>
               <input
@@ -862,7 +867,7 @@ const FinancesPage = () => {
       )}
 
       {showCommentModal && (
-        <Modal onClose={() => setShowCommentModal(false)}>
+        <Modal onClose={() => setShowCommentModal(false)} className="finances-comment-modal">
           <div style={styles.commentModal}>
             <h3>Add Comment</h3>
             <textarea
@@ -1245,5 +1250,182 @@ const styles = {
     fontSize: '0.9rem',
   },
 };
+
+// Responsive styles
+const responsiveStyles = `
+  @media (max-width: 1024px) {
+    .finances-container {
+      padding: 15px;
+    }
+    
+    .finances-toolbar {
+      flex-direction: column;
+      gap: 1rem;
+    }
+    
+    .finances-filters {
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    
+    .finances-summary-grid {
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .finances-container {
+      padding: 10px;
+    }
+    
+    .finances-toolbar {
+      gap: 0.75rem;
+    }
+    
+    .finances-search-container {
+      order: 1;
+      width: 100%;
+    }
+    
+    .finances-filters {
+      order: 2;
+      width: 100%;
+      justify-content: space-between;
+    }
+    
+    .finances-actions {
+      order: 3;
+      width: 100%;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .finances-entry {
+      padding: 1rem;
+    }
+    
+    .finances-entry-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+    
+    .finances-entry-actions {
+      align-self: flex-end;
+    }
+    
+    .finances-entry-content {
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    
+    .finances-metadata {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+    
+    .finances-summary-section {
+      padding: 1rem;
+    }
+    
+    .finances-totals-by-type {
+      flex-direction: column;
+      gap: 1rem;
+    }
+    
+    .finances-total-item {
+      justify-content: space-between;
+      padding: 0.75rem;
+    }
+    
+    .finances-category-totals {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    
+    .finances-pagination {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .finances-container {
+      padding: 8px;
+    }
+    
+    .finances-title {
+      font-size: 1.5rem;
+    }
+    
+    .finances-toolbar {
+      gap: 0.5rem;
+    }
+    
+    .finances-filters {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .finances-filter-select,
+    .finances-filter-date {
+      width: 100%;
+    }
+    
+    .finances-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .finances-add-button {
+      justify-content: center;
+    }
+    
+    .finances-entry {
+      margin-bottom: 1rem;
+    }
+    
+    .finances-summary-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .finances-container {
+      padding: 5px;
+    }
+    
+    .finances-title {
+      font-size: 1.25rem;
+    }
+    
+    .finances-entry-header h3 {
+      font-size: 1.125rem;
+    }
+    
+    .finances-amount {
+      font-size: 1rem;
+    }
+    
+    .finances-comment-modal {
+      margin: 1rem;
+      width: calc(100vw - 2rem);
+    }
+    
+    .finances-modal-form {
+      max-width: 100%;
+    }
+  }
+`;
+
+// Inject responsive styles
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement('style');
+  styleSheet.textContent = responsiveStyles;
+  document.head.appendChild(styleSheet);
+}
 
 export default FinancesPage;

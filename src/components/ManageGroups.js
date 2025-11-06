@@ -20,7 +20,7 @@ import {
 import { db } from "../firebase";
 import { Spinner } from "react-bootstrap";
 import { MdDelete, MdEdit, MdAdd, MdLocationOn, MdSchedule } from "react-icons/md";
-import { FaEye, FaPenToSquare, FaCalendarAlt, FaClock, FaMapMarkerAlt } from "react-icons/fa6";
+import { FaEye, FaPenToSquare, FaCalendarAlt, FaClock, FaLocationPin } from "react-icons/fa6";
 import { Tooltip } from "react-tooltip";
 import Modal from "react-modal";
 import { fetchUserById } from "../api/church";
@@ -47,7 +47,13 @@ const ManageGroups = () => {
   const [editFormData, setEditFormData] = useState({
     groupName: "",
     description: "",
-    address: "",
+    address: {
+      street: "",
+      city: "",
+      zipCode: "",
+      state: "",
+      country: ""
+    },
     meetingTimes: [],
     recurrence: "none"
   });
@@ -162,10 +168,27 @@ const ManageGroups = () => {
 
   const openEditModal = (group) => {
     setEditingGroup(group);
+    // Handle both old string format and new object format for address
+    let addressData = {
+      street: "",
+      city: "",
+      zipCode: "",
+      state: "",
+      country: ""
+    };
+
+    if (typeof group.address === 'string') {
+      // Old format - just put the whole address in street for now
+      addressData.street = group.address;
+    } else if (group.address && typeof group.address === 'object') {
+      // New format
+      addressData = { ...addressData, ...group.address };
+    }
+
     setEditFormData({
       groupName: group.groupName || "",
       description: group.description || "",
-      address: group.address || "",
+      address: addressData,
       meetingTimes: group.meetingTimes || [],
       recurrence: group.recurrence || "none"
     });
@@ -178,7 +201,13 @@ const ManageGroups = () => {
     setEditFormData({
       groupName: "",
       description: "",
-      address: "",
+      address: {
+        street: "",
+        city: "",
+        zipCode: "",
+        state: "",
+        country: ""
+      },
       meetingTimes: [],
       recurrence: "none"
     });
@@ -248,7 +277,7 @@ const ManageGroups = () => {
   };
 
   return (
-    <div style={commonStyles.container}>
+    <div style={commonStyles.fullWidthContainer}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <button
           onClick={() => navigate(`/organization/${id}/mi-organizacion`)}
@@ -291,11 +320,33 @@ const ManageGroups = () => {
               <div key={group.id} className="group-card">
                 <h4>{group.groupName}</h4>
                 <div className="group-card-body">
-                  <div>
-                    <p>Members: {group.members.length}</p>
-                    <p>Created by: {group.creator.displayName}</p>
+                  <div className="group-info">
+                    <p><strong>Members:</strong> {group.members.length}</p>
+                    <p><strong>Created by:</strong> {group.creator.displayName}</p>
+                    {group.address && (
+                      <div className="group-address">
+                        <FaLocationPin style={{ marginRight: '5px', marginBottom: '2px' }} />
+                        {typeof group.address === 'string' ? (
+                          <span>{group.address}</span>
+                        ) : (
+                          <div className="full-address">
+                            {group.address.street && <div>{group.address.street}</div>}
+                            {(group.address.city || group.address.state || group.address.zipCode) && (
+                              <div>
+                                {group.address.city}
+                                {group.address.city && group.address.state && ', '}
+                                {group.address.state}
+                                {(group.address.city || group.address.state) && group.address.zipCode && ' '}
+                                {group.address.zipCode}
+                              </div>
+                            )}
+                            {group.address.country && <div>{group.address.country}</div>}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div>
+                  <div className="group-actions">
                     <button
                       onClick={() => navigate(`/organization/${id}/chat/${group.id}`)}
                       className="icon-button"
@@ -387,12 +438,57 @@ const ManageGroups = () => {
 
               <div className="form-group">
                 <label>Address</label>
-                <input
-                  type="text"
-                  value={editFormData.address}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="Enter meeting address"
-                />
+                <div className="address-fields">
+                  <input
+                    type="text"
+                    value={editFormData.address.street}
+                    onChange={(e) => setEditFormData(prev => ({
+                      ...prev,
+                      address: { ...prev.address, street: e.target.value }
+                    }))}
+                    placeholder="Street Address"
+                  />
+                  <div className="address-row">
+                    <input
+                      type="text"
+                      value={editFormData.address.city}
+                      onChange={(e) => setEditFormData(prev => ({
+                        ...prev,
+                        address: { ...prev.address, city: e.target.value }
+                      }))}
+                      placeholder="City"
+                    />
+                    <input
+                      type="text"
+                      value={editFormData.address.zipCode}
+                      onChange={(e) => setEditFormData(prev => ({
+                        ...prev,
+                        address: { ...prev.address, zipCode: e.target.value }
+                      }))}
+                      placeholder="ZIP Code"
+                    />
+                  </div>
+                  <div className="address-row">
+                    <input
+                      type="text"
+                      value={editFormData.address.state}
+                      onChange={(e) => setEditFormData(prev => ({
+                        ...prev,
+                        address: { ...prev.address, state: e.target.value }
+                      }))}
+                      placeholder="State"
+                    />
+                    <input
+                      type="text"
+                      value={editFormData.address.country}
+                      onChange={(e) => setEditFormData(prev => ({
+                        ...prev,
+                        address: { ...prev.address, country: e.target.value }
+                      }))}
+                      placeholder="Country"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="form-group">
