@@ -16,13 +16,39 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import ChurchHeader from './ChurchHeader';
-import { toast } from 'react-toastify';
-import { FaEdit, FaCheck, FaTimes, FaChevronDown, FaChevronUp, FaChevronLeft, FaChevronRight, FaTrash, FaFilePdf } from 'react-icons/fa';
+import { safeToast } from '../utils/toastUtils';
+import { FaEdit, FaCheck, FaTimes, FaChevronDown, FaChevronUp, FaChevronLeft, FaChevronRight, FaTrash, FaFilePdf, FaChartBar } from 'react-icons/fa';
 import { jsPDF } from 'jspdf';
 import { QRCodeSVG } from 'qrcode.react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TaskQRLabel from './TaskQRLabel';
 import './BuildMyChurch.css';
+
+// Utility function to convert URLs in text to clickable links
+const convertUrlsToLinks = (text) => {
+  if (!text) return text;
+  
+  // Regex to match URLs (http, https, ftp, etc.)
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  
+  return text.split(urlRegex).map((part, index) => {
+    if (urlRegex.test(part)) {
+      return (
+        <a 
+          key={index} 
+          href={part} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          style={{ color: '#3B82F6', textDecoration: 'underline' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+};
 
 const BuildMyChurch = () => {
   const { id } = useParams();
@@ -31,6 +57,7 @@ const BuildMyChurch = () => {
   const location = useLocation();
   const [tasks, setTasks] = useState([]);
   const [topics, setTopics] = useState([]);
+  const [assignees, setAssignees] = useState([]);
   const [newTopic, setNewTopic] = useState('');
   const [newTask, setNewTask] = useState({
     title: '',
@@ -40,6 +67,8 @@ const BuildMyChurch = () => {
     topic: '',
     assignee: '',
     customTopic: '',
+    dueDate: '',
+    startDate: '',
     documents: []
   });
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -51,6 +80,11 @@ const BuildMyChurch = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [commentsByTask, setCommentsByTask] = useState({});
+  const [newCommentText, setNewCommentText] = useState('');
+  const [newCommentFiles, setNewCommentFiles] = useState([]);
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
   const [church, setChurch] = useState(null);
   const tasksPerPage = 5;
 
@@ -84,7 +118,7 @@ const BuildMyChurch = () => {
         setTasks(tasksList);
       } catch (error) {
         console.error('Error fetching tasks:', error);
-        toast.error('Failed to load tasks');
+        safeToast.error('Failed to load tasks');
       }
     };
 
@@ -98,6 +132,19 @@ const BuildMyChurch = () => {
         })));
       } catch (error) {
         console.error('Error fetching topics:', error);
+      }
+    };
+
+    const fetchAssignees = async () => {
+      try {
+        const assigneesQuery = query(collection(db, 'buildAssignees'), where('churchId', '==', id));
+        const snapshot = await getDocs(assigneesQuery);
+        setAssignees(snapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name
+        })));
+      } catch (error) {
+        console.error('Error fetching assignees:', error);
       }
     };
 
@@ -115,8 +162,24 @@ const BuildMyChurch = () => {
 
     fetchTasks();
     fetchTopics();
+    fetchAssignees();
     fetchChurchData();
   }, [user, id, navigate, location]);
+
+  useEffect(() => {
+    // load comments when a task is expanded or selected
+    if (expandedTaskId) {
+      fetchCommentsForTask(expandedTaskId);
+    }
+    if (selectedTask && selectedTask.id) {
+      fetchCommentsForTask(selectedTask.id);
+    }
+    // reset comment input when switching tasks
+    setNewCommentText('');
+    setNewCommentFiles([]);
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  }, [expandedTaskId, selectedTask]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -150,12 +213,142 @@ const BuildMyChurch = () => {
         topic: '',
         assignee: '',
         customTopic: '',
+        dueDate: '',
+        startDate: '',
         documents: []
       });
-      toast.success('Task created successfully');
+      safeToast.success('Task created successfully');
     } catch (error) {
       console.error('Error creating task:', error);
-      toast.error('Failed to create task');
+      safeToast.error('Failed to create task');
+    }
+  };
+
+  const fetchCommentsForTask = async (taskId) => {
+    if (!taskId) return;
+    try {
+      const commentsQuery = query(
+        collection(db, 'buildTasks', taskId, 'comments'),
+        orderBy('createdAt', 'desc')
+      );
+      const snapshot = await getDocs(commentsQuery);
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setCommentsByTask(prev => ({ ...prev, [taskId]: list }));
+    } catch (error) {
+      console.error('Error fetching comments for task', taskId, error);
+    }
+  };
+
+  const handleAddComment = async (taskId) => {
+    if (!taskId) return;
+    if (!newCommentText.trim() && newCommentFiles.length === 0) {
+      safeToast.error('Please enter a comment or attach a file');
+      return;
+    }
+
+    try {
+      setUploadingFile(true);
+
+      // Upload files first
+      const uploadedFiles = await Promise.all(newCommentFiles.map(async (file) => {
+        const timestamp = Date.now();
+        const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filePath = `tasks/${id}/${taskId}/comments/${timestamp}_${safeFileName}`;
+        const storageRef = ref(storage, filePath);
+        const metadata = { contentType: file.type };
+        const uploadTask = await uploadBytes(storageRef, file, metadata);
+        const url = await getDownloadURL(uploadTask.ref);
+        return {
+          name: file.name,
+          url,
+          path: filePath,
+          type: file.type,
+          size: file.size,
+          uploadedAt: new Date().toISOString()
+        };
+      }));
+
+      const commentData = {
+        text: newCommentText.trim(),
+        author: {
+          uid: user.uid,
+          displayName: user.displayName || user.email || 'Unknown'
+        },
+        files: uploadedFiles,
+        createdAt: new Date().toISOString()
+      };
+
+      const commentsCol = collection(db, 'buildTasks', taskId, 'comments');
+      const commentRef = await addDoc(commentsCol, commentData);
+
+      // update local state
+      setCommentsByTask(prev => ({
+        ...prev,
+        [taskId]: [( { id: commentRef.id, ...commentData } ), ...(prev[taskId] || [])]
+      }));
+
+      setNewCommentText('');
+      setNewCommentFiles([]);
+      safeToast.success('Comment added');
+    } catch (error) {
+      console.error('Error adding comment:', error);
+      safeToast.error('Failed to add comment');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleDeleteComment = async (taskId, commentId) => {
+    if (!window.confirm('Delete this comment?')) return;
+    try {
+      const commentRef = doc(db, 'buildTasks', taskId, 'comments', commentId);
+      // get comment to remove files
+      const commentSnap = await getDoc(commentRef);
+      if (commentSnap.exists()) {
+        const data = commentSnap.data();
+        if (data.files && data.files.length) {
+          await Promise.all(data.files.map(async (f) => {
+            try { await deleteObject(ref(storage, f.path)); } catch(e){/* ignore */}
+          }));
+        }
+      }
+      await deleteDoc(commentRef);
+      setCommentsByTask(prev => ({
+        ...prev,
+        [taskId]: (prev[taskId] || []).filter(c => c.id !== commentId)
+      }));
+      safeToast.success('Comment deleted');
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+      safeToast.error('Failed to delete comment');
+    }
+  };
+
+  const handleUpdateComment = async (taskId, commentId) => {
+    if (!editingCommentText.trim()) {
+      safeToast.error('Comment cannot be empty');
+      return;
+    }
+    try {
+      const commentRef = doc(db, 'buildTasks', taskId, 'comments', commentId);
+      await updateDoc(commentRef, {
+        text: editingCommentText.trim(),
+        updatedAt: new Date()
+      });
+      setCommentsByTask(prev => ({
+        ...prev,
+        [taskId]: (prev[taskId] || []).map(c =>
+          c.id === commentId
+            ? { ...c, text: editingCommentText.trim(), updatedAt: new Date() }
+            : c
+        )
+      }));
+      setEditingCommentId(null);
+      setEditingCommentText('');
+      safeToast.success('Comment updated');
+    } catch (error) {
+      console.error('Error updating comment:', error);
+      safeToast.error('Failed to update comment');
     }
   };
 
@@ -169,6 +362,8 @@ const BuildMyChurch = () => {
       topic: task.topic || '',
       assignee: task.assignee || '',
       customTopic: '',
+      dueDate: task.dueDate || '',
+      startDate: task.startDate || '',
       documents: task.documents || []
     });
   };
@@ -198,12 +393,14 @@ const BuildMyChurch = () => {
         topic: '',
         assignee: '',
         customTopic: '',
+        dueDate: '',
+        startDate: '',
         documents: []
       });
-      toast.success('Task updated successfully');
+      safeToast.success('Task updated successfully');
     } catch (error) {
       console.error('Error updating task:', error);
-      toast.error('Failed to update task');
+      safeToast.error('Failed to update task');
     }
   };
 
@@ -217,6 +414,8 @@ const BuildMyChurch = () => {
       topic: '',
       assignee: '',
       customTopic: '',
+      dueDate: '',
+      startDate: '',
       documents: []
     });
   };
@@ -233,7 +432,7 @@ const BuildMyChurch = () => {
       setNewTopic('');
     } catch (error) {
       console.error('Error adding topic:', error);
-      toast.error('Failed to add topic');
+      safeToast.error('Failed to add topic');
     }
   };
 
@@ -242,10 +441,10 @@ const BuildMyChurch = () => {
       try {
         await deleteDoc(doc(db, 'buildTasks', taskId));
         setTasks(prev => prev.filter(task => task.id !== taskId));
-        toast.success('Task deleted successfully');
+        safeToast.success('Task deleted successfully');
       } catch (error) {
         console.error('Error deleting task:', error);
-        toast.error('Failed to delete task');
+        safeToast.error('Failed to delete task');
       }
     }
   };
@@ -276,13 +475,13 @@ const BuildMyChurch = () => {
         ];
 
         if (!validTypes.includes(file.type)) {
-          toast.error(`Invalid file type: ${file.name}`);
+          safeToast.error(`Invalid file type: ${file.name}`);
           return null;
         }
 
         const maxSize = 5 * 1024 * 1024;
         if (file.size > maxSize) {
-          toast.error(`File too large: ${file.name}`);
+          safeToast.error(`File too large: ${file.name}`);
           return null;
         }
 
@@ -336,7 +535,7 @@ const BuildMyChurch = () => {
         }));
       }
 
-      toast.success('Files uploaded successfully');
+      safeToast.success('Files uploaded successfully');
     } catch (error) {
       console.error('Error uploading files:', error);
       toast.error('Failed to upload files');
@@ -384,7 +583,7 @@ const BuildMyChurch = () => {
       doc.rect(0, 0, doc.internal.pageSize.width, 40, 'F');
       doc.setTextColor(255);
       doc.setFontSize(24);
-      doc.text('Build My Church Tasks Report', 15, 25);
+      doc.text('Build My Organization Tasks Report', 15, 25);
       
       // Header info
       doc.setFontSize(11);
@@ -496,7 +695,10 @@ const BuildMyChurch = () => {
             [`Priority: ${task.priority || 'N/A'}`, `Topic: ${task.topic || 'N/A'}`, `Assigned To: ${task.assignee || 'Unassigned'}`],
             [`Created: ${new Date(task.createdAt).toLocaleDateString()}`, 
              `Last Updated: ${task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : 'N/A'}`,
-             `Documents: ${task.documents?.length || 0}`]
+             `Documents: ${task.documents?.length || 0}`],
+            [`Start Date: ${task.startDate ? new Date(task.startDate).toLocaleDateString() : 'Not Set'}`, 
+             `Due Date: ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not Set'}`,
+             `Status: ${task.status || 'N/A'}`]
           ];
 
           details.forEach((row, rowIndex) => {
@@ -506,7 +708,7 @@ const BuildMyChurch = () => {
             });
           });
 
-          yOffset += 40;
+          yOffset += 50;
         }
 
         yOffset += 10;
@@ -638,6 +840,20 @@ const BuildMyChurch = () => {
                 <div>Last Updated: {new Date(task.updatedAt).toLocaleDateString()}</div>
               )}
             </div>
+            {(task.startDate || task.dueDate) && (
+              <div style={{ display: "flex", gap: "20px", marginTop: "8px", fontSize: "14px" }}>
+                {task.startDate && (
+                  <div style={{ color: "#2563EB" }}>
+                    <strong>📅 Start:</strong> {new Date(task.startDate).toLocaleDateString()}
+                  </div>
+                )}
+                {task.dueDate && (
+                  <div style={{ color: "#D97706" }}>
+                    <strong>⏰ Due:</strong> {new Date(task.dueDate).toLocaleDateString()}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {task.documents && task.documents.length > 0 && (
@@ -655,6 +871,130 @@ const BuildMyChurch = () => {
               </ul>
             </div>
           )}
+
+          <div style={{ marginBottom: '20px' }}>
+            <h3>Comments</h3>
+            <div style={{ marginBottom: '10px' }}>
+              <textarea
+                value={newCommentText}
+                onChange={(e) => setNewCommentText(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Add a comment..."
+                rows={3}
+                style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+              />
+              <input
+                type="file"
+                multiple
+                onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
+                onClick={(e) => e.stopPropagation()}
+                style={{ marginTop: '8px' }}
+              />
+              <div style={{ marginTop: '8px' }}>
+                <button
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    await handleAddComment(task.id);
+                  }}
+                  style={{ padding: '8px 12px', backgroundColor: '#4F46E5', color: '#fff', border: 'none', borderRadius: '6px' }}
+                >Add Comment</button>
+              </div>
+            </div>
+
+            <div>
+              {(commentsByTask[task.id] || []).length === 0 && (
+                <div style={{ color: '#6B7280' }}>No comments yet</div>
+              )}
+              <ul style={{ listStyle: 'none', padding: 0 }}>
+                {(commentsByTask[task.id] || []).map(comment => (
+                  <li key={comment.id} style={{ marginBottom: '12px', padding: '8px', background: '#fff', borderRadius: '6px', border: '1px solid #E5E7EB' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                      <div style={{ color: '#6B7280', fontSize: '12px' }}>
+                        {new Date(comment.createdAt).toLocaleString()}
+                        {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
+                          <span> (edited)</span>
+                        )}
+                      </div>
+                    </div>
+                    {editingCommentId === comment.id ? (
+                      <div style={{ marginTop: '6px' }}>
+                        <textarea
+                          value={editingCommentText}
+                          onChange={(e) => setEditingCommentText(e.target.value)}
+                          rows={3}
+                          style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                        />
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleUpdateComment(task.id, comment.id);
+                            }}
+                            style={{ padding: '4px 8px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingCommentId(null);
+                              setEditingCommentText('');
+                            }}
+                            style={{ padding: '4px 8px', backgroundColor: '#6B7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ whiteSpace: 'pre-wrap', marginTop: '6px' }}>{convertUrlsToLinks(comment.text)}</div>
+                    )}
+                    {comment.files && comment.files.length > 0 && (
+                      <div style={{ marginTop: '8px' }}>
+                        <strong>Attachments:</strong>
+                        <ul>
+                          {comment.files.map((f, i) => (
+                            <li key={i}><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div style={{ marginTop: '8px' }}>
+                      {(user && (user.uid === comment.author?.uid || user.role === 'admin' || user.role === 'global_admin')) && editingCommentId !== comment.id && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingCommentId(comment.id);
+                              setEditingCommentText(comment.text);
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', marginRight: '8px' }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteComment(task.id, comment.id)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
 
           <div style={{ 
             padding: "20px",
@@ -702,7 +1042,11 @@ const BuildMyChurch = () => {
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
             <button 
-              onClick={() => handleEditTask(task)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleEditTask(task);
+              }}
               style={{ 
                 padding: "8px 16px",
                 backgroundColor: "#4F46E5",
@@ -720,6 +1064,111 @@ const BuildMyChurch = () => {
     );
   };
 
+  const AssigneeSelect = React.memo(({ value, onChange, placeholder = "Select or add assignee" }) => {
+    const [isAddingNew, setIsAddingNew] = useState(false);
+    const [newAssigneeName, setNewAssigneeName] = useState('');
+
+    const handleAddAssignee = async () => {
+      if (!newAssigneeName.trim()) return;
+      
+      try {
+        const assigneeRef = await addDoc(collection(db, 'buildAssignees'), {
+          name: newAssigneeName.trim(),
+          churchId: id,
+          createdAt: new Date().toISOString()
+        });
+        setAssignees(prev => [...prev, { id: assigneeRef.id, name: newAssigneeName.trim() }]);
+        onChange(newAssigneeName.trim());
+        setNewAssigneeName('');
+        setIsAddingNew(false);
+        toast.success('Assignee added successfully');
+      } catch (error) {
+        console.error('Error adding assignee:', error);
+        toast.error('Failed to add assignee');
+      }
+    };
+
+    const handleSelectChange = (e) => {
+      const selectedValue = e.target.value;
+      if (selectedValue === 'add-new') {
+        setIsAddingNew(true);
+      } else {
+        onChange(selectedValue);
+      }
+    };
+
+    return (
+      <div style={{ position: 'relative' }}>
+        {!isAddingNew ? (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <select
+              value={value || ''}
+              onChange={handleSelectChange}
+              className="form-input"
+              style={{ flex: 1 }}
+            >
+              <option value="">{placeholder}</option>
+              {assignees.map(assignee => (
+                <option key={assignee.id} value={assignee.name}>
+                  {assignee.name}
+                </option>
+              ))}
+              <option value="add-new">+ Add New Assignee</option>
+            </select>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="text"
+              value={newAssigneeName}
+              onChange={(e) => setNewAssigneeName(e.target.value)}
+              placeholder="Enter new assignee name"
+              className="form-input"
+              style={{ flex: 1 }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleAddAssignee();
+                }
+              }}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={handleAddAssignee}
+              style={{
+                padding: '8px 12px',
+                backgroundColor: '#10B981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              ✓
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingNew(false);
+                setNewAssigneeName('');
+              }}
+              style={{
+                padding: '8px 12px',
+                backgroundColor: '#6B7280',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  });
+
   return (
     <div className="build-my-church-container">
       <Link to={`/organization/${id}/mi-organizacion`} className="back-link">
@@ -730,25 +1179,54 @@ const BuildMyChurch = () => {
       
       <div className="build-content">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-          <h1 className="page-title">Build my Church</h1>
-          <button
-            onClick={exportToPDF}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.75rem 1.5rem",
-              backgroundColor: "#2563eb",
-              color: "white",
-              border: "none",
-              borderRadius: "0.5rem",
-              cursor: "pointer",
-              fontSize: "0.875rem",
-              fontWeight: "600"
-            }}
-          >
-            <FaFilePdf /> Export to PDF
-          </button>
+          <h1 className="page-title">Build my Organization</h1>
+          <div style={{ display: "flex", gap: "1rem" }}>
+            <button
+              onClick={() => navigate(`/organization/${id}/build/bi-dashboard`)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.75rem 1.5rem",
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                color: "white",
+                border: "none",
+                borderRadius: "0.5rem",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                fontWeight: "600",
+                transition: "transform 0.2s, box-shadow 0.2s"
+              }}
+              onMouseOver={(e) => {
+                e.target.style.transform = "translateY(-1px)";
+                e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.4)";
+              }}
+              onMouseOut={(e) => {
+                e.target.style.transform = "translateY(0)";
+                e.target.style.boxShadow = "none";
+              }}
+            >
+              <FaChartBar /> Business Intelligence
+            </button>
+            <button
+              onClick={exportToPDF}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.75rem 1.5rem",
+                backgroundColor: "#2563eb",
+                color: "white",
+                border: "none",
+                borderRadius: "0.5rem",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                fontWeight: "600"
+              }}
+            >
+              <FaFilePdf /> Export to PDF
+            </button>
+          </div>
         </div>
 
         <div className="task-grid">
@@ -835,12 +1313,30 @@ const BuildMyChurch = () => {
 
               <div className="form-group">
                 <label className="form-label">Assigned To</label>
-                <input
-                  type="text"
-                  className="form-input"
+                <AssigneeSelect
                   value={newTask.assignee}
-                  onChange={(e) => setNewTask({...newTask, assignee: e.target.value})}
-                  placeholder="Enter name of person assigned"
+                  onChange={(assignee) => setNewTask({...newTask, assignee})}
+                  placeholder="Select or add assignee"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Start Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={newTask.startDate}
+                  onChange={(e) => setNewTask({...newTask, startDate: e.target.value})}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Due Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={newTask.dueDate}
+                  onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
                 />
               </div>
 
@@ -1014,12 +1510,30 @@ const BuildMyChurch = () => {
 
                           <div className="form-group">
                             <label className="form-label">Assigned To</label>
-                            <input
-                              type="text"
-                              className="form-input"
+                            <AssigneeSelect
                               value={newTask.assignee}
-                              onChange={(e) => setNewTask({...newTask, assignee: e.target.value})}
-                              placeholder="Enter name of person assigned"
+                              onChange={(assignee) => setNewTask({...newTask, assignee})}
+                              placeholder="Select or add assignee"
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">Start Date</label>
+                            <input
+                              type="date"
+                              className="form-input"
+                              value={newTask.startDate}
+                              onChange={(e) => setNewTask({...newTask, startDate: e.target.value})}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">Due Date</label>
+                            <input
+                              type="date"
+                              className="form-input"
+                              value={newTask.dueDate}
+                              onChange={(e) => setNewTask({...newTask, dueDate: e.target.value})}
                             />
                           </div>
 
@@ -1111,6 +1625,18 @@ const BuildMyChurch = () => {
                               </span>
                             )}
                             {task.topic && <span className="topic-badge">{task.topic}</span>}
+                            {task.startDate && (
+                              <span className="date-badge start-date">
+                                <span className="date-icon">📅</span>
+                                Start: {new Date(task.startDate).toLocaleDateString()}
+                              </span>
+                            )}
+                            {task.dueDate && (
+                              <span className="date-badge due-date">
+                                <span className="date-icon">⏰</span>
+                                Due: {new Date(task.dueDate).toLocaleDateString()}
+                              </span>
+                            )}
                             <span className={`priority-badge ${task.priority}`}>
                               {task.priority.toUpperCase()}
                             </span>
@@ -1151,6 +1677,138 @@ const BuildMyChurch = () => {
                                   </ul>
                                 </div>
                               )}
+                              <div className="comments-section">
+                                <h4>Comments</h4>
+                                <div style={{ marginBottom: '10px' }}>
+                                  <textarea
+                                    value={newCommentText}
+                                    onChange={(e) => setNewCommentText(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    placeholder="Add a comment..."
+                                    rows={3}
+                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                                  />
+                                  <input
+                                    type="file"
+                                    multiple
+                                    onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ marginTop: '8px' }}
+                                  />
+                                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={async (e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        await handleAddComment(task.id);
+                                      }}
+                                      className="add-comment-button"
+                                    >
+                                      Add Comment
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  {(commentsByTask[task.id] || []).length === 0 && (
+                                    <div style={{ color: '#6B7280' }}>No comments yet</div>
+                                  )}
+                                  <ul style={{ listStyle: 'none', padding: 0 }}>
+                                    {(commentsByTask[task.id] || []).map(comment => (
+                                      <li key={comment.id} style={{ marginBottom: '12px', padding: '8px', background: '#fff', borderRadius: '6px', border: '1px solid #E5E7EB' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                                          <div style={{ color: '#6B7280', fontSize: '12px' }}>
+                                            {new Date(comment.createdAt).toLocaleString()}
+                                            {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
+                                              <span> (edited)</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {editingCommentId === comment.id ? (
+                                          <div style={{ marginTop: '6px' }}>
+                                            <textarea
+                                              value={editingCommentText}
+                                              onChange={(e) => setEditingCommentText(e.target.value)}
+                                              onClick={(e) => e.stopPropagation()}
+                                              rows={3}
+                                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                                            />
+                                            <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  handleUpdateComment(task.id, comment.id);
+                                                }}
+                                                style={{ padding: '4px 8px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                              >
+                                                Save
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  setEditingCommentId(null);
+                                                  setEditingCommentText('');
+                                                }}
+                                                style={{ padding: '4px 8px', backgroundColor: '#6B7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div style={{ whiteSpace: 'pre-wrap', marginTop: '6px' }}>{convertUrlsToLinks(comment.text)}</div>
+                                        )}
+                                        {comment.files && comment.files.length > 0 && (
+                                          <div style={{ marginTop: '8px' }}>
+                                            <strong>Attachments:</strong>
+                                            <ul>
+                                              {comment.files.map((f, i) => (
+                                                <li key={i}><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        <div style={{ marginTop: '8px' }}>
+                                          {(user && (user.uid === comment.author?.uid || user.role === 'admin' || user.role === 'global_admin')) && editingCommentId !== comment.id && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  setEditingCommentId(comment.id);
+                                                  setEditingCommentText(comment.text);
+                                                }}
+                                                style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', marginRight: '8px' }}
+                                              >
+                                                Edit
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  handleDeleteComment(task.id, comment.id);
+                                                }}
+                                                className="delete-comment-button"
+                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                                              >
+                                                Delete
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
                               <div style={{ marginTop: '15px' }}>
                                 <button
                                   type="button"

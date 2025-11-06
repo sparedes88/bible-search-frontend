@@ -269,6 +269,8 @@
 .task-metadata {
   display: flex;
   gap: 0.5rem;
+  position: relative;
+  z-index: 10;
 }
 
 .priority-badge,
@@ -334,6 +336,26 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
+}
+
+.date-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.date-badge.start-date {
+  background: #DBEAFE;
+  color: #2563EB;
+}
+
+.date-badge.due-date {
+  background: #FEF3C7;
+  color: #D97706;
 }
 
 .assignee-icon {
