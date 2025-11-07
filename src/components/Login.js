@@ -281,9 +281,10 @@ const Login = () => {
         const userData = userDoc.data();
         console.log("User data retrieved:", userData);
 
-        // Check if user is global_admin or matches church ID
+        // Check if user is global_admin, admin, or matches church ID
         if (
           userData.role === "global_admin" ||
+          userData.role === "admin" ||
           String(userData.churchId) === String(id)
         ) {
           // Redirect to return URL if it exists, otherwise to profile
