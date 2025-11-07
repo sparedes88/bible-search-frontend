@@ -79,12 +79,10 @@
   border-radius: var(--border-radius);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   overflow: hidden;
-  margin: 1rem;
-  max-width: 600px;
-  padding-left: max(var(--content-padding), env(safe-area-inset-left));
-  padding-right: max(var(--content-padding), env(safe-area-inset-right));
-  padding-bottom: max(var(--content-padding), env(safe-area-inset-bottom));
   width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .course-header {

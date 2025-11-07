@@ -23,6 +23,7 @@ import {
   serverTimestamp,
   addDoc,
   deleteDoc,
+  getDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import ChurchHeader from "./ChurchHeader";
@@ -32,6 +33,7 @@ import { Bounce, ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import Select from "react-select";
 import { useAuth } from "../contexts/AuthContext";
+import { FaChevronDown } from "react-icons/fa";
 import "./CourseCategories.css"; // Import the new CSS file
 
 // Safe toast wrapper to prevent errors - temporarily disabled
@@ -132,6 +134,10 @@ const CourseCategories = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [filteredCategories, setFilteredCategories] = useState([]);
   const [hasSubcategoryFilter, setHasSubcategoryFilter] = useState(false);
+  const [availableOrganizations, setAvailableOrganizations] = useState([]);
+  const [currentOrganization, setCurrentOrganization] = useState(null);
+  const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // Show loading spinner while authentication is loading
   if (authLoading) {
@@ -188,11 +194,69 @@ const CourseCategories = () => {
     }
   }, [id]);
 
+  // Fetch available organizations for the user
+  const fetchAvailableOrganizations = async () => {
+    try {
+      if (user?.role === 'global_admin' || user?.role === 'admin') {
+        // Global admins and admins can access all organizations
+        const churchesRef = collection(db, 'churches');
+        const churchesSnapshot = await getDocs(churchesRef);
+        const organizations = churchesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setAvailableOrganizations(organizations);
+        
+        // Find current organization
+        const currentOrg = organizations.find(org => org.id === id);
+        setCurrentOrganization(currentOrg);
+      } else {
+        // Regular users can only access their organization
+        const churchesRef = collection(db, 'churches');
+        const churchDoc = await getDoc(doc(churchesRef, id));
+        if (churchDoc.exists()) {
+          const organization = { id: churchDoc.id, ...churchDoc.data() };
+          setAvailableOrganizations([organization]);
+          setCurrentOrganization(organization);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching organizations:', error);
+    }
+  };
+
+  // Handle organization switch
+  const handleOrganizationSwitch = (organizationId) => {
+    const currentPath = location.pathname;
+    const newPath = currentPath.replace(`/church/${id}`, `/church/${organizationId}`);
+    navigate(newPath);
+  };
+
   useEffect(() => {
     fetchTopics();
     fetchCategories();
     return () => {};
   }, [fetchTopics, fetchCategories]);
+
+  // Fetch available organizations when user changes
+  useEffect(() => {
+    if (user) {
+      fetchAvailableOrganizations();
+    }
+  }, [user, id]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isDropdownOpen && !event.target.closest('[data-dropdown]')) {
+        setIsDropdownOpen(false);
+        setOrganizationSearchQuery('');
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isDropdownOpen]);
 
   const handleCategoryChange = (selected) => {
     setSelectedCategories(selected || []);
@@ -1099,7 +1163,7 @@ const CourseCategories = () => {
   };
 
   const handleSubcategoryClick = (categoryId, subcategoryId) => {
-    navigate(`/church/${id}/course/${categoryId}/subcategory/${subcategoryId}/settings`);
+    navigate(`/church/${id}/course/${categoryId}/subcategory/${subcategoryId}`);
   };
 
   const onDragEnd = async (result) => {
@@ -1697,7 +1761,7 @@ const CourseCategories = () => {
 
   return (
     <DragDropContext onDragEnd={onDragEnd}>
-      <div className="container" key={forceUpdate}>
+      <div className="container" key={forceUpdate} style={{ position: "relative" }}>
         <button
           onClick={() => handleBackClick(id)}
           className="back-button-link"
@@ -1706,6 +1770,122 @@ const CourseCategories = () => {
         </button>
 
         <ChurchHeader id={id} />
+        
+        {/* Organization Selector in Top Right */}
+        {availableOrganizations.length > 1 && (
+          <div style={{
+            position: "absolute",
+            top: "1rem",
+            right: "1rem",
+            zIndex: 1000,
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+            backgroundColor: "white",
+            padding: "0.75rem 1rem",
+            borderRadius: "0.5rem",
+            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+            border: "1px solid #e5e7eb",
+            minWidth: "250px"
+          }} data-dropdown>
+            <label style={{ fontSize: "0.875rem", fontWeight: "500", color: "#374151" }}>Organization:</label>
+            
+            {/* Custom Dropdown */}
+            <div style={{ position: "relative", width: "100%" }}>
+              {/* Dropdown Trigger */}
+              <div
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                style={{
+                  padding: "0.5rem",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "0.25rem",
+                  fontSize: "0.875rem",
+                  backgroundColor: "white",
+                  cursor: "pointer",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontWeight: "500"
+                }}
+              >
+                <span>
+                  {currentOrganization ? (currentOrganization.nombre || currentOrganization.name || currentOrganization.churchId || currentOrganization.id) : 'Select organization...'}
+                </span>
+                <FaChevronDown style={{ 
+                  transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s'
+                }} />
+              </div>
+              
+              {/* Dropdown Menu */}
+              {isDropdownOpen && (
+                <div style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  right: 0,
+                  backgroundColor: "white",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "0.25rem",
+                  boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                  zIndex: 1001,
+                  maxHeight: "200px",
+                  overflowY: "auto"
+                }}>
+                  {/* Search Input in Dropdown */}
+                  <div style={{ padding: "0.5rem", borderBottom: "1px solid #e5e7eb" }}>
+                    <input
+                      type="text"
+                      placeholder="Search organizations..."
+                      value={organizationSearchQuery}
+                      onChange={(e) => setOrganizationSearchQuery(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "0.25rem",
+                        border: "1px solid #d1d5db",
+                        borderRadius: "0.25rem",
+                        fontSize: "0.875rem",
+                        boxSizing: "border-box"
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                  
+                  {/* Filtered Options */}
+                  <div>
+                    {availableOrganizations
+                      .filter((org) => {
+                        const orgName = org.nombre || org.name || org.churchId || org.id || '';
+                        const searchLower = organizationSearchQuery.toLowerCase();
+                        return orgName.toLowerCase().includes(searchLower);
+                      })
+                      .map((org) => (
+                        <div
+                          key={org.id}
+                          onClick={() => {
+                            handleOrganizationSwitch(org.id);
+                            setIsDropdownOpen(false);
+                            setOrganizationSearchQuery('');
+                          }}
+                          style={{
+                            padding: "0.5rem 0.75rem",
+                            cursor: "pointer",
+                            backgroundColor: org.id === id ? "#f3f4f6" : "white",
+                            borderBottom: "1px solid #f3f4f6",
+                            fontWeight: org.id === id ? "600" : "500"
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = "#f9fafb"}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = org.id === id ? "#f3f4f6" : "white"}
+                        >
+                          {org.nombre || org.name || org.churchId || org.id}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         
         {/* Totals Section */}
         <div className="totals-section" style={{

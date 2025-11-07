@@ -224,7 +224,7 @@ const CourseDetail = () => {
   const [selectedEventInstance, setSelectedEventInstance] = useState(null);
   const [isAddingCompletion, setIsAddingCompletion] = useState(false);
   const [eventCompletions, setEventCompletions] = useState({});
-  const [isEditMode, setIsEditMode] = useState(mode === 'edit');
+  const [isEditMode, setIsEditMode] = useState(false);
 
   // Debug URL parameters
   useEffect(() => {
@@ -1014,7 +1014,7 @@ const CourseDetail = () => {
   };
 
   return (
-    <div style={{...commonStyles.container, textAlign:"start"}}>
+    <div style={{...commonStyles.fullWidthContainer, textAlign:"start"}}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
         <button
           onClick={() => handleBackClick(id)}
@@ -1282,10 +1282,12 @@ const CourseDetail = () => {
             <div className="course-content" style={{
               padding: '20px',
               backgroundColor: 'white',
-              borderRadius: '8px'
+              borderRadius: '8px',
+              width: '100%',
+              maxWidth: '100%'
             }}>
-              <div className="course-card">
-                <div className="course-content">
+              <div className="course-card" style={{ maxWidth: 'none', width: '100%' }}>
+                <div className="course-content" style={{ width: '100%' }}>
                   {course?.description && (
                     <p className="course-description">{course.description}</p>
                   )}
@@ -1300,10 +1302,11 @@ const CourseDetail = () => {
                       <h2>Course Materials</h2>
                       <div className="materials-grid" style={{
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
                         gap: '24px',
                         padding: '20px 0',
-                        width: '100%'
+                        width: '100%',
+                        maxWidth: '100%'
                       }}>
                         {course.materials.map((material, index) => (
                           <MaterialCard key={index} material={material} />
@@ -1656,8 +1659,7 @@ const MaterialCard = ({ material }) => {
     cursor: 'pointer',
     marginBottom: '15px',
     width: '100%',
-    maxWidth: '560px',
-    margin: '0 auto 15px auto'
+    maxWidth: '100%'
   };
 
   if (isVideo) {
