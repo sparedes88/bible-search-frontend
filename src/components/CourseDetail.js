@@ -1647,6 +1647,7 @@ const CourseDetail = () => {
 const MaterialCard = ({ material }) => {
   const isVideo = material.type?.includes('video') || (material.url && material.url.match(/\.(mp4|webm|ogg|mov|avi)$/i));
   const isImage = material.type?.includes('image') || (material.url && material.url.match(/\.(jpg|jpeg|png|gif|svg|webp)$/i));
+  const isPDF = material.type?.includes('pdf') || (material.url && material.url.match(/\.(pdf)$/i));
   
   const cardStyle = {
     backgroundColor: '#1A237E',
@@ -1719,6 +1720,49 @@ const MaterialCard = ({ material }) => {
               e.target.style.padding = "20px";
             }}
           />
+        </div>
+      </div>
+    );
+  }
+  
+  if (isPDF) {
+    return (
+      <div className="pdf-material-card" style={cardStyle}>
+        <h3 className="material-title" style={{
+          padding: '10px',
+          margin: 0,
+          color: 'white'
+        }}>{material.name || "PDF Document"}</h3>
+        <div className="pdf-container" style={{
+          backgroundColor: '#fff',
+          borderRadius: '4px',
+          padding: '5px',
+          height: '400px'
+        }}>
+          <iframe
+            src={material.url}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              borderRadius: '4px'
+            }}
+            title={material.name || "PDF Document"}
+          />
+        </div>
+        <div style={{ padding: '10px', textAlign: 'center' }}>
+          <a 
+            href={material.url} 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            style={{
+              color: '#3b82f6',
+              textDecoration: 'none',
+              fontSize: '0.875rem'
+            }}
+          >
+            Open in New Tab
+          </a>
         </div>
       </div>
     );
