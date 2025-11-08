@@ -21,6 +21,8 @@ import DebugPanel from './DebugPanel';
 const FormViewer = () => {
   const { id, formId } = useParams();
   const { user } = useAuth();
+  
+  console.log('🚀 FormViewer: Component initialized', { id, formId, user: !!user, url: window.location.href });
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -38,12 +40,8 @@ const FormViewer = () => {
   // Check authentication - only required for certain features, not for viewing forms
   useEffect(() => {
     // Allow public access to forms - authentication is optional
-    // Only set loading to false after we check if we can fetch the form
-    if (!user) {
-      console.log('No user found, but allowing public access to form');
-      // Don't set error or redirect for public forms
-      // Just proceed to fetch the form
-    }
+    // Don't block loading for unauthenticated users
+    console.log('🔐 FormViewer: Auth check - user present:', !!user);
   }, [user, id]);
 
   useEffect(() => {
@@ -650,7 +648,20 @@ const FormViewer = () => {
     user: !!user 
   });
 
-  return (
+  // Emergency fallback - if nothing else renders, show this
+  if (typeof loading === 'undefined' || typeof error === 'undefined') {
+    console.error('🚨 FormViewer: State variables undefined!');
+    return (
+      <div style={{ padding: '20px', backgroundColor: '#ffcccc', border: '2px solid red' }}>
+        <h2>FormViewer State Error</h2>
+        <p>Component state is corrupted. Please refresh the page.</p>
+        <button onClick={() => window.location.reload()}>Refresh Page</button>
+      </div>
+    );
+  }
+
+  try {
+    return (
     <div style={{
       minHeight: '100vh',
       background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
@@ -847,6 +858,22 @@ const FormViewer = () => {
       </div>
     </div>
   );
+  } catch (renderError) {
+    console.error('💥 FormViewer: Render error caught:', renderError);
+    return (
+      <div style={{ padding: '20px', backgroundColor: '#ffcccc', border: '2px solid red', margin: '20px' }}>
+        <h2>FormViewer Render Error</h2>
+        <p>An error occurred while rendering the form: {renderError.message}</p>
+        <details>
+          <summary>Error Details</summary>
+          <pre>{renderError.stack}</pre>
+        </details>
+        <button onClick={() => window.location.reload()} style={{ marginTop: '10px', padding: '10px' }}>
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
 };
 
 export default FormViewer;
