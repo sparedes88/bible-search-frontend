@@ -633,7 +633,11 @@ const App = () => {
           <Route path="/church/:id/events" element={<EventsPage />} />
           <Route path="/church/:id/mi-perfil" element={<MiPerfil />} />
           <Route path="/church/:id/login" element={<Login />} />
-          <Route path="/church/:id/form/:formId" element={<FormViewer />} />
+          <Route path="/church/:id/form/:formId" element={
+            <ErrorBoundary>
+              <FormViewer />
+            </ErrorBoundary>
+          } />
           <Route 
             path="/sql-server-bridge" 
             element={
