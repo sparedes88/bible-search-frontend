@@ -569,7 +569,9 @@ const App = () => {
             path="/organization/:id/forms" 
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <Forms />
+                <ErrorBoundary>
+                  <Forms />
+                </ErrorBoundary>
               </PrivateRoute>
             } 
           />
@@ -579,7 +581,9 @@ const App = () => {
             path="/organization/:id/forms/:formId/entries" 
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <FormEntriesPage />
+                <ErrorBoundary>
+                  <FormEntriesPage />
+                </ErrorBoundary>
               </PrivateRoute>
             } 
           />
@@ -605,7 +609,11 @@ const App = () => {
           {/* Public Form Viewer Route */}
           <Route 
             path="/organization/:id/form/:formId" 
-            element={<FormViewer />}
+            element={
+              <ErrorBoundary>
+                <FormViewer />
+              </ErrorBoundary>
+            }
           />
           
           {/* Embeddable Form Route */}

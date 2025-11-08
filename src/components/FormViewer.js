@@ -35,24 +35,23 @@ const FormViewer = () => {
   const [formsLoading, setFormsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Check authentication
+  // Check authentication - only required for certain features, not for viewing forms
   useEffect(() => {
+    // Allow public access to forms - authentication is optional
+    // Only set loading to false after we check if we can fetch the form
     if (!user) {
-      console.log('No user found, redirecting to login');
-      setError({ type: 'auth', message: 'Authentication required' });
-      setLoading(false);
-      // Delay redirect to show error state
-      setTimeout(() => {
-        window.location.href = `/church/${id}/login?returnUrl=${encodeURIComponent(window.location.pathname)}`;
-      }, 2000);
+      console.log('No user found, but allowing public access to form');
+      // Don't set error or redirect for public forms
+      // Just proceed to fetch the form
     }
   }, [user, id]);
 
   useEffect(() => {
-    if (user && !error) {
+    // Allow fetching form for both authenticated and unauthenticated users
+    if (!error) {
       fetchForm();
     }
-  }, [id, formId, user]);
+  }, [id, formId]);
 
   // Load available active forms for quick switching
   useEffect(() => {
@@ -143,36 +142,40 @@ const FormViewer = () => {
       setLoading(true);
       setError(null);
 
+      console.log('🔍 FormViewer: Starting fetchForm', { id, formId, user: user?.email });
+
       if (!id || !formId) {
-        console.error('Missing required parameters:', { id, formId });
+        console.error('❌ FormViewer: Missing required parameters:', { id, formId });
         setError({ type: 'params', message: 'Invalid form URL - missing parameters' });
         toast.error('Invalid form URL');
         return;
       }
 
-      console.log('Fetching form:', { id, formId, user: user?.email });
+      console.log('📡 FormViewer: Fetching form from Firestore:', { id, formId });
 
       const formRef = doc(db, 'churches', id, 'forms', formId);
       const formDoc = await getDoc(formRef);
 
       if (formDoc.exists()) {
         const formData = formDoc.data();
-        console.log('Form data loaded:', formData);
+        console.log('✅ FormViewer: Form data loaded successfully:', formData);
 
         if (!formData.isActive) {
+          console.log('⚠️ FormViewer: Form is not active');
           setError({ type: 'inactive', message: 'This form is no longer accepting submissions' });
           toast.error('This form is no longer accepting submissions');
           return;
         }
 
         setForm({ id: formDoc.id, ...formData });
+        console.log('🎉 FormViewer: Form set successfully');
       } else {
-        console.error('Form not found:', formId);
+        console.error('❌ FormViewer: Form not found:', formId);
         setError({ type: 'not_found', message: 'Form not found' });
         toast.error('Form not found');
       }
     } catch (error) {
-      console.error('Error fetching form:', error);
+      console.error('💥 FormViewer: Error fetching form:', error);
       setError({
         type: 'fetch_error',
         message: `Failed to load form: ${error.message}`,
@@ -181,6 +184,7 @@ const FormViewer = () => {
       toast.error(`Failed to load form: ${error.message}`);
     } finally {
       setLoading(false);
+      console.log('🏁 FormViewer: fetchForm completed');
     }
   };
 
@@ -637,6 +641,14 @@ const FormViewer = () => {
       </div>
     );
   }
+
+  console.log('🎨 FormViewer: Rendering component', { 
+    loading, 
+    error: error?.type, 
+    form: !!form, 
+    submitted,
+    user: !!user 
+  });
 
   return (
     <div style={{
