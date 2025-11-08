@@ -22,7 +22,13 @@ const FormViewer = () => {
   const { id, formId } = useParams();
   const { user } = useAuth();
   
-  console.log('🚀 FormViewer: Component initialized', { id, formId, user: !!user, url: window.location.href });
+  console.log('🚀 FormViewer: Component initialized', { 
+    id, 
+    formId, 
+    user: !!user,
+    url: window.location.href,
+    pathname: window.location.pathname
+  });
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -149,10 +155,20 @@ const FormViewer = () => {
         return;
       }
 
-      console.log('📡 FormViewer: Fetching form from Firestore:', { id, formId });
+      console.log('📡 FormViewer: Fetching form from Firestore:', { 
+        id, 
+        formId,
+        collectionPath: `churches/${id}/forms/${formId}`
+      });
 
       const formRef = doc(db, 'churches', id, 'forms', formId);
       const formDoc = await getDoc(formRef);
+
+      console.log('📄 FormViewer: Firestore response:', {
+        exists: formDoc.exists(),
+        id: formDoc.id,
+        data: formDoc.exists() ? formDoc.data() : null
+      });
 
       if (formDoc.exists()) {
         const formData = formDoc.data();
