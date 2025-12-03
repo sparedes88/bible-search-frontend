@@ -839,7 +839,8 @@ const TimeTracker = () => {
     description: '',
     category: '',
     costPerHour: '',
-    areaOfFocusIds: [] // Changed to array for multiple areas
+    areaOfFocusIds: [], // Changed to array for multiple areas
+    originalCostCode: null // Track if duplicating to check existing areas
   });
 
   // Areas of Focus State
@@ -2576,12 +2577,7 @@ const TimeTracker = () => {
           updatedAt: serverTimestamp()
         });
 
-        // Immediately update local state
-        setCostCodes(prev => prev.map(costCode => 
-          costCode.id === editingCostCode.id 
-            ? { ...costCode, ...costCodeData, id: editingCostCode.id }
-            : costCode
-        ));
+        // No need to update local state - the onSnapshot listener will handle it automatically
 
         // Create additional cost codes for any extra selected areas
         const additionalAreas = newCostCode.areaOfFocusIds.slice(1); // Skip first area (already updated)
@@ -2617,8 +2613,7 @@ const TimeTracker = () => {
             console.log(`Additional cost code created for area "${areaName}":`, newCostCodeWithId);
           }
 
-          // Update local state with all new cost codes
-          setCostCodes(prev => [...createdCostCodes, ...prev]);
+          // No need to update local state - the onSnapshot listener will handle it automatically
           
           toast.success(`Cost code updated and ${createdCostCodes.length} additional cost code(s) created!`);
         } else {
@@ -2657,8 +2652,7 @@ const TimeTracker = () => {
           console.log(`Cost code created for area "${areaName}":`, newCostCodeWithId);
         }
 
-        // Update local state with all new cost codes
-        setCostCodes(prev => [...createdCostCodes, ...prev]);
+        // No need to update local state - the onSnapshot listener will handle it automatically
         
         const count = createdCostCodes.length;
         toast.success(`${count} cost code${count > 1 ? 's' : ''} created successfully!`);
@@ -2669,7 +2663,8 @@ const TimeTracker = () => {
         description: '',
         category: '',
         costPerHour: '',
-        areaOfFocusIds: []
+        areaOfFocusIds: [],
+        originalCostCode: null
       });
       setEditingCostCode(null);
       setShowCostCodeModal(false);
@@ -5315,7 +5310,8 @@ const TimeTracker = () => {
                             description: costCode.description,
                             category: costCode.category,
                             costPerHour: costCode.costPerHour || '',
-                            areaOfFocusIds: [] // Empty so user can select different areas
+                            areaOfFocusIds: [], // Empty so user can select different areas
+                            originalCostCode: costCode.code // Store original code to check for duplicates
                           });
                           setShowCostCodeModal(true);
                         }}
@@ -6906,7 +6902,8 @@ const TimeTracker = () => {
                     description: '',
                     category: '',
                     costPerHour: '',
-                    areaOfFocusIds: []
+                    areaOfFocusIds: [],
+                    originalCostCode: null
                   });
                 }}
               >
@@ -7047,54 +7044,67 @@ const TimeTracker = () => {
                     </div>
                   ) : (
                     // When creating new, show as checkboxes (multi-selection)
-                    areasOfFocus.map(area => (
-                      <label
-                        key={area.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          padding: '8px',
-                          cursor: 'pointer',
-                          borderRadius: '4px',
-                          marginBottom: '4px',
-                          backgroundColor: newCostCode.areaOfFocusIds.includes(area.id) ? '#e0e7ff' : 'white',
-                          border: newCostCode.areaOfFocusIds.includes(area.id) ? '2px solid #667eea' : '1px solid #e5e7eb',
-                          transition: 'all 0.2s'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
-                            e.currentTarget.style.backgroundColor = '#f3f4f6';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
-                            e.currentTarget.style.backgroundColor = 'white';
-                          }
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={newCostCode.areaOfFocusIds.includes(area.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setNewCostCode({
-                                ...newCostCode,
-                                areaOfFocusIds: [...newCostCode.areaOfFocusIds, area.id]
-                              });
-                            } else {
-                              setNewCostCode({
-                                ...newCostCode,
-                                areaOfFocusIds: newCostCode.areaOfFocusIds.filter(id => id !== area.id)
-                              });
+                    areasOfFocus.map(area => {
+                      // If duplicating, check if this area already has this cost code
+                      const isDuplicating = newCostCode.originalCostCode;
+                      const hasExistingCostCode = isDuplicating && costCodes.some(cc => 
+                        cc.code === newCostCode.originalCostCode && 
+                        (cc.areaOfFocusId === area.id || cc.areaOfFocusIds?.includes(area.id))
+                      );
+                      
+                      return (
+                        <label
+                          key={area.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '8px',
+                            cursor: hasExistingCostCode ? 'not-allowed' : 'pointer',
+                            borderRadius: '4px',
+                            marginBottom: '4px',
+                            backgroundColor: newCostCode.areaOfFocusIds.includes(area.id) ? '#e0e7ff' : 'white',
+                            border: newCostCode.areaOfFocusIds.includes(area.id) ? '2px solid #667eea' : '1px solid #e5e7eb',
+                            transition: 'all 0.2s',
+                            opacity: hasExistingCostCode ? 0.5 : 1
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!newCostCode.areaOfFocusIds.includes(area.id) && !hasExistingCostCode) {
+                              e.currentTarget.style.backgroundColor = '#f3f4f6';
                             }
                           }}
-                          style={{ marginRight: '8px', cursor: 'pointer' }}
-                        />
-                        <span style={{ fontWeight: newCostCode.areaOfFocusIds.includes(area.id) ? '600' : '400' }}>
-                          {area.name}
-                        </span>
-                      </label>
-                    ))
+                          onMouseLeave={(e) => {
+                            if (!newCostCode.areaOfFocusIds.includes(area.id)) {
+                              e.currentTarget.style.backgroundColor = 'white';
+                            }
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={newCostCode.areaOfFocusIds.includes(area.id)}
+                            disabled={hasExistingCostCode}
+                            onChange={(e) => {
+                              if (hasExistingCostCode) return;
+                              
+                              if (e.target.checked) {
+                                setNewCostCode({
+                                  ...newCostCode,
+                                  areaOfFocusIds: [...newCostCode.areaOfFocusIds, area.id]
+                                });
+                              } else {
+                                setNewCostCode({
+                                  ...newCostCode,
+                                  areaOfFocusIds: newCostCode.areaOfFocusIds.filter(id => id !== area.id)
+                                });
+                              }
+                            }}
+                            style={{ marginRight: '8px', cursor: hasExistingCostCode ? 'not-allowed' : 'pointer' }}
+                          />
+                          <span style={{ fontWeight: newCostCode.areaOfFocusIds.includes(area.id) ? '600' : '400' }}>
+                            {area.name} {hasExistingCostCode ? '(Already exists)' : ''}
+                          </span>
+                        </label>
+                      );
+                    })
                   )}
                 </div>
                 {!editingCostCode && newCostCode.areaOfFocusIds.length > 0 && (

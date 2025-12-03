@@ -383,7 +383,7 @@ const Login = () => {
         </button>
       </div>
 
-      <ChurchHeader id={id} applyShadow={false} />
+      {id && <ChurchHeader id={id} applyShadow={false} />}
 
       {/* Network Status */}
       {!isOnline && (
