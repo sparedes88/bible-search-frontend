@@ -12,17 +12,6 @@
 }
 
 .header-content {
-  backg.video-link-item {
-  background: white;
-  border-radius: 12px;
-  padding: 1.5rem;
-  border: 1px solid #e2e8f0;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: flex-start;
-  gap: 1rem;
-  transition: all 0.2s ease;
-}
   border-radius: 16px;
   padding: 2rem;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);

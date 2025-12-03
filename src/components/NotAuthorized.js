@@ -56,7 +56,7 @@ const NotAuthorized = ({ message = "You don't have permission to access this res
 
         <div>
           <Link
-            to={`/${routeType}/${churchId}`}
+            to={`/${routeType}/${churchId}/mi-organizacion`}
             style={{
               color: '#4f46e5',
               textDecoration: 'none',

@@ -28,6 +28,13 @@ const Search = () => {
     adminName: "",
     adminLastName: ""
   });
+
+  // Debug environment variables
+  useEffect(() => {
+    console.log('Search component - Environment variables:');
+    console.log('REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET);
+    console.log('Firebase storage object:', storage);
+  }, []);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -41,26 +48,32 @@ const Search = () => {
 
   // Function to get Firebase Storage download URL
   const getImageUrl = async (imagePath) => {
-    if (!imagePath) return null;
+    if (!imagePath) {
+      console.log('getImageUrl: No image path provided');
+      return null;
+    }
 
     // Check if storage is available
     if (!storage) {
-      console.warn('Storage not available, cannot get image URL for:', imagePath);
+      console.warn('getImageUrl: Storage not available, cannot get image URL for:', imagePath);
       return null;
     }
     
     try {
       // If it's already a full URL, return as is
       if (imagePath.startsWith('http')) {
+        console.log('getImageUrl: Already a full URL:', imagePath);
         return imagePath;
       }
       
+      console.log('getImageUrl: Getting download URL for path:', imagePath);
       // If it's a Firebase Storage path, get download URL with token
       const imageRef = ref(storage, imagePath);
       const downloadUrl = await getDownloadURL(imageRef);
+      console.log('getImageUrl: Successfully got download URL:', downloadUrl);
       return downloadUrl;
     } catch (error) {
-      console.warn('Failed to get image URL:', imagePath, error);
+      console.warn('getImageUrl: Failed to get image URL for path:', imagePath, 'Error:', error);
       return null;
     }
   };
@@ -218,15 +231,18 @@ const Search = () => {
     const preloadImageUrls = async () => {
       if (churches.length === 0) return;
       
+      console.log('Starting image preload for', churches.length, 'churches');
       const urls = {};
       for (const church of churches) {
         const churchId = church.id;
         
         // Preload banner/header image
         if (church.banner) {
+          console.log('Preloading banner for church', church.nombre, 'path:', church.banner);
           try {
             const bannerUrl = await getImageUrl(church.banner);
             urls[`${churchId}_banner`] = bannerUrl;
+            console.log('Successfully preloaded banner URL:', bannerUrl);
           } catch (error) {
             console.warn(`Failed to preload banner for church ${churchId}:`, error);
           }
@@ -234,17 +250,19 @@ const Search = () => {
         
         // Preload logo image
         if (church.logo) {
+          console.log('Preloading logo for church', church.nombre, 'path:', church.logo);
           try {
             const logoUrl = await getImageUrl(church.logo);
             urls[`${churchId}_logo`] = logoUrl;
+            console.log('Successfully preloaded logo URL:', logoUrl);
           } catch (error) {
             console.warn(`Failed to preload logo for church ${churchId}:`, error);
           }
         }
       }
       
+      console.log('Setting imageUrls state with:', urls);
       setImageUrls(urls);
-      console.log('Preloaded image URLs:', urls);
     };
     
     preloadImageUrls();
@@ -536,12 +554,20 @@ const Search = () => {
                       // Use preloaded URL if available
                       imageUrls[`${church.id}_banner`] ||
                       // Fallback to constructing URL
-                      (church.banner ? `https://firebasestorage.googleapis.com/v0/b/${process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app'}/o${encodeURIComponent(church.banner)}?alt=media` : "/img/banner-fallback.svg")
+                      (() => {
+                        const bucket = process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app';
+                        const url = church.banner ? `https://firebasestorage.googleapis.com/v0/b/${bucket}/o${encodeURIComponent(church.banner)}?alt=media` : "/img/banner-fallback.svg";
+                        console.log('Banner URL for church', church.nombre, ':', url, 'Original path:', church.banner);
+                        return url;
+                      })()
                     } 
                     alt={`${church.nombre} header`} 
                     className="header-image" 
                     onError={(e) => {
                       console.log('Header image failed to load for church:', church.nombre, 'Using fallback');
+                      console.log('Failed image src was:', e.target.src);
+                      console.log('Church banner path:', church.banner);
+                      console.log('Preloaded banner URL:', imageUrls[`${church.id}_banner`]);
                       e.target.src = "/img/banner-fallback.svg";
                     }}
                   />
@@ -551,14 +577,27 @@ const Search = () => {
                         // Use preloaded URL if available
                         imageUrls[`${church.id}_logo`] ||
                         // Fallback to constructing URL
-                        (church.logo ? `https://firebasestorage.googleapis.com/v0/b/${process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app'}/o${encodeURIComponent(church.logo)}?alt=media` :
-                        church.Logo ? `https://firebasestorage.googleapis.com/v0/b/${process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app'}/o${encodeURIComponent(church.Logo)}?alt=media` :
-                        "/img/logo-fallback.svg")
+                        (() => {
+                          const bucket = process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app';
+                          let url;
+                          if (church.logo) {
+                            url = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o${encodeURIComponent(church.logo)}?alt=media`;
+                          } else if (church.Logo) {
+                            url = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o${encodeURIComponent(church.Logo)}?alt=media`;
+                          } else {
+                            url = "/img/logo-fallback.svg";
+                          }
+                          console.log('Logo URL for church', church.nombre, ':', url, 'Original paths - logo:', church.logo, 'Logo:', church.Logo);
+                          return url;
+                        })()
                       }
                       alt={`${church.nombre} logo`} 
                       className="card-logo" 
                       onError={(e) => {
                         console.log('Logo image failed to load for church:', church.nombre, 'Using fallback');
+                        console.log('Failed logo src was:', e.target.src);
+                        console.log('Church logo paths - logo:', church.logo, 'Logo:', church.Logo);
+                        console.log('Preloaded logo URL:', imageUrls[`${church.id}_logo`]);
                         e.target.src = "/img/logo-fallback.svg";
                       }}
                     />

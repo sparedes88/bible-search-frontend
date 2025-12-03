@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
+import { FaChevronDown } from 'react-icons/fa';
+import { db, auth } from '../firebase';
 import { 
   collection, 
   addDoc, 
@@ -17,6 +18,7 @@ import {
   getDocs,
   getDoc
 } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 import { toast } from 'react-toastify';
@@ -686,6 +688,13 @@ const TimeTracker = () => {
   const { id: churchId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Organization switcher state
+  const [availableOrganizations, setAvailableOrganizations] = useState([]);
+  const [currentOrganization, setCurrentOrganization] = useState(null);
+  const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   
   // Tab State
   const [activeTab, setActiveTab] = useState('timer');
@@ -830,7 +839,7 @@ const TimeTracker = () => {
     description: '',
     category: '',
     costPerHour: '',
-    areaOfFocusId: ''
+    areaOfFocusIds: [] // Changed to array for multiple areas
   });
 
   // Areas of Focus State
@@ -1091,6 +1100,63 @@ const TimeTracker = () => {
       return '';
     }
   };
+
+  // Fetch available organizations for the user
+  const fetchAvailableOrganizations = async () => {
+    try {
+      if (user?.role === 'global_admin' || user?.role === 'admin') {
+        // Global admins and admins can access all organizations
+        const churchesRef = collection(db, 'churches');
+        const churchesSnapshot = await getDocs(churchesRef);
+        const organizations = churchesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setAvailableOrganizations(organizations);
+        
+        // Find current organization
+        const currentOrg = organizations.find(org => org.id === churchId);
+        setCurrentOrganization(currentOrg);
+      } else {
+        // Regular users can only access their organization
+        const churchesRef = collection(db, 'churches');
+        const churchDoc = await getDoc(doc(churchesRef, churchId));
+        if (churchDoc.exists()) {
+          const organization = { id: churchDoc.id, ...churchDoc.data() };
+          setAvailableOrganizations([organization]);
+          setCurrentOrganization(organization);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching organizations:', error);
+    }
+  };
+
+  // Handle organization switch
+  const handleOrganizationSwitch = (organizationId) => {
+    const currentPath = location.pathname;
+    const newPath = currentPath.replace(`/organization/${churchId}`, `/organization/${organizationId}`);
+    navigate(newPath);
+  };
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      const returnUrl = `${location.pathname}${location.search}${location.hash}`;
+      await signOut(auth);
+      navigate(`/church/${churchId}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+    } catch (error) {
+      console.error('Error logging out:', error);
+      toast.error('Failed to logout');
+    }
+  };
+
+  // Fetch available organizations when user changes
+  useEffect(() => {
+    if (user) {
+      fetchAvailableOrganizations();
+    }
+  }, [user, churchId]);
 
   // Check TimeTracker permissions
   useEffect(() => {
@@ -1436,113 +1502,198 @@ const TimeTracker = () => {
 
   // Load Expenses
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId || !user) return;
 
-    const unsubscribe = onSnapshot(
-      collection(db, `churches/${churchId}/expenses`),
-      (snapshot) => {
-        const expensesData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setExpenses(expensesData);
-      },
-      (error) => {
-        console.error('Error loading expenses:', error);
-        toast.error('Failed to load expenses');
+    // Only load expenses for users with finance access
+    const checkAndLoadExpenses = async () => {
+      const hasFinanceAccess = await canAccessModule(user, churchId, 'finances');
+      if (!hasFinanceAccess) {
+        return;
       }
-    );
 
-    return () => unsubscribe();
-  }, [churchId]);
+      const unsubscribe = onSnapshot(
+        collection(db, `churches/${churchId}/expenses`),
+        (snapshot) => {
+          const expensesData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setExpenses(expensesData);
+        },
+        (error) => {
+          console.error('Error loading expenses:', error);
+          toast.error('Failed to load expenses');
+        }
+      );
+
+      return unsubscribe;
+    };
+
+    let unsubscribe;
+    checkAndLoadExpenses().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [churchId, user]);
 
   // Load Expense Categories
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId || !user) return;
 
-    const unsubscribe = onSnapshot(
-      collection(db, `churches/${churchId}/expenseCategories`),
-      (snapshot) => {
-        const categoriesData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setExpenseCategories(categoriesData);
-      },
-      (error) => {
-        console.error('Error loading expense categories:', error);
-        toast.error('Failed to load expense categories');
+    // Only load expense categories for users with finance access
+    const checkAndLoadCategories = async () => {
+      const hasFinanceAccess = await canAccessModule(user, churchId, 'finances');
+      if (!hasFinanceAccess) {
+        return;
       }
-    );
 
-    return () => unsubscribe();
-  }, [churchId]);
+      const unsubscribe = onSnapshot(
+        collection(db, `churches/${churchId}/expenseCategories`),
+        (snapshot) => {
+          const categoriesData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setExpenseCategories(categoriesData);
+        },
+        (error) => {
+          console.error('Error loading expense categories:', error);
+          toast.error('Failed to load expense categories');
+        }
+      );
+
+      return unsubscribe;
+    };
+
+    let unsubscribe;
+    checkAndLoadCategories().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [churchId, user]);
 
   // Load Expense Subcategories
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId || !user) return;
 
-    const unsubscribe = onSnapshot(
-      collection(db, `churches/${churchId}/expenseSubcategories`),
-      (snapshot) => {
-        const subcategoriesData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setExpenseSubcategories(subcategoriesData);
-      },
-      (error) => {
-        console.error('Error loading expense subcategories:', error);
-        toast.error('Failed to load expense subcategories');
+    // Only load expense subcategories for users with finance access
+    const checkAndLoadSubcategories = async () => {
+      const hasFinanceAccess = await canAccessModule(user, churchId, 'finances');
+      if (!hasFinanceAccess) {
+        return;
       }
-    );
 
-    return () => unsubscribe();
-  }, [churchId]);
+      const unsubscribe = onSnapshot(
+        collection(db, `churches/${churchId}/expenseSubcategories`),
+        (snapshot) => {
+          const subcategoriesData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setExpenseSubcategories(subcategoriesData);
+        },
+        (error) => {
+          console.error('Error loading expense subcategories:', error);
+          toast.error('Failed to load expense subcategories');
+        }
+      );
+
+      return unsubscribe;
+    };
+
+    let unsubscribe;
+    checkAndLoadSubcategories().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [churchId, user]);
 
   // Load Contracts
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId || !user) return;
 
-    const unsubscribe = onSnapshot(
-      collection(db, `churches/${churchId}/contracts`),
-      (snapshot) => {
-        const contractsData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setContracts(contractsData);
-      },
-      (error) => {
-        console.error('Error loading contracts:', error);
-        toast.error('Failed to load contracts');
+    // Only load contracts for users with finance access
+    const checkAndLoadContracts = async () => {
+      const hasFinanceAccess = await canAccessModule(user, churchId, 'finances');
+      if (!hasFinanceAccess) {
+        return;
       }
-    );
 
-    return () => unsubscribe();
-  }, [churchId]);
+      const unsubscribe = onSnapshot(
+        collection(db, `churches/${churchId}/contracts`),
+        (snapshot) => {
+          const contractsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setContracts(contractsData);
+        },
+        (error) => {
+          console.error('Error loading contracts:', error);
+          toast.error('Failed to load contracts');
+        }
+      );
+
+      return unsubscribe;
+    };
+
+    let unsubscribe;
+    checkAndLoadContracts().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [churchId, user]);
 
   // Load Brands
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId || !user) return;
 
-    const unsubscribe = onSnapshot(
-      collection(db, `churches/${churchId}/brands`),
-      (snapshot) => {
-        const brandsData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setBrands(brandsData);
-      },
-      (error) => {
-        console.error('Error loading brands:', error);
-        toast.error('Failed to load brands');
+    // Only load brands for users with finance access
+    const checkAndLoadBrands = async () => {
+      const hasFinanceAccess = await canAccessModule(user, churchId, 'finances');
+      if (!hasFinanceAccess) {
+        return;
       }
-    );
 
-    return () => unsubscribe();
-  }, [churchId]);
+      const unsubscribe = onSnapshot(
+        collection(db, `churches/${churchId}/brands`),
+        (snapshot) => {
+          const brandsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setBrands(brandsData);
+        },
+        (error) => {
+          console.error('Error loading brands:', error);
+          toast.error('Failed to load brands');
+        }
+      );
+
+      return unsubscribe;
+    };
+
+    let unsubscribe;
+    checkAndLoadBrands().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [churchId, user]);
 
   // Fetch users for the church
   useEffect(() => {
@@ -1861,7 +2012,8 @@ const TimeTracker = () => {
       areaOfFocus: '',
       costCode: '',
       duration: '',
-      durationMode: 'start'
+      durationMode: 'start',
+      userId: user?.uid || '' // Preselect current user
     });
   };
 
@@ -2394,9 +2546,9 @@ const TimeTracker = () => {
     console.log('editingCostCode:', editingCostCode);
 
     // Validate required fields
-    if (!newCostCode.areaOfFocusId) {
-      console.error('Validation failed: areaOfFocusId is missing');
-      toast.error('Please select an Area of Focus');
+    if (!newCostCode.areaOfFocusIds || newCostCode.areaOfFocusIds.length === 0) {
+      console.error('Validation failed: areaOfFocusIds is missing');
+      toast.error('Please select at least one Area of Focus');
       return;
     }
 
@@ -2407,15 +2559,18 @@ const TimeTracker = () => {
     }
 
     try {
-      const costCodeData = {
-        ...newCostCode,
-        userId: user.uid,
-        churchId,
-        updatedAt: new Date()
-      };
-
       if (editingCostCode) {
-        // Update existing cost code
+        // Update existing cost code with the first selected area
+        const costCodeData = {
+          ...newCostCode,
+          areaOfFocusId: newCostCode.areaOfFocusIds[0], // Single area for existing cost code
+          userId: user.uid,
+          churchId,
+          updatedAt: new Date()
+        };
+        
+        delete costCodeData.areaOfFocusIds; // Remove array field
+        
         await updateDoc(doc(db, `churches/${churchId}/costCodes`, editingCostCode.id), {
           ...costCodeData,
           updatedAt: serverTimestamp()
@@ -2428,26 +2583,85 @@ const TimeTracker = () => {
             : costCode
         ));
 
-        toast.success('Cost code updated successfully!');
-      } else {
-        // Create new cost code
-        costCodeData.createdAt = new Date();
+        // Create additional cost codes for any extra selected areas
+        const additionalAreas = newCostCode.areaOfFocusIds.slice(1); // Skip first area (already updated)
+        const createdCostCodes = [];
         
-        const docRef = await addDoc(collection(db, `churches/${churchId}/costCodes`), {
-          ...costCodeData,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+        if (additionalAreas.length > 0) {
+          for (const areaOfFocusId of additionalAreas) {
+            const areaName = areasOfFocus.find(area => area.id === areaOfFocusId)?.name || '';
+            
+            const newCostCodeData = {
+              code: newCostCode.code,
+              description: newCostCode.description,
+              category: newCostCode.category,
+              costPerHour: newCostCode.costPerHour,
+              areaOfFocusId: areaOfFocusId,
+              userId: user.uid,
+              churchId,
+              createdAt: new Date()
+            };
+            
+            const docRef = await addDoc(collection(db, `churches/${churchId}/costCodes`), {
+              ...newCostCodeData,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
 
-        // Immediately update local state
-        const newCostCodeWithId = {
-          id: docRef.id,
-          ...costCodeData
-        };
-        setCostCodes(prev => [newCostCodeWithId, ...prev]);
-        console.log('Cost code created successfully:', newCostCodeWithId);
+            // Add to created list for local state update
+            const newCostCodeWithId = {
+              id: docRef.id,
+              ...newCostCodeData
+            };
+            createdCostCodes.push(newCostCodeWithId);
+            console.log(`Additional cost code created for area "${areaName}":`, newCostCodeWithId);
+          }
 
-        toast.success('Cost code created successfully!');
+          // Update local state with all new cost codes
+          setCostCodes(prev => [...createdCostCodes, ...prev]);
+          
+          toast.success(`Cost code updated and ${createdCostCodes.length} additional cost code(s) created!`);
+        } else {
+          toast.success('Cost code updated successfully!');
+        }
+      } else {
+        // Create individual cost codes for each selected area of focus
+        const createdCostCodes = [];
+        
+        for (const areaOfFocusId of newCostCode.areaOfFocusIds) {
+          const areaName = areasOfFocus.find(area => area.id === areaOfFocusId)?.name || '';
+          
+          const costCodeData = {
+            code: newCostCode.code,
+            description: newCostCode.description,
+            category: newCostCode.category,
+            costPerHour: newCostCode.costPerHour,
+            areaOfFocusId: areaOfFocusId,
+            userId: user.uid,
+            churchId,
+            createdAt: new Date()
+          };
+          
+          const docRef = await addDoc(collection(db, `churches/${churchId}/costCodes`), {
+            ...costCodeData,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+
+          // Add to created list for local state update
+          const newCostCodeWithId = {
+            id: docRef.id,
+            ...costCodeData
+          };
+          createdCostCodes.push(newCostCodeWithId);
+          console.log(`Cost code created for area "${areaName}":`, newCostCodeWithId);
+        }
+
+        // Update local state with all new cost codes
+        setCostCodes(prev => [...createdCostCodes, ...prev]);
+        
+        const count = createdCostCodes.length;
+        toast.success(`${count} cost code${count > 1 ? 's' : ''} created successfully!`);
       }
 
       setNewCostCode({
@@ -2455,7 +2669,7 @@ const TimeTracker = () => {
         description: '',
         category: '',
         costPerHour: '',
-        areaOfFocusId: ''
+        areaOfFocusIds: []
       });
       setEditingCostCode(null);
       setShowCostCodeModal(false);
@@ -3788,13 +4002,218 @@ const TimeTracker = () => {
       fontFamily: "'Nunito', sans-serif",
       backgroundColor: "#ffffff",
       borderRadius: "12px",
-      boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)"
+      boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)",
+      position: "relative"
     }}>
+      {/* Organization Selector in Top Right */}
+      {availableOrganizations.length > 1 && (
+        <div style={{
+          position: "absolute",
+          top: "1rem",
+          right: "1rem",
+          zIndex: 1000,
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.5rem",
+          backgroundColor: "white",
+          padding: "0.75rem 1rem",
+          borderRadius: "0.5rem",
+          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+          border: "1px solid #e5e7eb",
+          minWidth: "250px"
+        }} data-dropdown>
+          <label style={{ fontSize: "0.875rem", fontWeight: "500", color: "#374151" }}>Organization:</label>
+          
+          {/* Custom Dropdown */}
+          <div style={{ position: "relative", width: "100%" }}>
+            {/* Dropdown Trigger */}
+            <div
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              style={{
+                padding: "0.5rem",
+                border: "1px solid #d1d5db",
+                borderRadius: "0.25rem",
+                fontSize: "0.875rem",
+                backgroundColor: "white",
+                cursor: "pointer",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                fontWeight: "500",
+                gap: "0.5rem"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1 }}>
+                {currentOrganization?.logo && (
+                  <img 
+                    src={currentOrganization.logo.startsWith('http') ? currentOrganization.logo : `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodeURIComponent(currentOrganization.logo.substring(1))}?alt=media`}
+                    alt={currentOrganization.nombre || currentOrganization.name || 'Logo'}
+                    style={{
+                      width: "24px",
+                      height: "24px",
+                      borderRadius: "50%",
+                      objectFit: "cover"
+                    }}
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                    }}
+                  />
+                )}
+                <span>
+                  {currentOrganization ? (currentOrganization.nombre || currentOrganization.name || currentOrganization.churchId || currentOrganization.id) : 'Select organization...'}
+                </span>
+              </div>
+              <FaChevronDown style={{ 
+                transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s',
+                flexShrink: 0
+              }} />
+            </div>
+            
+            {/* Dropdown Menu */}
+            {isDropdownOpen && (
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                right: 0,
+                backgroundColor: "white",
+                border: "1px solid #d1d5db",
+                borderRadius: "0.25rem",
+                boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                zIndex: 1001,
+                maxHeight: "300px",
+                overflowY: "auto",
+                scrollbarWidth: "none", /* Firefox */
+                msOverflowStyle: "none"  /* IE and Edge */
+              }}
+              className="hide-scrollbar"
+              >
+                {/* Search Input in Dropdown */}
+                <div style={{ padding: "0.5rem", borderBottom: "1px solid #e5e7eb" }}>
+                  <input
+                    type="text"
+                    placeholder="Search organizations..."
+                    value={organizationSearchQuery}
+                    onChange={(e) => setOrganizationSearchQuery(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "0.25rem",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "0.25rem",
+                      fontSize: "0.875rem",
+                      boxSizing: "border-box"
+                    }}
+                    autoFocus
+                  />
+                </div>
+                
+                {/* Filtered Options */}
+                <div>
+                  {availableOrganizations
+                    .filter((org) => {
+                      const orgName = org.nombre || org.name || org.churchId || org.id || '';
+                      const searchLower = organizationSearchQuery.toLowerCase();
+                      return orgName.toLowerCase().includes(searchLower);
+                    })
+                    .map((org) => (
+                      <div
+                        key={org.id}
+                        onClick={() => {
+                          handleOrganizationSwitch(org.id);
+                          setIsDropdownOpen(false);
+                          setOrganizationSearchQuery('');
+                        }}
+                        style={{
+                          padding: "0.5rem 0.75rem",
+                          cursor: "pointer",
+                          backgroundColor: org.id === churchId ? "#f3f4f6" : "white",
+                          borderBottom: "1px solid #f3f4f6",
+                          fontWeight: org.id === churchId ? "600" : "500",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#f9fafb"}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = org.id === churchId ? "#f3f4f6" : "white"}
+                      >
+                        {org.logo && (
+                          <img 
+                            src={org.logo.startsWith('http') ? org.logo : `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodeURIComponent(org.logo.substring(1))}?alt=media`}
+                            alt={org.nombre || org.name || 'Logo'}
+                            style={{
+                              width: "24px",
+                              height: "24px",
+                              borderRadius: "50%",
+                              objectFit: "cover"
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <span>{org.nombre || org.name || org.churchId || org.id}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <Link to={`/organization/${churchId}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
       <ChurchHeader id={churchId} applyShadow={false} allowEditBannerLogo={true} />
       <div style={{ marginTop: "-30px" }}>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '1rem'
+        }}>
+          <h1 style={commonStyles.title}>Time Tracker</h1>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div style={{
+              backgroundColor: '#F3F4F6',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid #E5E7EB',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>👤</span>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: '500' }}>Your Role</div>
+                <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#1F2937', textTransform: 'capitalize' }}>
+                  {user?.role?.replace('_', ' ') || 'Member'}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              style={{
+                backgroundColor: '#EF4444',
+                color: 'white',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: '500',
+                fontSize: '0.95rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#DC2626'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#EF4444'}
+            >
+              🚪 Logout
+            </button>
+          </div>
+        </div>
         <div className="time-tracker-container">
           {/* Tab Navigation */}
           <div className="tab-navigation">
@@ -3889,7 +4308,7 @@ const TimeTracker = () => {
               <div className="table-header">
                 <h3>Time Entries ({filteredAndSortedEntries().length})</h3>
                 <div className="table-controls">
-                  <div className="search-container">
+                  <div className="tt-search-container">
                     <input
                       type="text"
                       placeholder="Search entries..."
@@ -4858,10 +5277,14 @@ const TimeTracker = () => {
                         <h3>{costCode.code}</h3>
                         <div className="cost-code-meta">
                           <span className="cost-code-id">ID: {costCode.id.slice(-6)}</span>
-                          {costCode.areaOfFocusId && (
-                            <span className="area-badge">
-                              {areasOfFocus.find(area => area.id === costCode.areaOfFocusId)?.name || 'Unknown Area'}
-                            </span>
+                          {(costCode.areaOfFocusIds || (costCode.areaOfFocusId ? [costCode.areaOfFocusId] : [])).length > 0 && (
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {(costCode.areaOfFocusIds || [costCode.areaOfFocusId]).filter(Boolean).map(areaId => (
+                                <span key={areaId} className="area-badge">
+                                  {areasOfFocus.find(area => area.id === areaId)?.name || 'Unknown Area'}
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -4875,7 +5298,7 @@ const TimeTracker = () => {
                             description: costCode.description,
                             category: costCode.category,
                             costPerHour: costCode.costPerHour || '',
-                            areaOfFocusId: costCode.areaOfFocusId || ''
+                            areaOfFocusIds: costCode.areaOfFocusIds || (costCode.areaOfFocusId ? [costCode.areaOfFocusId] : []) // Support both old and new format
                           });
                           setShowCostCodeModal(true);
                         }}
@@ -4883,6 +5306,33 @@ const TimeTracker = () => {
                         title="Edit Cost Code"
                       >
                         ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingCostCode(null); // Not editing, creating new
+                          setNewCostCode({
+                            code: costCode.code,
+                            description: costCode.description,
+                            category: costCode.category,
+                            costPerHour: costCode.costPerHour || '',
+                            areaOfFocusIds: [] // Empty so user can select different areas
+                          });
+                          setShowCostCodeModal(true);
+                        }}
+                        className="duplicate-btn"
+                        title="Duplicate Cost Code"
+                        style={{
+                          backgroundColor: '#8b5cf6',
+                          color: 'white',
+                          border: 'none',
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          fontWeight: '500'
+                        }}
+                      >
+                        📋 Duplicate
                       </button>
                       <button
                         onClick={() => deleteCostCode(costCode.id)}
@@ -5035,7 +5485,7 @@ const TimeTracker = () => {
             <div className="expenses-summary">
               <h3>Expenses</h3>
               <div className="expenses-controls">
-                <div className="search-container">
+                <div className="tt-search-container">
                   <input
                     type="text"
                     placeholder="Search expenses..."
@@ -6456,7 +6906,7 @@ const TimeTracker = () => {
                     description: '',
                     category: '',
                     costPerHour: '',
-                    areaOfFocusId: ''
+                    areaOfFocusIds: []
                   });
                 }}
               >
@@ -6466,43 +6916,190 @@ const TimeTracker = () => {
             
             <form onSubmit={saveCostCode} className="cost-code-form">
               <div className="form-group">
-                <label>Area of Focus *</label>
-                <select
-                  value={newCostCode.areaOfFocusId}
-                  onChange={(e) => setNewCostCode({...newCostCode, areaOfFocusId: e.target.value})}
-                  required
-                >
-                  <option value="">Select Area of Focus</option>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label>Area of Focus *</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCostCodeModal(false);
+                      setShowAreaOfFocusModal(true);
+                    }}
+                    style={{
+                      background: '#667eea',
+                      color: 'white',
+                      border: 'none',
+                      padding: '4px 12px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      fontWeight: '500'
+                    }}
+                  >
+                    + Quick Add
+                  </button>
+                </div>
+                {!editingCostCode && newCostCode.areaOfFocusIds.length > 1 && (
+                  <div style={{
+                    backgroundColor: '#fef3c7',
+                    border: '1px solid #fbbf24',
+                    borderRadius: '6px',
+                    padding: '8px 12px',
+                    marginBottom: '8px',
+                    fontSize: '0.85rem',
+                    color: '#92400e'
+                  }}>
+                    ℹ️ Selecting multiple areas will create <strong>{newCostCode.areaOfFocusIds.length} separate cost codes</strong> (one for each area)
+                  </div>
+                )}
+                <div style={{
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  padding: '8px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  backgroundColor: '#f9fafb'
+                }}>
                   {areasOfFocus.length === 0 ? (
-                    <option value="" disabled>No areas of focus available. Please create one first.</option>
+                    <div style={{ padding: '12px', textAlign: 'center', color: '#6b7280' }}>
+                      No areas of focus available. 
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setShowCostCodeModal(false);
+                          setShowAreaOfFocusModal(true);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#667eea',
+                          textDecoration: 'underline',
+                          cursor: 'pointer',
+                          marginLeft: '4px'
+                        }}
+                      >
+                        Create one now
+                      </button>
+                    </div>
+                  ) : editingCostCode ? (
+                    // When editing, only show areas that don't already have this cost code
+                    <div>
+                      <select
+                        value={newCostCode.areaOfFocusIds[0] || ''}
+                        onChange={(e) => {
+                          const selectedAreaId = e.target.value;
+                          if (!selectedAreaId) {
+                            setNewCostCode({
+                              ...newCostCode,
+                              areaOfFocusIds: []
+                            });
+                            return;
+                          }
+                          
+                          // Check if another cost code already exists with the same code and this area
+                          const existingCostCode = costCodes.find(cc => 
+                            cc.code === editingCostCode.code && 
+                            cc.id !== editingCostCode.id &&
+                            (cc.areaOfFocusId === selectedAreaId || cc.areaOfFocusIds?.includes(selectedAreaId))
+                          );
+                          
+                          if (existingCostCode) {
+                            toast.error(`A cost code "${editingCostCode.code}" already exists for this area. Use duplicate instead to create a new one.`);
+                            return;
+                          }
+                          
+                          setNewCostCode({
+                            ...newCostCode,
+                            areaOfFocusIds: [selectedAreaId]
+                          });
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '8px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '4px',
+                          backgroundColor: 'white'
+                        }}
+                        required
+                      >
+                        <option value="">Select Area of Focus</option>
+                        {areasOfFocus.map(area => {
+                          // Check if this area already has this cost code
+                          const hasExistingCostCode = costCodes.some(cc => 
+                            cc.code === editingCostCode.code && 
+                            cc.id !== editingCostCode.id &&
+                            (cc.areaOfFocusId === area.id || cc.areaOfFocusIds?.includes(area.id))
+                          );
+                          
+                          return (
+                            <option 
+                              key={area.id} 
+                              value={area.id}
+                              disabled={hasExistingCostCode}
+                            >
+                              {area.name} {hasExistingCostCode ? '(Already exists)' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <small style={{ color: '#6b7280', marginTop: '4px', display: 'block', fontSize: '0.85rem' }}>
+                        💡 To add this cost code to areas that already have it, use the "Duplicate" button instead
+                      </small>
+                    </div>
                   ) : (
+                    // When creating new, show as checkboxes (multi-selection)
                     areasOfFocus.map(area => (
-                      <option key={area.id} value={area.id}>
-                        {area.name}
-                      </option>
+                      <label
+                        key={area.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '8px',
+                          cursor: 'pointer',
+                          borderRadius: '4px',
+                          marginBottom: '4px',
+                          backgroundColor: newCostCode.areaOfFocusIds.includes(area.id) ? '#e0e7ff' : 'white',
+                          border: newCostCode.areaOfFocusIds.includes(area.id) ? '2px solid #667eea' : '1px solid #e5e7eb',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
+                            e.currentTarget.style.backgroundColor = '#f3f4f6';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
+                            e.currentTarget.style.backgroundColor = 'white';
+                          }
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newCostCode.areaOfFocusIds.includes(area.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewCostCode({
+                                ...newCostCode,
+                                areaOfFocusIds: [...newCostCode.areaOfFocusIds, area.id]
+                              });
+                            } else {
+                              setNewCostCode({
+                                ...newCostCode,
+                                areaOfFocusIds: newCostCode.areaOfFocusIds.filter(id => id !== area.id)
+                              });
+                            }
+                          }}
+                          style={{ marginRight: '8px', cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: newCostCode.areaOfFocusIds.includes(area.id) ? '600' : '400' }}>
+                          {area.name}
+                        </span>
+                      </label>
                     ))
                   )}
-                </select>
-                {areasOfFocus.length === 0 && (
-                  <small style={{color: '#ef4444', marginTop: '4px', display: 'block'}}>
-                    You need to create an Area of Focus before adding cost codes. 
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setShowCostCodeModal(false);
-                        setShowAreaOfFocusModal(true);
-                      }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#667eea',
-                        textDecoration: 'underline',
-                        cursor: 'pointer',
-                        marginLeft: '4px'
-                      }}
-                    >
-                      Create one now
-                    </button>
+                </div>
+                {!editingCostCode && newCostCode.areaOfFocusIds.length > 0 && (
+                  <small style={{ color: '#667eea', marginTop: '4px', display: 'block' }}>
+                    {newCostCode.areaOfFocusIds.length} area(s) selected → {newCostCode.areaOfFocusIds.length} cost code(s) will be created
                   </small>
                 )}
               </div>
@@ -6564,6 +7161,121 @@ const TimeTracker = () => {
                 </button>
               </div>
             </form>
+            
+            {/* Separate card for adding to additional areas when editing */}
+            {editingCostCode && areasOfFocus.filter(area => area.id !== newCostCode.areaOfFocusIds[0]).length > 0 && (
+              <div style={{
+                marginTop: '20px',
+                padding: '16px',
+                backgroundColor: '#f0f9ff',
+                border: '2px solid #38bdf8',
+                borderRadius: '8px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '12px'
+                }}>
+                  <span style={{ fontSize: '1.2rem' }}>➕</span>
+                  <h4 style={{ margin: 0, color: '#0369a1', fontSize: '1rem' }}>
+                    Add This Cost Code to Additional Areas
+                  </h4>
+                </div>
+                
+                <p style={{ 
+                  fontSize: '0.85rem', 
+                  color: '#0c4a6e', 
+                  marginBottom: '12px',
+                  lineHeight: '1.4'
+                }}>
+                  Select additional areas where you want to use this same cost code. A separate cost code will be created for each area with identical details.
+                </p>
+                
+                <div style={{
+                  maxHeight: '180px',
+                  overflowY: 'auto',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  padding: '8px',
+                  backgroundColor: 'white'
+                }}>
+                  {areasOfFocus
+                    .filter(area => area.id !== newCostCode.areaOfFocusIds[0])
+                    .map(area => (
+                      <label
+                        key={area.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '8px',
+                          cursor: 'pointer',
+                          borderRadius: '4px',
+                          marginBottom: '6px',
+                          backgroundColor: newCostCode.areaOfFocusIds.includes(area.id) ? '#dbeafe' : 'white',
+                          border: newCostCode.areaOfFocusIds.includes(area.id) ? '2px solid #0ea5e9' : '1px solid #e5e7eb',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
+                            e.currentTarget.style.backgroundColor = '#f0f9ff';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!newCostCode.areaOfFocusIds.includes(area.id)) {
+                            e.currentTarget.style.backgroundColor = 'white';
+                          }
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newCostCode.areaOfFocusIds.includes(area.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewCostCode({
+                                ...newCostCode,
+                                areaOfFocusIds: [...newCostCode.areaOfFocusIds, area.id]
+                              });
+                            } else {
+                              setNewCostCode({
+                                ...newCostCode,
+                                areaOfFocusIds: newCostCode.areaOfFocusIds.filter(id => id !== area.id)
+                              });
+                            }
+                          }}
+                          style={{ marginRight: '10px', cursor: 'pointer', width: '16px', height: '16px' }}
+                        />
+                        <span style={{ 
+                          fontWeight: newCostCode.areaOfFocusIds.includes(area.id) ? '600' : '400',
+                          color: newCostCode.areaOfFocusIds.includes(area.id) ? '#0369a1' : '#374151'
+                        }}>
+                          {area.name}
+                        </span>
+                      </label>
+                    ))}
+                </div>
+                
+                {newCostCode.areaOfFocusIds.length > 1 && (
+                  <div style={{
+                    backgroundColor: '#fef3c7',
+                    border: '1px solid #fbbf24',
+                    borderRadius: '6px',
+                    padding: '10px 12px',
+                    marginTop: '12px',
+                    fontSize: '0.85rem',
+                    color: '#92400e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <span style={{ fontSize: '1.1rem' }}>ℹ️</span>
+                    <span>
+                      <strong>{newCostCode.areaOfFocusIds.length - 1} new cost code{newCostCode.areaOfFocusIds.length - 1 > 1 ? 's' : ''}</strong> will be created with the same code, description, category, and rate
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

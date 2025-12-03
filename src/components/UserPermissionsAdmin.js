@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { 
@@ -207,6 +207,18 @@ const UserPermissionsAdmin = () => {
         <div className="permission-denied">
           <h2>Access Denied</h2>
           <p>You do not have permission to manage user permissions.</p>
+          <Link 
+            to={`/organization/${churchId}/mi-organizacion`}
+            style={{
+              color: '#4f46e5',
+              textDecoration: 'none',
+              fontWeight: '500',
+              display: 'inline-block',
+              marginTop: '1rem'
+            }}
+          >
+            ← Go Back to Mi Organización
+          </Link>
         </div>
       </div>
     );

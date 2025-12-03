@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { db } from "../firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
@@ -80,6 +80,7 @@ const formLabelStyle = {
 const MiOrganizacion = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [organizationData, setOrganizationData] = useState(null);
   const [error, setError] = useState(null);
@@ -278,7 +279,19 @@ const MiOrganizacion = () => {
 
   useEffect(() => {
     const fetchOrganizationData = async () => {
-      if (!id) return;
+      if (!id || !user) return;
+
+      // Reset error state when ID changes
+      setError(null);
+
+      // Check if user has access to this organization
+      // Global admins can access any organization
+      // Regular users (admin, member) can only access their assigned church
+      if (user.role !== 'global_admin' && user.churchId && user.churchId !== id) {
+        setError("Access Denied: You don't have permission to access this organization.");
+        setLoading(false);
+        return;
+      }
 
       try {
         setLoading(true);
@@ -306,7 +319,7 @@ const MiOrganizacion = () => {
     };
 
     fetchOrganizationData();
-  }, [id]);
+  }, [id, user]);
 
   useEffect(() => {
     const checkPermissions = async () => {
@@ -431,8 +444,54 @@ const MiOrganizacion = () => {
 
   if (error) {
     return (
-      <div className="p-4 text-red-600">
-        <p>{error}</p>
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }}>
+        <div style={{
+          maxWidth: '500px',
+          margin: '0 auto',
+          backgroundColor: 'white',
+          padding: '3rem',
+          borderRadius: '16px',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🚫</div>
+          <h1 style={{ ...commonStyles.title, marginBottom: '1rem', color: '#ef4444' }}>
+            Access Denied
+          </h1>
+          <p style={{ color: '#6b7280', marginBottom: '2rem', fontSize: '1.1rem' }}>
+            {error}
+          </p>
+          {user?.churchId && (
+            <button
+              onClick={() => {
+                console.log('Navigating to church:', user.churchId);
+                navigate(`/organization/${user.churchId}/mi-organizacion`, { replace: true });
+              }}
+              style={{
+                backgroundColor: '#4F46E5',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                display: 'inline-block',
+                fontWeight: '500',
+                marginBottom: '1rem',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              Go to My Organization
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -444,7 +503,31 @@ const MiOrganizacion = () => {
       </Link>
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
       <div style={{ marginTop: "-30px" }}>
-        <h1 style={commonStyles.title}>My Organization</h1>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '1rem'
+        }}>
+          <h1 style={commonStyles.title}>My Organization</h1>
+          <div style={{
+            backgroundColor: '#F3F4F6',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: '1px solid #E5E7EB',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ fontSize: '1.2rem' }}>👤</span>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: '500' }}>Your Role</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#1F2937', textTransform: 'capitalize' }}>
+                {user?.role?.replace('_', ' ') || 'Member'}
+              </div>
+            </div>
+          </div>
+        </div>
         {(user.role === "global_admin" ||
           (user.role === "admin" && user.churchId == id)) && (
           <div
