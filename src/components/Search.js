@@ -12,6 +12,8 @@ import {
 } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { onAuthStateChanged } from "firebase/auth";
+import Skeleton from "react-loading-skeleton";
+import "react-loading-skeleton/dist/skeleton.css";
 
 const Search = () => {
   const navigate = useNavigate();
@@ -103,6 +105,7 @@ const Search = () => {
   useEffect(() => {
     const fetchChurches = async () => {
       try {
+        setIsLoading(true);
         setError(null);
         firebaseDebug('Fetching churches from Firestore');
         
@@ -142,6 +145,8 @@ const Search = () => {
         
         // Set empty array to avoid undefined errors
         setChurches([]);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -455,6 +460,25 @@ const Search = () => {
     }
   };
 
+  // Skeleton loader component for church cards
+  const ChurchCardSkeleton = () => (
+    <div className="church-card">
+      <div className="card-header">
+        <Skeleton height={180} />
+        <div className="card-overlay">
+          <Skeleton circle width={50} height={50} />
+        </div>
+      </div>
+      <div className="card-content">
+        <Skeleton height={24} width="80%" style={{ margin: '0 auto 15px' }} />
+        <Skeleton height={18} count={2} style={{ marginBottom: '20px' }} />
+        <div className="card-actions">
+          <Skeleton height={40} width={150} borderRadius={25} />
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="search-container">
       {/* Header Section */}
@@ -529,7 +553,18 @@ const Search = () => {
       </div>
 
       {/* Church Cards Below Search */}
-      {(searchQuery || selectedBrand || churches.length > 0) && (
+      {isLoading ? (
+        <>
+          <h3 className="churches-title">
+            📋 Loading Organizations...
+          </h3>
+          <div className="churches-grid">
+            {Array.from({ length: 12 }).map((_, index) => (
+              <ChurchCardSkeleton key={index} />
+            ))}
+          </div>
+        </>
+      ) : (searchQuery || selectedBrand || churches.length > 0) && (
         <>
           <h3 className="churches-title">
             {selectedBrand && searchQuery ? 
