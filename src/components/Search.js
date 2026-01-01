@@ -466,12 +466,12 @@ const Search = () => {
       <div className="card-header">
         <Skeleton height={180} />
         <div className="card-overlay">
-          <Skeleton circle width={50} height={50} />
+          <Skeleton circle width={50} height={50} className="card-logo" />
         </div>
       </div>
       <div className="card-content">
         <Skeleton height={24} width="80%" style={{ margin: '0 auto 15px' }} />
-        <Skeleton height={18} count={2} style={{ marginBottom: '20px' }} />
+        <Skeleton height={36} width="90%" style={{ marginBottom: '20px' }} />
         <div className="card-actions">
           <Skeleton height={40} width={150} borderRadius={25} />
         </div>
