@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { Suspense } from "react";
 import {
   BrowserRouter as Router,
   Route,
@@ -63,7 +63,23 @@ import ChurchApp from "./components/ChurchApp"; // Update this import path
 import "bootstrap/dist/css/bootstrap.min.css";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import EventDetails from "./components/EventDetails";
+
+// Loading fallback component
+const LoadingFallback = () => (
+  <div style={{
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '100vh',
+    fontSize: '18px',
+    color: '#666'
+  }}>
+    Loading...
+  </div>
+);
+
+// Lazy load components for code splitting (reduces initial bundle size)
+const EventDetails = React.lazy(() => import("./components/EventDetails"));
 import VisitorDetails from "./components/VisitorDetails";
 import EventCoordination from "./components/EventCoordination";
 import ManageGroups from "./components/ManageGroups";
@@ -131,8 +147,10 @@ const App = () => {
 
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
+      <ErrorBoundary>
+        <Router>
+          <Suspense fallback={<LoadingFallback />}>
+            <Routes>
           <Route path="/" element={<Search />} />{" "}
           {/* Set Search as the main page */}
           <Route path="/organization/:id" element={<ChurchApp />} />
@@ -647,8 +665,10 @@ const App = () => {
             } 
           />
           <Route path="/freshbooks/callback" element={<FreshBooksCallback />} />
-        </Routes>
-      </Router>
+            </Routes>
+          </Suspense>
+        </Router>
+      </ErrorBoundary>
       <ToastContainer />
     </AuthProvider>
   );

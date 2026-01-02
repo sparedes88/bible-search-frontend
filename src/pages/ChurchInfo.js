@@ -250,13 +250,29 @@ const ChurchInfo = () => {
         {/* Header Section */}
         <div style={commonStyles.banner}>
           {loading ? <Skeleton height={300} /> : church?.portadaArticulos ? (
-            <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />
+            <img 
+              src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} 
+              alt="Church Banner" 
+              style={commonStyles.bannerImage}
+              loading="lazy"
+              onError={(e) => {
+                e.target.src = '/img/image-fallback.svg';
+              }}
+            />
           ) : <Skeleton height={300} />}
         </div>
 
         <div style={commonStyles.logoContainer}>
           {loading ? <Skeleton circle height={90} width={90} /> : church?.Logo ? (
-            <img src={`https://iglesia-tech-api.e2api.com${church.Logo}`} alt="Church Logo" style={commonStyles.logo} />
+            <img 
+              src={`https://iglesia-tech-api.e2api.com${church.Logo}`} 
+              alt="Church Logo" 
+              style={commonStyles.logo}
+              loading="lazy"
+              onError={(e) => {
+                e.target.src = '/img/logo-fallback.svg';
+              }}
+            />
           ) : <Skeleton circle height={90} width={90} />}
         </div>
 

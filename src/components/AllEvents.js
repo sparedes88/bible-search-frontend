@@ -669,6 +669,7 @@ const AllEvents = () => {
                           } 
                           alt={event.title || 'Event'} 
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          loading="lazy"
                           onError={(e) => {
                             console.error("Image failed to load:", event.imageUrl);
                             e.target.style.display = 'none';

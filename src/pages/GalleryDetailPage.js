@@ -4,6 +4,8 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import FastImage from "../components/FastImage";
+import { batchPreloadImages } from "../utils/imageService";
 
 const GalleryDetailPage = () => {
   const { id, galleryId } = useParams();
@@ -38,6 +40,17 @@ const GalleryDetailPage = () => {
         // Fetch church data for banner and logo
         const churchData = await searchChurchById(id);
         setChurch(churchData);
+        
+        // Preload gallery images in batch (faster)
+        if (gallery && Array.isArray(gallery.photos) && gallery.photos.length > 0) {
+          const imageUrls = gallery.photos.map(photo => 
+            `https://iglesia-tech-api.e2api.com${photo.src_path}`
+          );
+          // Batch preload images (max 5 at a time)
+          batchPreloadImages(imageUrls, 5).catch(() => {
+            // Continue even if preload fails
+          });
+        }
       } catch (error) {
         console.error("❌ Error fetching gallery images:", error);
         setImages([]);
@@ -53,14 +66,30 @@ const GalleryDetailPage = () => {
       {/* Banner */}
       <div style={commonStyles.banner}>
         {loading ? <Skeleton height={300} /> : church?.portadaArticulos ? (
-          <img src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} alt="Church Banner" style={commonStyles.bannerImage} />
+          <img 
+            src={`https://iglesia-tech-api.e2api.com${church.portadaArticulos}`} 
+            alt="Church Banner" 
+            style={commonStyles.bannerImage}
+            loading="lazy"
+            onError={(e) => {
+              e.target.src = '/img/image-fallback.svg';
+            }}
+          />
         ) : <Skeleton height={300} />}
       </div>
 
       {/* Logo */}
       <div style={commonStyles.logoContainer}>
         {loading ? <Skeleton circle height={90} width={90} /> : church?.Logo ? (
-          <img src={`https://iglesia-tech-api.e2api.com${church.Logo}`} alt="Church Logo" style={commonStyles.logo} />
+          <img 
+            src={`https://iglesia-tech-api.e2api.com${church.Logo}`} 
+            alt="Church Logo" 
+            style={commonStyles.logo}
+            loading="lazy"
+            onError={(e) => {
+              e.target.src = '/img/logo-fallback.svg';
+            }}
+          />
         ) : <Skeleton circle height={90} width={90} />}
       </div>
 
@@ -76,7 +105,13 @@ const GalleryDetailPage = () => {
           <div style={styles.grid}>
             {images.map((image) => (
               <div key={image.id} style={styles.imageCard}>
-                <img src={`https://iglesia-tech-api.e2api.com${image.src_path}`} alt="Gallery Item" style={styles.galleryImage} />
+                <FastImage
+                  src={`https://iglesia-tech-api.e2api.com${image.src_path}`}
+                  alt="Gallery Item"
+                  style={styles.galleryImage}
+                  priority="low"
+                  showThumbnail={true}
+                />
               </div>
             ))}
           </div>

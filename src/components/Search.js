@@ -231,38 +231,41 @@ const Search = () => {
     const preloadImageUrls = async () => {
       if (churches.length === 0) return;
       
-      console.log('Starting image preload for', churches.length, 'churches');
-      const urls = {};
-      for (const church of churches) {
+      // Batch load images (max 5 at a time for speed)
+      const imageUrlsToLoad = [];
+      const urlMap = {};
+      
+      churches.slice(0, 20).forEach(church => { // Only preload first 20 for speed
         const churchId = church.id;
         
-        // Preload banner/header image
         if (church.banner) {
-          console.log('Preloading banner for church', church.nombre, 'path:', church.banner);
-          try {
-            const bannerUrl = await getImageUrl(church.banner);
-            urls[`${churchId}_banner`] = bannerUrl;
-            console.log('Successfully preloaded banner URL:', bannerUrl);
-          } catch (error) {
-            console.warn(`Failed to preload banner for church ${churchId}:`, error);
-          }
+          imageUrlsToLoad.push({ url: church.banner, key: `${churchId}_banner` });
         }
-        
-        // Preload logo image
         if (church.logo) {
-          console.log('Preloading logo for church', church.nombre, 'path:', church.logo);
-          try {
-            const logoUrl = await getImageUrl(church.logo);
-            urls[`${churchId}_logo`] = logoUrl;
-            console.log('Successfully preloaded logo URL:', logoUrl);
-          } catch (error) {
-            console.warn(`Failed to preload logo for church ${churchId}:`, error);
-          }
+          imageUrlsToLoad.push({ url: church.logo, key: `${churchId}_logo` });
         }
-      }
+      });
       
-      console.log('Setting imageUrls state with:', urls);
-      setImageUrls(urls);
+      // Batch preload with timeout
+      const loadPromises = imageUrlsToLoad.map(async ({ url, key }) => {
+        try {
+          const bannerUrl = await Promise.race([
+            getImageUrl(url),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+          ]);
+          urlMap[key] = bannerUrl;
+        } catch (error) {
+          // Skip failed images, continue with others
+        }
+      });
+      
+      // Wait for all or timeout after 5 seconds
+      await Promise.race([
+        Promise.all(loadPromises),
+        new Promise(resolve => setTimeout(resolve, 5000))
+      ]);
+      
+      setImageUrls(urlMap);
     };
     
     preloadImageUrls();
@@ -618,15 +621,17 @@ const Search = () => {
             ))}
           </div>
 
-          {/* Pagination Controls */}
+          {/* Pagination Controls - Enhanced */}
           {totalPages > 1 && (
             <div className="pagination-container">
               <button 
                 onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
-                className="pagination-button"
+                className="pagination-button pagination-prev"
+                aria-label="Previous page"
               >
-                ← Previous
+                <span className="pagination-icon">←</span>
+                <span className="pagination-text">Previous</span>
               </button>
               
               <div className="pagination-numbers">
@@ -635,6 +640,8 @@ const Search = () => {
                     key={page}
                     onClick={() => handlePageChange(page)}
                     className={`pagination-number ${currentPage === page ? 'active' : ''}`}
+                    aria-label={`Go to page ${page}`}
+                    aria-current={currentPage === page ? 'page' : undefined}
                   >
                     {page}
                   </button>
@@ -644,9 +651,11 @@ const Search = () => {
               <button 
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={currentPage === totalPages}
-                className="pagination-button"
+                className="pagination-button pagination-next"
+                aria-label="Next page"
               >
-                Next →
+                <span className="pagination-text">Next</span>
+                <span className="pagination-icon">→</span>
               </button>
             </div>
           )}

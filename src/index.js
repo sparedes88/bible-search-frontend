@@ -6,6 +6,19 @@ import App from './App';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 
+// Register Service Worker for aggressive caching
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then((registration) => {
+        console.log('Service Worker registered:', registration);
+      })
+      .catch((error) => {
+        console.log('Service Worker registration failed:', error);
+      });
+  });
+}
+
 const container = document.getElementById('root');
 if (!container) {
   throw new Error('Failed to find the root element');

@@ -67,7 +67,13 @@ const GalleryPage = () => {
       {/* Logo */}
       <div style={commonStyles.logoContainer} onClick={handleLogoTap}>
         {loading ? <Skeleton circle height={90} width={90} /> : church?.Logo ? (
-          <img src={`https://iglesia-tech-api.e2api.com${church.Logo}`} alt="Church Logo" style={commonStyles.logo} />
+          <img 
+            src={`https://iglesia-tech-api.e2api.com${church.Logo}`} 
+            alt="Church Logo" 
+            style={commonStyles.logo}
+            loading="lazy"
+            onError={(e) => { e.target.src = '/img/logo-fallback.svg'; }}
+          />
         ) : <Skeleton circle height={90} width={90} />}
       </div>
 

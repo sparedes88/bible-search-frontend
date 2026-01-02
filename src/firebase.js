@@ -160,8 +160,21 @@ const initializeFirebase = async () => {
 const getCoursesCollection = () => collection(db, "courses");
 const getCategoriesCollection = () => collection(db, "categories");
 
-// Initialize Firebase services
-initializeFirebase().catch(console.error);
+// Initialize Firebase services asynchronously (non-blocking)
+// This allows the app to start faster
+let firebaseInitialized = false;
+const initPromise = initializeFirebase()
+  .then(() => {
+    firebaseInitialized = true;
+    debugLog("Firebase initialization completed");
+  })
+  .catch((error) => {
+    console.error("Firebase initialization failed:", error);
+    // Don't throw - allow app to continue
+  });
+
+// Export initialization promise for components that need it
+export const firebaseReady = () => initPromise;
 
 export {
   auth,
