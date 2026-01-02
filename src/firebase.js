@@ -112,19 +112,21 @@ const initializeFirebase = async () => {
       debugLog("Connected to local emulators");
     }
 
-    // Enable offline persistence with retry logic
-    try {
-      await enableIndexedDbPersistence(db);
-      debugLog("Multi-tab persistence enabled");
-    } catch (err) {
-      if (err.code === "failed-precondition") {
-        debugLog("Multiple tabs open, persistence enabled in another tab");
-      } else if (err.code === "unimplemented") {
-        debugLog("Browser doesn't support persistence");
-      } else {
-        throw err;
-      }
-    }
+    // Enable offline persistence with retry logic (non-blocking)
+    enableIndexedDbPersistence(db)
+      .then(() => {
+        debugLog("Multi-tab persistence enabled");
+      })
+      .catch((err) => {
+        if (err.code === "failed-precondition") {
+          debugLog("Multiple tabs open, persistence enabled in another tab");
+        } else if (err.code === "unimplemented") {
+          debugLog("Browser doesn't support persistence");
+        } else {
+          debugLog(`Persistence error: ${err.message}`);
+        }
+        // Don't throw - allow app to continue
+      });
 
     // Initialize Analytics only in production and after everything else is set up
     if (!isLocal) {
@@ -137,18 +139,24 @@ const initializeFirebase = async () => {
       }
     }
 
-    // Set up connection monitoring
-    const connectedRef = doc(db, ".info/connected");
-    onSnapshot(
-      connectedRef,
-      (snap) => {
-        const isConnected = snap.exists() && snap.data()?.connected;
-        debugLog(
-          `Connection state: ${isConnected ? "Connected" : "Disconnected"}`
+    // Set up connection monitoring (non-blocking, async)
+    setTimeout(() => {
+      try {
+        const connectedRef = doc(db, ".info/connected");
+        onSnapshot(
+          connectedRef,
+          (snap) => {
+            const isConnected = snap.exists() && snap.data()?.connected;
+            debugLog(
+              `Connection state: ${isConnected ? "Connected" : "Disconnected"}`
+            );
+          },
+          (error) => debugLog(`Connection monitoring error: ${error.message}`)
         );
-      },
-      (error) => debugLog(`Connection monitoring error: ${error.message}`)
-    );
+      } catch (error) {
+        debugLog(`Connection monitoring setup error: ${error.message}`);
+      }
+    }, 100); // Delay to not block initial load
   } catch (error) {
     debugLog(`Firebase initialization error: ${error.message}`);
     console.error("Firebase initialization failed:", error);
@@ -163,14 +171,26 @@ const getCategoriesCollection = () => collection(db, "categories");
 // Initialize Firebase services asynchronously (non-blocking)
 // This allows the app to start faster
 let firebaseInitialized = false;
-const initPromise = initializeFirebase()
+
+// Initialize with timeout to prevent blocking
+const initPromise = Promise.race([
+  initializeFirebase(),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('Firebase init timeout')), 3000)
+  )
+])
   .then(() => {
     firebaseInitialized = true;
     debugLog("Firebase initialization completed");
   })
   .catch((error) => {
-    console.error("Firebase initialization failed:", error);
+    if (error.message !== 'Firebase init timeout') {
+      console.error("Firebase initialization failed:", error);
+    } else {
+      debugLog("Firebase initialization taking longer than expected, continuing anyway");
+    }
     // Don't throw - allow app to continue
+    firebaseInitialized = true; // Mark as initialized anyway
   });
 
 // Export initialization promise for components that need it

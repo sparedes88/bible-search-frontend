@@ -11,17 +11,26 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
+    // Set loading to false quickly to show UI
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 500); // Max 500ms loading state
+
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          // Load user data with timeout
+          const userDocPromise = getDoc(doc(db, 'users', firebaseUser.uid));
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 3000)
+          );
+          
+          const userDoc = await Promise.race([userDocPromise, timeoutPromise]);
+          
           if (userDoc.exists()) {
             const userData = userDoc.data();
-            // const fileRef = ref(storage, userData?.profileImg);
-            // const downloadURL = await getDownloadURL(fileRef);
             setUser({
               ...userData,
-              // profileImg: downloadURL,
               uid: firebaseUser.uid,
             });
             localStorage.setItem("userId", firebaseUser.uid);
@@ -29,16 +38,25 @@ export function AuthProvider({ children }) {
           setAuthError(null);
         } catch (error) {
           console.error('AuthContext - Error fetching user data:', error);
-          setAuthError(error.message);
+          // Don't block on error - set user with minimal data
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email
+          });
+          setAuthError(null);
         }
       } else {
         setUser(null);
         setAuthError(null);
       }
+      clearTimeout(timer);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
   }, []);
 
   // Helper functions for role checks

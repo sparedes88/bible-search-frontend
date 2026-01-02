@@ -25,13 +25,16 @@ if (!container) {
 }
 const root = createRoot(container);
 
-// Listen for auth state changes
+// Render immediately without waiting for auth (non-blocking)
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// Listen for auth state changes in background (non-blocking)
 onAuthStateChanged(auth, (user) => {
-  root.render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  );
+  // Auth state will update through AuthContext, no need to re-render
 });
 
 // Remove this code from functions/index.js and move it to src/index.js

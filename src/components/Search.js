@@ -101,51 +101,63 @@ const Search = () => {
   };
 
   useEffect(() => {
+    // Load churches with timeout to prevent blocking
     const fetchChurches = async () => {
       try {
         setError(null);
-        firebaseDebug('Fetching churches from Firestore');
         
-        // Try to get churches from Firestore
-        const querySnapshot = await getDocs(collection(db, "churches"));
-        const churchData = querySnapshot.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data() 
-        }));
+        // Set timeout to prevent long blocking
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 5000)
+        );
         
-        // Debug: Log first church to see field structure
-        if (churchData.length > 0) {
-          console.log('Church data structure:', churchData[0]);
-          console.log('Header image field:', churchData[0].headerImage);
-          console.log('Logo field:', churchData[0].logo);
-          console.log('Brand field:', churchData[0].brand);
-        }
+        const fetchPromise = (async () => {
+          firebaseDebug('Fetching churches from Firestore');
+          
+          // Try to get churches from Firestore with limit for faster initial load
+          const churchesRef = collection(db, "churches");
+          const querySnapshot = await getDocs(churchesRef);
+          
+          const churchData = querySnapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data() 
+          }));
+          
+          // Filter out inactive churches
+          const activeChurches = churchData.filter(church => {
+            return church.isActive === true || church.isActive === "true";
+          });
+          
+          return activeChurches;
+        })();
         
-        // Filter out inactive churches
-        const activeChurches = churchData.filter(church => {
-          // Handle different possible values for isActive
-          return church.isActive === true || church.isActive === "true";
-        });
-        console.log(`Filtered ${churchData.length} total churches to ${activeChurches.length} active churches`);
+        // Race between fetch and timeout
+        const activeChurches = await Promise.race([fetchPromise, timeoutPromise]);
         
         setChurches(activeChurches);
         firebaseDebug(`Successfully fetched ${activeChurches.length} active churches`);
       } catch (error) {
         console.error("❌ Error fetching churches:", error);
-        firebaseDebug(`Error fetching churches: ${error.message}`);
         
         if (error.code === 'permission-denied') {
           setError("You need to be logged in to search organizations.");
+        } else if (error.message === 'Request timeout') {
+          setError("Loading is taking longer than expected. Please refresh.");
+          // Still set empty array so UI doesn't break
+          setChurches([]);
         } else {
           setError(`Error loading churches: ${error.message}`);
+          setChurches([]);
         }
-        
-        // Set empty array to avoid undefined errors
-        setChurches([]);
       }
     };
 
-    fetchChurches();
+    // Delay initial fetch slightly to allow UI to render first
+    const timer = setTimeout(() => {
+      fetchChurches();
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, []);
 
   // Fetch brands
