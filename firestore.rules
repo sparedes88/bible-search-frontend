@@ -157,15 +157,14 @@ service cloud.firestore {
         allow read, write, create, update, delete: if isChurchAdmin(churchId);
       }
       
-      // Forms - Admin/Global admin can CRUD, authenticated users can read active forms
+      // Forms - Admin can manage forms, anyone can submit entries
       match /forms/{formId} {
         allow read: if isAuthenticated() || (resource.data.isActive == true);
         allow write, create, update, delete: if isChurchAdmin(churchId);
         
-        // Form entries - anyone can create, admin can CRUD
+        // Form entries - COMPLETELY OPEN for submissions
         match /entries/{entryId} {
-          allow create: if true; // Allow anonymous submissions
-          allow read, update, delete: if isChurchAdmin(churchId);
+          allow read, write, create, update, delete: if true;
         }
       }
       
