@@ -11,12 +11,18 @@ const MAX_CACHE_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
+      // Get base path for production
+      const basePath = self.location.pathname.split('/').slice(0, -1).join('/') || '';
       return cache.addAll([
-        '/',
-        '/img/image-fallback.svg',
-        '/img/image-placeholder.png',
-        '/img/logo-fallback.svg'
-      ]);
+        basePath + '/',
+        basePath + '/img/image-fallback.svg',
+        basePath + '/img/image-placeholder.png',
+        basePath + '/img/logo-fallback.svg',
+        basePath + '/img/banner-fallback.svg'
+      ].filter(Boolean));
+    }).catch((err) => {
+      console.log('Cache install failed:', err);
+      // Continue even if cache fails
     })
   );
   self.skipWaiting();
@@ -62,7 +68,11 @@ self.addEventListener('fetch', (event) => {
             return response;
           }).catch(() => {
             // Return fallback image on error
-            return caches.match('/img/image-fallback.svg');
+            const basePath = self.location.pathname.split('/').slice(0, -1).join('/') || '';
+            return caches.match(basePath + '/img/image-fallback.svg').catch(() => {
+              // If fallback not in cache, return empty response
+              return new Response('', { status: 404 });
+            });
           });
         });
       })

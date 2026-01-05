@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getOptimizedImageUrl, getThumbnailUrl, preloadImage } from '../utils/imageService';
+import { getImagePath } from '../utils/productionHelpers';
 
 /**
  * Ultra-fast image component
@@ -13,13 +14,13 @@ const FastImage = ({
   alt = '',
   className = '',
   style = {},
-  placeholder = '/img/image-placeholder.png',
-  fallback = '/img/image-fallback.svg',
+  placeholder = getImagePath('/img/image-placeholder.png'),
+  fallback = getImagePath('/img/image-fallback.svg'),
   priority = 'low',
   showThumbnail = true,
   ...props
 }) => {
-  const [imageSrc, setImageSrc] = useState(showThumbnail ? getThumbnailUrl(src) : placeholder);
+  const [imageSrc, setImageSrc] = useState(showThumbnail && src ? getThumbnailUrl(src) : placeholder);
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isInView, setIsInView] = useState(priority === 'high');
@@ -70,13 +71,13 @@ const FastImage = ({
 
   useEffect(() => {
     if (isInView && src && !hasError) {
-      // Set timeout for slow connections (5 seconds max)
+      // Set timeout for slow connections (2 seconds max for faster feedback)
       timeoutRef.current = setTimeout(() => {
         if (!isLoaded) {
           setHasError(true);
           setImageSrc(fallback);
         }
-      }, 5000);
+      }, 2000);
 
       // Load thumbnail first if enabled
       if (showThumbnail) {

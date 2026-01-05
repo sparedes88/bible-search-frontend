@@ -10,16 +10,23 @@ const loadingPromises = new Map();
 /**
  * Get optimized image URL with compression
  */
+/**
+ * Get optimized image URL - works in both dev and production
+ */
 export const getOptimizedImageUrl = (url, options = {}) => {
-  if (!url) return '/img/image-fallback.svg';
+  if (!url) {
+    // Use absolute path for production
+    return process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/img/image-fallback.svg` : '/img/image-fallback.svg';
+  }
   
   // If already cached, return immediately
   if (imageCache.has(url)) {
     return imageCache.get(url);
   }
 
-  // If URL is already optimized, return as is
-  if (url.startsWith('http') && !url.includes('iglesia-tech-api')) {
+  // If URL is already a full HTTP/HTTPS URL, return as is
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    imageCache.set(url, url);
     return url;
   }
 
@@ -32,12 +39,24 @@ export const getOptimizedImageUrl = (url, options = {}) => {
   // Build optimized URL
   let optimizedUrl = url;
   
-  // If it's an API URL, add optimization parameters
-  if (url.includes('iglesia-tech-api.e2api.com')) {
-    // Use query parameters for optimization if API supports it
-    optimizedUrl = `${url}?w=${width}&q=${quality}&f=${format}`;
-  } else if (url.startsWith('/')) {
-    optimizedUrl = `https://iglesia-tech-api.e2api.com${url}?w=${width}&q=${quality}`;
+  // Handle relative paths
+  if (url.startsWith('/')) {
+    // Check if it's a local asset
+    if (url.startsWith('/img/') || url.startsWith('/static/')) {
+      // Local asset - use PUBLIC_URL for production
+      optimizedUrl = process.env.PUBLIC_URL 
+        ? `${process.env.PUBLIC_URL}${url}`
+        : url;
+    } else {
+      // API path - construct full URL
+      optimizedUrl = `https://iglesia-tech-api.e2api.com${url}?w=${width}&q=${quality}`;
+    }
+  } else if (url.includes('iglesia-tech-api.e2api.com')) {
+    // API URL - add optimization parameters
+    optimizedUrl = `${url}${url.includes('?') ? '&' : '?'}w=${width}&q=${quality}&f=${format}`;
+  } else if (!url.startsWith('http')) {
+    // Relative path without leading slash
+    optimizedUrl = `https://iglesia-tech-api.e2api.com/${url}?w=${width}&q=${quality}`;
   }
 
   // Cache the optimized URL
@@ -62,10 +81,10 @@ export const preloadImage = (url, priority = 'low') => {
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
     
-    // Set timeout for slow connections
+    // Set timeout for slow connections (reduced for faster failure)
     const timeout = setTimeout(() => {
       reject(new Error('Image load timeout'));
-    }, priority === 'high' ? 10000 : 5000);
+    }, priority === 'high' ? 3000 : 2000);
 
     img.onload = () => {
       clearTimeout(timeout);
@@ -75,8 +94,9 @@ export const preloadImage = (url, priority = 'low') => {
 
     img.onerror = () => {
       clearTimeout(timeout);
-      // Try fallback
-      img.src = '/img/image-fallback.svg';
+      // Try fallback with correct path
+      const baseUrl = process.env.PUBLIC_URL || '';
+      img.src = `${baseUrl}/img/image-fallback.svg`;
       resolve(img);
     };
 
@@ -91,7 +111,7 @@ export const preloadImage = (url, priority = 'low') => {
 /**
  * Batch preload images (loads multiple images efficiently)
  */
-export const batchPreloadImages = async (urls, maxConcurrent = 3) => {
+export const batchPreloadImages = async (urls, maxConcurrent = 10) => {
   const results = [];
   const batches = [];
 

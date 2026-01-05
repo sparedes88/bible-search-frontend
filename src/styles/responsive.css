@@ -1,0 +1,355 @@
+/* ============================================
+   GLOBAL RESPONSIVE STYLES
+   ============================================ */
+
+/* Base responsive utilities */
+* {
+  box-sizing: border-box;
+}
+
+/* Container responsive behavior */
+.container,
+.container-fluid {
+  width: 100%;
+  padding-left: 15px;
+  padding-right: 15px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Responsive typography */
+h1, h2, h3, h4, h5, h6 {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Responsive images */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Responsive tables */
+table {
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Responsive buttons */
+button, .button, a.button {
+  min-height: 44px; /* Touch target size */
+  padding: 10px 20px;
+  font-size: 16px; /* Prevents zoom on iOS */
+}
+
+/* Responsive forms */
+input, textarea, select {
+  font-size: 16px; /* Prevents zoom on iOS */
+  width: 100%;
+  max-width: 100%;
+}
+
+/* ============================================
+   BREAKPOINTS
+   ============================================
+   Mobile: < 640px
+   Tablet: 640px - 1024px
+   Desktop: > 1024px
+   ============================================ */
+
+/* ============================================
+   MOBILE FIRST (< 640px)
+   ============================================ */
+@media (max-width: 639px) {
+  /* Typography */
+  h1 { font-size: 1.75rem; }
+  h2 { font-size: 1.5rem; }
+  h3 { font-size: 1.25rem; }
+  h4 { font-size: 1.125rem; }
+  h5 { font-size: 1rem; }
+  h6 { font-size: 0.875rem; }
+
+  /* Containers */
+  .container {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  /* Cards and grids */
+  .card-grid,
+  .grid,
+  .items-grid {
+    grid-template-columns: 1fr !important;
+    gap: 1rem;
+  }
+
+  /* Flex containers */
+  .flex-row {
+    flex-direction: column;
+  }
+
+  /* Navigation */
+  nav, .navbar {
+    flex-direction: column;
+    padding: 10px;
+  }
+
+  nav a, .navbar a {
+    padding: 10px;
+    width: 100%;
+    text-align: center;
+  }
+
+  /* Modals */
+  .modal,
+  .modal-content {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    margin: 10px !important;
+    padding: 15px !important;
+  }
+
+  /* Forms */
+  .form-row,
+  .form-group-row {
+    flex-direction: column;
+  }
+
+  .form-group {
+    width: 100%;
+    margin-bottom: 1rem;
+  }
+
+  /* Tables */
+  table {
+    font-size: 0.875rem;
+  }
+
+  th, td {
+    padding: 8px 4px;
+  }
+
+  /* Buttons */
+  .button-group,
+  .btn-group {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .button-group button,
+  .btn-group button {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  /* Sidebars */
+  .sidebar {
+    width: 100%;
+    position: static;
+  }
+
+  /* Hide on mobile */
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   TABLET (640px - 1024px)
+   ============================================ */
+@media (min-width: 640px) and (max-width: 1024px) {
+  /* Containers */
+  .container {
+    max-width: 100%;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  /* Cards and grids */
+  .card-grid,
+  .grid,
+  .items-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+
+  /* Navigation */
+  nav, .navbar {
+    flex-wrap: wrap;
+  }
+
+  /* Modals */
+  .modal,
+  .modal-content {
+    width: 90vw;
+    max-width: 90vw;
+    margin: 20px auto;
+  }
+
+  /* Forms */
+  .form-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+
+  /* Tables */
+  table {
+    font-size: 0.9rem;
+  }
+
+  /* Hide on tablet */
+  .hide-tablet {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   DESKTOP (> 1024px)
+   ============================================ */
+@media (min-width: 1025px) {
+  .container {
+    max-width: 1200px;
+  }
+
+  .card-grid,
+  .grid,
+  .items-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Hide on desktop */
+  .hide-desktop {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   LARGE DESKTOP (> 1440px)
+   ============================================ */
+@media (min-width: 1440px) {
+  .container {
+    max-width: 1400px;
+  }
+
+  .card-grid,
+  .grid,
+  .items-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+/* Responsive display */
+.responsive-flex {
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .responsive-flex {
+    flex-direction: column;
+  }
+}
+
+/* Responsive grid */
+.responsive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+
+/* Responsive padding */
+.responsive-padding {
+  padding: 20px;
+}
+
+@media (max-width: 768px) {
+  .responsive-padding {
+    padding: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .responsive-padding {
+    padding: 10px;
+  }
+}
+
+/* Responsive margin */
+.responsive-margin {
+  margin: 20px;
+}
+
+@media (max-width: 768px) {
+  .responsive-margin {
+    margin: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .responsive-margin {
+    margin: 10px;
+  }
+}
+
+/* Responsive text */
+.responsive-text {
+  font-size: 1rem;
+}
+
+@media (max-width: 768px) {
+  .responsive-text {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .responsive-text {
+    font-size: 0.875rem;
+  }
+}
+
+/* Responsive width */
+.responsive-width {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Touch-friendly */
+.touch-friendly {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Safe area for mobile devices */
+@supports (padding: max(0px)) {
+  .safe-area {
+    padding-left: max(15px, env(safe-area-inset-left));
+    padding-right: max(15px, env(safe-area-inset-right));
+  }
+}
+
+/* Landscape mobile */
+@media (max-width: 896px) and (orientation: landscape) {
+  .modal,
+  .modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-break {
+    page-break-after: always;
+  }
+}
+

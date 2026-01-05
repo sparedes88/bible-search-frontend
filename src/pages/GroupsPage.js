@@ -4,6 +4,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api"; // Remove getPublicChurchGroups import
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 import axios from "axios"; // Import axios for API call
 
 const GroupsPage = () => {

@@ -74,3 +74,4 @@ const ChurchInfo = React.lazy(() => import("./pages/ChurchInfo"));
 3. Implement full code splitting in App.js
 4. Add service worker for image caching
 
+

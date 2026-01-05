@@ -4,6 +4,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 
 const GalleryPage = () => {
   const { id } = useParams();
@@ -72,7 +73,10 @@ const GalleryPage = () => {
             alt="Church Logo" 
             style={commonStyles.logo}
             loading="lazy"
-            onError={(e) => { e.target.src = '/img/logo-fallback.svg'; }}
+            onError={(e) => { 
+              const baseUrl = process.env.PUBLIC_URL || '';
+              e.target.src = `${baseUrl}/img/logo-fallback.svg`; 
+            }}
           />
         ) : <Skeleton circle height={90} width={90} />}
       </div>

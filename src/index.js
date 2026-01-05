@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './firebase'; // Import firebase initialization first
 import './index.css';
+import './styles/responsive.css'; // Global responsive styles
 import App from './App';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';

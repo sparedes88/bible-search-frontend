@@ -4,6 +4,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 
 const OPENAI_API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
 

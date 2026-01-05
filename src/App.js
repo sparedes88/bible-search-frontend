@@ -151,34 +151,34 @@ const App = () => {
         <Router>
           <Suspense fallback={<LoadingFallback />}>
             <Routes>
-          <Route path="/" element={<Search />} />{" "}
+          <Route path="/" element={<ErrorBoundary><Search /></ErrorBoundary>} />{" "}
           {/* Set Search as the main page */}
-          <Route path="/organization/:id" element={<ChurchApp />} />
-          <Route path="/organization/:id/info" element={<ChurchInfo />} />
-          <Route path="/organization/:id/mi-perfil" element={<MiPerfil />} />
-          <Route path="/organization/:id/profile" element={<ProfilePage />} />
-          <Route path="/organization/:id/search" element={<Search />} />
-          <Route path="/organization/:id/events" element={<EventsPage />} />
-          <Route path="/organization/:id/groups" element={<GroupsPage />} />
-          <Route path="/organization/:id/directory" element={<DirectoryPage />} />
-          <Route path="/organization/:id/contact" element={<ContactPage />} />
-          <Route path="/organization/:id/articles" element={<ArticlesPage />} />
+          <Route path="/organization/:id" element={<ErrorBoundary><ChurchApp /></ErrorBoundary>} />
+          <Route path="/organization/:id/info" element={<ErrorBoundary><ChurchInfo /></ErrorBoundary>} />
+          <Route path="/organization/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
+          <Route path="/organization/:id/profile" element={<ErrorBoundary><ProfilePage /></ErrorBoundary>} />
+          <Route path="/organization/:id/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
+          <Route path="/organization/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/groups" element={<ErrorBoundary><GroupsPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/directory" element={<ErrorBoundary><DirectoryPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/contact" element={<ErrorBoundary><ContactPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/articles" element={<ErrorBoundary><ArticlesPage /></ErrorBoundary>} />
           <Route
             path="/organization/:id/articles/:articleId"
-            element={<ArticlePageDetail />}
+            element={<ErrorBoundary><ArticlePageDetail /></ErrorBoundary>}
           />
-          <Route path="/organization/:id/media" element={<MediaPage />} />{" "}
+          <Route path="/organization/:id/media" element={<ErrorBoundary><MediaPage /></ErrorBoundary>} />{" "}
           {/* Updated route */}
           <Route
             path="/organization/:id/media/:playlistId"
-            element={<MediaDetailPage />}
+            element={<ErrorBoundary><MediaDetailPage /></ErrorBoundary>}
           />{" "}
           {/* New route */}
-          <Route path="/organization/:id/media/video" element={<VideoPage />} />
-          <Route path="/organization/:id/media/audio" element={<AudioPage />} />
-          <Route path="/organization/:id/media/pdf" element={<PDFPage />} />
-          <Route path="/organization/:id/gallery" element={<GalleryPage />} />
-          <Route path="/organization/:id/bible" element={<BiblePage />} />
+          <Route path="/organization/:id/media/video" element={<ErrorBoundary><VideoPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/media/audio" element={<ErrorBoundary><AudioPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/media/pdf" element={<ErrorBoundary><PDFPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/gallery" element={<ErrorBoundary><GalleryPage /></ErrorBoundary>} />
+          <Route path="/organization/:id/bible" element={<ErrorBoundary><BiblePage /></ErrorBoundary>} />
           <Route
             path="/organization/:id/letter-generator"
             element={<LetterGeneratorPage />}
@@ -325,7 +325,7 @@ const App = () => {
           />
           <Route
             path="/organization/:id/mi-organizacion"
-            element={<MiOrganizacion />}
+            element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>}
           />
           <Route
             path="/organization/:id/role-manager"
@@ -642,15 +642,16 @@ const App = () => {
           
           <Route path="/organization/:id/leica" element={<LeicaModule />} />
           <Route path="/global-organization-manager" element={<GlobalOrganizationManager />} />
-          <Route path="/church-profile/:id" element={<ChurchProfile />} />
-          <Route path="/church/:id/course-categories" element={<CourseCategories />} />
-          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId" element={<CourseDetail />} />
-          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId/settings" element={<SubcategorySettings />} />
-          <Route path="/church/:id/forms" element={<Forms />} />
-          <Route path="/church/:id/bible" element={<BiblePage />} />
-          <Route path="/church/:id/events" element={<EventsPage />} />
-          <Route path="/church/:id/mi-perfil" element={<MiPerfil />} />
-          <Route path="/church/:id/login" element={<Login />} />
+          <Route path="/church-profile/:id" element={<ErrorBoundary><ChurchProfile /></ErrorBoundary>} />
+          <Route path="/church/:id/course-categories" element={<ErrorBoundary><CourseCategories /></ErrorBoundary>} />
+          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId" element={<ErrorBoundary><CourseDetail /></ErrorBoundary>} />
+          <Route path="/church/:id/course/:categoryId/subcategory/:subcategoryId/settings" element={<ErrorBoundary><SubcategorySettings /></ErrorBoundary>} />
+          <Route path="/church/:id/forms" element={<ErrorBoundary><Forms /></ErrorBoundary>} />
+          <Route path="/church/:id/bible" element={<ErrorBoundary><BiblePage /></ErrorBoundary>} />
+          <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
+          <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
+          <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
           <Route path="/church/:id/form/:formId" element={
             <ErrorBoundary>
               <FormViewer />

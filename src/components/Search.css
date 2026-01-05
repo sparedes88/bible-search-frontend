@@ -1,5 +1,14 @@
 /* Search Component Styles */
 
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 .search-container {
   width: 100%;
   min-height: 100vh;

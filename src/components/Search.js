@@ -3,12 +3,17 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { db, auth, firebaseDebug, storage } from "../firebase";
 import { ref, getDownloadURL } from "firebase/storage";
 import "./Search.css";
+import "./Search.responsive.css";
 import { 
   collection, 
   getDocs, 
   setDoc,
   doc,
-  writeBatch
+  writeBatch,
+  query,
+  limit,
+  where,
+  orderBy
 } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { onAuthStateChanged } from "firebase/auth";
@@ -106,28 +111,31 @@ const Search = () => {
       try {
         setError(null);
         
-        // Set timeout to prevent long blocking
+        // Set timeout to prevent long blocking (reduced to 2 seconds for faster feedback)
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), 5000)
+          setTimeout(() => reject(new Error('Request timeout')), 2000)
         );
         
         const fetchPromise = (async () => {
-          firebaseDebug('Fetching churches from Firestore');
+          firebaseDebug('Fetching churches from Firestore (limited)');
           
-          // Try to get churches from Firestore with limit for faster initial load
+          // CRITICAL: Only fetch first 36 churches for fast initial load
+          // This reduces data transfer from potentially 100+ to just 36
           const churchesRef = collection(db, "churches");
-          const querySnapshot = await getDocs(churchesRef);
+          const q = query(
+            churchesRef,
+            where("isActive", "==", true),
+            limit(36) // Only load 36 churches initially
+          );
           
-          const churchData = querySnapshot.docs.map(doc => ({ 
+          const querySnapshot = await getDocs(q);
+          
+          const activeChurches = querySnapshot.docs.map(doc => ({ 
             id: doc.id, 
             ...doc.data() 
           }));
           
-          // Filter out inactive churches
-          const activeChurches = churchData.filter(church => {
-            return church.isActive === true || church.isActive === "true";
-          });
-          
+          firebaseDebug(`Successfully fetched ${activeChurches.length} active churches (limited)`);
           return activeChurches;
         })();
         
@@ -135,91 +143,111 @@ const Search = () => {
         const activeChurches = await Promise.race([fetchPromise, timeoutPromise]);
         
         setChurches(activeChurches);
-        firebaseDebug(`Successfully fetched ${activeChurches.length} active churches`);
+        setIsLoading(false);
       } catch (error) {
         console.error("❌ Error fetching churches:", error);
+        
+        // If query fails (maybe isActive field doesn't exist), try without filter
+        if (error.code === 'failed-precondition' || error.message?.includes('index')) {
+          try {
+            firebaseDebug('Retrying without isActive filter');
+            const churchesRef = collection(db, "churches");
+            const q = query(churchesRef, limit(36));
+            const querySnapshot = await getDocs(q);
+            const churchData = querySnapshot.docs.map(doc => ({ 
+              id: doc.id, 
+              ...doc.data() 
+            }));
+            const activeChurches = churchData.filter(church => {
+              return church.isActive === true || church.isActive === "true" || church.isActive === undefined;
+            });
+            setChurches(activeChurches.slice(0, 36));
+            setIsLoading(false);
+            return;
+          } catch (retryError) {
+            console.error("Retry also failed:", retryError);
+          }
+        }
         
         if (error.code === 'permission-denied') {
           setError("You need to be logged in to search organizations.");
         } else if (error.message === 'Request timeout') {
           setError("Loading is taking longer than expected. Please refresh.");
-          // Still set empty array so UI doesn't break
           setChurches([]);
         } else {
           setError(`Error loading churches: ${error.message}`);
           setChurches([]);
         }
+        setIsLoading(false);
       }
     };
 
-    // Delay initial fetch slightly to allow UI to render first
-    const timer = setTimeout(() => {
-      fetchChurches();
-    }, 100);
-    
-    return () => clearTimeout(timer);
+    // Fetch immediately - no delay
+    fetchChurches();
   }, []);
 
-  // Fetch brands
+  // Fetch brands (non-blocking, but immediate)
   useEffect(() => {
     const fetchBrands = async () => {
       try {
-        console.log('Fetching brands from Firestore...');
+        // Fetch immediately - no delay
         const brandsSnapshot = await getDocs(collection(db, "brands"));
         const brandsData = brandsSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
-        console.log('Brands fetched successfully:', brandsData.length, 'brands');
-        console.log('Brands data:', brandsData);
         setBrands(brandsData);
         
-        // Preload brand logos
-        const logos = {};
-        for (const brand of brandsData) {
-          if (brand.imageUrl || brand.logo) { // Check both imageUrl and logo fields
-            try {
-              console.log(`Loading logo for brand ${brand.name || brand.id}: ${brand.imageUrl || brand.logo}`);
-              
-              // Use the same logic as GlobalOrganizationManager
-              let logoUrl = brand.imageUrl || brand.logo;
-              if (!logoUrl.startsWith('http')) {
-                if (logoUrl.startsWith('/')) {
-                  const encodedPath = encodeURIComponent(logoUrl.substring(1));
-                  logoUrl = `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodedPath}?alt=media`;
-                } else {
-                  // Try to get download URL from Firebase Storage
-                  const logoRef = ref(storage, logoUrl);
-                  logoUrl = await getDownloadURL(logoRef);
+        // Preload brand logos ASYNCHRONOUSLY (non-blocking)
+        // Don't wait for logos to load - let them load in background
+        const loadLogosAsync = async () => {
+          const logos = {};
+          const logoPromises = brandsData.map(async (brand) => {
+            if (brand.imageUrl || brand.logo) {
+              try {
+                let logoUrl = brand.imageUrl || brand.logo;
+                if (!logoUrl.startsWith('http')) {
+                  if (logoUrl.startsWith('/')) {
+                    const encodedPath = encodeURIComponent(logoUrl.substring(1));
+                    logoUrl = `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodedPath}?alt=media`;
+                  } else {
+                    try {
+                      const logoRef = ref(storage, logoUrl);
+                      logoUrl = await Promise.race([
+                        getDownloadURL(logoRef),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+                      ]);
+                    } catch (err) {
+                      return null; // Skip this logo
+                    }
+                  }
                 }
+                logos[brand.id] = logoUrl;
+              } catch (error) {
+                // Skip failed logos silently
               }
-              
-              logos[brand.id] = logoUrl;
-              console.log(`Logo loaded for ${brand.name || brand.id}: ${logoUrl}`);
-            } catch (error) {
-              console.warn(`Failed to preload logo for brand ${brand.id}:`, error);
             }
-          }
-        }
-        setBrandLogos(logos);
-        console.log('Brand logos loaded:', logos);
+            return null;
+          });
+          
+          // Wait for all logos with timeout (reduced for faster loading)
+          await Promise.race([
+            Promise.all(logoPromises),
+            new Promise(resolve => setTimeout(resolve, 1500))
+          ]);
+          
+          setBrandLogos(logos);
+        };
         
-        // TEMP: Add test logos for debugging
-        if (brandsData.length > 0) {
-          console.log('TEMP: Adding test logos for debugging');
-          // Add a test logo for the first brand if it doesn't have one
-          if (!logos[brandsData[0].id] && (!brandsData[0].imageUrl && !brandsData[0].logo)) {
-            logos[brandsData[0].id] = '/logo.png'; // Use the default logo as test
-            console.log(`TEMP: Added test logo for ${brandsData[0].name}: /logo.png`);
-          }
-        }
-        setBrandLogos(logos);
+        // Start logo loading but don't wait for it
+        loadLogosAsync();
       } catch (error) {
         console.error("Error fetching brands:", error);
         // Don't set error state for brands as it's not critical
       }
     };
 
+    // Fetch immediately - no delay
     fetchBrands();
   }, []);
 
@@ -240,14 +268,16 @@ const Search = () => {
   }, [searchParams]);
 
   useEffect(() => {
+    // DEFER image preloading - don't block initial render
+    if (churches.length === 0) return;
+    
     const preloadImageUrls = async () => {
-      if (churches.length === 0) return;
-      
-      // Batch load images (max 5 at a time for speed)
+      // Preload immediately - no delay
+      // Only preload first 12 images (one page worth) for speed
       const imageUrlsToLoad = [];
       const urlMap = {};
       
-      churches.slice(0, 20).forEach(church => { // Only preload first 20 for speed
+      churches.slice(0, 12).forEach(church => {
         const churchId = church.id;
         
         if (church.banner) {
@@ -258,28 +288,33 @@ const Search = () => {
         }
       });
       
-      // Batch preload with timeout
-      const loadPromises = imageUrlsToLoad.map(async ({ url, key }) => {
-        try {
-          const bannerUrl = await Promise.race([
-            getImageUrl(url),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-          ]);
-          urlMap[key] = bannerUrl;
-        } catch (error) {
-          // Skip failed images, continue with others
-        }
-      });
-      
-      // Wait for all or timeout after 5 seconds
-      await Promise.race([
-        Promise.all(loadPromises),
-        new Promise(resolve => setTimeout(resolve, 5000))
-      ]);
-      
-      setImageUrls(urlMap);
+      // Load images in larger batches (10 at a time) for faster loading
+      const batchSize = 10;
+      for (let i = 0; i < imageUrlsToLoad.length; i += batchSize) {
+        const batch = imageUrlsToLoad.slice(i, i + batchSize);
+        const loadPromises = batch.map(async ({ url, key }) => {
+          try {
+            const imageUrl = await Promise.race([
+              getImageUrl(url),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+            ]);
+            urlMap[key] = imageUrl;
+            // Update state incrementally for better UX
+            setImageUrls(prev => ({ ...prev, [key]: imageUrl }));
+          } catch (error) {
+            // Skip failed images silently
+          }
+        });
+        
+        // Wait for batch with timeout (reduced for faster loading)
+        await Promise.race([
+          Promise.all(loadPromises),
+          new Promise(resolve => setTimeout(resolve, 1500))
+        ]);
+      }
     };
     
+    // Start preloading but don't block
     preloadImageUrls();
   }, [churches]);
 
@@ -490,13 +525,14 @@ const Search = () => {
                 src={brandLogos[selectedBrand]} 
                 alt={`${brands.find(b => b.id === selectedBrand)?.name || 'Brand'} Logo`} 
                 className="search-logo" 
+                loading="lazy"
                 onError={(e) => {
                   console.error('Logo failed to load:', brandLogos[selectedBrand]);
                   e.target.style.display = 'none'; // Hide broken image
                 }}
               />
             ) : (
-              <img src="/logo.png" alt="Iglesia Tech Logo" className="search-logo" />
+              <img src="/logo.png" alt="Iglesia Tech Logo" className="search-logo" loading="lazy" />
             );
           })()}
         </div>
@@ -544,7 +580,39 @@ const Search = () => {
       </div>
 
       {/* Church Cards Below Search */}
-      {(searchQuery || selectedBrand || churches.length > 0) && (
+      {isLoading && churches.length === 0 ? (
+        <div className="churches-grid" style={{ padding: '20px' }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
+            <div key={i} className="church-card" style={{ 
+              background: '#f0f0f0',
+              animation: 'pulse 1.5s ease-in-out infinite',
+              minHeight: '300px',
+              cursor: 'default'
+            }}>
+              <div style={{ 
+                width: '100%', 
+                height: '150px', 
+                background: '#e0e0e0',
+                borderRadius: '8px 8px 0 0'
+              }} />
+              <div style={{ padding: '15px' }}>
+                <div style={{ 
+                  height: '20px', 
+                  background: '#d0d0d0',
+                  borderRadius: '4px',
+                  marginBottom: '10px'
+                }} />
+                <div style={{ 
+                  height: '16px', 
+                  background: '#d0d0d0',
+                  borderRadius: '4px',
+                  width: '70%'
+                }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (searchQuery || selectedBrand || churches.length > 0) && (
         <>
           <h3 className="churches-title">
             {selectedBrand && searchQuery ? 
@@ -570,20 +638,26 @@ const Search = () => {
                       imageUrls[`${church.id}_banner`] ||
                       // Fallback to constructing URL
                       (() => {
+                        if (!church.banner) {
+                          const baseUrl = process.env.PUBLIC_URL || '';
+                          return `${baseUrl}/img/banner-fallback.svg`;
+                        }
                         const bucket = process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'igletechv1.firebasestorage.app';
-                        const url = church.banner ? `https://firebasestorage.googleapis.com/v0/b/${bucket}/o${encodeURIComponent(church.banner)}?alt=media` : "/img/banner-fallback.svg";
-                        console.log('Banner URL for church', church.nombre, ':', url, 'Original path:', church.banner);
+                        const cleanPath = church.banner.startsWith('/') ? church.banner.substring(1) : church.banner;
+                        const url = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(cleanPath)}?alt=media`;
                         return url;
                       })()
                     } 
                     alt={`${church.nombre} header`} 
                     className="header-image" 
+                    loading="lazy"
                     onError={(e) => {
                       console.log('Header image failed to load for church:', church.nombre, 'Using fallback');
                       console.log('Failed image src was:', e.target.src);
                       console.log('Church banner path:', church.banner);
                       console.log('Preloaded banner URL:', imageUrls[`${church.id}_banner`]);
-                      e.target.src = "/img/banner-fallback.svg";
+                      const baseUrl = process.env.PUBLIC_URL || '';
+                      e.target.src = `${baseUrl}/img/banner-fallback.svg`;
                     }}
                   />
                   <div className="card-overlay">
@@ -600,7 +674,8 @@ const Search = () => {
                           } else if (church.Logo) {
                             url = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o${encodeURIComponent(church.Logo)}?alt=media`;
                           } else {
-                            url = "/img/logo-fallback.svg";
+                            const baseUrl = process.env.PUBLIC_URL || '';
+                            url = `${baseUrl}/img/logo-fallback.svg`;
                           }
                           console.log('Logo URL for church', church.nombre, ':', url, 'Original paths - logo:', church.logo, 'Logo:', church.Logo);
                           return url;
@@ -613,7 +688,8 @@ const Search = () => {
                         console.log('Failed logo src was:', e.target.src);
                         console.log('Church logo paths - logo:', church.logo, 'Logo:', church.Logo);
                         console.log('Preloaded logo URL:', imageUrls[`${church.id}_logo`]);
-                        e.target.src = "/img/logo-fallback.svg";
+                        const baseUrl = process.env.PUBLIC_URL || '';
+                      e.target.src = `${baseUrl}/img/logo-fallback.svg`;
                       }}
                     />
                   </div>

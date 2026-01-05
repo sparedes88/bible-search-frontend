@@ -11,10 +11,8 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
-    // Set loading to false quickly to show UI
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 500); // Max 500ms loading state
+    // Set loading to false immediately to show UI
+    setLoading(false);
 
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
@@ -49,12 +47,10 @@ export function AuthProvider({ children }) {
         setUser(null);
         setAuthError(null);
       }
-      clearTimeout(timer);
       setLoading(false);
     });
 
     return () => {
-      clearTimeout(timer);
       unsubscribe();
     };
   }, []);

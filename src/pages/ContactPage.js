@@ -6,6 +6,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api"; // ✅ Ensure correct import
 import commonStyles from "../pages/commonStyles"; // ✅ Ensure correct import
+import "./pages.responsive.css";
 
 const Login = () => {
   const { id } = useParams(); // Get church ID from URL

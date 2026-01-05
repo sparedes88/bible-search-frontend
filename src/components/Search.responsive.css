@@ -1,0 +1,225 @@
+/* ============================================
+   SEARCH COMPONENT RESPONSIVE STYLES
+   ============================================ */
+
+/* Mobile First - Base styles are already in Search.css */
+
+/* Tablet (640px - 1024px) */
+@media (min-width: 640px) and (max-width: 1024px) {
+  .search-header {
+    padding: 30px 15px;
+  }
+
+  .search-title {
+    font-size: 28px;
+  }
+
+  .search-input {
+    max-width: 400px;
+    font-size: 16px;
+    padding: 12px 18px;
+  }
+
+  .search-button {
+    padding: 12px 25px;
+    font-size: 16px;
+  }
+
+  .churches-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+
+  .church-card {
+    padding: 15px;
+  }
+}
+
+/* Mobile (< 640px) */
+@media (max-width: 639px) {
+  .search-container {
+    padding: 0;
+  }
+
+  .search-header {
+    padding: 20px 15px;
+    margin-bottom: 20px;
+  }
+
+  .search-logo {
+    width: 100px;
+    max-height: 90px;
+  }
+
+  .search-title {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+
+  .search-input-container {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .search-input {
+    width: 100%;
+    max-width: 100%;
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 12px 16px;
+    border-radius: 25px;
+  }
+
+  .search-button {
+    width: 100%;
+    max-width: 100%;
+    padding: 12px 20px;
+    font-size: 16px;
+    border-radius: 25px;
+  }
+
+  .brand-filter-container {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    padding: 0 15px;
+  }
+
+  .brand-filter-select {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .churches-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+    padding: 0 15px;
+  }
+
+  .church-card {
+    padding: 15px;
+    margin: 0;
+  }
+
+  .church-banner {
+    height: 150px;
+  }
+
+  .church-logo {
+    width: 60px;
+    height: 60px;
+    margin-top: -30px;
+  }
+
+  .church-name {
+    font-size: 18px;
+    margin-top: 10px;
+  }
+
+  .church-location {
+    font-size: 14px;
+  }
+
+  .church-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .church-action-button {
+    width: 100%;
+    padding: 10px;
+  }
+
+  .create-church-form {
+    padding: 15px;
+    margin: 15px;
+  }
+
+  .form-row {
+    flex-direction: column;
+  }
+
+  .form-group {
+    width: 100%;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .form-actions button {
+    width: 100%;
+  }
+}
+
+/* Small Mobile (< 480px) */
+@media (max-width: 480px) {
+  .search-header {
+    padding: 15px 10px;
+  }
+
+  .search-logo {
+    width: 80px;
+    max-height: 70px;
+  }
+
+  .search-title {
+    font-size: 20px;
+    margin-bottom: 15px;
+  }
+
+  .search-input {
+    padding: 10px 14px;
+    font-size: 16px;
+  }
+
+  .search-button {
+    padding: 10px 16px;
+    font-size: 16px;
+  }
+
+  .churches-grid {
+    gap: 12px;
+    padding: 0 10px;
+  }
+
+  .church-card {
+    padding: 12px;
+  }
+
+  .church-banner {
+    height: 120px;
+  }
+
+  .church-logo {
+    width: 50px;
+    height: 50px;
+    margin-top: -25px;
+  }
+
+  .church-name {
+    font-size: 16px;
+  }
+
+  .church-location {
+    font-size: 12px;
+  }
+}
+
+/* Landscape Mobile */
+@media (max-width: 896px) and (orientation: landscape) {
+  .search-header {
+    padding: 15px 20px;
+  }
+
+  .search-title {
+    font-size: 22px;
+    margin-bottom: 15px;
+  }
+
+  .churches-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+

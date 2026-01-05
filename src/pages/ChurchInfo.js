@@ -5,6 +5,7 @@ import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import { FaCog, FaArrowLeft } from "react-icons/fa";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 import { collection, getDocs, query, where, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ToastContainer, toast } from 'react-toastify';

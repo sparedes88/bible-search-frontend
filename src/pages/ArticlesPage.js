@@ -5,6 +5,7 @@ import "react-loading-skeleton/dist/skeleton.css";
 import Select from "react-select";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 
 const styles = {
   grid: {

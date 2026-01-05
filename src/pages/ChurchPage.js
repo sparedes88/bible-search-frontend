@@ -4,6 +4,7 @@ import { searchChurchById } from "../api";
 import { auth } from "../firebase"; // ✅ Import Firebase Authentication
 import commonStyles from "./commonStyles";
 import ChurchHeader from "../components/ChurchHeader";
+import "./pages.responsive.css";
 
 const ChurchPage = () => {
   const { id } = useParams(); // ✅ Get Church ID from URL

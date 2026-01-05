@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 import { db } from "../firebase"; // Import Firebase Firestore
 import { collection, query, where, getDocs } from "firebase/firestore"; // Import Firestore functions
 

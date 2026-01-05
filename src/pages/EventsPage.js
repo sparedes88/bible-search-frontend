@@ -4,6 +4,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 
 const EventsPage = () => {
   const { id } = useParams();
@@ -76,7 +77,10 @@ const EventsPage = () => {
             alt="Church Banner" 
             style={commonStyles.bannerImage}
             loading="lazy"
-            onError={(e) => { e.target.src = '/img/image-fallback.svg'; }}
+            onError={(e) => { 
+              const baseUrl = process.env.PUBLIC_URL || '';
+              e.target.src = `${baseUrl}/img/image-fallback.svg`; 
+            }}
           />
         ) : <Skeleton height={300} />}
       </div>
@@ -89,7 +93,10 @@ const EventsPage = () => {
             alt="Church Logo" 
             style={commonStyles.logo}
             loading="lazy"
-            onError={(e) => { e.target.src = '/img/logo-fallback.svg'; }}
+            onError={(e) => { 
+              const baseUrl = process.env.PUBLIC_URL || '';
+              e.target.src = `${baseUrl}/img/logo-fallback.svg`; 
+            }}
           />
         ) : <Skeleton circle height={90} width={90} />}
       </div>
@@ -115,7 +122,10 @@ const EventsPage = () => {
                       alt={event.name} 
                       style={styles.eventImage}
                       loading="lazy"
-                      onError={(e) => { e.target.src = '/img/image-placeholder.png'; }}
+                      onError={(e) => { 
+                        const baseUrl = process.env.PUBLIC_URL || '';
+                        e.target.src = `${baseUrl}/img/image-placeholder.png`; 
+                      }}
                     />
                   ) : (
                     <Skeleton height={150} />

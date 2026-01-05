@@ -10,6 +10,16 @@ const commonStyles = {
     backgroundColor: "#ffffff",
     borderRadius: "8px",
     boxShadow: "0px 5px 20px rgba(0, 0, 0, 0.15)",
+    // Responsive
+    "@media (max-width: 768px)": {
+      padding: "15px",
+      margin: "15px auto",
+    },
+    "@media (max-width: 480px)": {
+      padding: "10px",
+      margin: "10px auto",
+      borderRadius: "4px",
+    },
   },
   fullWidthContainer: {
     padding: "20px",
@@ -21,6 +31,13 @@ const commonStyles = {
     fontFamily: "'Nunito', sans-serif",
     textAlign: "center",
     backgroundColor: "#ffffff",
+    // Responsive
+    "@media (max-width: 768px)": {
+      padding: "15px",
+    },
+    "@media (max-width: 480px)": {
+      padding: "10px",
+    },
   },
   banner: {
     width: "100%",
@@ -28,12 +45,30 @@ const commonStyles = {
     backgroundSize: "cover",
     backgroundPosition: "center",
     borderRadius: "10px",
+    // Responsive
+    "@media (max-width: 768px)": {
+      height: "200px",
+      borderRadius: "8px",
+    },
+    "@media (max-width: 480px)": {
+      height: "150px",
+      borderRadius: "4px",
+    },
   },
   bannerImage: {
     width: "100%",
     height: "300px",
     objectFit: "cover",
     borderRadius: "10px",
+    // Responsive
+    "@media (max-width: 768px)": {
+      height: "200px",
+      borderRadius: "8px",
+    },
+    "@media (max-width: 480px)": {
+      height: "150px",
+      borderRadius: "4px",
+    },
   },
   logoContainer: {
     display: "flex",
@@ -176,11 +211,25 @@ const commonStyles = {
     fontSize: "28px",
     fontWeight: "700",
     color: "#1f262e",
+    // Responsive
+    "@media (max-width: 768px)": {
+      fontSize: "24px",
+    },
+    "@media (max-width: 480px)": {
+      fontSize: "20px",
+    },
   },
   subTitle: {
     fontSize: "22px",
     fontWeight: "600",
     color: "#48596b",
+    // Responsive
+    "@media (max-width: 768px)": {
+      fontSize: "20px",
+    },
+    "@media (max-width: 480px)": {
+      fontSize: "18px",
+    },
   },
   sectionContainer: {
     padding: "15px",

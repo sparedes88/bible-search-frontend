@@ -279,7 +279,17 @@ const MiOrganizacion = () => {
 
   useEffect(() => {
     const fetchOrganizationData = async () => {
-      if (!id || !user) return;
+      if (!id) {
+        setError("Organization ID is missing.");
+        setLoading(false);
+        return;
+      }
+
+      if (!user) {
+        setLoading(false);
+        // Don't set error - let PrivateRoute handle authentication
+        return;
+      }
 
       // Reset error state when ID changes
       setError(null);
@@ -323,7 +333,10 @@ const MiOrganizacion = () => {
 
   useEffect(() => {
     const checkPermissions = async () => {
-      if (!user || !id) return;
+      if (!user || !id) {
+        // Don't check permissions if user or id is missing
+        return;
+      }
 
       try {
         // Check permissions for modules that need special access control
@@ -496,9 +509,14 @@ const MiOrganizacion = () => {
     );
   }
 
+  // Determine route prefix based on current URL (with safety check)
+  const routePrefix = (typeof window !== 'undefined' && window.location?.pathname?.includes('/church/')) 
+    ? '/church' 
+    : '/organization';
+
   return (
     <div className="" style={commonStyles.fullWidthContainer}>
-      <Link to={`/organization/${id}/mi-perfil`} style={commonStyles.backButtonLink}>
+      <Link to={`${routePrefix}/${id}/mi-perfil`} style={commonStyles.backButtonLink}>
         ← Back to Profile
       </Link>
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
@@ -528,8 +546,8 @@ const MiOrganizacion = () => {
             </div>
           </div>
         </div>
-        {(user.role === "global_admin" ||
-          (user.role === "admin" && user.churchId == id)) && (
+        {(user && (user.role === "global_admin" ||
+          (user.role === "admin" && user.churchId == id))) && (
           <div
             style={{
               display: "flex",

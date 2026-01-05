@@ -1,0 +1,280 @@
+/* ============================================
+   PAGES RESPONSIVE STYLES
+   ============================================ */
+
+/* Common responsive styles for all pages */
+
+/* Mobile (< 640px) */
+@media (max-width: 639px) {
+  /* Articles Page */
+  .articles-grid,
+  .articles-page-grid {
+    grid-template-columns: 1fr !important;
+    gap: 15px;
+  }
+
+  .article-card {
+    padding: 12px;
+  }
+
+  .article-image {
+    height: 120px;
+  }
+
+  /* Events Page */
+  .events-grid,
+  .events-page-grid {
+    grid-template-columns: 1fr !important;
+    gap: 15px;
+  }
+
+  .event-card {
+    padding: 12px;
+  }
+
+  /* Gallery Page */
+  .gallery-grid,
+  .gallery-page-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  .gallery-item {
+    margin-bottom: 10px;
+  }
+
+  /* Directory Page */
+  .directory-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Church Page Navigation Cards */
+  .church-cards-container,
+  .cards-container {
+    grid-template-columns: 1fr !important;
+    gap: 15px;
+    padding: 15px;
+  }
+
+  .church-nav-card {
+    padding: 20px 15px;
+    min-height: 120px;
+  }
+
+  .church-nav-card h3 {
+    font-size: 18px;
+  }
+
+  /* Forms */
+  .form-container,
+  .form-wrapper {
+    padding: 15px;
+    margin: 10px;
+  }
+
+  .form-row {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .form-group {
+    width: 100%;
+    margin-bottom: 15px;
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="tel"],
+  textarea,
+  select {
+    width: 100%;
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 12px;
+  }
+
+  /* Buttons */
+  .button-group,
+  .btn-group {
+    flex-direction: column;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .button-group button,
+  .btn-group button {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    min-height: 44px; /* Touch target */
+  }
+
+  /* Modals */
+  .modal,
+  .modal-content,
+  .modal-dialog {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    margin: 10px !important;
+    padding: 15px !important;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  /* Tables */
+  table {
+    font-size: 12px;
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  th, td {
+    padding: 8px 4px;
+    white-space: nowrap;
+  }
+
+  /* Navigation */
+  .page-navigation,
+  .breadcrumbs {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .page-navigation a,
+  .breadcrumbs a {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+}
+
+/* Tablet (640px - 1024px) */
+@media (min-width: 640px) and (max-width: 1024px) {
+  /* Articles Page */
+  .articles-grid,
+  .articles-page-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+
+  /* Events Page */
+  .events-grid,
+  .events-page-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+
+  /* Gallery Page */
+  .gallery-grid,
+  .gallery-page-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+  }
+
+  /* Church Page Navigation Cards */
+  .church-cards-container,
+  .cards-container {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding: 20px;
+  }
+
+  /* Forms */
+  .form-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+  }
+
+  /* Modals */
+  .modal,
+  .modal-content {
+    width: 90vw;
+    max-width: 90vw;
+  }
+}
+
+/* Desktop (> 1024px) - Already handled by base styles */
+@media (min-width: 1025px) {
+  .articles-grid,
+  .articles-page-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .events-grid,
+  .events-page-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .gallery-grid,
+  .gallery-page-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .church-cards-container,
+  .cards-container {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Large Desktop (> 1440px) */
+@media (min-width: 1440px) {
+  .articles-grid,
+  .articles-page-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .events-grid,
+  .events-page-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .gallery-grid,
+  .gallery-page-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .church-cards-container,
+  .cards-container {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Common responsive utilities for pages */
+@media (max-width: 768px) {
+  .page-container {
+    padding: 15px !important;
+  }
+
+  .page-title {
+    font-size: 24px !important;
+  }
+
+  .page-subtitle {
+    font-size: 18px !important;
+  }
+
+  .section-title {
+    font-size: 20px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-container {
+    padding: 10px !important;
+  }
+
+  .page-title {
+    font-size: 20px !important;
+  }
+
+  .page-subtitle {
+    font-size: 16px !important;
+  }
+
+  .section-title {
+    font-size: 18px !important;
+  }
+}
+

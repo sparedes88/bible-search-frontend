@@ -4,8 +4,10 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
+import "./pages.responsive.css";
 import FastImage from "../components/FastImage";
 import { batchPreloadImages } from "../utils/imageService";
+import { getImagePath } from "../utils/productionHelpers";
 
 const GalleryDetailPage = () => {
   const { id, galleryId } = useParams();
@@ -72,7 +74,7 @@ const GalleryDetailPage = () => {
             style={commonStyles.bannerImage}
             loading="lazy"
             onError={(e) => {
-              e.target.src = '/img/image-fallback.svg';
+              e.target.src = getImagePath('/img/image-fallback.svg');
             }}
           />
         ) : <Skeleton height={300} />}
@@ -87,7 +89,7 @@ const GalleryDetailPage = () => {
             style={commonStyles.logo}
             loading="lazy"
             onError={(e) => {
-              e.target.src = '/img/logo-fallback.svg';
+              e.target.src = getImagePath('/img/logo-fallback.svg');
             }}
           />
         ) : <Skeleton circle height={90} width={90} />}
