@@ -97,3 +97,4 @@ console.log(`\n✨ Total: ${totalModified} images updated with lazy loading`);
 
 
 
+
