@@ -113,28 +113,36 @@ const ChurchHeader = ({
 
   return (
     <div
+      className="church-header-container"
       style={{
         boxShadow: applyShadow ? "0 2px 8px rgba(0,0,0,0.1)" : "none",
         width: "100%",
+        maxWidth: "100%",
         margin: "0 auto 40px",
         backgroundColor: "white",
         borderRadius: "12px",
         overflow: "hidden",
         position: "relative",
+        paddingLeft: 0,
+        paddingRight: 0,
       }}
     >
       <ToastContainer />
-      <div style={{ ...commonStyles.banner, position: "relative" }}>
+      <div 
+        className="banner-container church-header-banner"
+        
+      >
         {loading || uploading ? (
-          <Skeleton height={300} />
+          <Skeleton height={300} style={{ width: "100%" }} />
         ) : (
           <>
             <img
+              className=""
               src={
                 preview.banner || church?.banner || "/img/banner-fallback.svg"
               }
               alt="Church Banner"
-              style={commonStyles.bannerImage}
+              
             />
             {allowEditBannerLogo && (
               <label

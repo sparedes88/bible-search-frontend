@@ -180,3 +180,4 @@ The entire site is now fully responsive and will adapt beautifully to:
 
 All pages, components, and UI elements will automatically adjust to provide the best user experience on any device! 🎉
 
+

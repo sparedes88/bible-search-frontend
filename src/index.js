@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './firebase'; // Import firebase initialization first
 import './index.css';
 import './styles/responsive.css'; // Global responsive styles
+import './styles/banner.responsive.css'; // Banner responsive fixes
 import App from './App';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';

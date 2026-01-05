@@ -41,39 +41,28 @@ const commonStyles = {
   },
   banner: {
     width: "100%",
-    height: "300px",
+    height: "auto",
+    minHeight: "300px",
     backgroundSize: "cover",
     backgroundPosition: "center",
     borderRadius: "10px",
-    // Responsive
-    "@media (max-width: 768px)": {
-      height: "200px",
-      borderRadius: "8px",
-    },
-    "@media (max-width: 480px)": {
-      height: "150px",
-      borderRadius: "4px",
-    },
+    overflow: "hidden",
+    position: "relative",
   },
   bannerImage: {
     width: "100%",
-    height: "300px",
+    height: "auto",
+    minHeight: "300px",
+    maxHeight: "500px",
     objectFit: "cover",
+    objectPosition: "center",
     borderRadius: "10px",
-    // Responsive
-    "@media (max-width: 768px)": {
-      height: "200px",
-      borderRadius: "8px",
-    },
-    "@media (max-width: 480px)": {
-      height: "150px",
-      borderRadius: "4px",
-    },
+    display: "block",
   },
   logoContainer: {
     display: "flex",
     justifyContent: "center",
-    marginTop: "-50px",
+    marginTop: "-20px",
     cursor: "pointer",
   },
   logo: {

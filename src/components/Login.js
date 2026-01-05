@@ -366,9 +366,9 @@ const Login = () => {
   };
 
   return (
-    <div style={commonStyles.container}>
+    <div className="login-page-container" style={{...commonStyles.container, paddingLeft: 0, paddingRight: 0, overflowX: "hidden"}}>
       {/* Back Button */}
-      <div style={{display:"flex", justifyContent:"space-between"}}>
+      <div style={{display:"flex", justifyContent:"space-between", paddingLeft: "15px", paddingRight: "15px"}}>
         <button
           onClick={() => navigate('/')}
           style={commonStyles.backButton}

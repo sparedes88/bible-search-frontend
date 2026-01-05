@@ -96,3 +96,4 @@ ls -la build/img/
 Your site should now work perfectly on Hostinger! 🎉
 
 
+
