@@ -1,0 +1,32 @@
+.event-image-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.event-image-container::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.4));
+  pointer-events: none;
+}
+
+.event-image-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f3f4f6;
+  color: #9ca3af;
+}
+
+.event-image-preload {
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out;
+}
+
+.event-image-loaded {
+  opacity: 1;
+}

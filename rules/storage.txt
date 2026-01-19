@@ -1,0 +1,68 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isGlobalAdmin() {
+      return isAuthenticated() && 
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.roles.hasAny(['global_admin']);
+    }
+    
+    function isChurchAdmin(churchId) {
+      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && 
+        user.roles.hasAny(['admin']) &&
+        user.churchId == churchId;
+    }
+
+    function isValidImageFile() {
+      return request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function isValidCourseFile() {
+      return request.resource.size < 100 * 1024 * 1024  // 100MB max
+        && request.resource.contentType.matches(
+          'application/.*|image/.*|video/.*|text/.*|audio/.*'
+        );
+    }
+
+    // Gallery Rules (images only)
+    match /galleries/{galleryId}/{imageId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidImageFile();
+    }
+
+    // Course Categories Rules with Subcategories (all file types)
+    match /coursecategories/{churchId}/{categoryId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() ||
+        isChurchAdmin(churchId)
+      ) && isValidCourseFile();
+    }
+
+    // Courses Rules (all file types)
+    match /courses/{churchId}/{courseId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() ||
+        isChurchAdmin(churchId)
+      ) && isValidCourseFile();
+    }
+
+    // Categories Rules (images only)
+    match /categories/{churchId}/{categoryId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isGlobalAdmin() ||
+        isChurchAdmin(churchId)
+      ) && isValidImageFile();
+    }
+  }
+}
+
+

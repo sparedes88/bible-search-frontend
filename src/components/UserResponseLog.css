@@ -1,0 +1,226 @@
+/* Styles for the User Response Log component */
+.user-response-log-container {
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin: 20px 0;
+  padding: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-response-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eaeaea;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.user-response-log-title {
+  color: #2c3e50;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.user-response-log-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.user-response-log-filter {
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.user-response-log-table-container {
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.user-response-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.user-response-log-table th,
+.user-response-log-table td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.user-response-log-table th {
+  background-color: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.user-response-log-table tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+.user-response-log-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-response-log-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.user-response-log-name {
+  font-weight: 500;
+}
+
+.user-response-log-message {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #4b5563;
+}
+
+.user-response-log-timestamp {
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.user-response-log-status {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.user-response-log-type {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background-color: #f1f5f9;
+  color: #475569;
+}
+
+.member-type {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.visitor-type {
+  background-color: #ede9fe;
+  color: #6d28d9;
+}
+
+.user-response-log-footer {
+  margin-top: 16px;
+  padding-top: 8px;
+  border-top: 1px solid #eaeaea;
+  font-size: 13px;
+  color: #6b7280;
+  display: flex;
+  justify-content: space-between;
+}
+
+.user-response-log-pagination {
+  display: flex;
+  gap: 6px;
+}
+
+.user-response-log-pagination button {
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background-color: #ffffff;
+  cursor: pointer;
+}
+
+.user-response-log-pagination button:hover {
+  background-color: #f8fafc;
+}
+
+.user-response-log-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-response-log-pagination button.active {
+  background-color: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.user-response-log-toggle {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-response-log-toggle:hover {
+  background-color: #2563eb;
+}
+
+.user-response-log-collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin: 0;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.user-response-log-expanded {
+  max-height: 400px;
+  transition: all 0.3s ease;
+}
+
+.message-preview {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .user-response-log-table th:nth-child(3),
+  .user-response-log-table td:nth-child(3) {
+    display: none;
+  }
+  
+  .message-preview {
+    max-width: 150px;
+  }
+}

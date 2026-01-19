@@ -1,0 +1,37 @@
+.role-catalog-manager {
+  /* wrapper for scoped styles */
+}
+.role-catalog-manager .btn {
+  width: auto; /* override global rules that force 100% */
+  display: inline-block;
+}
+.role-catalog-manager .btn.secondary {
+  width: auto;
+}
+.role-catalog-manager .add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.role-catalog-manager .add-button {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+}
+
+/* Ensure the modal and its inputs are interactive even if other global overlays exist */
+.role-catalog-manager {
+  pointer-events: auto;
+}
+.role-catalog-manager * {
+  pointer-events: auto;
+}
+.role-catalog-manager input,
+.role-catalog-manager textarea,
+.role-catalog-manager button,
+.role-catalog-manager select {
+  pointer-events: auto;
+}
+.role-catalog-manager .add-input {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  user-select: text;
+}

@@ -1,0 +1,94 @@
+.container {
+  position: relative;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.section-container {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  box-sizing: border-box;
+}
+
+.page-container {
+  min-height: 100vh;
+  width: 100%;
+  background-color: #f3f4f6;
+  overflow-x: hidden;
+}
+
+/* Fix header alignment */
+.header-section {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background-color: white;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  z-index: 50;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Grid fixes */
+.categories-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  padding: 1.5rem;
+  margin: 0 auto;
+  max-width: 1280px;
+  box-sizing: border-box;
+}
+
+/* Content area fixes */
+.content-area {
+  margin-top: 64px;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+/* Card fixes */
+.card {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow: hidden;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Responsive fixes */
+@media (max-width: 768px) {
+  .container,
+  .section-container {
+    padding: 1rem 0.5rem;
+  }
+  
+  .categories-grid {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+  
+  .content-area {
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .container,
+  .section-container {
+    padding: 0.5rem;
+  }
+  
+  .header-section {
+    padding: 0 0.5rem;
+  }
+}

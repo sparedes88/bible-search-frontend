@@ -1,0 +1,135 @@
+/* Microsoft-Style Login UI */
+.login-container {
+    width: 100%;
+    margin: auto;
+    margin-top: -30px;
+    background: white;
+    border-radius: 8px;
+    text-align: center;
+  }
+  
+  .login-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: #2a2a2a;
+  }
+  
+  .login-subtitle {
+    font-size: 14px;
+    color: #6a6a6a;
+    margin-bottom: 20px;
+  }
+  
+  .login-input {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    margin-bottom: 10px;
+  }
+  
+  .login-button {
+    width: 100%;
+    padding: 10px;
+    background-color: #0078d4;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: 0.3s;
+  }
+  
+  .login-button:hover {
+    background-color: #005a9e;
+  }
+  
+  .login-footer {
+    font-size: 14px;
+    margin-top: 10px;
+  }
+  
+  .login-link {
+    color: #0078d4;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  
+  .login-link:hover {
+    text-decoration: underline;
+  }
+  
+  .login-error {
+    color: red;
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+
+  /* Login tabs styling */
+  .login-method-tabs {
+    display: flex;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .login-tab {
+    flex: 1;
+    padding: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    color: #6b7280;
+    position: relative;
+  }
+
+  .login-tab.active {
+    color: #4f46e5;
+    font-weight: 500;
+  }
+
+  .login-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background-color: #4f46e5;
+  }
+
+  .login-tab:hover {
+    background-color: #f9fafb;
+  }
+
+  /* Phone verification styling */
+  .recaptcha-container {
+    margin: 15px 0;
+    display: flex;
+    justify-content: center;
+  }
+
+  .secondary-btn {
+    background-color: #f3f4f6;
+    color: #4b5563;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 10px;
+    width: 100%;
+    font-size: 16px;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: background-color 0.2s;
+  }
+
+  .secondary-btn:hover {
+    background-color: #e5e7eb;
+  }
+
+  .secondary-btn:disabled {
+    background-color: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+  }
