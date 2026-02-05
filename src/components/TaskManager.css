@@ -360,8 +360,94 @@
 
 .comment-text {
   color: #555;
-  line-height: 1.5;
+  line-height: 1.6;
   margin: 10px 0;
+  word-wrap: break-word;
+}
+
+.comment-text p {
+  margin: 8px 0;
+}
+
+.comment-text strong {
+  color: #212529;
+  font-weight: 600;
+}
+
+.comment-text em,
+.comment-text i {
+  font-style: italic;
+}
+
+.comment-text u {
+  text-decoration: underline;
+}
+
+.comment-text s,
+.comment-text del {
+  text-decoration: line-through;
+}
+
+.comment-text ul,
+.comment-text ol {
+  margin: 10px 0;
+  padding-left: 25px;
+}
+
+.comment-text li {
+  margin: 4px 0;
+}
+
+.comment-text a {
+  color: #0066cc;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.comment-text a:hover {
+  color: #0052a3;
+  text-decoration: underline;
+}
+
+.comment-text code {
+  background: #f4f4f4;
+  color: #d63384;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.comment-text pre {
+  background: #f4f4f4;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
+.comment-text pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+}
+
+.comment-text blockquote {
+  border-left: 4px solid #0066cc;
+  padding-left: 15px;
+  margin: 10px 0;
+  color: #666;
+  font-style: italic;
+}
+
+.comment-text img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 10px 0;
+  max-height: 300px;
 }
 
 .comment-attachments {

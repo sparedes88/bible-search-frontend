@@ -25,6 +25,9 @@ import { toast } from 'react-toastify';
 import { canAccessModule } from '../utils/permissions';
 import TaskProgress from './TaskProgress';
 import TaskManager from './TaskManager';
+import MyProfile from './MyProfile';
+import MyTeam from './MyTeam';
+import EmployeeExpenses from './EmployeeExpenses';
 import ChurchHeader from './ChurchHeader';
 import commonStyles from '../pages/commonStyles';
 import './TimeTracker.css';
@@ -232,6 +235,15 @@ const formatDurationReadable = (seconds) => {
   if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
   
   return parts.join(' ');
+};
+
+// Helper function to calculate total cost based on duration (in hours) and hourly rate
+const calculateTotalCost = (durationHours, hourlyRate) => {
+  if (!durationHours || !hourlyRate) return 0;
+  const hours = parseFloat(durationHours);
+  const rate = parseFloat(hourlyRate);
+  if (isNaN(hours) || isNaN(rate)) return 0;
+  return (hours * rate).toFixed(2);
 };
 
 // Helper function to format time input with masking
@@ -720,10 +732,14 @@ const TimeTracker = () => {
 
   // Debounced tab switching to prevent Firestore listener issues
   const handleTabChange = (newTab) => {
-    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands)
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands'].includes(newTab)) {
+    console.log('🔄 Tab change requested:', newTab, 'Current role:', user?.role);
+    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands, profile)
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(newTab)) {
+      console.log('❌ Tab blocked for member:', newTab);
       return;
     }
+    
+    console.log('✅ Tab allowed:', newTab);
     
     if (tabSwitchTimeout) {
       clearTimeout(tabSwitchTimeout);
@@ -897,6 +913,10 @@ const TimeTracker = () => {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [expenseSearchTerm, setExpenseSearchTerm] = useState('');
+  const [expenseDateFrom, setExpenseDateFrom] = useState('');
+  const [expenseDateTo, setExpenseDateTo] = useState('');
+  const [expenseDateRangeFilter, setExpenseDateRangeFilter] = useState('custom');
+  const [expenseProjectFilter, setExpenseProjectFilter] = useState('');
   const [newExpense, setNewExpense] = useState({
     title: '',
     description: '',
@@ -915,6 +935,13 @@ const TimeTracker = () => {
     name: '',
     description: '',
     color: '#667eea'
+  });
+  const [showExpenseSubcategoryModal, setShowExpenseSubcategoryModal] = useState(false);
+  const [editingExpenseSubcategory, setEditingExpenseSubcategory] = useState(null);
+  const [newExpenseSubcategory, setNewExpenseSubcategory] = useState({
+    name: '',
+    description: '',
+    color: '#f59e0b'
   });
 
   // Contracts State
@@ -1220,7 +1247,7 @@ const TimeTracker = () => {
 
   // Role-based tab restriction for members
   useEffect(() => {
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands'].includes(activeTab)) {
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(activeTab)) {
       setActiveTab('timer');
     }
   }, [user?.role, activeTab]);
@@ -2193,6 +2220,9 @@ const TimeTracker = () => {
   const editTimeEntry = (entry) => {
     setEditingRowId(entry.id);
     
+    // Convert duration from seconds to hours
+    const durationInHours = entry.duration ? parseFloat((entry.duration / 3600).toFixed(2)) : '';
+    
     setEditRowData({
       note: entry.note || '',
       startTime: formatTimeDisplay(entry.startTime) !== '-' ? formatTimeDisplay(entry.startTime) : '',
@@ -2201,7 +2231,7 @@ const TimeTracker = () => {
       project: entry.project || '',
       areaOfFocus: entry.areaOfFocus || '',
       costCode: entry.costCode || '',
-      duration: entry.duration ? (entry.duration / 3600).toFixed(2) : '',
+      duration: durationInHours,
       userId: entry.userId || '',
       taskId: entry.taskId || '' // Add task association
     });
@@ -2796,6 +2826,51 @@ const TimeTracker = () => {
     }
   };
 
+  // Save Expense Subcategory
+  const saveExpenseSubcategory = async () => {
+    if (!churchId) return;
+
+    try {
+      if (editingExpenseSubcategory) {
+        await updateDoc(doc(db, `churches/${churchId}/expenseSubcategories`, editingExpenseSubcategory.id), {
+          ...newExpenseSubcategory,
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense subcategory updated successfully');
+      } else {
+        await addDoc(collection(db, `churches/${churchId}/expenseSubcategories`), {
+          ...newExpenseSubcategory,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Expense subcategory created successfully');
+      }
+      setShowExpenseSubcategoryModal(false);
+      setEditingExpenseSubcategory(null);
+      setNewExpenseSubcategory({
+        name: '',
+        description: '',
+        color: '#f59e0b'
+      });
+    } catch (error) {
+      console.error('Error saving expense subcategory:', error);
+      toast.error('Failed to save expense subcategory');
+    }
+  };
+
+  // Delete Expense Subcategory
+  const deleteExpenseSubcategory = async (subcategoryId) => {
+    if (!churchId || !window.confirm('Are you sure you want to delete this expense subcategory?')) return;
+
+    try {
+      await deleteDoc(doc(db, `churches/${churchId}/expenseSubcategories`, subcategoryId));
+      toast.success('Expense subcategory deleted successfully');
+    } catch (error) {
+      console.error('Error deleting expense subcategory:', error);
+      toast.error('Failed to delete expense subcategory');
+    }
+  };
+
   // Save Expense
   const saveExpense = async () => {
     if (!churchId) return;
@@ -2841,12 +2916,101 @@ const TimeTracker = () => {
     }
   };
 
-  // Filtered expenses based on search term
-  const filteredExpenses = expenses.filter(expense => {
-    if (!expenseSearchTerm) return true;
+  // Date range helpers for expenses
+  const setYesterdayDateRange = () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
     
+    setExpenseDateFrom(yesterday.toISOString().split('T')[0]);
+    setExpenseDateTo(yesterday.toISOString().split('T')[0]);
+  };
+
+  const setLastWeekDateRange = () => {
+    const today = new Date();
+    const lastWeekStart = new Date(today);
+    lastWeekStart.setDate(today.getDate() - 7);
+    
+    setExpenseDateFrom(lastWeekStart.toISOString().split('T')[0]);
+    setExpenseDateTo(today.toISOString().split('T')[0]);
+  };
+
+  const setLastMonthDateRange = () => {
+    const today = new Date();
+    const lastMonthStart = new Date(today);
+    lastMonthStart.setMonth(today.getMonth() - 1);
+    
+    setExpenseDateFrom(lastMonthStart.toISOString().split('T')[0]);
+    setExpenseDateTo(today.toISOString().split('T')[0]);
+  };
+
+  const setLastYearDateRange = () => {
+    const today = new Date();
+    const lastYearStart = new Date(today);
+    lastYearStart.setFullYear(today.getFullYear() - 1);
+    
+    setExpenseDateFrom(lastYearStart.toISOString().split('T')[0]);
+    setExpenseDateTo(today.toISOString().split('T')[0]);
+  };
+
+  const setCustomDateRange = () => {
+    setExpenseDateFrom('');
+    setExpenseDateTo('');
+  };
+
+  const handleExpenseDateRangeChange = (e) => {
+    const selectedRange = e.target.value;
+    setExpenseDateRangeFilter(selectedRange);
+
+    switch (selectedRange) {
+      case 'yesterday':
+        setYesterdayDateRange();
+        break;
+      case 'lastWeek':
+        setLastWeekDateRange();
+        break;
+      case 'lastMonth':
+        setLastMonthDateRange();
+        break;
+      case 'lastYear':
+        setLastYearDateRange();
+        break;
+      case 'custom':
+        setCustomDateRange();
+        break;
+      default:
+        break;
+    }
+  };
+
+  // Convert time entries to expense line items
+  const timeEntryExpenses = timeEntries.map(entry => {
+    const user = users.find(u => u.id === entry.userId);
+    const durationInHours = entry.duration ? entry.duration / 3600 : 0;
+    const amount = durationInHours * (user?.salary || 0);
+    
+    return {
+      id: `time-${entry.id}`,
+      title: `Time Entry - ${user?.name || 'Unknown'} (${durationInHours.toFixed(2)}h)`,
+      description: entry.note || '',
+      amount: amount,
+      date: entry.date ? new Date(entry.date) : new Date(),
+      categoryId: 'labor',
+      subcategoryId: null,
+      costCodeId: null,
+      projectId: entry.project || null,
+      vendor: user?.name || 'Team Member',
+      isTimeEntry: true,
+      originalEntryId: entry.id,
+      userId: entry.userId,
+      hourlyRate: user?.salary || 0,
+      duration: durationInHours
+    };
+  });
+
+  // Filtered expenses based on search term, date range, and project
+  const filteredExpenses = [...expenses, ...timeEntryExpenses].filter(expense => {
     const searchLower = expenseSearchTerm.toLowerCase();
-    return (
+    const matchesSearch = !expenseSearchTerm || (
       expense.title?.toLowerCase().includes(searchLower) ||
       expense.description?.toLowerCase().includes(searchLower) ||
       expense.vendor?.toLowerCase().includes(searchLower) ||
@@ -2854,7 +3018,99 @@ const TimeTracker = () => {
       costCodes.find(cc => cc.id === expense.costCodeId)?.code?.toLowerCase().includes(searchLower) ||
       projects.find(p => p.id === expense.projectId)?.name?.toLowerCase().includes(searchLower)
     );
+
+    if (!matchesSearch) return false;
+
+    // Filter by project if selected
+    if (expenseProjectFilter && expense.projectId !== expenseProjectFilter) {
+      return false;
+    }
+
+    if (expenseDateFrom || expenseDateTo) {
+      let expenseDate = null;
+      if (expense?.date?.seconds) {
+        expenseDate = new Date(expense.date.seconds * 1000);
+      } else if (expense?.date instanceof Date) {
+        expenseDate = expense.date;
+      } else if (expense?.date) {
+        expenseDate = new Date(expense.date);
+      }
+
+      if (!expenseDate || Number.isNaN(expenseDate.getTime())) return false;
+      const expenseDateStr = expenseDate.toISOString().split('T')[0];
+
+      if (expenseDateFrom && expenseDateStr < expenseDateFrom) return false;
+      if (expenseDateTo && expenseDateStr > expenseDateTo) return false;
+    }
+
+    return true;
   });
+
+  // Group time entry expenses by employee and project with subtotals
+  const organizedExpenses = (() => {
+    const regular = filteredExpenses.filter(e => !e.isTimeEntry);
+    const timeEntries = filteredExpenses.filter(e => e.isTimeEntry);
+    
+    // Group regular expenses by category and subcategory
+    const categoryGroups = {};
+    regular.forEach(expense => {
+      const categoryId = expense.categoryId || 'uncategorized';
+      const subcategoryId = expense.subcategoryId || 'no-subcategory';
+      const key = `${categoryId}-${subcategoryId}`;
+      
+      if (!categoryGroups[key]) {
+        const category = expenseCategories.find(cat => cat.id === categoryId);
+        const subcategory = expenseSubcategories.find(sub => sub.id === subcategoryId);
+        categoryGroups[key] = {
+          categoryId: categoryId,
+          categoryName: category?.name || 'Uncategorized',
+          categoryColor: category?.color || '#999',
+          subcategoryId: subcategoryId,
+          subcategoryName: subcategory?.name || 'No Subcategory',
+          subcategoryColor: subcategory?.color || '#ddd',
+          expenses: [],
+          subtotal: 0
+        };
+      }
+      categoryGroups[key].expenses.push(expense);
+      categoryGroups[key].subtotal += expense.amount;
+    });
+
+    // Convert to array and sort by category name, then subcategory name
+    const categorizedArray = Object.values(categoryGroups).sort((a, b) => {
+      if (a.categoryName !== b.categoryName) {
+        return a.categoryName.localeCompare(b.categoryName);
+      }
+      return a.subcategoryName.localeCompare(b.subcategoryName);
+    });
+    
+    // Group time entries by userId and projectId
+    const grouped = {};
+    timeEntries.forEach(entry => {
+      const key = `${entry.userId}-${entry.projectId}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          userId: entry.userId,
+          projectId: entry.projectId,
+          userName: entry.vendor,
+          projectName: projects.find(p => p.id === entry.projectId)?.name || 'No Project',
+          entries: [],
+          subtotal: 0
+        };
+      }
+      grouped[key].entries.push(entry);
+      grouped[key].subtotal += entry.amount;
+    });
+
+    // Convert grouped object to array and sort
+    const groupedArray = Object.values(grouped).sort((a, b) => {
+      if (a.userName !== b.userName) return a.userName.localeCompare(b.userName);
+      return a.projectName.localeCompare(b.projectName);
+    });
+
+    // Return categorized expenses, then grouped time entries
+    return { categorized: categorizedArray, groupedTimeEntries: groupedArray };
+  })();
 
   // Contract Functions
   const saveContract = async () => {
@@ -4298,9 +4554,22 @@ const TimeTracker = () => {
         >
           🏷️ BIM Tracker
         </button>
+        {/* Profile - Available to all users */}
+        <button 
+          className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}
+          onClick={() => handleTabChange('profile')}
+        >
+          👤 My Profile
+        </button>
         {/* Admin-only tabs */}
         {user?.role !== 'member' && (
           <>
+            <button 
+              className={`tab-btn ${activeTab === 'team' ? 'active' : ''}`}
+              onClick={() => handleTabChange('team')}
+            >
+              👥 My Team
+            </button>
             <button 
               className={`tab-btn ${activeTab === 'projects' ? 'active' : ''}`}
               onClick={() => handleTabChange('projects')}
@@ -4340,6 +4609,16 @@ const TimeTracker = () => {
               </button>
             )}
           </>
+        )}
+
+        {/* Employee Expenses Tab - Admin only */}
+        {user?.role !== 'member' && (
+          <button 
+            className={`tab-btn ${activeTab === 'employeeExpenses' ? 'active' : ''}`}
+            onClick={() => handleTabChange('employeeExpenses')}
+          >
+            💰 Employee Expenses
+          </button>
         )}
       </div>
 
@@ -4416,6 +4695,8 @@ const TimeTracker = () => {
                       <th onClick={() => handleSort('duration')} className="sortable">
                         Duration {sortField === 'duration' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
+                      <th>Hourly Rate</th>
+                      <th>Total Cost</th>
                       <th onClick={() => handleSort('project')} className="sortable">
                         Project {sortField === 'project' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
@@ -4592,6 +4873,19 @@ const TimeTracker = () => {
                               />
                             </td>
                             <td>
+                              {(() => {
+                                const user = users.find(u => u.id === editRowData.userId);
+                                return user?.salary ? `$${parseFloat(user.salary).toFixed(2)}/hr` : '-';
+                              })()}
+                            </td>
+                            <td>
+                              {(() => {
+                                const user = users.find(u => u.id === editRowData.userId);
+                                const totalCost = calculateTotalCost(editRowData.duration, user?.salary);
+                                return totalCost > 0 ? `$${totalCost}` : '-';
+                              })()}
+                            </td>
+                            <td>
                               <select
                                 value={editRowData.project}
                                 onChange={(e) => setEditRowData({...editRowData, project: e.target.value})}
@@ -4665,6 +4959,21 @@ const TimeTracker = () => {
                             <td>{formatTimeDisplay(entry.startTime)}</td>
                             <td>{formatTimeDisplay(entry.endTime)}</td>
                             <td>{entry.duration ? formatDurationReadable(entry.duration) : '-'}</td>
+                            <td>
+                              {(() => {
+                                const user = users.find(u => u.id === entry.userId);
+                                return user?.salary ? `$${parseFloat(user.salary).toFixed(2)}/hr` : '-';
+                              })()}
+                            </td>
+                            <td>
+                              {(() => {
+                                const user = users.find(u => u.id === entry.userId);
+                                // Convert duration from seconds to hours for calculation
+                                const durationInHours = entry.duration ? entry.duration / 3600 : 0;
+                                const totalCost = calculateTotalCost(durationInHours, user?.salary);
+                                return totalCost > 0 ? `$${totalCost}` : '-';
+                              })()}
+                            </td>
                             <td>{projects.find(p => p.id === entry.project)?.name || 'Unknown Project'}</td>
                             <td>{areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area'}</td>
                             <td>{costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code'}</td>
@@ -4808,6 +5117,19 @@ const TimeTracker = () => {
                             placeholder="8.5"
                             style={{width: '60px'}}
                           />
+                        </td>
+                        <td>
+                          {(() => {
+                            const user = users.find(u => u.id === newRowData.userId);
+                            return user?.salary ? `$${parseFloat(user.salary).toFixed(2)}/hr` : '-';
+                          })()}
+                        </td>
+                        <td>
+                          {(() => {
+                            const user = users.find(u => u.id === newRowData.userId);
+                            const totalCost = calculateTotalCost(newRowData.duration, user?.salary);
+                            return totalCost > 0 ? `$${totalCost}` : '-';
+                          })()}
                         </td>
                         <td>
                           <select
@@ -5370,6 +5692,9 @@ const TimeTracker = () => {
               <button className="add-btn" onClick={() => setShowExpenseCategoryModal(true)}>
                 + Add Category
               </button>
+              <button className="add-btn" onClick={() => setShowExpenseSubcategoryModal(true)}>
+                + Add Subcategory
+              </button>
               <button className="add-btn" onClick={() => setShowExpenseModal(true)}>
                 + Add Expense
               </button>
@@ -5453,12 +5778,66 @@ const TimeTracker = () => {
                     </button>
                   )}
                 </div>
-                <div className="expenses-total">
-                  <span className="total-label">Total Expenses:</span>
-                  <span className="total-amount">
-                    ${filteredExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0).toFixed(2)}
-                  </span>
-                  <span className="total-count">({filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''})</span>
+                <div className="date-range-filter">
+                  <label>Date Range</label>
+                  <select
+                    value={expenseDateRangeFilter}
+                    onChange={handleExpenseDateRangeChange}
+                    className="date-range-select"
+                  >
+                    <option value="custom">Custom</option>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="lastWeek">Last Week</option>
+                    <option value="lastMonth">Last Month</option>
+                    <option value="lastYear">Last Year</option>
+                  </select>
+                </div>
+                <div className="expenses-date-filters">
+                  <div className="date-filter">
+                    <label>Start</label>
+                    <input
+                      type="date"
+                      value={expenseDateFrom}
+                      onChange={(e) => setExpenseDateFrom(e.target.value)}
+                    />
+                  </div>
+                  <div className="date-filter">
+                    <label>End</label>
+                    <input
+                      type="date"
+                      value={expenseDateTo}
+                      onChange={(e) => setExpenseDateTo(e.target.value)}
+                    />
+                  </div>
+                  <div className="project-filter">
+                    <label>Project</label>
+                    <select
+                      value={expenseProjectFilter}
+                      onChange={(e) => setExpenseProjectFilter(e.target.value)}
+                      className="project-select"
+                    >
+                      <option value="">All Projects</option>
+                      {projects.map(project => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {(expenseDateFrom || expenseDateTo || expenseProjectFilter) && (
+                    <button
+                      className="clear-date-btn"
+                      onClick={() => {
+                        setExpenseDateFrom('');
+                        setExpenseDateTo('');
+                        setExpenseProjectFilter('');
+
+                      }}
+                      title="Clear date range"
+                    >
+                      Clear
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -5484,85 +5863,162 @@ const TimeTracker = () => {
                   )}
                 </div>
               ) : (
-                filteredExpenses.map(expense => {
-                  const category = expenseCategories.find(cat => cat.id === expense.categoryId);
-                  const subcategory = expenseSubcategories.find(sub => sub.id === expense.subcategoryId);
-                  const costCode = costCodes.find(cc => cc.id === expense.costCodeId);
-                  
-                  return (
-                    <div key={expense.id} className="expense-card">
-                      <div className="expense-header">
-                        <div className="expense-title-section">
-                          <h4>{expense.title}</h4>
-                          <div className="expense-meta">
-                            <span className="expense-date">{new Date(expense.date.seconds * 1000).toLocaleDateString()}</span>
-                            {expense.vendor && <span className="expense-vendor">• {expense.vendor}</span>}
+                <>
+                  {/* Categorized Regular Expenses */}
+                  {organizedExpenses.categorized.map((group, groupIndex) => (
+                    <div key={`category-${groupIndex}`} className="expense-category-group">
+                      <div className="category-group-header">
+                        <div className="category-info">
+                          <span 
+                            className="category-color-indicator" 
+                            style={{ backgroundColor: group.categoryColor }}
+                          ></span>
+                          <div className="category-details">
+                            <h4>{group.categoryName}</h4>
+                            <span className="subcategory-name">{group.subcategoryName}</span>
                           </div>
                         </div>
-                        <div className="expense-amount">
-                          ${expense.amount.toFixed(2)}
+                        <div className="category-subtotal">
+                          <span>Subtotal:</span>
+                          <span className="amount">${group.subtotal.toFixed(2)}</span>
                         </div>
                       </div>
-                      <div className="expense-details">
-                        {expense.description && <p>{expense.description}</p>}
-                        <div className="expense-tags">
-                          {category && (
-                            <span 
-                              className="expense-tag category-tag"
-                              style={{ backgroundColor: category.color }}
-                            >
-                              {category.name}
-                            </span>
-                          )}
-                          {subcategory && (
-                            <span className="expense-tag subcategory-tag">
-                              {subcategory.name}
-                            </span>
-                          )}
-                          {costCode && (
-                            <span className="expense-tag cost-code-tag">
-                              {costCode.code}
-                            </span>
-                          )}
-                          {expense.projectId && (
-                            <span className="expense-tag project-tag">
-                              {projects.find(p => p.id === expense.projectId)?.name || 'Unknown Project'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="expense-actions">
-                        <button 
-                          className="edit-btn"
-                          onClick={() => {
-                            setEditingExpense(expense);
-                            setNewExpense({
-                              title: expense.title,
-                              description: expense.description || '',
-                              amount: expense.amount.toString(),
-                              date: new Date(expense.date.seconds * 1000).toISOString().split('T')[0],
-                              categoryId: expense.categoryId || '',
-                              subcategoryId: expense.subcategoryId || '',
-                              costCodeId: expense.costCodeId || '',
-                              projectId: expense.projectId || '',
-                              vendor: expense.vendor || '',
-                              receipt: null
-                            });
-                            setShowExpenseModal(true);
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button 
-                          className="delete-btn"
-                          onClick={() => deleteExpense(expense.id)}
-                        >
-                          Delete
-                        </button>
+                      <div className="category-expenses">
+                        {group.expenses.map(expense => {
+                          const costCode = costCodes.find(cc => cc.id === expense.costCodeId);
+                          const expenseDate = expense.date?.seconds 
+                            ? new Date(expense.date.seconds * 1000).toLocaleDateString()
+                            : expense.date instanceof Date 
+                              ? expense.date.toLocaleDateString()
+                              : new Date(expense.date).toLocaleDateString();
+                          
+                          return (
+                            <div key={expense.id} className="expense-card">
+                              <div className="expense-header">
+                                <div className="expense-title-section">
+                                  <h4>{expense.title}</h4>
+                                  <div className="expense-meta">
+                                    <span className="expense-date">{expenseDate}</span>
+                                    {expense.vendor && <span className="expense-vendor">• {expense.vendor}</span>}
+                                  </div>
+                                </div>
+                                <div className="expense-amount">
+                                  ${expense.amount.toFixed(2)}
+                                </div>
+                              </div>
+                              <div className="expense-details">
+                                {expense.description && <p>{expense.description}</p>}
+                                <div className="expense-tags">
+                                  {costCode && (
+                                    <span className="expense-tag cost-code-tag">
+                                      {costCode.code}
+                                    </span>
+                                  )}
+                                  {expense.projectId && (
+                                    <span className="expense-tag project-tag">
+                                      {projects.find(p => p.id === expense.projectId)?.name || 'Unknown Project'}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="expense-actions">
+                                <button 
+                                  className="edit-btn"
+                                  onClick={() => {
+                                    setEditingExpense(expense);
+                                    setNewExpense({
+                                      title: expense.title,
+                                      description: expense.description || '',
+                                      amount: expense.amount.toString(),
+                                      date: new Date(expense.date.seconds * 1000).toISOString().split('T')[0],
+                                      categoryId: expense.categoryId || '',
+                                      subcategoryId: expense.subcategoryId || '',
+                                      costCodeId: expense.costCodeId || '',
+                                      projectId: expense.projectId || '',
+                                      vendor: expense.vendor || '',
+                                      receipt: null
+                                    });
+                                    setShowExpenseModal(true);
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button 
+                                  className="delete-btn"
+                                  onClick={() => deleteExpense(expense.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })
+                  ))}
+
+                  {/* Grouped Time Entry Expenses */}
+                  {organizedExpenses.groupedTimeEntries.map((group, groupIndex) => (
+                    <div key={`group-${groupIndex}`} className="time-entry-group">
+                      <div className="group-header">
+                        <div className="group-title">
+                          <h5>{group.userName}</h5>
+                          <span className="group-project">{group.projectName}</span>
+                        </div>
+                        <div className="group-subtotal">
+                          <span>Subtotal:</span>
+                          <span className="amount">${group.subtotal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      <div className="group-entries">
+                        {group.entries.map(expense => {
+                          const expenseDate = expense.date?.seconds 
+                            ? new Date(expense.date.seconds * 1000).toLocaleDateString()
+                            : expense.date instanceof Date 
+                              ? expense.date.toLocaleDateString()
+                              : new Date(expense.date).toLocaleDateString();
+                          
+                          return (
+                            <div key={expense.id} className="expense-card time-entry-card">
+                              <div className="expense-header">
+                                <div className="expense-title-section">
+                                  <h4>{expense.title}</h4>
+                                  <div className="expense-meta">
+                                    <span className="expense-date">{expenseDate}</span>
+                                    {expense.isTimeEntry && (
+                                      <span className="expense-time-details">• {expense.duration?.toFixed(2)}h @ ${expense.hourlyRate?.toFixed(2)}/hr</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="expense-amount">
+                                  ${expense.amount.toFixed(2)}
+                                </div>
+                              </div>
+                              <div className="expense-details">
+                                {expense.description && <p>{expense.description}</p>}
+                                <div className="expense-tags">
+                                  <span className="expense-tag time-entry-tag">⏱️ Time Entry</span>
+                                </div>
+                              </div>
+                              <div className="expense-actions">
+                                <span className="time-entry-label">Auto-generated from Time Entry</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {filteredExpenses.length > 0 && (
+                <div className="expenses-total-footer">
+                  <span className="total-label">Total Expenses:</span>
+                  <span className="total-amount">
+                    ${filteredExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0).toFixed(2)}
+                  </span>
+                  <span className="total-count">({filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''})</span>
+                </div>
               )}
             </div>
           </div>
@@ -5702,6 +6158,24 @@ const TimeTracker = () => {
           <div style={{ width: '100%' }}>
             <ExcelManager churchId={churchId} collectionName="brands" />
           </div>
+        </div>
+      )}
+
+      {activeTab === 'profile' && (
+        <div className="profile-tab-content" style={{ width: '100%' }}>
+          <MyProfile />
+        </div>
+      )}
+
+      {activeTab === 'team' && (
+        <div className="team-tab-content" style={{ width: '100%' }}>
+          <MyTeam />
+        </div>
+      )}
+
+      {activeTab === 'employeeExpenses' && (
+        <div className="employee-expenses-tab-content" style={{ width: '100%' }}>
+          <EmployeeExpenses />
         </div>
       )}
 
@@ -7510,6 +7984,18 @@ const TimeTracker = () => {
                   </select>
                 </div>
                 <div className="form-group">
+                  <label>Subcategory</label>
+                  <select
+                    value={newExpense.subcategoryId}
+                    onChange={(e) => setNewExpense(prev => ({ ...prev, subcategoryId: e.target.value }))}
+                  >
+                    <option value="">Select Subcategory</option>
+                    {expenseSubcategories.map(subcategory => (
+                      <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
                   <label>Project *</label>
                   <select
                     value={newExpense.projectId}
@@ -7606,6 +8092,105 @@ const TimeTracker = () => {
                 disabled={!newExpenseCategory.name}
               >
                 {editingExpenseCategory ? 'Update' : 'Save'} Category
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Expense Subcategory Modal */}
+      {showExpenseSubcategoryModal && (
+        <div className="modal-overlay" onClick={() => setShowExpenseSubcategoryModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingExpenseSubcategory ? 'Edit Subcategory' : 'Add New Subcategory'}</h2>
+              <button className="close-btn" onClick={() => setShowExpenseSubcategoryModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Name *</label>
+                <input
+                  type="text"
+                  value={newExpenseSubcategory.name}
+                  onChange={(e) => setNewExpenseSubcategory(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Subcategory name"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={newExpenseSubcategory.description}
+                  onChange={(e) => setNewExpenseSubcategory(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Subcategory description"
+                  rows="2"
+                />
+              </div>
+              <div className="form-group">
+                <label>Color</label>
+                <input
+                  type="color"
+                  value={newExpenseSubcategory.color}
+                  onChange={(e) => setNewExpenseSubcategory(prev => ({ ...prev, color: e.target.value }))}
+                />
+              </div>
+              {expenseSubcategories && expenseSubcategories.length > 0 && (
+                <div className="categories-list">
+                  <h4>Existing Subcategories</h4>
+                  <div className="list-items">
+                    {expenseSubcategories.map(subcategory => (
+                      <div key={subcategory.id} className="list-item">
+                        <div className="item-info">
+                          <span 
+                            className="color-indicator" 
+                            style={{ backgroundColor: subcategory.color }}
+                          ></span>
+                          <div className="item-details">
+                            <h5>{subcategory.name}</h5>
+                            {subcategory.description && <p>{subcategory.description}</p>}
+                          </div>
+                        </div>
+                        <div className="item-actions">
+                          <button 
+                            className="icon-btn edit-btn"
+                            onClick={() => {
+                              setEditingExpenseSubcategory(subcategory);
+                              setNewExpenseSubcategory({
+                                name: subcategory.name,
+                                description: subcategory.description || '',
+                                color: subcategory.color
+                              });
+                            }}
+                            title="Edit"
+                          >
+                            ✎
+                          </button>
+                          <button 
+                            className="icon-btn delete-btn"
+                            onClick={() => deleteExpenseSubcategory(subcategory.id)}
+                            title="Delete"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="cancel-btn" onClick={() => {
+                setShowExpenseSubcategoryModal(false);
+                setEditingExpenseSubcategory(null);
+                setNewExpenseSubcategory({ name: '', description: '', color: '#f59e0b' });
+              }}>Cancel</button>
+              <button 
+                className="save-btn" 
+                onClick={saveExpenseSubcategory}
+                disabled={!newExpenseSubcategory.name}
+              >
+                {editingExpenseSubcategory ? 'Update' : 'Save'} Subcategory
               </button>
             </div>
           </div>

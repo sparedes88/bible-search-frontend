@@ -33,7 +33,9 @@
 
 .tab-navigation {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
+  gap: 8px;
   margin-bottom: 12px;
   background: white;
   border-radius: 12px;
@@ -43,21 +45,22 @@
 }
 
 .tab-btn {
-  flex: 1;
-  max-width: 200px;
-  padding: 12px 24px;
+  flex: 0 1 auto;
+  min-width: 140px;
+  padding: 12px 16px;
   border: none;
   background: transparent;
   color: #6b7280;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .tab-btn:hover {
@@ -4961,12 +4964,56 @@ input:required:valid, select:required:valid, textarea:required:valid {
   justify-content: space-between;
   align-items: center;
   gap: 20px;
+  flex-wrap: wrap;
 }
 
 .tt-search-container {
   position: relative;
   flex: 1;
   max-width: 90%;
+}
+
+.expenses-date-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.expenses-date-filters .date-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.expenses-date-filters input[type="date"] {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+}
+
+.expenses-date-filters input[type="date"]:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.clear-date-btn {
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #374151;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.clear-date-btn:hover {
+  background: #f3f4f6;
 }
 
 .search-input {

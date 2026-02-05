@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
+import { Editor } from '@tinymce/tinymce-react';
+import DOMPurify from 'dompurify';
 import {
   collection,
   query,
@@ -581,11 +583,35 @@ const TaskManager = () => {
                 <h4>Comments ({comments.length})</h4>
 
                 <form onSubmit={handleAddComment} className="comment-form">
-                  <textarea
+                  <Editor
+                    apiKey="wrmosrnprf5gkr7hklq37ubgsdey3vfs8zh2tl9czcc0gsil"
                     value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    placeholder="Add a comment..."
-                    rows="3"
+                    onEditorChange={(content) => setNewComment(content)}
+                    init={{
+                      height: 300,
+                      menubar: true,
+                      plugins: ['lists', 'link', 'image', 'code', 'fontsize', 'textcolor'],
+                      toolbar: 'undo redo | formatselect | fontsize | forecolor backcolor | bold italic underline strikethrough | bullist numlist | link image | code',
+                      content_style: 'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; }',
+                      paste_as_text: true,
+                      image_upload_handler: async (blobInfo) => {
+                        // Handle image upload
+                        const file = blobInfo.blob();
+                        const fileId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                        const filePath = `churches/${churchId}/tasks/${selectedTask?.id}/comment-images/${fileId}_${file.name}`;
+                        const fileRef = ref(storage, filePath);
+
+                        try {
+                          const snapshot = await uploadBytes(fileRef, file);
+                          const downloadURL = await getDownloadURL(snapshot.ref);
+                          return downloadURL;
+                        } catch (error) {
+                          console.error('Error uploading image:', error);
+                          toast.error('Failed to upload image');
+                          throw error;
+                        }
+                      }
+                    }}
                   />
                   <div className="comment-form-actions">
                     <input
@@ -619,10 +645,22 @@ const TaskManager = () => {
 
                       {editingComment === comment.id ? (
                         <div className="comment-edit">
-                          <textarea
+                          <Editor
+                            apiKey="wrmosrnprf5gkr7hklq37ubgsdey3vfs8zh2tl9czcc0gsil"
                             value={editCommentText}
-                            onChange={(e) => setEditCommentText(e.target.value)}
-                            rows="3"
+                            onEditorChange={(content) => setEditCommentText(content)}
+                            init={{
+                              height: 250,
+                              menubar: true,
+                              plugins: ['lists', 'link', 'image', 'code', 'fontsize', 'textcolor'],
+                              toolbar: 'undo redo | formatselect | fontsize | forecolor backcolor | bold italic underline strikethrough | bullist numlist | link image | code',
+                              image_upload_handler: async (blobInfo) => {
+                                const fileRef = ref(storage, `churches/${selectedChurch}/tasks/${selectedTask}/comments/images/${Date.now()}-${blobInfo.filename()}`);
+                                await uploadBytes(fileRef, blobInfo.blob());
+                                const url = await getDownloadURL(fileRef);
+                                return url;
+                              }
+                            }}
                           />
                           <div className="comment-edit-actions">
                             <button
@@ -643,7 +681,10 @@ const TaskManager = () => {
                           </div>
                         </div>
                       ) : (
-                        <p className="comment-text">{comment.text}</p>
+                        <div 
+                          className="comment-text" 
+                          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.text) }}
+                        />
                       )}
 
                       {comment.attachments && comment.attachments.length > 0 && (
