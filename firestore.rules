@@ -180,24 +180,20 @@ service cloud.firestore {
           (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
       }
 
-      // Employee Expenses - Users can read and manage their own, admins see all
+      // Employee Expenses - Users can read their own, admins see all
       match /employeeExpenses/{expenseId} {
         allow read: if isAuthenticated() && 
           (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
-        allow create: if isAuthenticated() && 
+        allow write, create, update, delete: if isAuthenticated() && 
           (request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
-        allow update, delete: if isAuthenticated() && 
-          (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
       }
 
-      // Salary Payments - Users can read and manage their own, admins manage all
+      // Salary Payments - Users can read their own, admins manage all
       match /salaryPayments/{paymentId} {
         allow read: if isAuthenticated() && 
           (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
-        allow create: if isAuthenticated() && 
-          (request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
-        allow update, delete: if isAuthenticated() && 
-          (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
+        allow write, create, update, delete: if isAuthenticated() && 
+          isChurchAdmin(churchId);
       }
       
       // Tasks - Users can CRUD their own tasks, and read all tasks in their church

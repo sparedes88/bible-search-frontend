@@ -452,15 +452,13 @@ const EmployeeExpenses = () => {
   // Expense handlers
   const handleAddExpense = async () => {
     try {
-      const effectiveUserId = isAdmin() ? newExpense.userId : currentUserId;
-      if (!effectiveUserId || !newExpense.amount || !newExpense.description) {
+      if (!newExpense.userId || !newExpense.amount || !newExpense.description) {
         toast.error('Please fill in all required fields');
         return;
       }
 
       const expenseData = {
         ...newExpense,
-        userId: effectiveUserId,
         amount: parseFloat(newExpense.amount),
         isPaid: false,
         createdAt: new Date().toISOString(),
@@ -473,7 +471,7 @@ const EmployeeExpenses = () => {
       setExpenses([...expenses, { id: docRef.id, ...expenseData }]);
       setShowAddExpense(false);
       setNewExpense({
-        userId: isAdmin() ? '' : currentUserId,
+        userId: '',
         amount: '',
         description: '',
         date: new Date().toISOString().split('T')[0],
@@ -823,20 +821,11 @@ const EmployeeExpenses = () => {
           </div>
         )}
 
-        <button
-          className="btn btn-sm btn-success"
-          onClick={() => {
-            if (!isAdmin()) {
-              setNewExpense(prev => ({
-                ...prev,
-                userId: currentUserId || ''
-              }));
-            }
-            setShowAddExpense(true);
-          }}
-        >
-          ➕ Add Expense
-        </button>
+        {isAdmin() && (
+          <button className="btn btn-sm btn-success" onClick={() => setShowAddExpense(true)}>
+            ➕ Add Expense
+          </button>
+        )}
       </div>
 
       {/* Summary Cards - Overall Totals */}
@@ -952,7 +941,7 @@ const EmployeeExpenses = () => {
                             )}
                           </div>
                           <div className="expense-actions">
-                            {!expense.isTimeBased && (
+                            {isAdmin() && !expense.isTimeBased && (
                               expense.isPaid ? (
                                 <button
                                   className="btn btn-xs btn-secondary"
@@ -971,7 +960,7 @@ const EmployeeExpenses = () => {
                                 </button>
                               )
                             )}
-                            {expense.isTimeBased && (
+                            {isAdmin() && expense.isTimeBased && (
                               expense.isPaid ? (
                                 <button
                                   className="btn btn-xs btn-secondary"
@@ -1061,12 +1050,14 @@ const EmployeeExpenses = () => {
                                       ${(entry.parsedHours * expense.hourlyRate).toFixed(2)}
                                     </div>
                                     <div className="col-actions">
-                                      <button
-                                        className="btn btn-xs btn-primary"
-                                        onClick={() => handleEditTimeEntry(entry)}
-                                      >
-                                        ✏️ Edit
-                                      </button>
+                                      {isAdmin() && (
+                                        <button
+                                          className="btn btn-xs btn-primary"
+                                          onClick={() => handleEditTimeEntry(entry)}
+                                        >
+                                          ✏️ Edit
+                                        </button>
+                                      )}
                                     </div>
                                   </>
                                 )}
@@ -1094,27 +1085,18 @@ const EmployeeExpenses = () => {
             <div className="modal-body">
               <div className="form-group">
                 <label>Employee *</label>
-                {isAdmin() ? (
-                  <select
-                    value={newExpense.userId}
-                    onChange={(e) => setNewExpense({ ...newExpense, userId: e.target.value })}
-                    className="form-control"
-                  >
-                    <option value="">Select employee...</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} {u.lastName}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={`${user?.name || ''} ${user?.lastName || ''}`.trim() || user?.email || 'You'}
-                    className="form-control"
-                    disabled
-                  />
-                )}
+                <select
+                  value={newExpense.userId}
+                  onChange={(e) => setNewExpense({ ...newExpense, userId: e.target.value })}
+                  className="form-control"
+                >
+                  <option value="">Select employee...</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} {u.lastName}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="form-group">

@@ -52,6 +52,28 @@ const MyProfile = () => {
             gender: data.gender || '',
             maritalStatus: data.maritalStatus || ''
           });
+        } else {
+          // Fallback to auth user info if profile doc is missing
+          const fallbackData = {
+            name: user?.name || '',
+            lastName: user?.lastName || '',
+            email: user?.email || '',
+            phone: user?.phone || '',
+            title: user?.title || '',
+            salaryPerHour: user?.salaryPerHour || '',
+            address: user?.address || {
+              street: '',
+              city: '',
+              state: '',
+              zipCode: '',
+              country: ''
+            },
+            dateOfBirth: user?.dateOfBirth || '',
+            gender: user?.gender || '',
+            maritalStatus: user?.maritalStatus || ''
+          };
+          setUserData(fallbackData);
+          setEditData(fallbackData);
         }
       } catch (error) {
         console.error('Error fetching user data:', error);

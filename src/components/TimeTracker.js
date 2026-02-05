@@ -733,8 +733,8 @@ const TimeTracker = () => {
   // Debounced tab switching to prevent Firestore listener issues
   const handleTabChange = (newTab) => {
     console.log('🔄 Tab change requested:', newTab, 'Current role:', user?.role);
-    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands, profile)
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(newTab)) {
+    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands, profile, employeeExpenses)
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile', 'employeeExpenses'].includes(newTab)) {
       console.log('❌ Tab blocked for member:', newTab);
       return;
     }
@@ -1247,7 +1247,7 @@ const TimeTracker = () => {
 
   // Role-based tab restriction for members
   useEffect(() => {
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(activeTab)) {
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile', 'employeeExpenses'].includes(activeTab)) {
       setActiveTab('timer');
     }
   }, [user?.role, activeTab]);
@@ -1895,7 +1895,7 @@ const TimeTracker = () => {
 
       // Date range filter
       if (filterDateFrom || filterDateTo) {
-        const entryDate = parseDate(entry.startTime);
+        const entryDate = parseDate(entry.date || entry.startTime);
         if (!entryDate) return false;
         
         const entryDateStr = entryDate.toISOString().split('T')[0];
@@ -1912,6 +1912,10 @@ const TimeTracker = () => {
       let aValue, bValue;
 
       switch (sortField) {
+        case 'date':
+          aValue = parseDate(a.date || a.startTime)?.getTime() || 0;
+          bValue = parseDate(b.date || b.startTime)?.getTime() || 0;
+          break;
         case 'startTime':
           aValue = parseDate(a.startTime)?.getTime() || 0;
           bValue = parseDate(b.startTime)?.getTime() || 0;
@@ -2223,11 +2227,13 @@ const TimeTracker = () => {
     // Convert duration from seconds to hours
     const durationInHours = entry.duration ? parseFloat((entry.duration / 3600).toFixed(2)) : '';
     
+    const fallbackDate = parseDate(entry.startTime)?.toISOString().split('T')[0] || '';
+
     setEditRowData({
       note: entry.note || '',
       startTime: formatTimeDisplay(entry.startTime) !== '-' ? formatTimeDisplay(entry.startTime) : '',
       endTime: formatTimeDisplay(entry.endTime) !== '-' ? formatTimeDisplay(entry.endTime) : '',
-      date: entry.date,
+      date: entry.date || fallbackDate,
       project: entry.project || '',
       areaOfFocus: entry.areaOfFocus || '',
       costCode: entry.costCode || '',
@@ -4611,15 +4617,13 @@ const TimeTracker = () => {
           </>
         )}
 
-        {/* Employee Expenses Tab - Admin only */}
-        {user?.role !== 'member' && (
-          <button 
-            className={`tab-btn ${activeTab === 'employeeExpenses' ? 'active' : ''}`}
-            onClick={() => handleTabChange('employeeExpenses')}
-          >
-            💰 Employee Expenses
-          </button>
-        )}
+        {/* Employee Expenses Tab - Available for all users */}
+        <button 
+          className={`tab-btn ${activeTab === 'employeeExpenses' ? 'active' : ''}`}
+          onClick={() => handleTabChange('employeeExpenses')}
+        >
+          💰 Employee Expenses
+        </button>
       </div>
 
       {activeTab === 'timer' && (
@@ -4688,6 +4692,9 @@ const TimeTracker = () => {
                       <th onClick={() => handleSort('userId')} className="sortable">
                         User {sortField === 'userId' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
+                      <th onClick={() => handleSort('date')} className="sortable">
+                        Date {sortField === 'date' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </th>
                       <th onClick={() => handleSort('startTime')} className="sortable">
                         Start Time {sortField === 'startTime' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </th>
@@ -4732,6 +4739,14 @@ const TimeTracker = () => {
                                   </option>
                                 ))}
                               </select>
+                            </td>
+                            <td>
+                              <input
+                                type="date"
+                                value={editRowData.date}
+                                onChange={(e) => setEditRowData({...editRowData, date: e.target.value})}
+                                className="inline-edit-input"
+                              />
                             </td>
                             <td>
                               <input
@@ -4956,6 +4971,12 @@ const TimeTracker = () => {
                                 return user ? (user.name && user.lastName ? `${user.name} ${user.lastName}` : user.name || user.email) : 'Unknown User';
                               })()}
                             </td>
+                            <td>
+                              {(() => {
+                                const dateValue = parseDate(entry.date || entry.startTime);
+                                return dateValue ? dateValue.toLocaleDateString('en-US') : '-';
+                              })()}
+                            </td>
                             <td>{formatTimeDisplay(entry.startTime)}</td>
                             <td>{formatTimeDisplay(entry.endTime)}</td>
                             <td>{entry.duration ? formatDurationReadable(entry.duration) : '-'}</td>
@@ -5012,6 +5033,14 @@ const TimeTracker = () => {
                               </option>
                             ))}
                           </select>
+                        </td>
+                        <td>
+                          <input
+                            type="date"
+                            value={newRowData.date}
+                            onChange={(e) => setNewRowData({...newRowData, date: e.target.value})}
+                            className="inline-edit-input"
+                          />
                         </td>
                         <td>
                           <input
