@@ -174,10 +174,17 @@ service cloud.firestore {
           (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
       }
       
-      // Tasks - Users can CRUD their own tasks
+      // Tasks - Users can CRUD their own tasks, and read all tasks in their church
       match /tasks/{taskId} {
-        allow read, write, create, update, delete: if isAuthenticated() && 
-          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+        allow read: if isAuthenticated();
+        allow write, create, update, delete: if isAuthenticated() && 
+          ((resource.data.userId == request.auth.uid || resource.data.createdBy == request.auth.uid) || 
+           (request.resource.data.userId == request.auth.uid || request.resource.data.createdBy == request.auth.uid));
+        
+        // Task comments - Authenticated users can CRUD comments on tasks
+        match /comments/{commentId} {
+          allow read, write, create, update, delete: if isAuthenticated();
+        }
       }
       
       // Build Tasks - Church members can access tasks for their church
@@ -203,16 +210,30 @@ service cloud.firestore {
           (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
       }
       
-      // Areas of Focus - Users can CRUD their own areas
-      match /areasOfFocus/{areaId} {
-        allow read, write, create, update, delete: if isAuthenticated() && 
-          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      // Projects - Authenticated users can read all projects in any church
+      match /projects/{projectId} {
+        allow read: if isAuthenticated();
+        allow create, update, delete: if isAuthenticated() && 
+          (request.resource.data.userId == request.auth.uid || resource.data.userId == request.auth.uid);
       }
       
-      // Cost Codes - Users can CRUD their own cost codes
+      // Areas of Focus - Authenticated users can read all areas in any church
+      match /areasOfFocus/{areaId} {
+        allow read: if isAuthenticated();
+        allow create, update, delete: if isAuthenticated() && 
+          (request.resource.data.userId == request.auth.uid || resource.data.userId == request.auth.uid);
+      }
+      
+      // Cost Codes - Authenticated users can read all cost codes in any church
       match /costCodes/{costCodeId} {
-        allow read, write, create, update, delete: if isAuthenticated() && 
-          (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+        allow read: if isAuthenticated();
+        allow create, update, delete: if isAuthenticated() && 
+          (request.resource.data.userId == request.auth.uid || resource.data.userId == request.auth.uid);
+      }
+      
+      // Brands (BIM Tracker) - Authenticated users can read and write
+      match /brands/{brandId} {
+        allow read, write, create, update, delete: if isAuthenticated();
       }
     }
 

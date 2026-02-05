@@ -116,6 +116,7 @@ const TaskManager = () => {
     try {
       const taskData = {
         ...newTask,
+        userId: user.uid,
         createdBy: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -232,19 +233,55 @@ const TaskManager = () => {
   // Add comment
   const handleAddComment = async (e) => {
     e.preventDefault();
-    if (!newComment.trim() || !selectedTask) return;
+    if (!newComment.trim() && fileInputRef.current?.files?.length === 0) return;
 
     try {
+      let attachments = [];
+      
+      // Upload files if any
+      if (fileInputRef.current?.files?.length > 0) {
+        const uploadPromises = Array.from(fileInputRef.current.files).map(async (file) => {
+          const fileId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+          const filePath = `churches/${churchId}/tasks/${selectedTask.id}/comments/${fileId}_${file.name}`;
+          const fileRef = ref(storage, filePath);
+
+          try {
+            const snapshot = await uploadBytes(fileRef, file);
+            const downloadURL = await getDownloadURL(snapshot.ref);
+
+            return {
+              id: fileId,
+              name: file.name,
+              path: filePath,
+              url: downloadURL,
+              size: file.size,
+              type: file.type,
+              uploadedAt: new Date()
+            };
+          } catch (error) {
+            console.error('Error uploading file:', error);
+            toast.error(`Failed to upload ${file.name}`);
+            return null;
+          }
+        });
+
+        const uploadedFiles = await Promise.all(uploadPromises);
+        attachments = uploadedFiles.filter(file => file !== null);
+      }
+
       const commentData = {
         text: newComment,
         authorId: user.uid,
         authorName: user.displayName || user.email,
         createdAt: serverTimestamp(),
-        attachments: []
+        attachments: attachments
       };
 
       await addDoc(collection(db, `churches/${churchId}/tasks/${selectedTask.id}/comments`), commentData);
       setNewComment('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       toast.success('Comment added!');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -555,7 +592,6 @@ const TaskManager = () => {
                       type="file"
                       ref={fileInputRef}
                       multiple
-                      onChange={(e) => handleFileUpload(e.target.files)}
                       style={{ display: 'none' }}
                     />
                     <button
@@ -612,24 +648,46 @@ const TaskManager = () => {
 
                       {comment.attachments && comment.attachments.length > 0 && (
                         <div className="comment-attachments">
-                          {comment.attachments.map(attachment => (
-                            <div key={attachment.id} className="attachment-item">
-                              <a
-                                href={attachment.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="attachment-link"
-                              >
-                                📎 {attachment.name}
-                              </a>
-                              <button
-                                className="btn btn-danger btn-xs"
-                                onClick={() => handleDeleteAttachment(comment.id, attachment.id, attachment.path)}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
+                          {comment.attachments.map(attachment => {
+                            const isImage = attachment.type && attachment.type.startsWith('image/');
+                            return (
+                              <div key={attachment.id} className="attachment-item">
+                                {isImage ? (
+                                  <div className="attachment-image">
+                                    <img 
+                                      src={attachment.url} 
+                                      alt={attachment.name}
+                                      style={{
+                                        maxWidth: '200px',
+                                        maxHeight: '200px',
+                                        borderRadius: '6px',
+                                        objectFit: 'cover',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={() => window.open(attachment.url, '_blank')}
+                                      title="Click to open in new tab"
+                                    />
+                                  </div>
+                                ) : (
+                                  <a
+                                    href={attachment.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="attachment-link"
+                                  >
+                                    📎 {attachment.name}
+                                  </a>
+                                )}
+                                <button
+                                  className="btn btn-danger btn-xs"
+                                  onClick={() => handleDeleteAttachment(comment.id, attachment.id, attachment.path)}
+                                  style={{ marginTop: '4px' }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 

@@ -136,6 +136,15 @@ service firebase.storage {
         && isChurchMember(churchId);
     }
 
+    // Time entry attachments - allow authenticated church members to upload files
+    match /churches/{churchId}/timeEntries/{entryId}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
     // Gallery images
     match /galleries/{galleryId}/{imageId} {
       allow read: if true;
@@ -280,6 +289,13 @@ service firebase.storage {
         && request.resource.contentType.matches('image/.*');
       allow delete: if request.auth != null
         && isGlobalAdmin();
+    }
+
+    // Task comment attachments - allow church members to upload files with comments
+    match /churches/{churchId}/tasks/{taskId}/comments/{fileName} {
+      allow read, write, delete: if request.auth != null
+        && isChurchMember(churchId)
+        && request.resource.size < 10 * 1024 * 1024;  // 10MB max
     }
   }
 }

@@ -199,6 +199,35 @@
   transform: translateY(0);
 }
 
+/* Modern Back Button */
+.nav-btn {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.nav-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(17, 24, 39, 0.12);
+  border-color: #d1d5db;
+}
+
+.nav-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.08);
+}
+
 .time-tracker-content {
   display: flex;
   flex-direction: column;
@@ -2052,7 +2081,7 @@ input:required:valid, select:required:valid, textarea:required:valid {
   font-weight: 600;
 }
 
-.entry-cost-code {
+.entry-cost-code, .entry-project {
   color: #6b7280;
   font-size: 0.875rem;
 }
@@ -3384,6 +3413,8 @@ input:required:valid, select:required:valid, textarea:required:valid {
   padding: 30px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .cost-codes-header {
@@ -3442,9 +3473,8 @@ input:required:valid, select:required:valid, textarea:required:valid {
 }
 
 .cost-codes-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 24px;
+  display: block;
+  width: 100%;
   margin-top: 20px;
 }
 
@@ -3457,6 +3487,8 @@ input:required:valid, select:required:valid, textarea:required:valid {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .cost-code-card::before {

@@ -9,7 +9,9 @@ import {
   onSnapshot,
   updateDoc,
   deleteDoc,
-  doc 
+  doc,
+  addDoc,
+  serverTimestamp
 } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import './TaskProgress.css';
@@ -22,6 +24,14 @@ const TaskProgress = () => {
   const [selectedTask, setSelectedTask] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [editingProgress, setEditingProgress] = useState(null);
+  const [newProgress, setNewProgress] = useState({
+    taskId: '',
+    progress: '',
+    notes: '',
+    date: new Date().toISOString().split('T')[0]
+  });
 
   // Fetch tasks
   useEffect(() => {
@@ -93,8 +103,6 @@ const TaskProgress = () => {
 
   // Delete progress entry
   const deleteProgress = async (progressId) => {
-    if (!window.confirm('Are you sure you want to delete this progress entry?')) return;
-
     try {
       // Immediately update local state for instant feedback
       setProgressEntries(prev => prev.filter(entry => entry.id !== progressId));
@@ -106,10 +114,61 @@ const TaskProgress = () => {
     } catch (error) {
       console.error('Error deleting progress:', error);
       toast.error('Failed to delete progress entry');
-      
-      // Note: In a real app, you might want to revert the optimistic update here
-      // For now, the real-time listener will eventually correct any inconsistencies
     }
+  };
+
+  // Save progress entry (Create or Update)
+  const saveProgress = async (e) => {
+    e.preventDefault();
+    
+    if (!newProgress.taskId || !newProgress.progress) {
+      toast.error('Task and Progress are required');
+      return;
+    }
+
+    try {
+      if (editingProgress) {
+        // Update existing progress
+        await updateDoc(doc(db, `churches/${churchId}/taskProgress`, editingProgress.id), {
+          ...newProgress,
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Progress entry updated successfully');
+      } else {
+        // Create new progress
+        await addDoc(collection(db, `churches/${churchId}/taskProgress`), {
+          ...newProgress,
+          userId: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        toast.success('Progress entry created successfully');
+      }
+      
+      setShowProgressModal(false);
+      setEditingProgress(null);
+      setNewProgress({
+        taskId: '',
+        progress: '',
+        notes: '',
+        date: new Date().toISOString().split('T')[0]
+      });
+    } catch (error) {
+      console.error('Error saving progress:', error);
+      toast.error('Failed to save progress entry: ' + error.message);
+    }
+  };
+
+  // Open edit modal
+  const editProgress = (progress) => {
+    setEditingProgress(progress);
+    setNewProgress({
+      taskId: progress.taskId,
+      progress: progress.progress,
+      notes: progress.notes || '',
+      date: progress.date
+    });
+    setShowProgressModal(true);
   };
 
   // Get progress for a specific task
@@ -228,7 +287,33 @@ const TaskProgress = () => {
 
       {/* Progress Entries */}
       <div className="progress-entries-section">
-        <h2>Progress Entries</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2>Progress Entries</h2>
+          <button
+            className="create-progress-btn"
+            onClick={() => {
+              setEditingProgress(null);
+              setNewProgress({
+                taskId: '',
+                progress: '',
+                notes: '',
+                date: new Date().toISOString().split('T')[0]
+              });
+              setShowProgressModal(true);
+            }}
+            style={{
+              backgroundColor: '#667eea',
+              color: 'white',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            + Add Progress
+          </button>
+        </div>
         
         {getFilteredProgress().length === 0 ? (
           <div className="no-progress">
@@ -258,10 +343,35 @@ const TaskProgress = () => {
                       </div>
                     </div>
                     
-                    <div className="entry-actions">
+                  <div className="entry-actions">
+                      <button 
+                        onClick={() => editProgress(entry)}
+                        className="edit-progress-btn"
+                        style={{
+                          backgroundColor: '#f59e0b',
+                          color: 'white',
+                          border: 'none',
+                          padding: '6px 12px',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          marginRight: '8px',
+                          fontSize: '0.9rem'
+                        }}
+                      >
+                        Edit
+                      </button>
                       <button 
                         onClick={() => deleteProgress(entry.id)}
                         className="delete-progress-btn"
+                        style={{
+                          backgroundColor: '#ef4444',
+                          color: 'white',
+                          border: 'none',
+                          padding: '6px 12px',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem'
+                        }}
                       >
                         Delete
                       </button>
@@ -344,7 +454,138 @@ const TaskProgress = () => {
           );
         })()}
       </div>
-    </div>
+      {/* Progress Modal */}
+      {showProgressModal && (
+        <div className="modal-overlay" onClick={() => setShowProgressModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+            <div className="modal-header">
+              <h3>{editingProgress ? 'Edit Progress Entry' : 'Add Progress Entry'}</h3>
+              <button 
+                className="modal-close"
+                onClick={() => {
+                  setShowProgressModal(false);
+                  setEditingProgress(null);
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            <form onSubmit={saveProgress} style={{ padding: '20px' }}>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600' }}>Select Task *</label>
+                <select
+                  value={newProgress.taskId}
+                  onChange={(e) => setNewProgress({...newProgress, taskId: e.target.value})}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '1rem'
+                  }}
+                >
+                  <option value="">Choose a task...</option>
+                  {tasks.map(task => (
+                    <option key={task.id} value={task.id}>
+                      {task.title} ({task.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600' }}>Date *</label>
+                <input
+                  type="date"
+                  value={newProgress.date}
+                  onChange={(e) => setNewProgress({...newProgress, date: e.target.value})}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '1rem'
+                  }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600' }}>Progress Made *</label>
+                <textarea
+                  value={newProgress.progress}
+                  onChange={(e) => setNewProgress({...newProgress, progress: e.target.value})}
+                  required
+                  rows="4"
+                  placeholder="Describe the progress made on this task..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '1rem',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600' }}>Additional Notes (Optional)</label>
+                <textarea
+                  value={newProgress.notes}
+                  onChange={(e) => setNewProgress({...newProgress, notes: e.target.value})}
+                  rows="3"
+                  placeholder="Any additional notes or observations..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '1rem',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProgressModal(false);
+                    setEditingProgress(null);
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    backgroundColor: '#f3f4f6',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#667eea',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  {editingProgress ? 'Update' : 'Create'} Progress
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}    </div>
   );
 };
 

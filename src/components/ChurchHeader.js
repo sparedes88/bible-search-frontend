@@ -137,12 +137,11 @@ const ChurchHeader = ({
         ) : (
           <>
             <img
-              className=""
+              className="church-banner-image"
               src={
                 preview.banner || church?.banner || "/img/banner-fallback.svg"
               }
               alt="Church Banner"
-              
             />
             {allowEditBannerLogo && (
               <label

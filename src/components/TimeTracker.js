@@ -218,6 +218,22 @@ const formatDuration = (seconds) => {
   }
 };
 
+// Helper function to format duration in human-readable format (hours, minutes, seconds)
+const formatDurationReadable = (seconds) => {
+  if (!seconds || seconds === 0) return '0s';
+  
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+  
+  return parts.join(' ');
+};
+
 // Helper function to format time input with masking
 const formatTimeInput = (value) => {
   if (!value || value.trim() === '') return '';
@@ -704,8 +720,8 @@ const TimeTracker = () => {
 
   // Debounced tab switching to prevent Firestore listener issues
   const handleTabChange = (newTab) => {
-    // Prevent members from accessing restricted tabs
-    if (user?.role === 'member' && newTab !== 'timer') {
+    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands)
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands'].includes(newTab)) {
       return;
     }
     
@@ -1204,7 +1220,7 @@ const TimeTracker = () => {
 
   // Role-based tab restriction for members
   useEffect(() => {
-    if (user?.role === 'member' && activeTab !== 'timer') {
+    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands'].includes(activeTab)) {
       setActiveTab('timer');
     }
   }, [user?.role, activeTab]);
@@ -1370,12 +1386,8 @@ const TimeTracker = () => {
 
     try {
       const projectsRef = collection(db, `churches/${churchId}/projects`);
-      const projectQuery = query(
-        projectsRef,
-        where('userId', '==', user.uid)
-      );
 
-      unsubscribe = onSnapshot(projectQuery,
+      unsubscribe = onSnapshot(projectsRef,
         (snapshot) => {
           if (!isMounted) return;
           
@@ -1423,12 +1435,8 @@ const TimeTracker = () => {
 
     try {
       const areasRef = collection(db, `churches/${churchId}/areasOfFocus`);
-      const areasQuery = query(
-        areasRef,
-        where('userId', '==', user.uid)
-      );
 
-      unsubscribe = onSnapshot(areasQuery,
+      unsubscribe = onSnapshot(areasRef,
         (snapshot) => {
           if (!isMounted) return;
 
@@ -1477,12 +1485,8 @@ const TimeTracker = () => {
 
     try {
       const costCodesRef = collection(db, `churches/${churchId}/costCodes`);
-      const costCodeQuery = query(
-        costCodesRef,
-        where('userId', '==', user.uid)
-      );
 
-      unsubscribe = onSnapshot(costCodeQuery,
+      unsubscribe = onSnapshot(costCodesRef,
         (snapshot) => {
           if (!isMounted) return;
           
@@ -2163,17 +2167,13 @@ const TimeTracker = () => {
     // Find the entry to check ownership
     const entry = timeEntries.find(e => e.id === entryId);
     if (!entry) {
-      toast.error('Time entry not found');
       return;
     }
 
     // Check permissions: members can only delete their own entries, admins can delete any
     if (user.role === 'member' && entry.userId !== user.uid) {
-      toast.error('You can only delete your own time entries');
       return;
     }
-
-    if (!window.confirm('Are you sure you want to delete this time entry?')) return;
 
     try {
       // Immediately update local state for instant feedback
@@ -2181,11 +2181,8 @@ const TimeTracker = () => {
 
       // Delete from Firestore
       await deleteDoc(doc(db, `churches/${churchId}/timeEntries`, entryId));
-      
-      toast.success('Time entry deleted successfully!');
     } catch (error) {
       console.error('Error deleting time entry:', error);
-      toast.error('Failed to delete time entry');
       
       // Note: In a real app, you might want to revert the optimistic update here
       // For now, the real-time listener will eventually correct any inconsistencies
@@ -2272,24 +2269,65 @@ const TimeTracker = () => {
       const updateData = {
         startTime: startDateTime.toISOString(),
         endTime: endDateTime ? endDateTime.toISOString() : null,
-        duration: duration,
-        note: editRowData.note,
-        date: editRowData.date,
-        project: editRowData.project,
-        areaOfFocus: editRowData.areaOfFocus,
-        costCode: editRowData.costCode,
-        userId: editRowData.userId,
-        taskId: editRowData.taskId || null // Add task association
+        duration: duration || 0,
+        note: editRowData.note || '',
+        date: editRowData.date || entry.date,
+        project: editRowData.project || '',
+        areaOfFocus: editRowData.areaOfFocus || '',
+        costCode: editRowData.costCode || '',
+        userId: editRowData.userId || entry.userId,
+        taskId: editRowData.taskId || null
       };
 
+      // Remove undefined values to prevent Firestore errors
+      const cleanUpdateData = {};
+      Object.keys(updateData).forEach(key => {
+        if (updateData[key] !== undefined) {
+          cleanUpdateData[key] = updateData[key];
+        } else {
+          console.warn(`Skipping undefined field: ${key}`);
+        }
+      });
+
+      console.log('Clean update data before history:', cleanUpdateData);
+
       // Track changes for history
-      const changes = createChangeHistory(entry, updateData, user.uid);
+      const changes = createChangeHistory(entry, cleanUpdateData, user.uid);
       if (changes.length > 0) {
         const existingHistory = entry.history || [];
-        updateData.history = [...existingHistory, ...changes];
+        const sanitizeHistory = (items) => items
+          .filter(item => item)
+          .map(item => ({
+            field: item.field || '',
+            oldValue: item.oldValue === undefined ? null : item.oldValue,
+            newValue: item.newValue === undefined ? null : item.newValue,
+            changedBy: item.changedBy || user.uid,
+            changedAt: item.changedAt || new Date().toISOString()
+          }))
+          .filter(item => item.field && item.changedBy && item.changedAt);
+
+        cleanUpdateData.history = [
+          ...sanitizeHistory(existingHistory),
+          ...sanitizeHistory(changes)
+        ];
       }
 
-      await updateDoc(doc(db, `churches/${churchId}/timeEntries`, entryId), updateData);
+      // Final cleanup - make sure no undefined values snuck in through history
+      const finalUpdateData = {};
+      Object.keys(cleanUpdateData).forEach(key => {
+        if (cleanUpdateData[key] !== undefined) {
+          // For arrays, filter out undefined values
+          if (Array.isArray(cleanUpdateData[key])) {
+            finalUpdateData[key] = cleanUpdateData[key].filter(item => item !== undefined);
+          } else {
+            finalUpdateData[key] = cleanUpdateData[key];
+          }
+        }
+      });
+
+      console.log('Final update data:', finalUpdateData);
+
+      await updateDoc(doc(db, `churches/${churchId}/timeEntries`, entryId), finalUpdateData);
 
       // Update local state
       setTimeEntries(prev => prev.map(entry => 
@@ -4239,21 +4277,30 @@ const TimeTracker = () => {
         >
           ⏱️ Time Tracker
         </button>
-        {/* Only show other tabs if user is not a member */}
+        {/* Tasks - Available to members */}
+        <button 
+          className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
+          onClick={() => handleTabChange('tasks')}
+        >
+          📋 Tasks & Submissions
+        </button>
+        {/* Progress - Available to members */}
+        <button 
+          className={`tab-btn ${activeTab === 'progress' ? 'active' : ''}`}
+          onClick={() => handleTabChange('progress')}
+        >
+          📊 Task Progress
+        </button>
+        {/* Brands - Available to members */}
+        <button 
+          className={`tab-btn ${activeTab === 'brands' ? 'active' : ''}`}
+          onClick={() => handleTabChange('brands')}
+        >
+          🏷️ BIM Tracker
+        </button>
+        {/* Admin-only tabs */}
         {user?.role !== 'member' && (
           <>
-            <button 
-              className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
-              onClick={() => handleTabChange('tasks')}
-            >
-              📋 Tasks & Submissions
-            </button>
-            <button 
-              className={`tab-btn ${activeTab === 'progress' ? 'active' : ''}`}
-              onClick={() => handleTabChange('progress')}
-            >
-              📊 Task Progress
-            </button>
             <button 
               className={`tab-btn ${activeTab === 'projects' ? 'active' : ''}`}
               onClick={() => handleTabChange('projects')}
@@ -4283,12 +4330,6 @@ const TimeTracker = () => {
               onClick={() => handleTabChange('contracts')}
             >
               📄 Contracts
-            </button>
-            <button 
-              className={`tab-btn ${activeTab === 'brands' ? 'active' : ''}`}
-              onClick={() => handleTabChange('brands')}
-            >
-              🏷️ BIM Tracker
             </button>
             {selectedProject && (
               <button 
@@ -4623,7 +4664,7 @@ const TimeTracker = () => {
                             </td>
                             <td>{formatTimeDisplay(entry.startTime)}</td>
                             <td>{formatTimeDisplay(entry.endTime)}</td>
-                            <td>{entry.duration ? (entry.duration / 3600).toFixed(2) + 'h' : '-'}</td>
+                            <td>{entry.duration ? formatDurationReadable(entry.duration) : '-'}</td>
                             <td>{projects.find(p => p.id === entry.project)?.name || 'Unknown Project'}</td>
                             <td>{areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area'}</td>
                             <td>{costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code'}</td>
@@ -4843,151 +4884,6 @@ const TimeTracker = () => {
       {activeTab === 'tasks' && (
         <>
           <TaskManager />
-          <div className="tasks-content">
-            {/* Task Management */}
-            <div className="section">
-              <div className="section-header">
-                <div className="header-content">
-                  <h3>Task Management</h3>
-                  <div className="forecast-overview">
-                    <div className="forecast-summary">
-                      <span className="forecast-label">Total Forecasted Hours:</span>
-                      <span className="forecast-value">{tasks.reduce((total, task) => total + (task.forecastedHours || 0), 0)}h</span>
-                    </div>
-                    <div className="status-summary">
-                      <span className="status-count started">Started: {tasks.filter(task => task.status === 'started').length} ({tasks.filter(task => task.status === 'started').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
-                      <span className="status-count in-progress">In Progress: {tasks.filter(task => task.status === 'in-progress').length} ({tasks.filter(task => task.status === 'in-progress').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
-                      <span className="status-count completed">Completed: {tasks.filter(task => task.status === 'completed').length} ({tasks.filter(task => task.status === 'completed').reduce((total, task) => total + (task.forecastedHours || 0), 0)}h)</span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  className="create-task-btn"
-                  onClick={() => setShowTaskModal(true)}
-                >
-                  Create Task
-                </button>
-              </div>
-
-              {/* Task List */}
-              <div className="tasks-list">
-                {tasks.map(task => (
-                  <div key={task.id} className={`task-card ${task.status}`}>
-                    <div className="task-header">
-                      <h4>{task.title}</h4>
-                      <div className="task-actions">
-                        <select
-                          value={task.status}
-                          onChange={(e) => updateTaskStatus(task.id, e.target.value)}
-                          className="status-select"
-                        >
-                          <option value="started">Started</option>
-                          <option value="in-progress">In Progress</option>
-                          <option value="completed">Completed</option>
-                        </select>
-                        <button onClick={() => editTask(task)} className="edit-btn">Edit</button>
-                        <button onClick={() => deleteTask(task.id)} className="delete-btn">Delete</button>
-                      </div>
-                    </div>
-                    <p className="task-description">{task.description}</p>
-                    <div className="task-meta">
-                      <span className={`priority ${task.priority}`}>
-                        {task.priority} priority
-                      </span>
-                      {task.assignedTo && (
-                        <span className="assigned-user">👤 {task.assignedTo}</span>
-                      )}
-                      {task.dueDate && (
-                        <span className="due-date">Due: {task.dueDate}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Submissions Management */}
-            <div className="section">
-              <div className="section-header">
-                <h3>Submissions Management</h3>
-                <button
-                  className="create-submission-btn"
-                  onClick={() => setShowSubmissionModal(true)}
-                >
-                  Create Submission
-                </button>
-              </div>
-
-              {/* Submissions List */}
-              <div className="submissions-list">
-                {submissions.length === 0 ? (
-                  <div className="no-submissions">
-                    <p>No submissions yet. Create your first submission to get started!</p>
-                  </div>
-                ) : (
-                  submissions.map(submission => (
-                    <div key={submission.id} className={`submission-card ${submission.status}`}>
-                      <div className="submission-header">
-                        <div className="submission-info">
-                          <h4>{submission.title}</h4>
-                          <span className={`submission-type ${submission.type}`}>
-                            {submission.type}
-                          </span>
-                        </div>
-                        <div className="submission-actions">
-                          <select
-                            value={submission.status}
-                            onChange={(e) => updateSubmissionStatus(submission.id, e.target.value)}
-                            className="status-select"
-                          >
-                            <option value="draft">Draft</option>
-                            <option value="pending">Pending Review</option>
-                            <option value="approved">Approved</option>
-                            <option value="rejected">Rejected</option>
-                            <option value="submitted">Submitted</option>
-                          </select>
-                          <button onClick={() => editSubmission(submission)} className="edit-btn">Edit</button>
-                          <button onClick={() => deleteSubmission(submission.id)} className="delete-btn">Delete</button>
-                        </div>
-                      </div>
-
-                      <p className="submission-description">{submission.description}</p>
-
-                      {submission.relatedTaskId && (
-                        <div className="related-task">
-                          <strong>Related Task:</strong> {
-                            tasks.find(task => task.id === submission.relatedTaskId)?.title || 'Unknown Task'
-                          }
-                        </div>
-                      )}
-
-                      {submission.content && (
-                        <div className="submission-content">
-                          <strong>Content:</strong>
-                          <div className="content-preview">
-                            {submission.content.substring(0, 200)}
-                            {submission.content.length > 200 && '...'}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="submission-meta">
-                        {submission.dueDate && (
-                          <span className="due-date">Due: {submission.dueDate}</span>
-                        )}
-                        <span className="created-date">
-                          Created: {submission.createdAt?.toDate ?
-                            submission.createdAt.toDate().toLocaleDateString() :
-                            'Unknown'
-                          }
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
         </>
       )}
 
@@ -5284,8 +5180,39 @@ const TimeTracker = () => {
                 </button>
               </div>
             ) : (
-              costCodes.map(costCode => (
-                <div key={costCode.id} className="cost-code-card">
+              (() => {
+                // Group cost codes by area of focus
+                const groupedByArea = {};
+                costCodes.forEach(costCode => {
+                  const areaIds = costCode.areaOfFocusIds || (costCode.areaOfFocusId ? [costCode.areaOfFocusId] : []);
+                  
+                  if (areaIds.length === 0) {
+                    // If no area assigned, put in "Unassigned"
+                    if (!groupedByArea['unassigned']) {
+                      groupedByArea['unassigned'] = [];
+                    }
+                    groupedByArea['unassigned'].push(costCode);
+                  } else {
+                    // Add cost code to each area it belongs to
+                    areaIds.forEach(areaId => {
+                      if (!groupedByArea[areaId]) {
+                        groupedByArea[areaId] = [];
+                      }
+                      groupedByArea[areaId].push(costCode);
+                    });
+                  }
+                });
+
+                return (
+                  <div>
+                    {Object.entries(groupedByArea).map(([areaId, areaCostCodes]) => (
+                      <div key={areaId} style={{ marginBottom: '24px' }}>
+                        <h3 style={{ marginBottom: '12px', color: '#1f2937', fontSize: '1.1rem', fontWeight: '600' }}>
+                          🎯 {areaId === 'unassigned' ? 'Unassigned' : (areasOfFocus.find(a => a.id === areaId)?.name || 'Unknown Area')}
+                        </h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '16px', width: '100%' }}>
+                          {areaCostCodes.map(costCode => (
+                            <div key={costCode.id} className="cost-code-card">
                   <div className="cost-code-header">
                     <div className="cost-code-info">
                       <div className="cost-code-icon">💰</div>
@@ -5423,7 +5350,13 @@ const TimeTracker = () => {
                     </div>
                   </div>
                 </div>
-              ))
+                            ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>
@@ -6443,7 +6376,8 @@ const TimeTracker = () => {
                     <div key={entry.id} className="time-entry-item">
                       <div className="entry-details">
                         <span className="entry-date">{new Date(entry.date).toLocaleDateString()}</span>
-                        <span className="entry-duration">{entry.duration ? (entry.duration / 3600).toFixed(2) + 'h' : '0.00h'}</span>
+                        <span className="entry-duration">{entry.duration ? formatDurationReadable(entry.duration) : '0s'}</span>
+                        <span className="entry-project">Project: {projects.find(p => p.id === entry.project)?.name || 'Unknown'}</span>
                         <span className="entry-cost-code">Cost Code: {entry.costCode || 'None'}</span>
                       </div>
                       <div className="entry-note">
@@ -6876,7 +6810,7 @@ const TimeTracker = () => {
                       >
                         <option value="">Select Cost Code</option>
                         {costCodes
-                          .filter(cc => !newProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id))
+                          .filter(cc => !newProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id) && cc.id && cc.code)
                           .map(costCode => (
                             <option key={costCode.id} value={costCode.id}>
                               {costCode.code} - {costCode.description}
