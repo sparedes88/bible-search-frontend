@@ -3,6 +3,7 @@ import { getAuth, connectAuthEmulator } from "firebase/auth";
 import {
   getFirestore,
   enableIndexedDbPersistence,
+  enableMultiTabIndexedDbPersistence,
   connectFirestoreEmulator,
   doc,
   onSnapshot,
@@ -112,20 +113,34 @@ const initializeFirebase = async () => {
       debugLog("Connected to local emulators");
     }
 
-    // Enable offline persistence with retry logic (non-blocking)
-    enableIndexedDbPersistence(db)
+    // Enable offline persistence (multi-tab first, then fallback)
+    enableMultiTabIndexedDbPersistence(db)
       .then(() => {
         debugLog("Multi-tab persistence enabled");
       })
       .catch((err) => {
-        if (err.code === "failed-precondition") {
-          debugLog("Multiple tabs open, persistence enabled in another tab");
-        } else if (err.code === "unimplemented") {
-          debugLog("Browser doesn't support persistence");
+        if (err.code === "unimplemented") {
+          debugLog("Browser doesn't support multi-tab persistence");
+        } else if (err.code === "failed-precondition") {
+          debugLog("Multi-tab persistence failed-precondition");
         } else {
-          debugLog(`Persistence error: ${err.message}`);
+          debugLog(`Multi-tab persistence error: ${err.message}`);
         }
-        // Don't throw - allow app to continue
+
+        // Fallback to single-tab persistence
+        return enableIndexedDbPersistence(db)
+          .then(() => {
+            debugLog("Single-tab persistence enabled");
+          })
+          .catch((fallbackErr) => {
+            if (fallbackErr.code === "failed-precondition") {
+              debugLog("Multiple tabs open, persistence enabled in another tab");
+            } else if (fallbackErr.code === "unimplemented") {
+              debugLog("Browser doesn't support persistence");
+            } else {
+              debugLog(`Persistence error: ${fallbackErr.message}`);
+            }
+          });
       });
 
     // Initialize Analytics only in production and after everything else is set up
