@@ -26,6 +26,8 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
   const [uploadingComment, setUploadingComment] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editingCommentText, setEditingCommentText] = useState('');
+  const [newColumnName, setNewColumnName] = useState('');
+  const [addingColumn, setAddingColumn] = useState(false);
   const { user } = useAuth();
 
   const getPrimaryType = (header) => {
@@ -286,7 +288,7 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
       let finalHeaders = hdrs;
       if (preferredHeaders && preferredHeaders.length) {
         const ordered = [];
-        preferredHeaders.forEach(k => { if (hdrs.includes(k)) ordered.push(k); });
+        preferredHeaders.forEach(k => { if (!ordered.includes(k)) ordered.push(k); });
         hdrs.forEach(k => { if (!ordered.includes(k)) ordered.push(k); });
         finalHeaders = ordered;
       }
@@ -658,6 +660,42 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
     setClearing(false);
   };
 
+  const addColumn = async () => {
+    if (!churchId) { setError('Missing churchId'); return; }
+
+    const rawName = (newColumnName || '').trim();
+    if (!rawName) {
+      setError('Column name is required.');
+      return;
+    }
+
+    const normalizedName = rawName.replace(/\s+/g, ' ');
+    const exists = (headers || []).some(h => String(h).toLowerCase() === normalizedName.toLowerCase());
+    if (exists) {
+      setError('Column already exists.');
+      return;
+    }
+
+    setAddingColumn(true);
+    setError(null);
+    try {
+      const nextHeaders = [...(headers || []), normalizedName];
+      setHeaders(nextHeaders);
+      setPreferredHeaders(nextHeaders);
+      setRows(prev => (prev || []).map(r => ({ ...r, [normalizedName]: '' })));
+
+      const metaRef = doc(db, 'churches', String(churchId), 'collectionMetadata', collectionName);
+      await setDoc(metaRef, { headers: nextHeaders }, { merge: true });
+
+      setNewColumnName('');
+    } catch (err) {
+      console.error('Failed to add column', err);
+      setError('Failed to add column.');
+    } finally {
+      setAddingColumn(false);
+    }
+  };
+
   // keep original index for each row so actions map to the correct document
   const filtered = rows.map((r, idx) => ({ r, idx })).filter(({ r }) => {
     if (!search) return true;
@@ -726,6 +764,8 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
   }, [localSearch]);
 
   const totalPages = Math.max(1, Math.ceil((sorted && sorted.length) / PAGE_SIZE));
+  const hasRows = filtered.length > 0;
+  const showTable = headers.length > 0;
   const paged = (sorted || []).slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
 
   return (
@@ -740,6 +780,21 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
             onBlur={() => setSearch(localSearch)}
             style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb' }}
           />
+          <input
+            placeholder="New column name"
+            value={newColumnName}
+            onChange={(e) => setNewColumnName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addColumn();
+              }
+            }}
+            style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb' }}
+          />
+          <button className="btn" onClick={addColumn} disabled={addingColumn}>
+            {addingColumn ? 'Adding...' : 'Add Column'}
+          </button>
           <button className="btn" onClick={addRow} disabled={savingRow}>Add Row</button>
           {(rows && rows.some(r => r && r.__tempId)) ? (
             <button className="btn secondary small" onClick={discardTempRows} title="Remove unsaved draft">Discard Draft</button>
@@ -754,16 +809,18 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
       {error && <div className="error">{error}</div>}
 
       <div className="table-wrap">
-        {filtered.length === 0 ? (
+        {!showTable ? (
           <div style={{ padding: 24, color: '#6b7280' }}>No rows to display.</div>
         ) : (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ color: '#6b7280', fontSize: 13 }}>
-                Showing {Math.min(1 + currentPage * PAGE_SIZE, (sorted || []).length || 0)} - {Math.min((currentPage + 1) * PAGE_SIZE, (sorted || []).length || 0)} of {(sorted || []).length || 0}
+            {hasRows ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ color: '#6b7280', fontSize: 13 }}>
+                  Showing {Math.min(1 + currentPage * PAGE_SIZE, (sorted || []).length || 0)} - {Math.min((currentPage + 1) * PAGE_SIZE, (sorted || []).length || 0)} of {(sorted || []).length || 0}
+                </div>
+                <div />
               </div>
-              <div />
-            </div>
+            ) : null}
             <table className="donor-table" style={{ width: '100%' }}>
             <thead>
               <tr>
@@ -789,139 +846,149 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
               </tr>
             </thead>
             <tbody>
-                {paged.map(({ r, idx }, i) => {
-                  const rowKey = r && r.__id ? r.__id : (r && r.__tempId ? r.__tempId : (idx || i));
-                  return (
-                    <tr key={rowKey}>
-                      <td style={{ textAlign: 'center' }}>
-                        <button title="Comments" className="btn small" onClick={() => openCommentsForRow(r)}>💬</button>
-                      </td>
-                      {headers.map((h) => {
-                        const isEditing = editingCell && editingCell.id === rowKey && editingCell.key === h;
-                        return (
-                          <td key={h}>
-                            {isEditing ? (
-                              isDropdown(h) ? (
-                                <select
-                                  className="cell-input"
-                                  autoFocus
-                                  value={editValue}
-                                  onChange={async (e) => {
-                                    const v = e.target.value;
-                                    if (v === '__add_new__') {
-                                      // prompt for new catalog value
-                                      const newVal = window.prompt(`Add new value to ${h}:`);
-                                      if (newVal && newVal.trim()) {
-                                        const trimmed = newVal.trim();
-                                        const docId = await addCatalogValue(h, trimmed);
-                                        if (docId) {
-                                          // set the cell to the newly added value
-                                          setEditValue(trimmed);
-                                          updateCell(idx, h, trimmed);
+                {paged.length === 0 ? (
+                  <tr>
+                    <td colSpan={headers.length + 2} style={{ textAlign: 'center', color: '#6b7280', padding: 16 }}>
+                      No rows to display.
+                    </td>
+                  </tr>
+                ) : (
+                  paged.map(({ r, idx }, i) => {
+                    const rowKey = r && r.__id ? r.__id : (r && r.__tempId ? r.__tempId : (idx || i));
+                    return (
+                      <tr key={rowKey}>
+                        <td style={{ textAlign: 'center' }}>
+                          <button title="Comments" className="btn small" onClick={() => openCommentsForRow(r)}>💬</button>
+                        </td>
+                        {headers.map((h) => {
+                          const isEditing = editingCell && editingCell.id === rowKey && editingCell.key === h;
+                          return (
+                            <td key={h}>
+                              {isEditing ? (
+                                isDropdown(h) ? (
+                                  <select
+                                    className="cell-input"
+                                    autoFocus
+                                    value={editValue}
+                                    onChange={async (e) => {
+                                      const v = e.target.value;
+                                      if (v === '__add_new__') {
+                                        // prompt for new catalog value
+                                        const newVal = window.prompt(`Add new value to ${h}:`);
+                                        if (newVal && newVal.trim()) {
+                                          const trimmed = newVal.trim();
+                                          const docId = await addCatalogValue(h, trimmed);
+                                          if (docId) {
+                                            // set the cell to the newly added value
+                                            setEditValue(trimmed);
+                                            updateCell(idx, h, trimmed);
+                                          } else {
+                                            // failed to add, keep previous
+                                            setEditValue(editValue);
+                                          }
                                         } else {
-                                          // failed to add, keep previous
+                                          // reset selection
                                           setEditValue(editValue);
                                         }
                                       } else {
-                                        // reset selection
-                                        setEditValue(editValue);
+                                        setEditValue(v);
+                                        updateCell(idx, h, v);
                                       }
-                                    } else {
-                                      setEditValue(v);
-                                      updateCell(idx, h, v);
+                                    }}
+                                  >
+                                    <option value="">--</option>
+                                    {(catalogs[h] || []).map((opt) => (
+                                      <option key={opt} value={opt}>{opt}</option>
+                                    ))}
+                                    <option value="__add_new__">+ Add new...</option>
+                                  </select>
+                                ) : (
+                                  (() => {
+                                    const primary = getPrimaryType(h);
+                                    if (primary === 'date') {
+                                      return (
+                                        <input
+                                          type="date"
+                                          className="cell-input"
+                                          autoFocus
+                                          value={editValue}
+                                          onChange={(e) => { setEditValue(e.target.value); updateCell(idx, h, e.target.value); }}
+                                          onBlur={() => { updateCell(idx, h, editValue); setEditingCell(null); }}
+                                        />
+                                      );
                                     }
-                                  }}
-                                >
-                                  <option value="">--</option>
-                                  {(catalogs[h] || []).map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                  ))}
-                                  <option value="__add_new__">+ Add new...</option>
-                                </select>
-                              ) : (
-                                (() => {
-                                  const primary = getPrimaryType(h);
-                                  if (primary === 'date') {
+                                    if (primary === 'number') {
+                                      return (
+                                        <input
+                                          type="number"
+                                          className="cell-input"
+                                          autoFocus
+                                          value={editValue}
+                                          onChange={(e) => { setEditValue(e.target.value); updateCell(idx, h, e.target.value); }}
+                                          onBlur={() => { updateCell(idx, h, editValue); setEditingCell(null); }}
+                                        />
+                                      );
+                                    }
                                     return (
                                       <input
-                                        type="date"
                                         className="cell-input"
                                         autoFocus
                                         value={editValue}
-                                        onChange={(e) => { setEditValue(e.target.value); updateCell(idx, h, e.target.value); }}
-                                        onBlur={() => { updateCell(idx, h, editValue); setEditingCell(null); }}
-                                      />
-                                    );
-                                  }
-                                  if (primary === 'number') {
-                                    return (
-                                      <input
-                                        type="number"
-                                        className="cell-input"
-                                        autoFocus
-                                        value={editValue}
-                                        onChange={(e) => { setEditValue(e.target.value); updateCell(idx, h, e.target.value); }}
-                                        onBlur={() => { updateCell(idx, h, editValue); setEditingCell(null); }}
-                                      />
-                                    );
-                                  }
-                                  return (
-                                    <input
-                                      className="cell-input"
-                                      autoFocus
-                                      value={editValue}
-                                      onChange={(e) => setEditValue(e.target.value)}
-                                      onBlur={() => {
-                                        updateCell(idx, h, editValue);
-                                        setEditingCell(null);
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') e.currentTarget.blur();
-                                        else if (e.key === 'Escape') {
-                                          setEditValue(rows[idx] ? (rows[idx][h] || '') : '');
+                                        onChange={(e) => setEditValue(e.target.value)}
+                                        onBlur={() => {
+                                          updateCell(idx, h, editValue);
                                           setEditingCell(null);
-                                        }
-                                      }}
-                                    />
-                                  );
-                                })()
-                              )
-                            ) : (
-                              isUrl(r[h]) ? (
-                                <a className="cell-view" href={typeof r[h] === 'string' ? r[h] : formatValue(r[h])} target="_blank" rel="noreferrer">link</a>
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') e.currentTarget.blur();
+                                          else if (e.key === 'Escape') {
+                                            setEditValue(rows[idx] ? (rows[idx][h] || '') : '');
+                                            setEditingCell(null);
+                                          }
+                                        }}
+                                      />
+                                    );
+                                  })()
+                                )
                               ) : (
-                                <div
-                                  className="cell-view"
-                                  onClick={() => {
-                                    const rowKeyInner = (r && r.__id) ? r.__id : (r && r.__tempId ? r.__tempId : idx);
-                                    setEditingCell({ id: rowKeyInner, key: h });
-                                    setEditValue(isDropdown(h) ? (rows[idx] ? (rows[idx][h] || '') : '') : formatValue(r[h]));
-                                  }}
-                                >
-                                  {(() => {
-                                    const maybeDate = formatDateOnly(r[h], h);
-                                    return maybeDate === formatValue(r[h]) ? formatValue(r[h]) : maybeDate;
-                                  })()}
-                                </div>
-                              )
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn small" onClick={() => saveRow(idx)} disabled={savingRow}>Save</button>
-                        <button className="btn small secondary" onClick={() => deleteRow(idx)} style={{ marginLeft: 8 }}>Delete</button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                                isUrl(r[h]) ? (
+                                  <a className="cell-view" href={typeof r[h] === 'string' ? r[h] : formatValue(r[h])} target="_blank" rel="noreferrer">link</a>
+                                ) : (
+                                  <div
+                                    className="cell-view"
+                                    onClick={() => {
+                                      const rowKeyInner = (r && r.__id) ? r.__id : (r && r.__tempId ? r.__tempId : idx);
+                                      setEditingCell({ id: rowKeyInner, key: h });
+                                      setEditValue(isDropdown(h) ? (rows[idx] ? (rows[idx][h] || '') : '') : formatValue(r[h]));
+                                    }}
+                                  >
+                                    {(() => {
+                                      const maybeDate = formatDateOnly(r[h], h);
+                                      return maybeDate === formatValue(r[h]) ? formatValue(r[h]) : maybeDate;
+                                    })()}
+                                  </div>
+                                )
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button className="btn small" onClick={() => saveRow(idx)} disabled={savingRow}>Save</button>
+                          <button className="btn small secondary" onClick={() => deleteRow(idx)} style={{ marginLeft: 8 }}>Delete</button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
           </table>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 8 }}>
-            <button className="btn small" onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage <= 0}>Prev</button>
-            <div style={{ fontSize: 13 }}>{currentPage + 1} / {totalPages}</div>
-            <button className="btn small" onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))} disabled={currentPage >= totalPages - 1}>Next</button>
-          </div>
+          {hasRows ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <button className="btn small" onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage <= 0}>Prev</button>
+              <div style={{ fontSize: 13 }}>{currentPage + 1} / {totalPages}</div>
+              <button className="btn small" onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))} disabled={currentPage >= totalPages - 1}>Next</button>
+            </div>
+          ) : null}
           
           </>
         )}

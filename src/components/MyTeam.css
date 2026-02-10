@@ -322,6 +322,18 @@
   width: 100%;
 }
 
+.effective-date-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.effective-date-input-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
 .salary-input,
 .salary-note-input {
   padding: 6px 8px;

@@ -883,7 +883,8 @@ const TimeTracker = () => {
   const [costCodes, setCostCodes] = useState([]);
   const [newCostCodeAssignment, setNewCostCodeAssignment] = useState({
     costCodeId: '',
-    hours: ''
+    hours: '',
+    areaOfFocusId: ''
   });
   const [showCostCodeModal, setShowCostCodeModal] = useState(false);
   const [editingCostCode, setEditingCostCode] = useState(null);
@@ -1005,6 +1006,7 @@ const TimeTracker = () => {
   // Cost Code Assignment Form State
   const [assigningCostCode, setAssigningCostCode] = useState(null);
   const [assignmentHours, setAssignmentHours] = useState('');
+  const [projectAssignmentAreaId, setProjectAssignmentAreaId] = useState('');
 
   // Time Entries Table State
   const [searchTerm, setSearchTerm] = useState('');
@@ -1800,6 +1802,89 @@ const TimeTracker = () => {
     );
   };
 
+  // Get available areas of focus (filter out deleted/invalid entries)
+  const getAvailableAreasOfFocus = () => {
+    return areasOfFocus.filter(area =>
+      area &&
+      area.id &&
+      area.name &&
+      !area.isDeleted &&
+      !area.deleted &&
+      !area.archived &&
+      !area.inactive
+    );
+  };
+
+  const getAvailableAreasForProject = (projectId = '') => {
+    if (!projectId) return [];
+
+    const availableCodes = getAvailableCostCodesForProject(projectId);
+    if (availableCodes.length === 0) return [];
+
+    const areaIds = new Set();
+    availableCodes.forEach(code => {
+      if (code.areaOfFocusId) areaIds.add(code.areaOfFocusId);
+      if (Array.isArray(code.areaOfFocusIds)) {
+        code.areaOfFocusIds.forEach(areaId => areaIds.add(areaId));
+      }
+    });
+
+    return getAvailableAreasOfFocus()
+      .filter(area => areaIds.has(area.id))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  };
+
+  // Get available cost codes (filter out deleted/invalid entries)
+  const getAvailableCostCodes = () => {
+    return costCodes.filter(code =>
+      code &&
+      code.id &&
+      code.code &&
+      !code.isDeleted &&
+      !code.deleted &&
+      !code.archived &&
+      !code.inactive
+    );
+  };
+
+  // Get available cost codes for a specific project/area (dedupe by code)
+  const getAvailableCostCodesForProject = (projectId = '', areaId = '') => {
+    let filtered = getAvailableCostCodes();
+
+    if (projectId) {
+      const project = projects.find(p => p.id === projectId);
+      const assignedIds = (project?.costCodeAssignments || [])
+        .map(assignment => assignment.costCodeId)
+        .filter(Boolean);
+
+      if (assignedIds.length > 0) {
+        const assignedSet = new Set(assignedIds);
+        filtered = filtered.filter(code => assignedSet.has(code.id) || assignedSet.has(code.code));
+      } else {
+        filtered = [];
+      }
+    }
+
+    if (areaId) {
+      filtered = filtered.filter(code => {
+        if (code.areaOfFocusId && code.areaOfFocusId === areaId) return true;
+        if (Array.isArray(code.areaOfFocusIds) && code.areaOfFocusIds.includes(areaId)) return true;
+        return false;
+      });
+    }
+
+    const uniqueByCode = new Map();
+    filtered.forEach(code => {
+      if (!uniqueByCode.has(code.code)) {
+        uniqueByCode.set(code.code, code);
+      }
+    });
+
+    return Array.from(uniqueByCode.values()).sort((a, b) => {
+      return String(a.code).localeCompare(String(b.code));
+    });
+  };
+
   // Helper function to track changes for history
   const createChangeHistory = (oldEntry, newData, changedBy) => {
     const changes = [];
@@ -2059,6 +2144,9 @@ const TimeTracker = () => {
 
   // Inline add row functions
   const startAddRow = () => {
+    if (editingRowId !== null) {
+      setEditingRowId(null);
+    }
     setShowAddRow(true);
     setNewRowData({
       note: '',
@@ -2229,14 +2317,21 @@ const TimeTracker = () => {
     
     const fallbackDate = parseDate(entry.startTime)?.toISOString().split('T')[0] || '';
 
+    const availableAreaIds = new Set(getAvailableAreasOfFocus().map(area => area.id));
+    const availableCostCodes = new Set(
+      getAvailableCostCodesForProject(entry.project, entry.areaOfFocus).map(code => code.code)
+    );
+    const safeAreaOfFocus = availableAreaIds.has(entry.areaOfFocus) ? entry.areaOfFocus : '';
+    const safeCostCode = availableCostCodes.has(entry.costCode) ? entry.costCode : '';
+
     setEditRowData({
       note: entry.note || '',
       startTime: formatTimeDisplay(entry.startTime) !== '-' ? formatTimeDisplay(entry.startTime) : '',
       endTime: formatTimeDisplay(entry.endTime) !== '-' ? formatTimeDisplay(entry.endTime) : '',
       date: entry.date || fallbackDate,
       project: entry.project || '',
-      areaOfFocus: entry.areaOfFocus || '',
-      costCode: entry.costCode || '',
+      areaOfFocus: safeAreaOfFocus,
+      costCode: safeCostCode,
       duration: durationInHours,
       userId: entry.userId || '',
       taskId: entry.taskId || '' // Add task association
@@ -2530,6 +2625,11 @@ const TimeTracker = () => {
         description: '',
         costCodeAssignments: []
       });
+      setNewCostCodeAssignment({
+        costCodeId: '',
+        hours: '',
+        areaOfFocusId: ''
+      });
       setEditingProject(null);
       setShowProjectModal(false);
     } catch (error) {
@@ -2558,8 +2658,20 @@ const TimeTracker = () => {
 
   // Add cost code assignment to project
   const addCostCodeAssignment = () => {
+    if (!newCostCodeAssignment.areaOfFocusId) {
+      toast.error('Please select an area of focus first');
+      return;
+    }
+
     if (!newCostCodeAssignment.costCodeId || !newCostCodeAssignment.hours) {
       toast.error('Please select a cost code and enter hours');
+      return;
+    }
+
+    const selectedCostCode = costCodes.find(cc => cc.id === newCostCodeAssignment.costCodeId);
+    const areaIds = selectedCostCode?.areaOfFocusIds || (selectedCostCode?.areaOfFocusId ? [selectedCostCode.areaOfFocusId] : []);
+    if (!selectedCostCode || !areaIds.includes(newCostCodeAssignment.areaOfFocusId)) {
+      toast.error('Selected cost code does not match the chosen area of focus');
       return;
     }
 
@@ -2580,7 +2692,8 @@ const TimeTracker = () => {
 
     setNewCostCodeAssignment({
       costCodeId: '',
-      hours: ''
+      hours: '',
+      areaOfFocusId: ''
     });
   };
 
@@ -3688,6 +3801,17 @@ const TimeTracker = () => {
   // Assign cost code to project
   const assignCostCodeToProject = async (costCodeId, hours = '0') => {
     if (!selectedProject) return;
+    if (!projectAssignmentAreaId) {
+      toast.error('Please select an area of focus first');
+      return;
+    }
+
+    const selectedCostCode = costCodes.find(cc => cc.id === costCodeId);
+    const areaIds = selectedCostCode?.areaOfFocusIds || (selectedCostCode?.areaOfFocusId ? [selectedCostCode.areaOfFocusId] : []);
+    if (!selectedCostCode || !areaIds.includes(projectAssignmentAreaId)) {
+      toast.error('Selected cost code does not match the chosen area of focus');
+      return;
+    }
 
     try {
       const newAssignment = { costCodeId, hours: hours.toString() };
@@ -3854,6 +3978,10 @@ const TimeTracker = () => {
 
   // Start assigning cost code with hours input
   const startAssigningCostCode = (costCodeId) => {
+    if (!projectAssignmentAreaId) {
+      toast.error('Please select an area of focus first');
+      return;
+    }
     setAssigningCostCode(costCodeId);
     setAssignmentHours('');
   };
@@ -3866,6 +3994,10 @@ const TimeTracker = () => {
 
   // Confirm cost code assignment with hours
   const confirmAssignCostCode = async () => {
+    if (!projectAssignmentAreaId) {
+      toast.error('Please select an area of focus first');
+      return;
+    }
     if (!assigningCostCode || !assignmentHours.trim()) {
       toast.error('Please enter hours for the cost code assignment');
       return;
@@ -4663,7 +4795,7 @@ const TimeTracker = () => {
                   <button 
                     onClick={startAddRow} 
                     className="add-new-btn"
-                    disabled={showAddRow || editingRowId !== null}
+                    disabled={showAddRow}
                   >
                     + Add New Entry
                   </button>
@@ -4903,7 +5035,25 @@ const TimeTracker = () => {
                             <td>
                               <select
                                 value={editRowData.project}
-                                onChange={(e) => setEditRowData({...editRowData, project: e.target.value})}
+                                onChange={(e) => {
+                                  const nextProject = e.target.value;
+                                  setEditRowData(prev => {
+                                    const availableAreas = getAvailableAreasForProject(nextProject);
+                                    const nextArea = prev.areaOfFocus && availableAreas.some(area => area.id === prev.areaOfFocus)
+                                      ? prev.areaOfFocus
+                                      : '';
+                                    const allowedCodes = getAvailableCostCodesForProject(nextProject, nextArea).map(code => code.code);
+                                    const nextCostCode = prev.costCode && allowedCodes.includes(prev.costCode) ? prev.costCode : '';
+                                    const nextTaskId = nextCostCode ? prev.taskId : '';
+                                    return {
+                                      ...prev,
+                                      project: nextProject,
+                                      areaOfFocus: nextArea,
+                                      costCode: nextCostCode,
+                                      taskId: nextTaskId
+                                    };
+                                  });
+                                }}
                                 className="inline-edit-select"
                               >
                                 <option value="">Select Project</option>
@@ -4913,40 +5063,117 @@ const TimeTracker = () => {
                               </select>
                             </td>
                             <td>
-                              <select
-                                value={editRowData.areaOfFocus}
-                                onChange={(e) => setEditRowData({...editRowData, areaOfFocus: e.target.value})}
-                                className="inline-edit-select"
-                              >
-                                <option value="">Select Area of Focus</option>
-                                {areasOfFocus.map(area => (
-                                  <option key={area.id} value={area.id}>{area.name}</option>
-                                ))}
-                              </select>
+                              {(() => {
+                                if (!editRowData.project) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      Select Project First
+                                    </span>
+                                  );
+                                }
+
+                                const availableAreas = getAvailableAreasForProject(editRowData.project);
+                                if (availableAreas.length === 0) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      No areas available
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <select
+                                    value={editRowData.areaOfFocus}
+                                    onChange={(e) => {
+                                      const nextArea = e.target.value;
+                                      setEditRowData(prev => {
+                                        const allowedCodes = getAvailableCostCodesForProject(prev.project, nextArea).map(code => code.code);
+                                        const nextCostCode = prev.costCode && allowedCodes.includes(prev.costCode) ? prev.costCode : '';
+                                        const nextTaskId = nextCostCode ? prev.taskId : '';
+                                        return { ...prev, areaOfFocus: nextArea, costCode: nextCostCode, taskId: nextTaskId };
+                                      });
+                                    }}
+                                    className="inline-edit-select"
+                                  >
+                                    <option value="">Select Area of Focus</option>
+                                    {availableAreas.map(area => (
+                                      <option key={area.id} value={area.id}>{area.name}</option>
+                                    ))}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td>
-                              <select
-                                value={editRowData.costCode}
-                                onChange={(e) => setEditRowData({...editRowData, costCode: e.target.value})}
-                                className="inline-edit-select"
-                              >
-                                <option value="">Select Cost Code</option>
-                                {costCodes.map(code => (
-                                  <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
-                                ))}
-                              </select>
+                              {(() => {
+                                if (!editRowData.areaOfFocus) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      Select Area of Focus First
+                                    </span>
+                                  );
+                                }
+
+                                const availableCodes = getAvailableCostCodesForProject(editRowData.project, editRowData.areaOfFocus);
+                                if (availableCodes.length === 0) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      No cost codes available
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <select
+                                    value={editRowData.costCode}
+                                    onChange={(e) => {
+                                      const nextCostCode = e.target.value;
+                                      setEditRowData(prev => ({
+                                        ...prev,
+                                        costCode: nextCostCode,
+                                        taskId: nextCostCode === prev.costCode ? prev.taskId : ''
+                                      }));
+                                    }}
+                                    className="inline-edit-select"
+                                  >
+                                    <option value="">Select Cost Code</option>
+                                    {availableCodes.map(code => (
+                                      <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
+                                    ))}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td>
-                              <select
-                                value={editRowData.taskId}
-                                onChange={(e) => setEditRowData({...editRowData, taskId: e.target.value})}
-                                className="inline-edit-select"
-                              >
-                                <option value="">Select Task (Optional)</option>
-                                {tasks.map(task => (
-                                  <option key={task.id} value={task.id}>{task.title}</option>
-                                ))}
-                              </select>
+                              {(() => {
+                                if (!editRowData.costCode) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      Select Cost Code First
+                                    </span>
+                                  );
+                                }
+
+                                if (tasks.length === 0) {
+                                  return (
+                                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                      No tasks available
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <select
+                                    value={editRowData.taskId}
+                                    onChange={(e) => setEditRowData({...editRowData, taskId: e.target.value})}
+                                    className="inline-edit-select"
+                                  >
+                                    <option value="">Select Task (Optional)</option>
+                                    {tasks.map(task => (
+                                      <option key={task.id} value={task.id}>{task.title}</option>
+                                    ))}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td>
                               <input
@@ -5163,7 +5390,25 @@ const TimeTracker = () => {
                         <td>
                           <select
                             value={newRowData.project}
-                            onChange={(e) => setNewRowData({...newRowData, project: e.target.value})}
+                            onChange={(e) => {
+                              const nextProject = e.target.value;
+                              setNewRowData(prev => {
+                                const availableAreas = getAvailableAreasForProject(nextProject);
+                                const nextArea = prev.areaOfFocus && availableAreas.some(area => area.id === prev.areaOfFocus)
+                                  ? prev.areaOfFocus
+                                  : '';
+                                const allowedCodes = getAvailableCostCodesForProject(nextProject, nextArea).map(code => code.code);
+                                const nextCostCode = prev.costCode && allowedCodes.includes(prev.costCode) ? prev.costCode : '';
+                                const nextTaskId = nextCostCode ? prev.taskId : '';
+                                return {
+                                  ...prev,
+                                  project: nextProject,
+                                  areaOfFocus: nextArea,
+                                  costCode: nextCostCode,
+                                  taskId: nextTaskId
+                                };
+                              });
+                            }}
                             className="inline-edit-select"
                           >
                             <option value="">Select Project</option>
@@ -5173,40 +5418,117 @@ const TimeTracker = () => {
                           </select>
                         </td>
                         <td>
-                          <select
-                            value={newRowData.areaOfFocus}
-                            onChange={(e) => setNewRowData({...newRowData, areaOfFocus: e.target.value})}
-                            className="inline-edit-select"
-                          >
-                            <option value="">Select Area of Focus</option>
-                            {areasOfFocus.map(area => (
-                              <option key={area.id} value={area.id}>{area.name}</option>
-                            ))}
-                          </select>
+                          {(() => {
+                            if (!newRowData.project) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  Select Project First
+                                </span>
+                              );
+                            }
+
+                            const availableAreas = getAvailableAreasForProject(newRowData.project);
+                            if (availableAreas.length === 0) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  No areas available
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <select
+                                value={newRowData.areaOfFocus}
+                                onChange={(e) => {
+                                  const nextArea = e.target.value;
+                                  setNewRowData(prev => {
+                                    const allowedCodes = getAvailableCostCodesForProject(prev.project, nextArea).map(code => code.code);
+                                    const nextCostCode = prev.costCode && allowedCodes.includes(prev.costCode) ? prev.costCode : '';
+                                    const nextTaskId = nextCostCode ? prev.taskId : '';
+                                    return { ...prev, areaOfFocus: nextArea, costCode: nextCostCode, taskId: nextTaskId };
+                                  });
+                                }}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Area of Focus</option>
+                                {availableAreas.map(area => (
+                                  <option key={area.id} value={area.id}>{area.name}</option>
+                                ))}
+                              </select>
+                            );
+                          })()}
                         </td>
                         <td>
-                          <select
-                            value={newRowData.costCode}
-                            onChange={(e) => setNewRowData({...newRowData, costCode: e.target.value})}
-                            className="inline-edit-select"
-                          >
-                            <option value="">Select Cost Code</option>
-                            {costCodes.map(code => (
-                              <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
-                            ))}
-                          </select>
+                          {(() => {
+                            if (!newRowData.areaOfFocus) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  Select Area of Focus First
+                                </span>
+                              );
+                            }
+
+                            const availableCodes = getAvailableCostCodesForProject(newRowData.project, newRowData.areaOfFocus);
+                            if (availableCodes.length === 0) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  No cost codes available
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <select
+                                value={newRowData.costCode}
+                                onChange={(e) => {
+                                  const nextCostCode = e.target.value;
+                                  setNewRowData(prev => ({
+                                    ...prev,
+                                    costCode: nextCostCode,
+                                    taskId: nextCostCode === prev.costCode ? prev.taskId : ''
+                                  }));
+                                }}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Cost Code</option>
+                                {availableCodes.map(code => (
+                                  <option key={code.id} value={code.code}>{code.code} - {code.description}</option>
+                                ))}
+                              </select>
+                            );
+                          })()}
                         </td>
                         <td>
-                          <select
-                            value={newRowData.taskId}
-                            onChange={(e) => setNewRowData({...newRowData, taskId: e.target.value})}
-                            className="inline-edit-select"
-                          >
-                            <option value="">Select Task (Optional)</option>
-                            {tasks.map(task => (
-                              <option key={task.id} value={task.id}>{task.title}</option>
-                            ))}
-                          </select>
+                          {(() => {
+                            if (!newRowData.costCode) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  Select Cost Code First
+                                </span>
+                              );
+                            }
+
+                            if (tasks.length === 0) {
+                              return (
+                                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                  No tasks available
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <select
+                                value={newRowData.taskId}
+                                onChange={(e) => setNewRowData({...newRowData, taskId: e.target.value})}
+                                className="inline-edit-select"
+                              >
+                                <option value="">Select Task (Optional)</option>
+                                {tasks.map(task => (
+                                  <option key={task.id} value={task.id}>{task.title}</option>
+                                ))}
+                              </select>
+                            );
+                          })()}
                         </td>
                         <td>
                           <input
@@ -6806,63 +7128,99 @@ const TimeTracker = () => {
 
               <div className="assign-cost-code-section">
                 <h4>Assign New Cost Code</h4>
-                <div className="cost-code-selector">
-                  {costCodes
-                    .filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id))
-                    .map(costCode => (
-                      <div key={costCode.id} className="cost-code-assignment-item">
-                        {assigningCostCode === costCode.id ? (
-                          <div className="assignment-form">
-                            <div className="assignment-form-header">
-                              <span className="cost-code-info">
-                                {costCode.code} - {costCode.description}
-                                {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                              </span>
-                            </div>
-                            <div className="assignment-form-body">
-                              <div className="hours-input-group">
-                                <label>Assigned Hours:</label>
-                                <input
-                                  type="number"
-                                  step="0.25"
-                                  min="0"
-                                  value={assignmentHours}
-                                  onChange={(e) => setAssignmentHours(e.target.value)}
-                                  placeholder="0.00"
-                                  className="assignment-hours-input"
-                                  autoFocus
-                                />
-                                <span className="hours-unit">h</span>
-                              </div>
-                              <div className="assignment-form-actions">
-                                <button 
-                                  className="confirm-assign-btn"
-                                  onClick={confirmAssignCostCode}
-                                >
-                                  Assign
-                                </button>
-                                <button 
-                                  className="cancel-assign-btn"
-                                  onClick={cancelAssigningCostCode}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <button
-                            className="assign-cost-code-btn"
-                            onClick={() => startAssigningCostCode(costCode.id)}
-                          >
-                            + {costCode.code} - {costCode.description}
-                            {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
-                          </button>
-                        )}
-                      </div>
+                <div className="assignment-form" style={{ marginBottom: '12px' }}>
+                  <label>Area of Focus</label>
+                  <select
+                    value={projectAssignmentAreaId}
+                    onChange={(e) => {
+                      setProjectAssignmentAreaId(e.target.value);
+                      setAssigningCostCode(null);
+                      setAssignmentHours('');
+                    }}
+                  >
+                    <option value="">Select Area of Focus</option>
+                    {areasOfFocus.map(area => (
+                      <option key={area.id} value={area.id}>
+                        {area.name}
+                      </option>
                     ))}
-                  {costCodes.filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id)).length === 0 && (
-                    <p>All available cost codes are already assigned.</p>
+                  </select>
+                </div>
+                <div className="cost-code-selector">
+                  {!projectAssignmentAreaId && (
+                    <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                      Select an area of focus to unlock cost codes.
+                    </div>
+                  )}
+                  {projectAssignmentAreaId && (
+                    <>
+                      {costCodes
+                        .filter(cc => {
+                          const areaIds = cc.areaOfFocusIds || (cc.areaOfFocusId ? [cc.areaOfFocusId] : []);
+                          return areaIds.includes(projectAssignmentAreaId);
+                        })
+                        .filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id))
+                        .map(costCode => (
+                          <div key={costCode.id} className="cost-code-assignment-item">
+                            {assigningCostCode === costCode.id ? (
+                              <div className="assignment-form">
+                                <div className="assignment-form-header">
+                                  <span className="cost-code-info">
+                                    {costCode.code} - {costCode.description}
+                                    {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
+                                  </span>
+                                </div>
+                                <div className="assignment-form-body">
+                                  <div className="hours-input-group">
+                                    <label>Assigned Hours:</label>
+                                    <input
+                                      type="number"
+                                      step="0.25"
+                                      min="0"
+                                      value={assignmentHours}
+                                      onChange={(e) => setAssignmentHours(e.target.value)}
+                                      placeholder="0.00"
+                                      className="assignment-hours-input"
+                                      autoFocus
+                                    />
+                                    <span className="hours-unit">h</span>
+                                  </div>
+                                  <div className="assignment-form-actions">
+                                    <button 
+                                      className="confirm-assign-btn"
+                                      onClick={confirmAssignCostCode}
+                                    >
+                                      Assign
+                                    </button>
+                                    <button 
+                                      className="cancel-assign-btn"
+                                      onClick={cancelAssigningCostCode}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                className="assign-cost-code-btn"
+                                onClick={() => startAssigningCostCode(costCode.id)}
+                              >
+                                + {costCode.code} - {costCode.description}
+                                {costCode.costPerHour && ` (${costCode.costPerHour}/hr)`}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      {costCodes
+                        .filter(cc => {
+                          const areaIds = cc.areaOfFocusIds || (cc.areaOfFocusId ? [cc.areaOfFocusId] : []);
+                          return areaIds.includes(projectAssignmentAreaId);
+                        })
+                        .filter(cc => !selectedProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id)).length === 0 && (
+                        <p>All available cost codes are already assigned.</p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -7174,6 +7532,11 @@ const TimeTracker = () => {
                     description: '',
                     costCodeAssignments: []
                   });
+                  setNewCostCodeAssignment({
+                    costCodeId: '',
+                    hours: '',
+                    areaOfFocusId: ''
+                  });
                 }}
               >
                 ×
@@ -7254,7 +7617,7 @@ const TimeTracker = () => {
                 </div>
               </div>
               
-              {editingProject && (
+              {
                 <div className="cost-code-assignments-section">
                   <h4>Cost Code Assignments</h4>
                   
@@ -7305,14 +7668,37 @@ const TimeTracker = () => {
                     <h5>Add Cost Code Assignment</h5>
                     <div className="assignment-form">
                       <select
+                        value={newCostCodeAssignment.areaOfFocusId}
+                        onChange={(e) => setNewCostCodeAssignment(prev => ({
+                          ...prev,
+                          areaOfFocusId: e.target.value,
+                          costCodeId: ''
+                        }))}
+                      >
+                        <option value="">Select Area of Focus</option>
+                        {areasOfFocus.map(area => (
+                          <option key={area.id} value={area.id}>
+                            {area.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
                         value={newCostCodeAssignment.costCodeId}
                         onChange={(e) => setNewCostCodeAssignment(prev => ({
                           ...prev,
                           costCodeId: e.target.value
                         }))}
+                        disabled={!newCostCodeAssignment.areaOfFocusId}
                       >
-                        <option value="">Select Cost Code</option>
+                        <option value="">
+                          {newCostCodeAssignment.areaOfFocusId ? 'Select Cost Code' : 'Select Area of Focus First'}
+                        </option>
                         {costCodes
+                          .filter(cc => {
+                            if (!newCostCodeAssignment.areaOfFocusId) return false;
+                            const areaIds = cc.areaOfFocusIds || (cc.areaOfFocusId ? [cc.areaOfFocusId] : []);
+                            return areaIds.includes(newCostCodeAssignment.areaOfFocusId);
+                          })
                           .filter(cc => !newProject.costCodeAssignments?.some(assignment => assignment.costCodeId === cc.id) && cc.id && cc.code)
                           .map(costCode => (
                             <option key={costCode.id} value={costCode.id}>
@@ -7321,6 +7707,11 @@ const TimeTracker = () => {
                             </option>
                           ))}
                       </select>
+                      {!newCostCodeAssignment.areaOfFocusId && (
+                        <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                          Select an area of focus to unlock cost codes.
+                        </div>
+                      )}
                       <input
                         type="number"
                         step="0.25"
@@ -7343,7 +7734,7 @@ const TimeTracker = () => {
                     </div>
                   </div>
                 </div>
-              )}
+              }
               
               <div className="modal-actions">
                 <button type="submit" className="save-btn">

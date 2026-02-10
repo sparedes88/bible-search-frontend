@@ -345,12 +345,28 @@ const Login = () => {
 
     try {
       setIsLoading(true);
-      const resetUrl = `${window.location.origin}/organization/${id}/login`;
 
-      await sendPasswordResetEmail(auth, identifier.trim(), {
-        url: resetUrl,
-        handleCodeInApp: false,
-      });
+      const configuredResetUrl = process.env.REACT_APP_AUTH_CONTINUE_URL?.trim();
+      const originResetUrl = `${window.location.origin}/organization/${id}/login`;
+      const authDomain = auth?.config?.authDomain || process.env.REACT_APP_FIREBASE_AUTH_DOMAIN;
+      const fallbackResetUrl = authDomain ? `https://${authDomain}` : null;
+      const primaryResetUrl = configuredResetUrl || originResetUrl;
+
+      try {
+        await sendPasswordResetEmail(auth, identifier.trim(), {
+          url: primaryResetUrl,
+          handleCodeInApp: false,
+        });
+      } catch (error) {
+        if (error?.code === "auth/unauthorized-continue-uri" && fallbackResetUrl) {
+          await sendPasswordResetEmail(auth, identifier.trim(), {
+            url: fallbackResetUrl,
+            handleCodeInApp: false,
+          });
+        } else {
+          throw error;
+        }
+      }
 
       setResetEmailSent(true);
       setError(null);
@@ -359,7 +375,13 @@ const Login = () => {
       }, 5000);
     } catch (error) {
       console.error("Password reset error:", error);
-      setError("No se pudo enviar el correo electrónico de restablecimiento. Verifique su dirección.");
+      if (error?.code === "auth/unauthorized-continue-uri") {
+        setError(
+          "No se pudo enviar el correo. El dominio de esta aplicación no está autorizado en Firebase Auth. Agregue el dominio en Authorized domains o configure REACT_APP_AUTH_CONTINUE_URL."
+        );
+      } else {
+        setError("No se pudo enviar el correo electrónico de restablecimiento. Verifique su dirección.");
+      }
     } finally {
       setIsLoading(false);
     }

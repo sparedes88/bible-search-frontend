@@ -339,7 +339,8 @@ const BuildMyChurch = () => {
           displayName: user.displayName || user.email || 'Unknown'
         },
         files: uploadedFiles,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        inGoodStanding: false
       };
 
       const commentsCol = collection(db, 'buildTasks', taskId, 'comments');
@@ -413,6 +414,33 @@ const BuildMyChurch = () => {
     } catch (error) {
       console.error('Error updating comment:', error);
       safeToast.error('Failed to update comment');
+    }
+  };
+
+  const handleToggleCommentStatus = async (taskId, commentId, currentStatus) => {
+    try {
+      const commentRef = doc(db, 'buildTasks', taskId, 'comments', commentId);
+      const newStatus = !currentStatus;
+      await updateDoc(commentRef, {
+        inGoodStanding: newStatus,
+        statusUpdatedAt: new Date(),
+        statusUpdatedBy: {
+          uid: user.uid,
+          displayName: user.displayName || user.email
+        }
+      });
+      setCommentsByTask(prev => ({
+        ...prev,
+        [taskId]: (prev[taskId] || []).map(c =>
+          c.id === commentId
+            ? { ...c, inGoodStanding: newStatus, statusUpdatedAt: new Date() }
+            : c
+        )
+      }));
+      safeToast.success(newStatus ? 'Marked as in good standing' : 'Unmarked');
+    } catch (error) {
+      console.error('Error updating comment status:', error);
+      safeToast.error('Failed to update comment status');
     }
   };
 
@@ -1016,7 +1044,23 @@ const BuildMyChurch = () => {
                 {(commentsByTask[task.id] || []).map(comment => (
                   <li key={comment.id} style={{ marginBottom: '12px', padding: '8px', background: '#fff', borderRadius: '6px', border: '1px solid #E5E7EB' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleToggleCommentStatus(task.id, comment.id, comment.inGoodStanding);
+                          }}
+                          className={`comment-status-checkbox ${comment.inGoodStanding ? 'checked' : ''}`}
+                          title={comment.inGoodStanding ? 'In good standing - Click to unmark' : 'Click to mark as in good standing'}
+                        >
+                          {comment.inGoodStanding && (
+                            <FaCheck style={{ color: 'white', fontSize: '14px' }} />
+                          )}
+                        </button>
+                        <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                      </div>
                       <div style={{ color: '#6B7280', fontSize: '12px' }}>
                         {new Date(comment.createdAt).toLocaleString()}
                         {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
