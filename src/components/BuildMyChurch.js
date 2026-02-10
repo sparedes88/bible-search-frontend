@@ -2014,7 +2014,23 @@ const BuildMyChurch = () => {
                                     {(commentsByTask[task.id] || []).map(comment => (
                                       <li key={comment.id} style={{ marginBottom: '12px', padding: '8px', background: '#fff', borderRadius: '6px', border: '1px solid #E5E7EB' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                          <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleToggleCommentStatus(task.id, comment.id, comment.inGoodStanding);
+                                              }}
+                                              className={`comment-status-checkbox ${comment.inGoodStanding ? 'checked' : ''}`}
+                                              title={comment.inGoodStanding ? 'In good standing - Click to unmark' : 'Click to mark as in good standing'}
+                                            >
+                                              {comment.inGoodStanding && (
+                                                <FaCheck style={{ color: 'white', fontSize: '14px' }} />
+                                              )}
+                                            </button>
+                                            <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
+                                          </div>
                                           <div style={{ color: '#6B7280', fontSize: '12px' }}>
                                             {new Date(comment.createdAt).toLocaleString()}
                                             {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
