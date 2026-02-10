@@ -1177,11 +1177,35 @@ const BuildMyChurch = () => {
                     {comment.files && comment.files.length > 0 && (
                       <div style={{ marginTop: '8px' }}>
                         <strong>Attachments:</strong>
-                        <ul>
-                          {comment.files.map((f, i) => (
-                            <li key={i}><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></li>
-                          ))}
-                        </ul>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '8px' }}>
+                          {comment.files.map((f, i) => {
+                            const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(f.name);
+                            return (
+                              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                {isImage ? (
+                                  <a href={f.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                                    <img 
+                                      src={f.url} 
+                                      alt={f.name}
+                                      style={{ 
+                                        maxWidth: '150px', 
+                                        maxHeight: '150px', 
+                                        objectFit: 'cover',
+                                        borderRadius: '6px',
+                                        border: '1px solid #E5E7EB',
+                                        cursor: 'pointer'
+                                      }}
+                                    />
+                                  </a>
+                                ) : (
+                                  <a href={f.url} target="_blank" rel="noreferrer" style={{ color: '#3B82F6' }}>
+                                    📄 {f.name}
+                                  </a>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                     <div style={{ marginTop: '8px' }}>
@@ -2259,11 +2283,35 @@ const BuildMyChurch = () => {
                                         {comment.files && comment.files.length > 0 && (
                                           <div style={{ marginTop: '8px' }}>
                                             <strong>Attachments:</strong>
-                                            <ul>
-                                              {comment.files.map((f, i) => (
-                                                <li key={i}><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></li>
-                                              ))}
-                                            </ul>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '8px' }}>
+                                              {comment.files.map((f, i) => {
+                                                const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(f.name);
+                                                return (
+                                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                    {isImage ? (
+                                                      <a href={f.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                                                        <img 
+                                                          src={f.url} 
+                                                          alt={f.name}
+                                                          style={{ 
+                                                            maxWidth: '150px', 
+                                                            maxHeight: '150px', 
+                                                            objectFit: 'cover',
+                                                            borderRadius: '6px',
+                                                            border: '1px solid #E5E7EB',
+                                                            cursor: 'pointer'
+                                                          }}
+                                                        />
+                                                      </a>
+                                                    ) : (
+                                                      <a href={f.url} target="_blank" rel="noreferrer" style={{ color: '#3B82F6' }}>
+                                                        📄 {f.name}
+                                                      </a>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
                                           </div>
                                         )}
                                         <div style={{ marginTop: '8px' }}>
