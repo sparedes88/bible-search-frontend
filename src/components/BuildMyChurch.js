@@ -77,6 +77,9 @@ const BuildMyChurch = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterPriority, setFilterPriority] = useState('all');
   const [filterTopic, setFilterTopic] = useState('all');
+  const [filterHasComments, setFilterHasComments] = useState('all');
+  const [filterHasDocuments, setFilterHasDocuments] = useState('all');
+  const [filterHasCheckedComments, setFilterHasCheckedComments] = useState('all');
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -93,6 +96,7 @@ const BuildMyChurch = () => {
   const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [expandedDocuments, setExpandedDocuments] = useState({});
+  const [showCommentForm, setShowCommentForm] = useState({});
   const tasksPerPage = 5;
 
   const STATUS_OPTIONS = [
@@ -542,10 +546,17 @@ const BuildMyChurch = () => {
     }
   };
 
+  const resolveAssigneeName = (assigneeValue) => {
+    if (!assigneeValue) return '';
+    const match = assignees.find(a => a.id === assigneeValue || a.name === assigneeValue);
+    return match ? match.name : assigneeValue;
+  };
+
   const handleRemoveAssignee = async (assigneeId) => {
     try {
+      const assigneeName = resolveAssigneeName(assigneeId);
       // Remove assignee from all tasks
-      const tasksToUpdate = tasks.filter(task => task.assignee === assigneeId);
+      const tasksToUpdate = tasks.filter(task => task.assignee === assigneeName);
       const updatePromises = tasksToUpdate.map(task =>
         updateDoc(doc(db, 'buildTasks', task.id), { assignee: null })
       );
@@ -553,7 +564,7 @@ const BuildMyChurch = () => {
 
       // Update local state
       setTasks(prev => prev.map(task =>
-        task.assignee === assigneeId ? { ...task, assignee: null } : task
+        task.assignee === assigneeName ? { ...task, assignee: null } : task
       ));
 
       safeToast.success('Assignee removed successfully');
@@ -565,16 +576,18 @@ const BuildMyChurch = () => {
 
   const handleReassignTasks = async (fromAssigneeId, toAssigneeId) => {
     try {
+      const fromAssigneeName = resolveAssigneeName(fromAssigneeId);
+      const toAssigneeName = resolveAssigneeName(toAssigneeId);
       // Reassign all tasks from one assignee to another
-      const tasksToUpdate = tasks.filter(task => task.assignee === fromAssigneeId);
+      const tasksToUpdate = tasks.filter(task => task.assignee === fromAssigneeName);
       const updatePromises = tasksToUpdate.map(task =>
-        updateDoc(doc(db, 'buildTasks', task.id), { assignee: toAssigneeId })
+        updateDoc(doc(db, 'buildTasks', task.id), { assignee: toAssigneeName })
       );
       await Promise.all(updatePromises);
 
       // Update local state
       setTasks(prev => prev.map(task =>
-        task.assignee === fromAssigneeId ? { ...task, assignee: toAssigneeId } : task
+        task.assignee === fromAssigneeName ? { ...task, assignee: toAssigneeName } : task
       ));
 
       safeToast.success('Tasks reassigned successfully');
@@ -729,7 +742,8 @@ const BuildMyChurch = () => {
       let yOffset = 50;
 
       // Add filter information
-      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || searchQuery) {
+      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || searchQuery || 
+          filterHasComments !== 'all' || filterHasDocuments !== 'all' || filterHasCheckedComments !== 'all') {
         doc.setFillColor(243, 244, 246); // #F3F4F6
         doc.rect(15, yOffset, doc.internal.pageSize.width - 30, 25, 'F');
         doc.setTextColor(75, 85, 99); // #4B5563
@@ -740,6 +754,9 @@ const BuildMyChurch = () => {
         if (filterPriority !== 'all') filterText.push(`Priority: ${filterPriority}`);
         if (filterStatus !== 'all') filterText.push(`Status: ${filterStatus}`);
         if (filterTopic !== 'all') filterText.push(`Topic: ${filterTopic}`);
+        if (filterHasComments !== 'all') filterText.push(`Comments: ${filterHasComments}`);
+        if (filterHasDocuments !== 'all') filterText.push(`Documents: ${filterHasDocuments}`);
+        if (filterHasCheckedComments !== 'all') filterText.push(`Checked: ${filterHasCheckedComments}`);
         if (searchQuery) filterText.push(`Search: "${searchQuery}"`);
         
         doc.text(filterText.join(' | '), 20, yOffset + 17);
@@ -865,7 +882,8 @@ const BuildMyChurch = () => {
       
       // Add current filters to filename if any are active
       let filename = 'build-my-church-tasks';
-      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all') {
+      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || 
+          filterHasComments !== 'all' || filterHasDocuments !== 'all' || filterHasCheckedComments !== 'all') {
         filename += '-filtered';
       }
       filename += '.pdf';
@@ -890,8 +908,25 @@ const BuildMyChurch = () => {
     const matchesStatus = filterStatus === 'all' || task.status === filterStatus;
     const matchesPriority = filterPriority === 'all' || task.priority === filterPriority;
     const matchesTopic = filterTopic === 'all' || task.topic === filterTopic;
+    
+    const taskComments = commentsByTask[task.id] || [];
+    const hasComments = taskComments.length > 0;
+    const matchesHasComments = filterHasComments === 'all' || 
+      (filterHasComments === 'with' && hasComments) || 
+      (filterHasComments === 'without' && !hasComments);
+    
+    const hasDocuments = (task.documents || []).length > 0;
+    const matchesHasDocuments = filterHasDocuments === 'all' || 
+      (filterHasDocuments === 'with' && hasDocuments) || 
+      (filterHasDocuments === 'without' && !hasDocuments);
+    
+    const hasCheckedComments = taskComments.some(c => c.inGoodStanding);
+    const matchesHasCheckedComments = filterHasCheckedComments === 'all' || 
+      (filterHasCheckedComments === 'with' && hasCheckedComments) || 
+      (filterHasCheckedComments === 'without' && !hasCheckedComments);
 
-    return matchesSearch && matchesStatus && matchesPriority && matchesTopic;
+    return matchesSearch && matchesStatus && matchesPriority && matchesTopic && 
+           matchesHasComments && matchesHasDocuments && matchesHasCheckedComments;
   });
 
   const indexOfLastTask = currentPage * tasksPerPage;
@@ -992,7 +1027,7 @@ const BuildMyChurch = () => {
           </div>
 
           {task.documents && task.documents.length > 0 && (
-            <div style={{ marginBottom: "20px" }}>
+            <div style={{ marginBottom: "20px" }} onClick={(e) => e.stopPropagation()}>
               <h3 
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1020,33 +1055,55 @@ const BuildMyChurch = () => {
 
           <div style={{ marginBottom: '20px' }}>
             <h3>Comments</h3>
-            <div style={{ marginBottom: '10px' }}>
-              <textarea
-                value={newCommentText}
-                onChange={(e) => setNewCommentText(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                placeholder="Add a comment..."
-                rows={3}
-                style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
-              />
-              <input
-                type="file"
-                multiple
-                onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
-                onClick={(e) => e.stopPropagation()}
-                style={{ marginTop: '8px' }}
-              />
-              <div style={{ marginTop: '8px' }}>
-                <button
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    await handleAddComment(task.id);
-                  }}
-                  style={{ padding: '8px 12px', backgroundColor: '#4F46E5', color: '#fff', border: 'none', borderRadius: '6px' }}
-                >Add Comment</button>
+            {!showCommentForm[task.id] ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCommentForm(prev => ({...prev, [task.id]: true}));
+                }}
+                style={{ padding: '8px 16px', backgroundColor: '#4F46E5', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginBottom: '10px' }}
+              >
+                + Add Comment
+              </button>
+            ) : (
+              <div style={{ marginBottom: '10px' }}>
+                <textarea
+                  value={newCommentText}
+                  onChange={(e) => setNewCommentText(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  placeholder="Add a comment..."
+                  rows={3}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                />
+                <input
+                  type="file"
+                  multiple
+                  onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ marginTop: '8px' }}
+                />
+                <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      await handleAddComment(task.id);
+                      setShowCommentForm(prev => ({...prev, [task.id]: false}));
+                    }}
+                    style={{ padding: '8px 12px', backgroundColor: '#10B981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                  >Submit</button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowCommentForm(prev => ({...prev, [task.id]: false}));
+                      setNewCommentText('');
+                      setNewCommentFiles([]);
+                    }}
+                    style={{ padding: '8px 12px', backgroundColor: '#6B7280', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                  >Cancel</button>
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               {(commentsByTask[task.id] || []).length === 0 && (
@@ -1711,7 +1768,63 @@ const BuildMyChurch = () => {
                     <option key={topic.id} value={topic.name}>{topic.name}</option>
                   ))}
                 </select>
+                <select
+                  value={filterHasComments}
+                  onChange={(e) => setFilterHasComments(e.target.value)}
+                  className="filter-select"
+                >
+                  <option value="all">All Comments</option>
+                  <option value="with">With Comments</option>
+                  <option value="without">Without Comments</option>
+                </select>
+                <select
+                  value={filterHasDocuments}
+                  onChange={(e) => setFilterHasDocuments(e.target.value)}
+                  className="filter-select"
+                >
+                  <option value="all">All Documents</option>
+                  <option value="with">With Documents</option>
+                  <option value="without">Without Documents</option>
+                </select>
+                <select
+                  value={filterHasCheckedComments}
+                  onChange={(e) => setFilterHasCheckedComments(e.target.value)}
+                  className="filter-select"
+                >
+                  <option value="all">All Checked</option>
+                  <option value="with">With Checked Comments</option>
+                  <option value="without">Without Checked Comments</option>
+                </select>
               </div>
+              
+              {(filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || 
+                filterHasComments !== 'all' || filterHasDocuments !== 'all' || filterHasCheckedComments !== 'all') && (
+                <button
+                  onClick={() => {
+                    setFilterStatus('all');
+                    setFilterPriority('all');
+                    setFilterTopic('all');
+                    setFilterHasComments('all');
+                    setFilterHasDocuments('all');
+                    setFilterHasCheckedComments('all');
+                    setSearchQuery('');
+                  }}
+                  className="clear-filters-button"
+                  style={{
+                    marginTop: '10px',
+                    padding: '8px 16px',
+                    backgroundColor: '#6366f1',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                >
+                  Clear All Filters
+                </button>
+              )}
             </div>
 
             <h2 className="section-title">
@@ -1951,6 +2064,25 @@ const BuildMyChurch = () => {
                             <span className={`status-badge ${task.status}`}>
                               {task.status.toUpperCase()}
                             </span>
+                            {(() => {
+                              const commentCount = (commentsByTask[task.id] || []).length;
+                              const checkedCount = (commentsByTask[task.id] || []).filter(c => c.inGoodStanding).length;
+                              const docCount = (task.documents || []).length;
+                              return (
+                                <>
+                                  {commentCount > 0 && (
+                                    <span className="status-badge" style={{ background: '#6366F1', color: 'white' }} title={`${commentCount} comment(s), ${checkedCount} checked`}>
+                                      💬 {commentCount} {checkedCount > 0 && `(✓${checkedCount})`}
+                                    </span>
+                                  )}
+                                  {docCount > 0 && (
+                                    <span className="status-badge" style={{ background: '#8B5CF6', color: 'white' }} title={`${docCount} document(s)`}>
+                                      📄 {docCount}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                           {expandedTaskId === task.id && (
                             <div className="task-details">
@@ -1965,7 +2097,7 @@ const BuildMyChurch = () => {
                                 </div>
                               )}
                               {task.documents && task.documents.length > 0 && (
-                                <div className="documents-section">
+                                <div className="documents-section" onClick={(e) => e.stopPropagation()}>
                                   <h4 
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1998,36 +2130,61 @@ const BuildMyChurch = () => {
                               )}
                               <div className="comments-section">
                                 <h4>Comments</h4>
-                                <div style={{ marginBottom: '10px' }}>
-                                  <textarea
-                                    value={newCommentText}
-                                    onChange={(e) => setNewCommentText(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    placeholder="Add a comment..."
-                                    rows={3}
-                                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
-                                  />
-                                  <input
-                                    type="file"
-                                    multiple
-                                    onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
-                                    onClick={(e) => e.stopPropagation()}
-                                    style={{ marginTop: '8px' }}
-                                  />
-                                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
-                                    <button
-                                      type="button"
-                                      onClick={async (e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        await handleAddComment(task.id);
-                                      }}
-                                      className="add-comment-button"
-                                    >
-                                      Add Comment
-                                    </button>
+                                {!showCommentForm[`detail-${task.id}`] ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: true}));
+                                    }}
+                                    style={{ padding: '8px 16px', backgroundColor: '#4F46E5', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginBottom: '10px' }}
+                                  >
+                                    + Add Comment
+                                  </button>
+                                ) : (
+                                  <div style={{ marginBottom: '10px' }}>
+                                    <textarea
+                                      value={newCommentText}
+                                      onChange={(e) => setNewCommentText(e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      placeholder="Add a comment..."
+                                      rows={3}
+                                      style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                                    />
+                                    <input
+                                      type="file"
+                                      multiple
+                                      onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
+                                      onClick={(e) => e.stopPropagation()}
+                                      style={{ marginTop: '8px' }}
+                                    />
+                                    <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={async (e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          await handleAddComment(task.id);
+                                          setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: false}));
+                                        }}
+                                        className="add-comment-button"
+                                      >
+                                        Submit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: false}));
+                                          setNewCommentText('');
+                                          setNewCommentFiles([]);
+                                        }}
+                                        style={{ padding: '8px 16px', backgroundColor: '#6B7280', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
                                   </div>
-                                </div>
+                                )}
 
                                 <div>
                                   {(commentsByTask[task.id] || []).length === 0 && (
