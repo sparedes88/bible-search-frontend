@@ -994,7 +994,10 @@ const BuildMyChurch = () => {
           {task.documents && task.documents.length > 0 && (
             <div style={{ marginBottom: "20px" }}>
               <h3 
-                onClick={() => setExpandedDocuments(prev => ({...prev, [task.id]: !prev[task.id]}))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedDocuments(prev => ({...prev, [task.id]: !prev[task.id]}));
+                }}
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', userSelect: 'none' }}
               >
                 {expandedDocuments[task.id] ? <FaChevronDown /> : <FaChevronRight />}
@@ -1964,7 +1967,10 @@ const BuildMyChurch = () => {
                               {task.documents && task.documents.length > 0 && (
                                 <div className="documents-section">
                                   <h4 
-                                    onClick={() => setExpandedDocuments(prev => ({...prev, [`detail-${task.id}`]: !prev[`detail-${task.id}`]}))}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedDocuments(prev => ({...prev, [`detail-${task.id}`]: !prev[`detail-${task.id}`]}));
+                                    }}
                                     style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', userSelect: 'none' }}
                                   >
                                     {expandedDocuments[`detail-${task.id}`] ? <FaChevronDown /> : <FaChevronRight />}
