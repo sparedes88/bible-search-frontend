@@ -92,6 +92,7 @@ const BuildMyChurch = () => {
   const [currentOrganization, setCurrentOrganization] = useState(null);
   const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [expandedDocuments, setExpandedDocuments] = useState({});
   const tasksPerPage = 5;
 
   const STATUS_OPTIONS = [
@@ -992,17 +993,25 @@ const BuildMyChurch = () => {
 
           {task.documents && task.documents.length > 0 && (
             <div style={{ marginBottom: "20px" }}>
-              <h3>Documents</h3>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {task.documents.map((doc, index) => (
-                  <li key={index} style={{ marginBottom: "8px" }}>
-                    <a href={doc.url} target="_blank" rel="noopener noreferrer" 
-                       style={{ color: "#4F46E5", textDecoration: "none" }}>
-                      {doc.name}
-                    </a>
-                  </li>
-                ))}
-              </ul>
+              <h3 
+                onClick={() => setExpandedDocuments(prev => ({...prev, [task.id]: !prev[task.id]}))}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', userSelect: 'none' }}
+              >
+                {expandedDocuments[task.id] ? <FaChevronDown /> : <FaChevronRight />}
+                Documents ({task.documents.length})
+              </h3>
+              {expandedDocuments[task.id] && (
+                <ul style={{ listStyle: "none", padding: 0 }}>
+                  {task.documents.map((doc, index) => (
+                    <li key={index} style={{ marginBottom: "8px" }}>
+                      <a href={doc.url} target="_blank" rel="noopener noreferrer" 
+                         style={{ color: "#4F46E5", textDecoration: "none" }}>
+                        {doc.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
@@ -1954,23 +1963,31 @@ const BuildMyChurch = () => {
                               )}
                               {task.documents && task.documents.length > 0 && (
                                 <div className="documents-section">
-                                  <h4>Documents:</h4>
-                                  <ul>
-                                    {task.documents.map((doc, index) => (
-                                      <li key={index}>
-                                        <a href={doc.url} target="_blank" rel="noopener noreferrer">
-                                          {doc.name}
-                                        </a>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteFile(task.id, index)}
-                                          className="delete-file-button"
-                                        >
-                                          <FaTrash /> Delete
-                                        </button>
-                                      </li>
-                                    ))}
-                                  </ul>
+                                  <h4 
+                                    onClick={() => setExpandedDocuments(prev => ({...prev, [`detail-${task.id}`]: !prev[`detail-${task.id}`]}))}
+                                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', userSelect: 'none' }}
+                                  >
+                                    {expandedDocuments[`detail-${task.id}`] ? <FaChevronDown /> : <FaChevronRight />}
+                                    Documents ({task.documents.length})
+                                  </h4>
+                                  {expandedDocuments[`detail-${task.id}`] && (
+                                    <ul>
+                                      {task.documents.map((doc, index) => (
+                                        <li key={index}>
+                                          <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                            {doc.name}
+                                          </a>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteFile(task.id, index)}
+                                            className="delete-file-button"
+                                          >
+                                            <FaTrash /> Delete
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
                                 </div>
                               )}
                               <div className="comments-section">
