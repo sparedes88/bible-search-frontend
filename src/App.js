@@ -4,6 +4,7 @@ import {
   Route,
   Routes,
   Navigate,
+  useParams,
 } from "react-router-dom";
 import { auth } from "./firebase"; // Import Firebase Auth
 import { useAuthState } from "react-firebase-hooks/auth";
@@ -78,6 +79,11 @@ const LoadingFallback = () => (
   </div>
 );
 
+const BuildBIRedirect = () => {
+  const { id } = useParams();
+  return <Navigate to={`/organization/${id}/bi-dashboard`} replace />;
+};
+
 // Lazy load components for code splitting (reduces initial bundle size)
 const EventDetails = React.lazy(() => import("./components/EventDetails"));
 import VisitorDetails from "./components/VisitorDetails";
@@ -139,10 +145,12 @@ import FormEmbed from "./components/FormEmbed"; // Import FormEmbed component
 import FormEntriesPage from "./components/FormEntriesPage"; // Import FormEntriesPage component
 import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
 import TimerPage from "./components/TimerPage"; // Import TimerPage component
+import TaskProgressDetail from "./components/TaskProgressDetail"; // Import TaskProgressDetail component
 import GlobalOrganizationManager from "./components/GlobalOrganizationManager";
 import ChurchProfile from "./components/ChurchProfile";
 import FreshBooksCallback from "./components/FreshBooksCallback";
 import SqlServerBridge from "./components/SqlServerBridge";
+import ExcelRowDetail from "./components/ExcelRowDetail";
 
 const App = () => {
   const [user] = useAuthState(auth);
@@ -469,6 +477,14 @@ const App = () => {
               </PrivateRoute>
             }
           />
+          <Route
+            path="/organization/:id/build-my-church/task/:taskId"
+            element={
+              <PrivateRoute>
+                <BuildMyChurch />
+              </PrivateRoute>
+            }
+          />
           <Route path="/organization/:id/messages" element={
             <RequireAuth>
               <Messages />
@@ -526,6 +542,12 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <BIDashboard />
               </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/build/bi-dashboard"
+            element={
+              <BuildBIRedirect />
             }
           />
           
@@ -618,6 +640,22 @@ const App = () => {
             element={
               <PrivateRoute>
                 <TimeTracker />
+              </PrivateRoute>
+            } 
+          />
+          <Route
+            path="/organization/:id/time-tracker/brands/:rowId"
+            element={
+              <PrivateRoute>
+                <ExcelRowDetail />
+              </PrivateRoute>
+            }
+          />
+          <Route 
+            path="/organization/:id/task-progress/:taskId" 
+            element={
+              <PrivateRoute>
+                <TaskProgressDetail />
               </PrivateRoute>
             } 
           />

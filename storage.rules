@@ -145,6 +145,13 @@ service firebase.storage {
       allow delete: if isAuthenticated() && isChurchMember(churchId);
     }
 
+    // Time tracker brand comment attachments - allow authenticated church members
+    match /churches/{churchId}/brands/{rowId}/comments/{commentId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
     // Gallery images
     match /galleries/{galleryId}/{imageId} {
       allow read: if true;

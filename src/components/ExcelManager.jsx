@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
-import { collection, doc, setDoc, addDoc, deleteDoc, serverTimestamp, getDocs, writeBatch, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, deleteDoc, serverTimestamp, getDocs, writeBatch, getDoc, updateDoc, arrayUnion, deleteField } from 'firebase/firestore';
 import './DonorUploader.css';
 import CatalogManager from './CatalogManager';
 import ExcelUploader from './ExcelUploader';
@@ -28,7 +29,19 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
   const [editingCommentText, setEditingCommentText] = useState('');
   const [newColumnName, setNewColumnName] = useState('');
   const [addingColumn, setAddingColumn] = useState(false);
+  const [updatingColumns, setUpdatingColumns] = useState(false);
   const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const normalizeColumnName = (value) => (value || '').trim().replace(/\s+/g, ' ');
+  const getColumnTypeConfig = (header) => {
+    const v = columnTypes && header ? columnTypes[header] : null;
+    if (!v) return { type: 'auto', dropdown: false };
+    if (typeof v === 'string') {
+      return { type: v === 'dropdown' ? 'text' : v, dropdown: v === 'dropdown' };
+    }
+    return { type: v.type === 'dropdown' ? 'text' : (v.type || 'auto'), dropdown: !!v.dropdown || v.type === 'dropdown' };
+  };
 
   const getPrimaryType = (header) => {
     const v = columnTypes && header ? columnTypes[header] : null;
@@ -663,13 +676,13 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
   const addColumn = async () => {
     if (!churchId) { setError('Missing churchId'); return; }
 
-    const rawName = (newColumnName || '').trim();
+    const rawName = normalizeColumnName(newColumnName);
     if (!rawName) {
       setError('Column name is required.');
       return;
     }
 
-    const normalizedName = rawName.replace(/\s+/g, ' ');
+    const normalizedName = rawName;
     const exists = (headers || []).some(h => String(h).toLowerCase() === normalizedName.toLowerCase());
     if (exists) {
       setError('Column already exists.');
@@ -693,6 +706,173 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
       setError('Failed to add column.');
     } finally {
       setAddingColumn(false);
+    }
+  };
+
+  const saveColumnType = async (header, nextType, nextDropdown) => {
+    if (!churchId || !header) return;
+    const normalizedType = nextType || 'auto';
+    const normalizedDropdown = !!nextDropdown;
+    setUpdatingColumns(true);
+    setError(null);
+    try {
+      const nextTypes = { ...(columnTypes || {}) };
+      if (normalizedType === 'auto' && !normalizedDropdown) {
+        delete nextTypes[header];
+      } else {
+        nextTypes[header] = { type: normalizedType, dropdown: normalizedDropdown };
+      }
+      setColumnTypes(nextTypes);
+      const metaRef = doc(db, 'churches', String(churchId), 'collectionMetadata', collectionName);
+      await setDoc(metaRef, { types: nextTypes }, { merge: true });
+    } catch (err) {
+      console.error('Failed to update column type', err);
+      setError('Failed to update column type.');
+      await refreshMetadata();
+    } finally {
+      setUpdatingColumns(false);
+    }
+  };
+
+  const renameColumn = async (oldName) => {
+    if (!churchId) { setError('Missing churchId'); return; }
+    if (!oldName) return;
+    const rawInput = window.prompt('Rename column:', oldName);
+    if (rawInput === null) return;
+
+    const normalizedName = normalizeColumnName(rawInput);
+    if (!normalizedName) {
+      setError('Column name is required.');
+      return;
+    }
+
+    if (normalizedName === oldName) return;
+
+    const exists = (headers || []).some(h => h !== oldName && String(h).toLowerCase() === normalizedName.toLowerCase());
+    if (exists) {
+      setError('Column already exists.');
+      return;
+    }
+
+    setUpdatingColumns(true);
+    setError(null);
+
+    const currentPreferred = (preferredHeaders && preferredHeaders.length) ? preferredHeaders : headers;
+    const nextHeaders = (headers || []).map(h => h === oldName ? normalizedName : h);
+    const nextPreferred = (currentPreferred || []).map(h => h === oldName ? normalizedName : h);
+    const nextTypes = (columnTypes && Object.prototype.hasOwnProperty.call(columnTypes, oldName))
+      ? { ...columnTypes, [normalizedName]: columnTypes[oldName] }
+      : { ...(columnTypes || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextTypes, oldName)) delete nextTypes[oldName];
+    const nextCatalogDocMap = (catalogDocMap && Object.prototype.hasOwnProperty.call(catalogDocMap, oldName))
+      ? { ...catalogDocMap, [normalizedName]: catalogDocMap[oldName] }
+      : { ...(catalogDocMap || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextCatalogDocMap, oldName)) delete nextCatalogDocMap[oldName];
+    const nextCatalogs = (catalogs && Object.prototype.hasOwnProperty.call(catalogs, oldName))
+      ? { ...catalogs, [normalizedName]: catalogs[oldName] }
+      : { ...(catalogs || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextCatalogs, oldName)) delete nextCatalogs[oldName];
+
+    setHeaders(nextHeaders);
+    setPreferredHeaders(nextPreferred);
+    setColumnTypes(nextTypes);
+    setCatalogDocMap(nextCatalogDocMap);
+    setCatalogs(nextCatalogs);
+    setSelectedCatalogHeader(prev => prev === oldName ? normalizedName : prev);
+    setSortKey(prev => prev === oldName ? normalizedName : prev);
+    setEditingCell(prev => prev && prev.key === oldName ? null : prev);
+    setRows(prev => (prev || []).map(r => {
+      if (!r || !Object.prototype.hasOwnProperty.call(r, oldName)) return r;
+      const next = { ...r, [normalizedName]: r[oldName] };
+      delete next[oldName];
+      return next;
+    }));
+
+    try {
+      const collRef = collection(db, `churches/${churchId}/${collectionName}`);
+      const snapshot = await getDocs(collRef);
+      const docs = snapshot.docs || [];
+      const CHUNK = 500;
+      for (let i = 0; i < docs.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + CHUNK).forEach(d => {
+          const data = d.data() || {};
+          const payload = { [oldName]: deleteField() };
+          if (data[oldName] !== undefined) payload[normalizedName] = data[oldName];
+          batch.update(d.ref, payload);
+        });
+        await batch.commit();
+      }
+
+      const metaRef = doc(db, 'churches', String(churchId), 'collectionMetadata', collectionName);
+      await setDoc(metaRef, { headers: nextPreferred, types: nextTypes, catalogs: nextCatalogDocMap }, { merge: true });
+    } catch (err) {
+      console.error('Failed to rename column', err);
+      setError('Failed to rename column.');
+      await refreshCollection();
+      await refreshMetadata();
+    } finally {
+      setUpdatingColumns(false);
+    }
+  };
+
+  const deleteColumn = async (columnName) => {
+    if (!churchId) { setError('Missing churchId'); return; }
+    if (!columnName) return;
+
+    const ok = window.confirm(`Delete column "${columnName}"? This will remove the field from all rows.`);
+    if (!ok) return;
+
+    setUpdatingColumns(true);
+    setError(null);
+
+    const currentPreferred = (preferredHeaders && preferredHeaders.length) ? preferredHeaders : headers;
+    const nextHeaders = (headers || []).filter(h => h !== columnName);
+    const nextPreferred = (currentPreferred || []).filter(h => h !== columnName);
+    const nextTypes = { ...(columnTypes || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextTypes, columnName)) delete nextTypes[columnName];
+    const nextCatalogDocMap = { ...(catalogDocMap || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextCatalogDocMap, columnName)) delete nextCatalogDocMap[columnName];
+    const nextCatalogs = { ...(catalogs || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextCatalogs, columnName)) delete nextCatalogs[columnName];
+
+    setHeaders(nextHeaders);
+    setPreferredHeaders(nextPreferred);
+    setColumnTypes(nextTypes);
+    setCatalogDocMap(nextCatalogDocMap);
+    setCatalogs(nextCatalogs);
+    setSelectedCatalogHeader(prev => prev === columnName ? null : prev);
+    setSortKey(prev => prev === columnName ? null : prev);
+    setEditingCell(prev => prev && prev.key === columnName ? null : prev);
+    setRows(prev => (prev || []).map(r => {
+      if (!r || !Object.prototype.hasOwnProperty.call(r, columnName)) return r;
+      const next = { ...r };
+      delete next[columnName];
+      return next;
+    }));
+
+    try {
+      const collRef = collection(db, `churches/${churchId}/${collectionName}`);
+      const snapshot = await getDocs(collRef);
+      const docs = snapshot.docs || [];
+      const CHUNK = 500;
+      for (let i = 0; i < docs.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + CHUNK).forEach(d => {
+          batch.update(d.ref, { [columnName]: deleteField() });
+        });
+        await batch.commit();
+      }
+
+      const metaRef = doc(db, 'churches', String(churchId), 'collectionMetadata', collectionName);
+      await setDoc(metaRef, { headers: nextPreferred, types: nextTypes, catalogs: nextCatalogDocMap }, { merge: true });
+    } catch (err) {
+      console.error('Failed to delete column', err);
+      setError('Failed to delete column.');
+      await refreshCollection();
+      await refreshMetadata();
+    } finally {
+      setUpdatingColumns(false);
     }
   };
 
@@ -767,6 +947,8 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
   const hasRows = filtered.length > 0;
   const showTable = headers.length > 0;
   const paged = (sorted || []).slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const canAddColumn = newColumnName.trim().length > 0;
+  const canViewRow = (row) => !!(row && row.__id);
 
   return (
     <div style={{ width: '100%', marginTop: 18 }}>
@@ -787,12 +969,16 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
+                if (!canAddColumn) {
+                  setError('Column name is required.');
+                  return;
+                }
                 addColumn();
               }
             }}
             style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb' }}
           />
-          <button className="btn" onClick={addColumn} disabled={addingColumn}>
+          <button className="btn" onClick={addColumn} disabled={addingColumn || !canAddColumn || updatingColumns}>
             {addingColumn ? 'Adding...' : 'Add Column'}
           </button>
           <button className="btn" onClick={addRow} disabled={savingRow}>Add Row</button>
@@ -834,7 +1020,52 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div>{h} {sortKey === h ? (sortDir === 'asc' ? '▲' : '▼') : ''}</div>
                       </div>
-                      {isDropdown(h) && collectionName !== 'brands' ? (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          className="btn small secondary"
+                          onClick={(e) => { e.stopPropagation(); renameColumn(h); }}
+                          disabled={updatingColumns}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          className="btn small secondary"
+                          onClick={(e) => { e.stopPropagation(); deleteColumn(h); }}
+                          disabled={updatingColumns}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select
+                          value={getColumnTypeConfig(h).type}
+                          onChange={(e) => {
+                            const config = getColumnTypeConfig(h);
+                            saveColumnType(h, e.target.value, config.dropdown);
+                          }}
+                          style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #e5e7eb' }}
+                          onClick={(e) => e.stopPropagation()}
+                          disabled={updatingColumns}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="text">Text</option>
+                          <option value="number">Number</option>
+                          <option value="date">Date</option>
+                        </select>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={getColumnTypeConfig(h).dropdown}
+                            onChange={(e) => {
+                              const config = getColumnTypeConfig(h);
+                              saveColumnType(h, config.type, e.target.checked);
+                            }}
+                            disabled={updatingColumns}
+                          />
+                          Dropdown
+                        </label>
+                      </div>
+                      {isDropdown(h) ? (
                         <div>
                           <button className="btn small" onClick={(e) => { e.stopPropagation(); setShowCatalogs(true); setSelectedCatalogHeader(h); }}>Manage</button>
                         </div>
@@ -973,7 +1204,14 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
                           );
                         })}
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          <button className="btn small" onClick={() => saveRow(idx)} disabled={savingRow}>Save</button>
+                          <button
+                            className="btn small secondary"
+                            onClick={() => navigate(`/organization/${churchId}/time-tracker/brands/${r.__id}`)}
+                            disabled={!canViewRow(r)}
+                          >
+                            View
+                          </button>
+                          <button className="btn small" onClick={() => saveRow(idx)} disabled={savingRow} style={{ marginLeft: 8 }}>Save</button>
                           <button className="btn small secondary" onClick={() => deleteRow(idx)} style={{ marginLeft: 8 }}>Delete</button>
                         </td>
                       </tr>

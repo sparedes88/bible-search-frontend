@@ -3,10 +3,13 @@ import { FaTrash, FaUser, FaTasks } from 'react-icons/fa';
 
 const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onReassign }) => {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [reassignMode, setReassignMode] = useState(false);
   const [selectedReassignTo, setSelectedReassignTo] = useState('');
 
   // Get tasks assigned to this assignee
-  const assigneeTasks = tasks.filter(task => task.assignee === assignee.id);
+  const assigneeTasks = tasks.filter(task =>
+    task.assignee === assignee.name || task.assignee === assignee.id
+  );
 
   const handleRemoveClick = () => {
     if (assigneeTasks.length > 0) {
@@ -18,22 +21,49 @@ const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onRea
   };
 
   const handleConfirmRemove = () => {
-    if (selectedReassignTo) {
-      onReassign(assignee.id, selectedReassignTo);
+    if (reassignMode && selectedReassignTo) {
+      onReassign(assignee.name || assignee.id, selectedReassignTo);
     } else {
-      onRemove(assignee.id);
+      onRemove(assignee.name || assignee.id);
     }
     setShowConfirmDialog(false);
+    setReassignMode(false);
     setSelectedReassignTo('');
   };
 
   const handleCancelRemove = () => {
     setShowConfirmDialog(false);
+    setReassignMode(false);
     setSelectedReassignTo('');
   };
 
   // Filter out the current assignee from reassignment options
   const availableAssignees = allAssignees.filter(a => a.id !== assignee.id);
+
+  const displayedTasks = assigneeTasks.slice(0, 5);
+  const remainingTaskCount = assigneeTasks.length - displayedTasks.length;
+
+  const badgeColors = [
+    { bg: '#fee2e2', text: '#991b1b' },
+    { bg: '#ffedd5', text: '#9a3412' },
+    { bg: '#fef9c3', text: '#854d0e' },
+    { bg: '#dcfce7', text: '#166534' },
+    { bg: '#cffafe', text: '#155e75' },
+    { bg: '#dbeafe', text: '#1e40af' },
+    { bg: '#e0e7ff', text: '#3730a3' },
+    { bg: '#f3e8ff', text: '#6b21a8' }
+  ];
+
+  const getBadgeColor = (key) => {
+    if (!key) return badgeColors[0];
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+      hash = ((hash << 5) - hash) + key.charCodeAt(i);
+      hash |= 0;
+    }
+    const index = Math.abs(hash) % badgeColors.length;
+    return badgeColors[index];
+  };
 
   return (
     <>
@@ -49,6 +79,47 @@ const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onRea
               <span className="task-count">
                 <FaTasks /> {assigneeTasks.length} task{assigneeTasks.length !== 1 ? 's' : ''}
               </span>
+            </div>
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '4px' }}>
+                Assigned tasks
+              </div>
+              {assigneeTasks.length === 0 ? (
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>None</div>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {displayedTasks.map(task => {
+                    const colors = getBadgeColor(task.id || task.title);
+                    return (
+                    <li
+                      key={task.id}
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: colors.bg,
+                        borderRadius: '999px',
+                        fontSize: '0.75rem',
+                        color: colors.text
+                      }}
+                    >
+                      {task.title}
+                    </li>
+                    );
+                  })}
+                  {remainingTaskCount > 0 && (
+                    <li
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: '#e5e7eb',
+                        borderRadius: '999px',
+                        fontSize: '0.75rem',
+                        color: '#6b7280'
+                      }}
+                    >
+                      +{remainingTaskCount} more
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
           </div>
         </div>
@@ -78,9 +149,12 @@ const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onRea
                   <input
                     type="radio"
                     name="reassign"
-                    value=""
-                    checked={selectedReassignTo === ''}
-                    onChange={(e) => setSelectedReassignTo(e.target.value)}
+                    value="delete"
+                    checked={!reassignMode}
+                    onChange={() => {
+                      setReassignMode(false);
+                      setSelectedReassignTo('');
+                    }}
                   />
                   <span>Delete all tasks</span>
                 </label>
@@ -91,22 +165,22 @@ const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onRea
                       type="radio"
                       name="reassign"
                       value="reassign"
-                      checked={selectedReassignTo === 'reassign'}
-                      onChange={(e) => setSelectedReassignTo('reassign')}
+                      checked={reassignMode}
+                      onChange={() => setReassignMode(true)}
                     />
                     <span>Reassign to:</span>
                   </label>
                 )}
 
-                {selectedReassignTo === 'reassign' && availableAssignees.length > 0 && (
+                {reassignMode && availableAssignees.length > 0 && (
                   <select
                     className="reassign-select"
                     value={selectedReassignTo}
                     onChange={(e) => setSelectedReassignTo(e.target.value)}
                   >
-                    <option value="reassign" disabled>Select assignee...</option>
+                    <option value="" disabled>Select assignee...</option>
                     {availableAssignees.map(a => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
+                      <option key={a.id} value={a.name}>{a.name}</option>
                     ))}
                   </select>
                 )}
@@ -123,7 +197,7 @@ const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onRea
               <button
                 className="confirm-btn"
                 onClick={handleConfirmRemove}
-                disabled={selectedReassignTo === 'reassign' && !availableAssignees.some(a => a.id === selectedReassignTo)}
+                disabled={reassignMode && !selectedReassignTo}
               >
                 {assigneeTasks.length === 0 ? 'Remove' : 'Confirm'}
               </button>

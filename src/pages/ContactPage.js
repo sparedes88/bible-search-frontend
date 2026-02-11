@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { searchChurchById } from "../api"; // ✅ Ensure correct import
@@ -11,6 +11,7 @@ import "./pages.responsive.css";
 const Login = () => {
   const { id } = useParams(); // Get church ID from URL
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -44,7 +45,12 @@ const Login = () => {
     e.preventDefault();
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      navigate("/mi-perfil"); // Redirect to profile after login
+      const returnUrl = new URLSearchParams(location.search).get("returnUrl");
+      if (returnUrl) {
+        navigate(returnUrl, { replace: true });
+      } else {
+        navigate("/mi-perfil");
+      }
     } catch (err) {
       setError("❌ Error: Invalid credentials. Please try again.");
     }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
-import { db, storage } from '../firebase';
+import { signOut } from 'firebase/auth';
+import { auth, db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   collection,
@@ -17,6 +18,7 @@ import {
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import ChurchHeader from './ChurchHeader';
 import { safeToast } from '../utils/toastUtils';
+import { toast } from 'react-toastify';
 import { FaEdit, FaCheck, FaTimes, FaChevronDown, FaChevronUp, FaChevronLeft, FaChevronRight, FaTrash, FaFilePdf, FaChartBar } from 'react-icons/fa';
 import { jsPDF } from 'jspdf';
 import { QRCodeSVG } from 'qrcode.react';
@@ -52,7 +54,7 @@ const convertUrlsToLinks = (text) => {
 };
 
 const BuildMyChurch = () => {
-  const { id } = useParams();
+  const { id, taskId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -98,6 +100,17 @@ const BuildMyChurch = () => {
   const [expandedDocuments, setExpandedDocuments] = useState({});
   const [showCommentForm, setShowCommentForm] = useState({});
   const tasksPerPage = 5;
+
+  const handleLogout = async () => {
+    try {
+      const returnUrl = `${location.pathname}${location.search}${location.hash}`;
+      await signOut(auth);
+      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+    } catch (error) {
+      console.error('Error logging out:', error);
+      safeToast.error('Failed to logout');
+    }
+  };
 
   const STATUS_OPTIONS = [
     { value: 'not-started', label: 'Not Started' },
@@ -725,45 +738,29 @@ const BuildMyChurch = () => {
     try {
       const toastId = toast.loading('Preparing PDF...', { autoClose: false });
       const doc = new jsPDF();
-      
-      // Add title and header with branded color
-      doc.setFillColor(79, 70, 229); // #4F46E5 - matching web primary color
-      doc.rect(0, 0, doc.internal.pageSize.width, 40, 'F');
-      doc.setTextColor(255);
-      doc.setFontSize(24);
-      doc.text('Build My Organization Tasks Report', 15, 25);
-      
-      // Header info
-      doc.setFontSize(11);
-      doc.setTextColor(200, 200, 200);
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 15, 35);
-      doc.text(`Total Tasks: ${filteredTasks.length}`, doc.internal.pageSize.width - 60, 35);
-      
-      let yOffset = 50;
 
-      // Add filter information
-      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || searchQuery || 
-          filterHasComments !== 'all' || filterHasDocuments !== 'all' || filterHasCheckedComments !== 'all') {
-        doc.setFillColor(243, 244, 246); // #F3F4F6
-        doc.rect(15, yOffset, doc.internal.pageSize.width - 30, 25, 'F');
-        doc.setTextColor(75, 85, 99); // #4B5563
-        doc.setFontSize(10);
-        doc.text('Applied Filters:', 20, yOffset + 7);
-        
-        let filterText = [];
-        if (filterPriority !== 'all') filterText.push(`Priority: ${filterPriority}`);
-        if (filterStatus !== 'all') filterText.push(`Status: ${filterStatus}`);
-        if (filterTopic !== 'all') filterText.push(`Topic: ${filterTopic}`);
-        if (filterHasComments !== 'all') filterText.push(`Comments: ${filterHasComments}`);
-        if (filterHasDocuments !== 'all') filterText.push(`Documents: ${filterHasDocuments}`);
-        if (filterHasCheckedComments !== 'all') filterText.push(`Checked: ${filterHasCheckedComments}`);
-        if (searchQuery) filterText.push(`Search: "${searchQuery}"`);
-        
-        doc.text(filterText.join(' | '), 20, yOffset + 17);
-        yOffset += 35;
-      }
-      
-      // Group tasks by status
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - (margin * 2);
+
+      const formatDate = (value) => (value ? new Date(value).toLocaleDateString() : 'Not set');
+      const statusLabelMap = STATUS_OPTIONS.reduce((acc, option) => {
+        acc[option.value] = option.label;
+        return acc;
+      }, {});
+
+      const filters = [];
+      if (filterPriority !== 'all') filters.push(`Priority: ${filterPriority}`);
+      if (filterStatus !== 'all') filters.push(`Status: ${filterStatus}`);
+      if (filterTopic !== 'all') filters.push(`Topic: ${filterTopic}`);
+      if (filterHasComments !== 'all') filters.push(`Comments: ${filterHasComments}`);
+      if (filterHasDocuments !== 'all') filters.push(`Documents: ${filterHasDocuments}`);
+      if (filterHasCheckedComments !== 'all') filters.push(`Checked: ${filterHasCheckedComments}`);
+      if (searchQuery) filters.push(`Search: "${searchQuery}"`);
+
+      const filterText = filters.length ? filters.join(' | ') : 'None';
+
       const statusGroups = {
         'not-started': filteredTasks.filter(task => task.status === 'not-started'),
         'in-progress': filteredTasks.filter(task => task.status === 'in-progress'),
@@ -772,124 +769,202 @@ const BuildMyChurch = () => {
         'cancelled': filteredTasks.filter(task => task.status === 'cancelled')
       };
 
-      // Status colors matching web interface
-      const statusColors = {
-        'not-started': { bg: [239, 68, 68], text: [255, 255, 255] },    // Red
-        'in-progress': { bg: [245, 158, 11], text: [255, 255, 255] },   // Orange
-        'on-hold': { bg: [107, 114, 128], text: [255, 255, 255] },      // Gray
-        'completed': { bg: [16, 185, 129], text: [255, 255, 255] },     // Green
-        'cancelled': { bg: [156, 163, 175], text: [255, 255, 255] }     // Gray
+      const statusCounts = Object.keys(statusGroups).reduce((acc, key) => {
+        acc[key] = statusGroups[key].length;
+        return acc;
+      }, {});
+
+      const withDocumentsCount = filteredTasks.filter(task => (task.documents || []).length > 0).length;
+      const withCommentsCount = filteredTasks.filter(task => (commentsByTask[task.id] || []).length > 0).length;
+
+      const addSectionHeader = (status, count) => {
+        const label = statusLabelMap[status] || status;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor(31, 41, 55);
+        doc.text(`${label} (${count})`, margin, 18);
+        doc.setDrawColor(229, 231, 235);
+        doc.line(margin, 21, pageWidth - margin, 21);
+        return 28;
       };
 
-      let processedItems = 0;
-      const totalItems = filteredTasks.length;
+      // Cover page
+      doc.setFillColor(31, 41, 55);
+      doc.rect(0, 0, pageWidth, 22, 'F');
+      doc.setTextColor(255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('Build My Organization Tasks Report', margin, 14);
 
-      // Process each status group
-      for (const [status, tasks] of Object.entries(statusGroups)) {
-        if (tasks.length === 0) continue;
+      const orgName = church?.name || 'Organization';
+      doc.setTextColor(31, 41, 55);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.text(orgName, margin, 34);
 
-        // Always start a new page for each status section
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(107, 114, 128);
+      doc.text(`Generated ${new Date().toLocaleString()}`, margin, 40);
+      doc.text(`Total Tasks: ${filteredTasks.length}`, pageWidth - margin, 40, { align: 'right' });
+
+      let yOffset = 46;
+
+      // Filters block
+      const filterLines = doc.splitTextToSize(filterText, contentWidth - 10);
+      const filterBlockHeight = 10 + (filterLines.length * 5);
+      doc.setFillColor(243, 244, 246);
+      doc.roundedRect(margin, yOffset, contentWidth, filterBlockHeight, 2, 2, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(55, 65, 81);
+      doc.text('Filters', margin + 4, yOffset + 6);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(107, 114, 128);
+      doc.text(filterLines, margin + 4, yOffset + 12);
+
+      yOffset += filterBlockHeight + 10;
+
+      // Summary block
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(31, 41, 55);
+      doc.text('Summary', margin, yOffset);
+
+      yOffset += 6;
+      doc.setDrawColor(229, 231, 235);
+      doc.line(margin, yOffset, pageWidth - margin, yOffset);
+      yOffset += 6;
+
+      const summaryItems = [
+        ['Not Started', statusCounts['not-started']],
+        ['In Progress', statusCounts['in-progress']],
+        ['On Hold', statusCounts['on-hold']],
+        ['Completed', statusCounts['completed']],
+        ['Cancelled', statusCounts['cancelled']],
+        ['With Documents', withDocumentsCount],
+        ['With Comments', withCommentsCount]
+      ];
+
+      const columnWidth = contentWidth / 2;
+      const rowHeight = 6;
+      summaryItems.forEach((item, index) => {
+        const col = index % 2;
+        const row = Math.floor(index / 2);
+        const x = margin + (col * columnWidth);
+        const y = yOffset + (row * rowHeight);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(75, 85, 99);
+        doc.text(`${item[0]}: ${item[1]}`, x, y);
+      });
+
+      yOffset += (Math.ceil(summaryItems.length / 2) * rowHeight) + 10;
+
+      if (filteredTasks.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(107, 114, 128);
+        doc.text('No tasks match the current filters.', margin, yOffset + 4);
+      } else {
+        // Start details on a new page
         doc.addPage();
-        yOffset = 20;
 
-        // Add status section header
-        const statusColor = statusColors[status] || { bg: [79, 70, 229], text: [255, 255, 255] };
-        doc.setFillColor(...statusColor.bg);
-        doc.rect(15, yOffset, doc.internal.pageSize.width - 30, 10, 'F');
-        doc.setTextColor(...statusColor.text);
-        doc.setFontSize(14);
-        doc.text(STATUS_OPTIONS.find(opt => opt.value === status)?.label || status.toUpperCase(), 20, yOffset + 7);
-        yOffset += 15;
+        let processedItems = 0;
+        const totalItems = filteredTasks.length || 1;
 
-        // Process tasks in this status group
-        for (const task of tasks) {
-          processedItems++;
-          const progress = Math.round((processedItems / totalItems) * 100);
-          toast.update(toastId, { 
-            render: `Generating PDF... ${progress}%`,
-          });
+        for (const [status, tasks] of Object.entries(statusGroups)) {
+          if (tasks.length === 0) continue;
 
-          // Calculate space needed for this task
-          const descriptionLines = doc.splitTextToSize(task.description || '', doc.internal.pageSize.width - 45);  // Increased margin
-          const descriptionHeight = descriptionLines.length * 6;  // Increased line spacing
-          const estimatedTaskHeight = 90 + descriptionHeight;
+          yOffset = addSectionHeader(status, tasks.length);
 
-          // Check if we need a new page for this task
-          if (yOffset + estimatedTaskHeight > doc.internal.pageSize.height - 30) {
-            doc.addPage();
-            yOffset = 20;
-          }
-
-          // Task title
-          doc.setFontSize(12);
-          doc.setTextColor(31, 41, 55);
-          const titleLines = doc.splitTextToSize(task.title, doc.internal.pageSize.width - 45);
-          doc.text(titleLines, 20, yOffset + 10);
-          yOffset += 15 + (titleLines.length * 7);  // Adjust offset based on title length
-
-          // Task description with proper wrapping
-          if (task.description) {
-            doc.setFontSize(10);
-            doc.setTextColor(107, 114, 128);
-            doc.text(descriptionLines, 20, yOffset);
-            yOffset += descriptionHeight + 15;
-          }
-
-          // Task details grid with proper spacing
-          doc.setFillColor(243, 244, 246);
-          doc.roundedRect(20, yOffset, doc.internal.pageSize.width - 40, 30, 2, 2, 'F');
-
-          // Details content with proper column spacing
-          doc.setFontSize(9);
-          doc.setTextColor(75, 85, 99);
-          
-          const details = [
-            [`Priority: ${task.priority || 'N/A'}`, `Topic: ${task.topic || 'N/A'}`, `Assigned To: ${task.assignee || 'Unassigned'}`],
-            [`Created: ${new Date(task.createdAt).toLocaleDateString()}`, 
-             `Last Updated: ${task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : 'N/A'}`,
-             `Documents: ${task.documents?.length || 0}`],
-            [`Start Date: ${task.startDate ? new Date(task.startDate).toLocaleDateString() : 'Not Set'}`, 
-             `Due Date: ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not Set'}`,
-             `Status: ${task.status || 'N/A'}`]
-          ];
-
-          details.forEach((row, rowIndex) => {
-            row.forEach((cell, colIndex) => {
-              const xPos = 25 + (colIndex * Math.floor((doc.internal.pageSize.width - 50) / 3));
-              doc.text(cell, xPos, yOffset + 10 + (rowIndex * 10));
+          for (const task of tasks) {
+            processedItems++;
+            const progress = Math.round((processedItems / totalItems) * 100);
+            toast.update(toastId, {
+              render: `Generating PDF... ${progress}%`,
             });
-          });
 
-          yOffset += 50;
+            const titleText = task.title || 'Untitled task';
+            const descriptionText = task.description || 'No description provided.';
+            const titleLines = doc.splitTextToSize(titleText, contentWidth - 8);
+            const descriptionLines = doc.splitTextToSize(descriptionText, contentWidth - 8);
+
+            const titleHeight = titleLines.length * 6;
+            const descriptionHeight = descriptionLines.length * 5;
+
+            const detailRows = [
+              [`Priority: ${task.priority || 'N/A'}`, `Status: ${statusLabelMap[task.status] || task.status || 'N/A'}`],
+              [`Topic: ${task.topic || 'N/A'}`, `Assignee: ${task.assignee || 'Unassigned'}`],
+              [`Start: ${formatDate(task.startDate)}`, `Due: ${formatDate(task.dueDate)}`],
+              [`Created: ${formatDate(task.createdAt)}`, `Updated: ${formatDate(task.updatedAt)}`],
+              [`Documents: ${task.documents?.length || 0}`, `Comments: ${(commentsByTask[task.id] || []).length}`]
+            ];
+
+            const detailHeight = (detailRows.length * 5) + 4;
+            const cardHeight = 8 + titleHeight + 3 + descriptionHeight + 4 + detailHeight + 6;
+
+            if (yOffset + cardHeight > pageHeight - 20) {
+              doc.addPage();
+              yOffset = addSectionHeader(status, tasks.length);
+            }
+
+            doc.setDrawColor(229, 231, 235);
+            doc.setFillColor(249, 250, 251);
+            doc.roundedRect(margin, yOffset, contentWidth, cardHeight, 2, 2, 'FD');
+
+            let textY = yOffset + 8;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(11);
+            doc.setTextColor(31, 41, 55);
+            doc.text(titleLines, margin + 4, textY);
+            textY += titleHeight + 2;
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(107, 114, 128);
+            doc.text(descriptionLines, margin + 4, textY);
+            textY += descriptionHeight + 3;
+
+            doc.setDrawColor(229, 231, 235);
+            doc.line(margin + 4, textY, pageWidth - margin - 4, textY);
+            textY += 4;
+
+            doc.setFontSize(9);
+            doc.setTextColor(75, 85, 99);
+            detailRows.forEach((row) => {
+              doc.text(row[0], margin + 4, textY);
+              doc.text(row[1], margin + (contentWidth / 2), textY);
+              textY += 5;
+            });
+
+            yOffset += cardHeight + 6;
+          }
         }
-
-        yOffset += 10;
       }
 
-      // Add page numbers
+      // Page numbers
       const pageCount = doc.internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
-        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
         doc.setTextColor(156, 163, 175);
-        doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.width / 2, doc.internal.pageSize.height - 10, { align: 'center' });
+        doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, pageHeight - 8, { align: 'center' });
       }
 
-      // Save the PDF
-      toast.update(toastId, { 
+      toast.update(toastId, {
         render: 'Finalizing PDF...',
       });
-      
-      // Add current filters to filename if any are active
+
       let filename = 'build-my-church-tasks';
-      if (filterStatus !== 'all' || filterPriority !== 'all' || filterTopic !== 'all' || 
-          filterHasComments !== 'all' || filterHasDocuments !== 'all' || filterHasCheckedComments !== 'all') {
+      if (filters.length) {
         filename += '-filtered';
       }
       filename += '.pdf';
-      
+
       doc.save(filename);
-      
+
       toast.update(toastId, {
         render: 'PDF generated successfully!',
         type: 'success',
@@ -939,16 +1014,55 @@ const BuildMyChurch = () => {
   };
 
   const handleTaskClick = async (task) => {
-    toggleTaskExpand(task.id);
+    if (!task || !task.id) return;
+    setSelectedTask(task);
+    navigate(`/organization/${id}/build-my-church/task/${task.id}`, {
+      state: { from: `${location.pathname}${location.search}${location.hash}` }
+    });
   };
 
   const handleCloseDetailView = () => {
     setSelectedTask(null);
+    if (taskId) {
+      navigate(`/organization/${id}/build-my-church`, { replace: true });
+    }
   };
 
   const getTaskUrl = (taskId) => {
-    return `${window.location.origin}/church/${id}/build-my-church?task=${taskId}`;
+    return `${window.location.origin}/organization/${id}/build-my-church/task/${taskId}`;
   };
+
+  useEffect(() => {
+    if (!taskId || tasks.length === 0) return;
+
+    if (!location.state?.from) {
+      setFilterStatus('all');
+      setFilterPriority('all');
+      setFilterTopic('all');
+      setFilterHasComments('all');
+      setFilterHasDocuments('all');
+      setFilterHasCheckedComments('all');
+      setSearchQuery('');
+    }
+
+    const matchedTask = tasks.find(task => task.id === taskId);
+    if (!matchedTask) return;
+
+    setSelectedTask(matchedTask);
+    setExpandedTaskId(taskId);
+
+    const taskIndex = tasks.findIndex(task => task.id === taskId);
+    if (taskIndex >= 0) {
+      setCurrentPage(Math.floor(taskIndex / tasksPerPage) + 1);
+    }
+
+    requestAnimationFrame(() => {
+      const taskElement = document.querySelector(`[data-task-id="${taskId}"]`);
+      if (taskElement) {
+        taskElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }, [taskId, tasks, location.state]);
 
   const DetailView = ({ task }) => {
     if (!task) return null;
@@ -1592,6 +1706,24 @@ const BuildMyChurch = () => {
             >
               <FaFilePdf /> Export to PDF
             </button>
+            <button
+              onClick={handleLogout}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.75rem 1.5rem",
+                backgroundColor: "#ef4444",
+                color: "white",
+                border: "none",
+                borderRadius: "0.5rem",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                fontWeight: "600"
+              }}
+            >
+              Logout
+            </button>
           </div>
         </div>
 
@@ -1871,6 +2003,7 @@ const BuildMyChurch = () => {
                   {currentTasks.map(task => (
                     <div 
                       key={task.id} 
+                      data-task-id={task.id}
                       className={`task-card priority-${task.priority}`}
                       onClick={() => handleTaskClick(task)}
                       style={{ cursor: 'pointer' }}

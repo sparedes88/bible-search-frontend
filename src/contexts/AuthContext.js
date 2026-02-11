@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { auth, db, storage } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { getDownloadURL, ref } from 'firebase/storage';
+import { signOut } from 'firebase/auth';
 
 const AuthContext = createContext();
 
@@ -59,12 +60,25 @@ export function AuthProvider({ children }) {
   const isAdmin = () => user?.role === 'admin' || user?.role === 'global_admin';
   const isGlobalAdmin = () => user?.role === 'global_admin';
 
+  // Logout function
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      localStorage.removeItem("userId");
+    } catch (error) {
+      console.error('Logout error:', error);
+      throw error;
+    }
+  };
+
   const value = {
     user,
     loading,
     authError,
     isAdmin,
-    isGlobalAdmin
+    isGlobalAdmin,
+    logout
   };
 
   if (loading) {

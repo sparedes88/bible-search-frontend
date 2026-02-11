@@ -1,10 +1,10 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const cors = require("cors");
-const twilio = require('twilio');
+let twilioLib = null;
 // const stripe = require('stripe')(functions.config().stripe.secret_key); // Commented out to fix deployment error
 const axios = require('axios');
-const sql = require('mssql');
+let sql = null;
 // const { freshbooksToken } = require('./freshbooksToken'); // Temporarily commented out to fix deployment
 
 // Load environment variables from .env file
@@ -80,6 +80,9 @@ let sqlPool = null;
 async function getSqlPool() {
   if (!sqlPool) {
     try {
+      if (!sql) {
+        sql = require('mssql');
+      }
       sqlPool = await sql.connect(sqlConfig);
       console.log('✅ Connected to SQL Server');
     } catch (error) {
@@ -109,14 +112,19 @@ async function executeQuery(query, params = []) {
   }
 }
 
-// Initialize Twilio client (only if credentials are available)
+// Initialize Twilio client lazily (only if credentials are available)
 let twilioClient = null;
-if (process.env.TWILIO_ACCOUNT_SID || functions.config().twilio?.account_sid) {
-  twilioClient = twilio(
-    process.env.TWILIO_ACCOUNT_SID || functions.config().twilio?.account_sid,
-    process.env.TWILIO_AUTH_TOKEN || functions.config().twilio?.auth_token
-  );
-}
+const getTwilioClient = () => {
+  if (twilioClient) return twilioClient;
+  const accountSid = process.env.TWILIO_ACCOUNT_SID || functions.config().twilio?.account_sid;
+  const authToken = process.env.TWILIO_AUTH_TOKEN || functions.config().twilio?.auth_token;
+  if (!accountSid || !authToken) return null;
+  if (!twilioLib) {
+    twilioLib = require('twilio');
+  }
+  twilioClient = twilioLib(accountSid, authToken);
+  return twilioClient;
+};
 
 const corsHandler = cors({origin: true});
 
@@ -187,7 +195,14 @@ exports.sendSMS = functions.https.onRequest((req, res) => {
       });
 
       // Send SMS via Twilio
-      const result = await twilioClient.messages.create({
+      const client = getTwilioClient();
+      if (!client) {
+        return res.status(500).json({
+          success: false,
+          error: 'Twilio is not configured'
+        });
+      }
+      const result = await client.messages.create({
         to,
         body: message,
         from: process.env.TWILIO_PHONE_NUMBER || functions.config().twilio?.phone_number
@@ -531,14 +546,21 @@ exports.checkTwilioMessages = functions.https.onRequest((req, res) => {
       console.log(`Checking messages for phone: ${formattedPhone}, churchId: ${churchId}, memberId: ${memberId || 'none'}, visitorId: ${visitorId || 'none'}`);
       
       // Get messages from Twilio API
-      const messages = await twilioClient.messages.list({
+      const client = getTwilioClient();
+      if (!client) {
+        return res.status(500).json({
+          success: false,
+          error: 'Twilio is not configured'
+        });
+      }
+      const messages = await client.messages.list({
         // Look for messages sent to or from this number in the last 7 days
         to: formattedPhone,
         limit: 20
       });
       
       // Also get messages sent from this number
-      const inboundMessages = await twilioClient.messages.list({
+      const inboundMessages = await client.messages.list({
         from: formattedPhone,
         limit: 20
       });

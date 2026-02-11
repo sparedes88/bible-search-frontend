@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { 
@@ -19,6 +19,8 @@ import './TaskProgress.css';
 const TaskProgress = () => {
   const { id: churchId } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [tasks, setTasks] = useState([]);
   const [progressEntries, setProgressEntries] = useState([]);
   const [selectedTask, setSelectedTask] = useState('');
@@ -186,6 +188,12 @@ const TaskProgress = () => {
     return Math.min(progress.length * 10, 100);
   };
 
+  const handleTaskClick = (taskId) => {
+    navigate(`/organization/${churchId}/task-progress/${taskId}`, {
+      state: { from: `${location.pathname}${location.search}` }
+    });
+  };
+
   if (loading) {
     return (
       <div className="task-progress-container">
@@ -244,7 +252,19 @@ const TaskProgress = () => {
             const completionRate = getTaskCompletionRate(task.id);
             
             return (
-              <div key={task.id} className={`task-overview-card ${task.status}`}>
+              <div
+                key={task.id}
+                className={`task-overview-card is-clickable ${task.status}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleTaskClick(task.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleTaskClick(task.id);
+                  }
+                }}
+              >
                 <div className="task-card-header">
                   <h3>{task.title}</h3>
                   <span className={`status-badge ${task.status}`}>
