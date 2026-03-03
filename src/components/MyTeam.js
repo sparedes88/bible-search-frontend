@@ -20,6 +20,8 @@ const MyTeam = () => {
   const [salaryNote, setSalaryNote] = useState('');
   const [showSalaryHistory, setShowSalaryHistory] = useState(null);
   const [newExpectedHours, setNewExpectedHours] = useState('');
+  const [roles, setRoles] = useState([]);
+  const [systemRoles, setSystemRoles] = useState([]);
   
   // Expenses tab state
   const [activeTab, setActiveTab] = useState('team'); // 'team' or 'expenses'
@@ -34,6 +36,12 @@ const MyTeam = () => {
     date: new Date().toISOString().split('T')[0],
     category: 'Other'
   });
+
+  const defaultSystemRoles = [
+    { id: 'system_global_admin', name: 'Global Admin' },
+    { id: 'system_admin', name: 'Church Admin' },
+    { id: 'system_member', name: 'Member' }
+  ];
 
   // Fetch all users in the church
   useEffect(() => {
@@ -85,6 +93,25 @@ const MyTeam = () => {
     };
 
     fetchProjects();
+  }, [id]);
+
+  // Fetch role catalog for the church
+  useEffect(() => {
+    const fetchRoles = async () => {
+      if (!id) return;
+      try {
+        const rolesQuery = query(collection(db, 'roles'), where('churchId', '==', id));
+        const rolesSnap = await getDocs(rolesQuery);
+        const rolesList = rolesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setRoles(rolesList);
+        setSystemRoles(defaultSystemRoles);
+      } catch (error) {
+        console.error('Error fetching roles:', error);
+        toast.error('Failed to load roles');
+      }
+    };
+
+    fetchRoles();
   }, [id]);
 
   // Fetch expenses
@@ -328,10 +355,13 @@ const MyTeam = () => {
   const getRoleBadgeClass = (role) => {
     switch (role) {
       case 'global_admin':
+      case 'system_global_admin':
         return 'role-badge global-admin';
       case 'admin':
+      case 'system_admin':
         return 'role-badge admin';
       case 'member':
+      case 'system_member':
         return 'role-badge member';
       default:
         return 'role-badge';
@@ -339,15 +369,41 @@ const MyTeam = () => {
   };
 
   const getRoleLabel = (role) => {
-    switch (role) {
-      case 'global_admin':
-        return 'Global Admin';
-      case 'admin':
-        return 'Admin';
-      case 'member':
-        return 'Member';
-      default:
-        return role || 'Unknown';
+    if (role === 'global_admin') return 'Global Admin';
+    if (role === 'admin') return 'Admin';
+    if (role === 'member') return 'Member';
+
+    const systemRole = systemRoles.find(r => r.id === role);
+    if (systemRole) return systemRole.name;
+
+    const customRole = roles.find(r => r.id === role);
+    if (customRole) return customRole.name;
+
+    return role || 'Unknown';
+  };
+
+  const normalizeRoleValue = (role) => {
+    if (role === 'global_admin') return 'system_global_admin';
+    if (role === 'admin') return 'system_admin';
+    if (role === 'member') return 'system_member';
+    return role || '';
+  };
+
+  const canEditRoles = user?.role === 'global_admin'
+    || user?.role === 'admin'
+    || user?.role === 'system_global_admin'
+    || user?.role === 'system_admin';
+
+  const handleRoleChange = async (userId, nextRole) => {
+    if (!canEditRoles) return;
+    try {
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, { role: nextRole || '' });
+      setUsers(prev => prev.map(u => (u.id === userId ? { ...u, role: nextRole } : u)));
+      toast.success('Role updated');
+    } catch (error) {
+      console.error('Error updating role:', error);
+      toast.error('Failed to update role');
     }
   };
 
@@ -531,9 +587,38 @@ const MyTeam = () => {
                 <div className="col-email">{teamMember.email}</div>
 
                 <div className="col-role">
-                  <span className={getRoleBadgeClass(teamMember.role)}>
-                    {getRoleLabel(teamMember.role)}
-                  </span>
+                  {canEditRoles ? (
+                    <select
+                      className="role-select"
+                      value={normalizeRoleValue(teamMember.role)}
+                      onChange={(e) => handleRoleChange(teamMember.id, e.target.value)}
+                    >
+                      {teamMember.role && !normalizeRoleValue(teamMember.role) && (
+                        <option value={teamMember.role}>{getRoleLabel(teamMember.role)}</option>
+                      )}
+                      <option value="">No Role</option>
+                      <optgroup label="System Roles">
+                        {systemRoles.map(role => (
+                          <option key={role.id} value={role.id}>
+                            {role.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                      {roles.length > 0 && (
+                        <optgroup label="Custom Roles">
+                          {roles.map(role => (
+                            <option key={role.id} value={role.id}>
+                              {role.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  ) : (
+                    <span className={getRoleBadgeClass(teamMember.role)}>
+                      {getRoleLabel(teamMember.role)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="col-salary">

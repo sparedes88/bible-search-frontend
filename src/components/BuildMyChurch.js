@@ -13,7 +13,9 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  getDoc
+  getDoc,
+  arrayUnion,
+  limit
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import ChurchHeader from './ChurchHeader';
@@ -24,6 +26,7 @@ import { jsPDF } from 'jspdf';
 import { QRCodeSVG } from 'qrcode.react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TaskQRLabel from './TaskQRLabel';
+import TaskGantt from './TaskGantt';
 import './BuildMyChurch.css';
 import AssigneeManagementItem from './AssigneeManagementItem';
 
@@ -53,6 +56,89 @@ const convertUrlsToLinks = (text) => {
   });
 };
 
+const generateUniqueTicketId = (takenIds) => {
+  const normalized = new Set(Array.from(takenIds || []).map(value => String(value)));
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidate = String(Math.floor(1000 + Math.random() * 1000));
+    if (!normalized.has(candidate)) return candidate;
+  }
+
+  const fallback = `1${String(Date.now()).slice(-3)}`;
+  if (!normalized.has(fallback)) return fallback;
+
+  return `1${Math.floor(Math.random() * 1000)}`;
+};
+
+const isValidTicketId = (value) => /^1\d{3}$/.test(String(value));
+
+const formatBrimValue = (val) => {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object') {
+    if (val.toDate && typeof val.toDate === 'function') {
+      try { return val.toDate().toLocaleString(); } catch (e) { return ''; }
+    }
+    try { return JSON.stringify(val); } catch (e) { return String(val); }
+  }
+  return String(val);
+};
+
+const buildBrimRowLabel = (data, fallbackId, preferredColumn) => {
+  if (!data) return `Row ${fallbackId}`;
+  if (preferredColumn && data[preferredColumn] !== undefined && data[preferredColumn] !== null) {
+    const directValue = String(data[preferredColumn]).trim();
+    if (directValue !== '') return directValue;
+  }
+  const preferredKeys = ['name', 'title', 'brand', 'company', 'organization', 'org', 'church', 'project'];
+  const entries = Object.entries(data);
+  for (const key of preferredKeys) {
+    const hit = entries.find(([k]) => String(k).toLowerCase().replace(/\s+/g, '') === key);
+    if (hit && hit[1] !== undefined && hit[1] !== null && String(hit[1]).trim() !== '') {
+      return String(hit[1]).trim();
+    }
+  }
+  const firstValue = entries.find(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+  if (firstValue) return String(firstValue[1]).trim();
+  return `Row ${fallbackId}`;
+};
+
+const formatBrimCommentDate = (val) => {
+  if (!val) return '';
+  if (val.toDate && typeof val.toDate === 'function') {
+    try { return val.toDate().toLocaleString(); } catch (e) { return ''; }
+  }
+  if (val.seconds !== undefined) {
+    try { return new Date(val.seconds * 1000).toLocaleString(); } catch (e) { return ''; }
+  }
+  try { return new Date(val).toLocaleString(); } catch (e) { return String(val); }
+};
+
+const normalizeAssigneeList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return [value].filter(Boolean);
+};
+
+const formatAssigneeDisplay = (value) => normalizeAssigneeList(value).join(', ');
+
+const removeAssigneeValue = (value, assigneeName) => {
+  const next = normalizeAssigneeList(value).filter(name => name !== assigneeName);
+  return next.length ? next : null;
+};
+
+const replaceAssigneeValue = (value, fromName, toName) => {
+  const next = normalizeAssigneeList(value).map(name => (name === fromName ? toName : name));
+  const deduped = Array.from(new Set(next.filter(Boolean)));
+  return deduped.length ? deduped : null;
+};
+
+const isBrimImageAttachment = (attachment) => {
+  if (!attachment) return false;
+  if (attachment.contentType && attachment.contentType.startsWith('image/')) return true;
+  const name = (attachment.name || '').toLowerCase();
+  return name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.gif') || name.endsWith('.webp');
+};
+
 const BuildMyChurch = () => {
   const { id, taskId } = useParams();
   const { user } = useAuth();
@@ -65,10 +151,11 @@ const BuildMyChurch = () => {
   const [newTask, setNewTask] = useState({
     title: '',
     description: '',
+    ticketId: '',
     priority: 'medium',
-    status: 'not-started',
+    status: 'ready',
     topic: '',
-    assignee: '',
+    assignee: [],
     customTopic: '',
     dueDate: '',
     startDate: '',
@@ -85,27 +172,60 @@ const BuildMyChurch = () => {
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [uploadingFile, setUploadingFile] = useState(false);
-  const [selectedTask, setSelectedTask] = useState(null);
   const [commentsByTask, setCommentsByTask] = useState({});
-  const [newCommentText, setNewCommentText] = useState('');
-  const [newCommentFiles, setNewCommentFiles] = useState([]);
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editingCommentText, setEditingCommentText] = useState('');
   const [church, setChurch] = useState(null);
   const [activeTab, setActiveTab] = useState('tasks');
+  const [agileTasks, setAgileTasks] = useState([]);
+  const [agileMigrating, setAgileMigrating] = useState(false);
+  const [agileAutoMigrated, setAgileAutoMigrated] = useState(false);
+  const [draggingAgileId, setDraggingAgileId] = useState(null);
+  const [agileDragOverStatus, setAgileDragOverStatus] = useState(null);
+  const [agileDetailTaskId, setAgileDetailTaskId] = useState(null);
+  const [agileDetailTask, setAgileDetailTask] = useState(null);
+  const [agileDetailLoading, setAgileDetailLoading] = useState(false);
+  const [agileLoaded, setAgileLoaded] = useState(false);
+  const [agileActivity, setAgileActivity] = useState([]);
+  const [agileComments, setAgileComments] = useState([]);
+  const [agileCommentDraft, setAgileCommentDraft] = useState('');
+  const [agileCommentFiles, setAgileCommentFiles] = useState([]);
+  const [agileCommentUploading, setAgileCommentUploading] = useState(false);
+  const [agileBrimSearch, setAgileBrimSearch] = useState('');
+  const [agileSelectedBrimRowId, setAgileSelectedBrimRowId] = useState('');
+  const [agileEdit, setAgileEdit] = useState({
+    title: '',
+    description: '',
+    assignee: '',
+    project: '',
+    status: 'ready',
+    priority: 'medium'
+  });
+  const [ticketBackfilled, setTicketBackfilled] = useState(false);
   const [availableOrganizations, setAvailableOrganizations] = useState([]);
   const [currentOrganization, setCurrentOrganization] = useState(null);
   const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [expandedDocuments, setExpandedDocuments] = useState({});
   const [showCommentForm, setShowCommentForm] = useState({});
+  const [brimRows, setBrimRows] = useState([]);
+  const [brimRowsLoading, setBrimRowsLoading] = useState(false);
+  const [brimRowsError, setBrimRowsError] = useState(null);
+  const [brimLabelColumn, setBrimLabelColumn] = useState('');
+  const [savingBrimLinks, setSavingBrimLinks] = useState(false);
+  const [brimRowDetailId, setBrimRowDetailId] = useState(null);
+  const [brimRowDetail, setBrimRowDetail] = useState(null);
+  const [brimRowDetailLoading, setBrimRowDetailLoading] = useState(false);
+  const [brimRowComments, setBrimRowComments] = useState([]);
+  const [brimRowCommentsLoading, setBrimRowCommentsLoading] = useState(false);
+  const [brimRowCommentsError, setBrimRowCommentsError] = useState(null);
   const tasksPerPage = 5;
 
   const handleLogout = async () => {
     try {
       const returnUrl = `${location.pathname}${location.search}${location.hash}`;
       await signOut(auth);
-      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+      navigate(`/organization/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
     } catch (error) {
       console.error('Error logging out:', error);
       safeToast.error('Failed to logout');
@@ -118,6 +238,16 @@ const BuildMyChurch = () => {
     { value: 'on-hold', label: 'On Hold' },
     { value: 'completed', label: 'Completed' },
     { value: 'cancelled', label: 'Cancelled' }
+  ];
+
+  const AGILE_STATUSES = [
+    { value: 'ready', label: 'Ready to be assigned' },
+    { value: 'assigned', label: 'Assigned' },
+    { value: 'in-progress', label: 'In Progress' },
+    { value: 'uat-internal', label: 'UAT Internal' },
+    { value: 'uat-customer', label: 'UAT Customer' },
+    { value: 'completed', label: 'Completed' },
+    { value: 'show-stoppers', label: 'Show Stoppers' }
   ];
 
   // Fetch available organizations for the user
@@ -158,6 +288,157 @@ const BuildMyChurch = () => {
     navigate(newPath);
   };
 
+  const getProjectColor = (projectName) => {
+    if (!projectName) return '#64748b';
+    let hash = 0;
+    for (let i = 0; i < projectName.length; i += 1) {
+      hash = projectName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue}, 65%, 45%)`;
+  };
+
+  const getAgileStatusLabel = (value) => {
+    const match = AGILE_STATUSES.find(status => status.value === value);
+    return match ? match.label : value;
+  };
+
+  const dedupeAgileTasks = (list) => {
+    const sorted = [...list].sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
+
+    const seen = new Set();
+    const output = [];
+
+    sorted.forEach((task) => {
+      const key = task.sourceTaskId
+        ? `source:${task.sourceTaskId}`
+        : (task.ticketId ? `ticket:${task.ticketId}` : `id:${task.id}`);
+
+      if (seen.has(key)) return;
+      seen.add(key);
+      output.push(task);
+    });
+
+    return output;
+  };
+
+  const updateAgileTaskState = (taskId, patch) => {
+    setAgileTasks(prev => prev.map(task =>
+      task.id === taskId ? { ...task, ...patch } : task
+    ));
+    setAgileDetailTask(prev => (prev && prev.id === taskId ? { ...prev, ...patch } : prev));
+  };
+
+  const logAgileActivity = async (taskId, entry) => {
+    const activityEntry = {
+      ...entry,
+      user: {
+        uid: user?.uid || 'unknown',
+        displayName: user?.displayName || user?.email || 'Unknown'
+      },
+      createdAt: new Date().toISOString()
+    };
+
+    await addDoc(collection(db, 'agileTasks', taskId, 'activity'), activityEntry);
+    setAgileActivity(prev => [activityEntry, ...prev]);
+  };
+
+  const fetchAgileDetail = async (taskId) => {
+    if (!taskId) return;
+    setAgileDetailLoading(true);
+    try {
+      const activityBase = collection(db, 'agileTasks', taskId, 'activity');
+      const commentsBase = collection(db, 'agileTasks', taskId, 'comments');
+
+      const activityQuery = query(activityBase, orderBy('createdAt', 'desc'));
+      const commentsQuery = query(commentsBase, orderBy('createdAt', 'desc'));
+
+      let activitySnapshot;
+      let commentsSnapshot;
+
+      try {
+        activitySnapshot = await getDocs(activityQuery);
+      } catch (innerError) {
+        if (innerError?.code === 'failed-precondition') {
+          activitySnapshot = await getDocs(activityBase);
+        } else {
+          throw innerError;
+        }
+      }
+
+      try {
+        commentsSnapshot = await getDocs(commentsQuery);
+      } catch (innerError) {
+        if (innerError?.code === 'failed-precondition') {
+          commentsSnapshot = await getDocs(commentsBase);
+        } else {
+          throw innerError;
+        }
+      }
+
+      const activityList = activitySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const commentsList = commentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      setAgileActivity(activityList);
+      setAgileComments(commentsList);
+    } catch (error) {
+      console.error('Error fetching agile detail:', error);
+      safeToast.error('Failed to load task details');
+    } finally {
+      setAgileDetailLoading(false);
+    }
+  };
+
+  const openAgileDetail = (task) => {
+    setAgileDetailTaskId(task.id);
+    setAgileDetailTask(task);
+    setAgileEdit({
+      title: task.title || '',
+      description: task.description || '',
+      assignee: task.assignee || '',
+      project: task.project || '',
+      status: task.status || 'ready',
+      priority: task.priority || 'medium'
+    });
+    setAgileCommentDraft('');
+    setAgileCommentFiles([]);
+    setAgileBrimSearch('');
+    setAgileSelectedBrimRowId('');
+    fetchAgileDetail(task.id);
+  };
+
+  const closeAgileDetail = () => {
+    setAgileDetailTaskId(null);
+    setAgileDetailTask(null);
+    setAgileActivity([]);
+    setAgileComments([]);
+    setAgileCommentDraft('');
+    setAgileCommentFiles([]);
+    setAgileBrimSearch('');
+    setAgileSelectedBrimRowId('');
+  };
+
+  const mapBuildStatusToAgile = (status) => {
+    switch (status) {
+      case 'not-started':
+        return 'ready';
+      case 'in-progress':
+        return 'in-progress';
+      case 'on-hold':
+        return 'show-stoppers';
+      case 'completed':
+        return 'completed';
+      case 'cancelled':
+        return 'show-stoppers';
+      default:
+        return 'ready';
+    }
+  };
+
   // Fetch available organizations when user changes
   useEffect(() => {
     if (user) {
@@ -166,20 +447,64 @@ const BuildMyChurch = () => {
   }, [user, id]);
 
   useEffect(() => {
+    if (!id) return;
+    const loadBrimRows = async () => {
+      setBrimRowsLoading(true);
+      setBrimRowsError(null);
+      try {
+        const metaRef = doc(db, 'churches', String(id), 'collectionMetadata', 'brands');
+        const metaSnap = await getDoc(metaRef);
+        const defaultLabel = metaSnap.exists() ? (metaSnap.data()?.defaultLabelColumn || '') : '';
+        setBrimLabelColumn(defaultLabel);
+
+        const rowsQuery = query(collection(db, `churches/${id}/brands`), limit(300));
+        const rowsSnap = await getDocs(rowsQuery);
+        const rows = rowsSnap.docs.map(docSnap => {
+          const data = docSnap.data() || {};
+          return {
+            id: docSnap.id,
+            label: buildBrimRowLabel(data, docSnap.id, defaultLabel)
+          };
+        });
+        rows.sort((a, b) => a.label.localeCompare(b.label));
+        setBrimRows(rows);
+      } catch (error) {
+        console.error('Error loading Brim tracker rows:', error);
+        setBrimRowsError('Failed to load Brim tracker rows');
+        setBrimRows([]);
+      } finally {
+        setBrimRowsLoading(false);
+      }
+    };
+
+    loadBrimRows();
+  }, [id]);
+
+  useEffect(() => {
     if (!user) {
       const returnUrl = `${location.pathname}${location.search}${location.hash}`;
-      navigate(`/church/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+      navigate(`/organization/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`);
       return;
     }
 
     const fetchTasks = async () => {
       try {
-        const tasksQuery = query(
+        const baseQuery = query(
           collection(db, 'buildTasks'),
-          where('churchId', '==', id),
-          orderBy('createdAt', 'desc')
+          where('churchId', '==', id)
         );
-        const snapshot = await getDocs(tasksQuery);
+        const tasksQuery = query(baseQuery, orderBy('createdAt', 'desc'));
+        let snapshot;
+
+        try {
+          snapshot = await getDocs(tasksQuery);
+        } catch (innerError) {
+          if (innerError?.code === 'failed-precondition') {
+            snapshot = await getDocs(baseQuery);
+          } else {
+            throw innerError;
+          }
+        }
         const tasksList = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
@@ -236,19 +561,165 @@ const BuildMyChurch = () => {
   }, [user, id, navigate, location]);
 
   useEffect(() => {
-    // load comments when a task is expanded or selected
+    if (!user) return;
+
+    const fetchAgileTasks = async () => {
+      setAgileLoaded(false);
+      try {
+        const baseQuery = query(
+          collection(db, 'agileTasks'),
+          where('churchId', '==', id)
+        );
+        const agileQuery = query(baseQuery, orderBy('createdAt', 'desc'));
+        let snapshot;
+
+        try {
+          snapshot = await getDocs(agileQuery);
+        } catch (innerError) {
+          if (innerError?.code === 'failed-precondition') {
+            snapshot = await getDocs(baseQuery);
+          } else {
+            throw innerError;
+          }
+        }
+        const list = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setAgileTasks(dedupeAgileTasks(list));
+      } catch (error) {
+        console.error('Error fetching agile tasks:', error);
+        safeToast.error('Failed to load agile tasks');
+      } finally {
+        setAgileLoaded(true);
+      }
+    };
+
+    fetchAgileTasks();
+  }, [user, id]);
+
+  useEffect(() => {
+    if (!user || agileAutoMigrated || !agileLoaded) return;
+    if (tasks.length === 0) return;
+    if (agileTasks.length > 0) {
+      setAgileAutoMigrated(true);
+      return;
+    }
+
+    handleAgileMigrateFromBuildTasks({ silent: true, auto: true });
+  }, [user, tasks.length, agileTasks.length, agileAutoMigrated, agileLoaded]);
+
+  useEffect(() => {
+    if (!user || ticketBackfilled) return;
+    if (tasks.length === 0 && agileTasks.length === 0) return;
+
+    const backfillMissingTicketIds = async () => {
+      const takenIds = new Set(
+        [...tasks, ...agileTasks]
+          .map(task => task.ticketId)
+          .filter(Boolean)
+          .map(value => String(value))
+      );
+
+      const updates = [];
+      const assignId = () => {
+        const nextId = generateUniqueTicketId(takenIds);
+        takenIds.add(nextId);
+        return nextId;
+      };
+
+      tasks.forEach(task => {
+        if (!task.ticketId || !isValidTicketId(task.ticketId)) {
+          updates.push({ collection: 'buildTasks', id: task.id, ticketId: assignId() });
+        }
+      });
+
+      agileTasks.forEach(task => {
+        if (!task.ticketId || !isValidTicketId(task.ticketId)) {
+          updates.push({ collection: 'agileTasks', id: task.id, ticketId: assignId() });
+        }
+      });
+
+      if (updates.length === 0) {
+        setTicketBackfilled(true);
+        return;
+      }
+
+      try {
+        const results = await Promise.allSettled(
+          updates.map(update => updateDoc(doc(db, update.collection, update.id), { ticketId: update.ticketId }))
+        );
+
+        const applied = updates.filter((update, index) => results[index].status === 'fulfilled');
+        if (applied.length) {
+          const buildMap = new Map(
+            applied
+              .filter(update => update.collection === 'buildTasks')
+              .map(update => [update.id, update.ticketId])
+          );
+          const agileMap = new Map(
+            applied
+              .filter(update => update.collection === 'agileTasks')
+              .map(update => [update.id, update.ticketId])
+          );
+
+          if (buildMap.size) {
+            setTasks(prev => prev.map(task => (buildMap.has(task.id)
+              ? { ...task, ticketId: buildMap.get(task.id) }
+              : task
+            )));
+          }
+
+          if (agileMap.size) {
+            setAgileTasks(prev => prev.map(task => (agileMap.has(task.id)
+              ? { ...task, ticketId: agileMap.get(task.id) }
+              : task
+            )));
+          }
+        }
+
+        if (results.some(result => result.status === 'rejected')) {
+          console.error('Some ticketId updates failed during backfill');
+          safeToast.error('Some tasks could not be backfilled with IDs');
+        }
+      } catch (error) {
+        console.error('Error backfilling task ticket IDs:', error);
+        safeToast.error('Failed to backfill task IDs');
+      } finally {
+        setTicketBackfilled(true);
+      }
+    };
+
+    backfillMissingTicketIds();
+  }, [user, tasks, agileTasks, ticketBackfilled]);
+
+  useEffect(() => {
+    // load comments when a task is expanded or in detail view
     if (expandedTaskId) {
       fetchCommentsForTask(expandedTaskId);
     }
-    if (selectedTask && selectedTask.id) {
-      fetchCommentsForTask(selectedTask.id);
+    if (taskId) {
+      fetchCommentsForTask(taskId);
     }
     // reset comment input when switching tasks
-    setNewCommentText('');
-    setNewCommentFiles([]);
     setEditingCommentId(null);
     setEditingCommentText('');
-  }, [expandedTaskId, selectedTask]);
+  }, [expandedTaskId, taskId]);
+
+  useEffect(() => {
+    if (taskId || !location.state?.editTaskId || tasks.length === 0) return;
+
+    const taskToEdit = tasks.find(task => task.id === location.state.editTaskId);
+    if (!taskToEdit) return;
+
+    setActiveTab('tasks');
+    handleEditTask(taskToEdit);
+
+    const taskIndex = tasks.findIndex(task => task.id === location.state.editTaskId);
+    if (taskIndex >= 0) {
+      setCurrentPage(Math.floor(taskIndex / tasksPerPage) + 1);
+    }
+  }, [location.state, taskId, tasks]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -266,8 +737,19 @@ const BuildMyChurch = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const existingTicketIds = new Set(
+        [...tasks, ...agileTasks]
+          .map(task => task.ticketId)
+          .filter(Boolean)
+      );
+      const normalizedTicketId = (newTask.ticketId || '').trim();
+      const generatedTicketId = normalizedTicketId || generateUniqueTicketId(existingTicketIds);
+
+      const assigneeList = normalizeAssigneeList(newTask.assignee);
       const taskData = {
         ...newTask,
+        assignee: assigneeList.length ? assigneeList : null,
+        ticketId: generatedTicketId,
         topic: newTask.topic === 'new' ? newTask.customTopic : newTask.topic,
         churchId: id,
         createdAt: new Date().toISOString(),
@@ -286,14 +768,23 @@ const BuildMyChurch = () => {
       }
 
       const docRef = await addDoc(collection(db, 'buildTasks'), taskData);
-      setTasks(prev => [{id: docRef.id, ...taskData}, ...prev]);
+      const finalTicketId = taskData.ticketId || docRef.id;
+
+      if (finalTicketId !== taskData.ticketId) {
+        await updateDoc(doc(db, 'buildTasks', docRef.id), {
+          ticketId: finalTicketId
+        });
+      }
+
+      setTasks(prev => [{ id: docRef.id, ...taskData, ticketId: finalTicketId }, ...prev]);
       setNewTask({
         title: '',
         description: '',
+        ticketId: '',
         priority: 'medium',
-        status: 'not-started',
+        status: 'ready',
         topic: '',
-        assignee: '',
+        assignee: [],
         customTopic: '',
         dueDate: '',
         startDate: '',
@@ -303,6 +794,302 @@ const BuildMyChurch = () => {
     } catch (error) {
       console.error('Error creating task:', error);
       safeToast.error('Failed to create task');
+    }
+  };
+
+  const handleAgileStatusChange = async (taskId, nextStatus) => {
+    const currentTask = agileTasks.find(task => task.id === taskId);
+    if (!currentTask || currentTask.status === nextStatus) return;
+
+    try {
+      const statusEntry = {
+        previousStatus: currentTask.status || null,
+        newStatus: nextStatus,
+        changedAt: new Date().toISOString(),
+        changedBy: user?.uid || 'unknown'
+      };
+      const taskRef = doc(db, 'agileTasks', taskId);
+      await updateDoc(taskRef, {
+        status: nextStatus,
+        updatedAt: new Date().toISOString(),
+        statusChangeLog: arrayUnion(statusEntry)
+      });
+      updateAgileTaskState(taskId, {
+        status: nextStatus,
+        updatedAt: new Date().toISOString(),
+        statusChangeLog: [
+          ...(currentTask.statusChangeLog || []),
+          statusEntry
+        ]
+      });
+
+      await logAgileActivity(taskId, {
+        type: 'status',
+        message: `${user?.displayName || user?.email || 'Someone'} changed status from ${getAgileStatusLabel(currentTask.status)} to ${getAgileStatusLabel(nextStatus)}`,
+        from: currentTask.status,
+        to: nextStatus
+      });
+    } catch (error) {
+      console.error('Error updating agile status:', error);
+      safeToast.error('Failed to update status');
+    }
+  };
+
+  const handleAgileSaveEdits = async () => {
+    if (!agileDetailTaskId || !agileDetailTask) return;
+
+    const updates = {};
+    const changes = [];
+    let statusEntry = null;
+
+    if ((agileEdit.title || '').trim() !== (agileDetailTask.title || '')) {
+      updates.title = (agileEdit.title || '').trim();
+      changes.push({
+        field: 'title',
+        from: agileDetailTask.title || '',
+        to: updates.title,
+        message: `${user?.displayName || user?.email || 'Someone'} changed title from "${agileDetailTask.title || ''}" to "${updates.title}"`
+      });
+    }
+
+    if ((agileEdit.description || '').trim() !== (agileDetailTask.description || '')) {
+      updates.description = (agileEdit.description || '').trim();
+      changes.push({
+        field: 'description',
+        from: agileDetailTask.description || '',
+        to: updates.description,
+        message: `${user?.displayName || user?.email || 'Someone'} updated description`
+      });
+    }
+
+    if ((agileEdit.assignee || '').trim() !== (agileDetailTask.assignee || '')) {
+      updates.assignee = (agileEdit.assignee || '').trim();
+      changes.push({
+        field: 'assignee',
+        from: agileDetailTask.assignee || '',
+        to: updates.assignee,
+        message: `${user?.displayName || user?.email || 'Someone'} changed assignee from "${agileDetailTask.assignee || 'Unassigned'}" to "${updates.assignee || 'Unassigned'}"`
+      });
+    }
+
+    if ((agileEdit.project || '').trim() !== (agileDetailTask.project || '')) {
+      updates.project = (agileEdit.project || '').trim();
+      changes.push({
+        field: 'project',
+        from: agileDetailTask.project || '',
+        to: updates.project,
+        message: `${user?.displayName || user?.email || 'Someone'} changed project from "${agileDetailTask.project || 'Unassigned'}" to "${updates.project || 'Unassigned'}"`
+      });
+    }
+
+    if ((agileEdit.status || '') !== (agileDetailTask.status || '')) {
+      updates.status = agileEdit.status || 'ready';
+      statusEntry = {
+        previousStatus: agileDetailTask.status || null,
+        newStatus: updates.status,
+        changedAt: new Date().toISOString(),
+        changedBy: user?.uid || 'unknown'
+      };
+      changes.push({
+        field: 'status',
+        from: agileDetailTask.status || 'ready',
+        to: updates.status,
+        message: `${user?.displayName || user?.email || 'Someone'} changed status from ${getAgileStatusLabel(agileDetailTask.status || 'ready')} to ${getAgileStatusLabel(updates.status)}`
+      });
+    }
+
+    if ((agileEdit.priority || '') !== (agileDetailTask.priority || 'medium')) {
+      updates.priority = agileEdit.priority || 'medium';
+      changes.push({
+        field: 'priority',
+        from: agileDetailTask.priority || 'medium',
+        to: updates.priority,
+        message: `${user?.displayName || user?.email || 'Someone'} changed priority from "${agileDetailTask.priority || 'medium'}" to "${updates.priority}"`
+      });
+    }
+
+    if (!Object.keys(updates).length) return;
+
+    try {
+      const taskRef = doc(db, 'agileTasks', agileDetailTaskId);
+      await updateDoc(taskRef, {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+        ...(statusEntry ? { statusChangeLog: arrayUnion(statusEntry) } : {})
+      });
+
+      updateAgileTaskState(agileDetailTaskId, {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+        ...(statusEntry ? {
+          statusChangeLog: [
+            ...(agileDetailTask.statusChangeLog || []),
+            statusEntry
+          ]
+        } : {})
+      });
+
+      for (const change of changes) {
+        await logAgileActivity(agileDetailTaskId, {
+          type: 'edit',
+          field: change.field,
+          from: change.from,
+          to: change.to,
+          message: change.message
+        });
+      }
+    } catch (error) {
+      console.error('Error saving agile edits:', error);
+      safeToast.error('Failed to save changes');
+    }
+  };
+
+  const handleAgileAddComment = async () => {
+    if (!agileDetailTaskId) return;
+    const text = (agileCommentDraft || '').trim();
+    const files = Array.isArray(agileCommentFiles) ? agileCommentFiles : [];
+    if (!text && files.length === 0) {
+      safeToast.error('Please enter a comment or attach a file');
+      return;
+    }
+
+    try {
+      setAgileCommentUploading(true);
+      let uploadedFiles = [];
+      if (files.length > 0) {
+        const timestamp = Date.now();
+        uploadedFiles = await Promise.all(files.map(async (file) => {
+          const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          const filePath = `agileTasks/${id}/${agileDetailTaskId}/comments/${timestamp}_${safeFileName}`;
+          const storageRef = ref(storage, filePath);
+          const metadata = { contentType: file.type };
+          const uploadTask = await uploadBytes(storageRef, file, metadata);
+          const downloadUrl = await getDownloadURL(uploadTask.ref);
+          return {
+            name: file.name,
+            url: downloadUrl,
+            path: filePath,
+            type: file.type,
+            size: file.size
+          };
+        }));
+      }
+
+      const commentData = {
+        text,
+        author: {
+          uid: user?.uid || 'unknown',
+          displayName: user?.displayName || user?.email || 'Unknown'
+        },
+        createdAt: new Date().toISOString(),
+        files: uploadedFiles
+      };
+
+      const commentRef = await addDoc(collection(db, 'agileTasks', agileDetailTaskId, 'comments'), commentData);
+      setAgileComments(prev => [{ id: commentRef.id, ...commentData }, ...prev]);
+      setAgileCommentDraft('');
+      setAgileCommentFiles([]);
+
+      await logAgileActivity(agileDetailTaskId, {
+        type: 'comment',
+        message: `${user?.displayName || user?.email || 'Someone'} added a comment`
+      });
+    } catch (error) {
+      console.error('Error adding agile comment:', error);
+      safeToast.error('Failed to add comment');
+    } finally {
+      setAgileCommentUploading(false);
+    }
+  };
+
+  const handleAgileDragStart = (taskId, event) => {
+    setDraggingAgileId(taskId);
+    if (event?.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', taskId);
+    }
+  };
+
+  const handleAgileDragEnd = () => {
+    setDraggingAgileId(null);
+  };
+
+  const handleAgileDrop = (statusValue, event) => {
+    event.preventDefault();
+    const droppedId = event.dataTransfer?.getData('text/plain');
+    const taskId = droppedId || draggingAgileId;
+    if (!taskId) return;
+    handleAgileStatusChange(taskId, statusValue);
+    setDraggingAgileId(null);
+    setAgileDragOverStatus(null);
+  };
+
+  const handleAgileMigrateFromBuildTasks = async (options = {}) => {
+    const { silent = false, auto = false } = options;
+
+    if (!tasks.length) {
+      if (!silent) {
+        safeToast.error('No build tasks available to migrate');
+      }
+      if (auto) {
+        setAgileAutoMigrated(true);
+      }
+      return;
+    }
+
+    try {
+      setAgileMigrating(true);
+      const existingSourceIds = new Set(
+        dedupeAgileTasks(agileTasks).map(task => task.sourceTaskId).filter(Boolean)
+      );
+      const toMigrate = tasks.filter(task => !existingSourceIds.has(task.id));
+
+      if (!toMigrate.length) {
+        if (!silent) {
+          safeToast.info('All build tasks are already migrated');
+        }
+        return;
+      }
+
+      const created = await Promise.all(toMigrate.map(async (task) => {
+        const initialStatus = mapBuildStatusToAgile(task.status);
+        const taskData = {
+          churchId: id,
+          title: task.title || 'Untitled task',
+          description: task.description || '',
+          ticketId: task.ticketId || task.id,
+          assignee: formatAssigneeDisplay(task.assignee) || 'Unassigned',
+          project: task.topic || task.project || 'General',
+          status: initialStatus,
+          startDate: task.startDate || '',
+          dueDate: task.dueDate || '',
+          createdAt: task.createdAt || new Date().toISOString(),
+          sourceTaskId: task.id,
+          statusChangeLog: [{
+            previousStatus: null,
+            newStatus: initialStatus,
+            changedAt: new Date().toISOString(),
+            changedBy: user?.uid || 'unknown'
+          }]
+        };
+        const docRef = await addDoc(collection(db, 'agileTasks'), taskData);
+        return { id: docRef.id, ...taskData };
+      }));
+
+      setAgileTasks(prev => dedupeAgileTasks([...created, ...prev]));
+      if (!silent) {
+        safeToast.success(`Migrated ${created.length} task(s) to Agile`);
+      }
+    } catch (error) {
+      console.error('Error migrating tasks to agile:', error);
+      if (!silent) {
+        safeToast.error('Failed to migrate tasks');
+      }
+    } finally {
+      setAgileMigrating(false);
+      if (auto) {
+        setAgileAutoMigrated(true);
+      }
     }
   };
 
@@ -321,9 +1108,10 @@ const BuildMyChurch = () => {
     }
   };
 
-  const handleAddComment = async (taskId) => {
+  const handleAddComment = async (taskId, text, files = []) => {
     if (!taskId) return;
-    if (!newCommentText.trim() && newCommentFiles.length === 0) {
+    const trimmedText = (text || '').trim();
+    if (!trimmedText && files.length === 0) {
       safeToast.error('Please enter a comment or attach a file');
       return;
     }
@@ -332,7 +1120,7 @@ const BuildMyChurch = () => {
       setUploadingFile(true);
 
       // Upload files first
-      const uploadedFiles = await Promise.all(newCommentFiles.map(async (file) => {
+      const uploadedFiles = await Promise.all(files.map(async (file) => {
         const timestamp = Date.now();
         const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
         const filePath = `tasks/${id}/${taskId}/comments/${timestamp}_${safeFileName}`;
@@ -351,7 +1139,7 @@ const BuildMyChurch = () => {
       }));
 
       const commentData = {
-        text: newCommentText.trim(),
+        text: trimmedText,
         author: {
           uid: user.uid,
           displayName: user.displayName || user.email || 'Unknown'
@@ -370,8 +1158,6 @@ const BuildMyChurch = () => {
         [taskId]: [( { id: commentRef.id, ...commentData } ), ...(prev[taskId] || [])]
       }));
 
-      setNewCommentText('');
-      setNewCommentFiles([]);
       safeToast.success('Comment added');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -467,10 +1253,11 @@ const BuildMyChurch = () => {
     setNewTask({
       title: task.title,
       description: task.description,
+      ticketId: task.ticketId || '',
       priority: task.priority,
       status: task.status,
       topic: task.topic || '',
-      assignee: task.assignee || '',
+      assignee: normalizeAssigneeList(task.assignee),
       customTopic: '',
       dueDate: task.dueDate || '',
       startDate: task.startDate || '',
@@ -478,11 +1265,15 @@ const BuildMyChurch = () => {
     });
   };
 
-  const handleUpdateTask = async (e) => {
+  const handleUpdateTask = async (e, options = {}) => {
     e.preventDefault();
+    const { keepEditing = false } = options;
     try {
+      const assigneeList = normalizeAssigneeList(newTask.assignee);
       const updatedData = {
         ...newTask,
+        assignee: assigneeList.length ? assigneeList : null,
+        ticketId: (newTask.ticketId || '').trim(),
         topic: newTask.topic === 'new' ? newTask.customTopic : newTask.topic,
         updatedAt: new Date().toISOString()
       };
@@ -494,19 +1285,29 @@ const BuildMyChurch = () => {
         task.id === editingTaskId ? { ...task, ...updatedData } : task
       ));
 
-      setEditingTaskId(null);
-      setNewTask({
-        title: '',
-        description: '',
-        priority: 'medium',
-        status: 'not-started',
-        topic: '',
-        assignee: '',
-        customTopic: '',
-        dueDate: '',
-        startDate: '',
-        documents: []
-      });
+      if (keepEditing) {
+        setEditingTaskId(editingTaskId);
+        setNewTask({
+          ...updatedData,
+          topic: updatedData.topic || '',
+          customTopic: ''
+        });
+      } else {
+        setEditingTaskId(null);
+        setNewTask({
+          title: '',
+          description: '',
+          ticketId: '',
+          priority: 'medium',
+          status: 'ready',
+          topic: '',
+          assignee: [],
+          customTopic: '',
+          dueDate: '',
+          startDate: '',
+          documents: []
+        });
+      }
       safeToast.success('Task updated successfully');
     } catch (error) {
       console.error('Error updating task:', error);
@@ -519,10 +1320,11 @@ const BuildMyChurch = () => {
     setNewTask({
       title: '',
       description: '',
+      ticketId: '',
       priority: 'medium',
-      status: 'not-started',
+      status: 'ready',
       topic: '',
-      assignee: '',
+      assignee: [],
       customTopic: '',
       dueDate: '',
       startDate: '',
@@ -569,15 +1371,17 @@ const BuildMyChurch = () => {
     try {
       const assigneeName = resolveAssigneeName(assigneeId);
       // Remove assignee from all tasks
-      const tasksToUpdate = tasks.filter(task => task.assignee === assigneeName);
+      const tasksToUpdate = tasks.filter(task => normalizeAssigneeList(task.assignee).includes(assigneeName));
       const updatePromises = tasksToUpdate.map(task =>
-        updateDoc(doc(db, 'buildTasks', task.id), { assignee: null })
+        updateDoc(doc(db, 'buildTasks', task.id), { assignee: removeAssigneeValue(task.assignee, assigneeName) })
       );
       await Promise.all(updatePromises);
 
       // Update local state
       setTasks(prev => prev.map(task =>
-        task.assignee === assigneeName ? { ...task, assignee: null } : task
+        normalizeAssigneeList(task.assignee).includes(assigneeName)
+          ? { ...task, assignee: removeAssigneeValue(task.assignee, assigneeName) }
+          : task
       ));
 
       safeToast.success('Assignee removed successfully');
@@ -592,15 +1396,17 @@ const BuildMyChurch = () => {
       const fromAssigneeName = resolveAssigneeName(fromAssigneeId);
       const toAssigneeName = resolveAssigneeName(toAssigneeId);
       // Reassign all tasks from one assignee to another
-      const tasksToUpdate = tasks.filter(task => task.assignee === fromAssigneeName);
+      const tasksToUpdate = tasks.filter(task => normalizeAssigneeList(task.assignee).includes(fromAssigneeName));
       const updatePromises = tasksToUpdate.map(task =>
-        updateDoc(doc(db, 'buildTasks', task.id), { assignee: toAssigneeName })
+        updateDoc(doc(db, 'buildTasks', task.id), { assignee: replaceAssigneeValue(task.assignee, fromAssigneeName, toAssigneeName) })
       );
       await Promise.all(updatePromises);
 
       // Update local state
       setTasks(prev => prev.map(task =>
-        task.assignee === fromAssigneeName ? { ...task, assignee: toAssigneeName } : task
+        normalizeAssigneeList(task.assignee).includes(fromAssigneeName)
+          ? { ...task, assignee: replaceAssigneeValue(task.assignee, fromAssigneeName, toAssigneeName) }
+          : task
       ));
 
       safeToast.success('Tasks reassigned successfully');
@@ -745,7 +1551,7 @@ const BuildMyChurch = () => {
       const contentWidth = pageWidth - (margin * 2);
 
       const formatDate = (value) => (value ? new Date(value).toLocaleDateString() : 'Not set');
-      const statusLabelMap = STATUS_OPTIONS.reduce((acc, option) => {
+      const statusLabelMap = [...STATUS_OPTIONS, ...AGILE_STATUSES].reduce((acc, option) => {
         acc[option.value] = option.label;
         return acc;
       }, {});
@@ -753,7 +1559,7 @@ const BuildMyChurch = () => {
       const filters = [];
       if (filterPriority !== 'all') filters.push(`Priority: ${filterPriority}`);
       if (filterStatus !== 'all') filters.push(`Status: ${filterStatus}`);
-      if (filterTopic !== 'all') filters.push(`Topic: ${filterTopic}`);
+      if (filterTopic !== 'all') filters.push(`Project: ${filterTopic}`);
       if (filterHasComments !== 'all') filters.push(`Comments: ${filterHasComments}`);
       if (filterHasDocuments !== 'all') filters.push(`Documents: ${filterHasDocuments}`);
       if (filterHasCheckedComments !== 'all') filters.push(`Checked: ${filterHasCheckedComments}`);
@@ -761,13 +1567,15 @@ const BuildMyChurch = () => {
 
       const filterText = filters.length ? filters.join(' | ') : 'None';
 
-      const statusGroups = {
-        'not-started': filteredTasks.filter(task => task.status === 'not-started'),
-        'in-progress': filteredTasks.filter(task => task.status === 'in-progress'),
-        'on-hold': filteredTasks.filter(task => task.status === 'on-hold'),
-        'completed': filteredTasks.filter(task => task.status === 'completed'),
-        'cancelled': filteredTasks.filter(task => task.status === 'cancelled')
-      };
+      const statusGroupKeys = Array.from(new Set([
+        ...AGILE_STATUSES.map(option => option.value),
+        ...STATUS_OPTIONS.map(option => option.value)
+      ]));
+
+      const statusGroups = statusGroupKeys.reduce((acc, key) => {
+        acc[key] = filteredTasks.filter(task => task.status === key);
+        return acc;
+      }, {});
 
       const statusCounts = Object.keys(statusGroups).reduce((acc, key) => {
         acc[key] = statusGroups[key].length;
@@ -837,11 +1645,7 @@ const BuildMyChurch = () => {
       yOffset += 6;
 
       const summaryItems = [
-        ['Not Started', statusCounts['not-started']],
-        ['In Progress', statusCounts['in-progress']],
-        ['On Hold', statusCounts['on-hold']],
-        ['Completed', statusCounts['completed']],
-        ['Cancelled', statusCounts['cancelled']],
+        ...statusGroupKeys.map(key => [statusLabelMap[key] || key, statusCounts[key] || 0]),
         ['With Documents', withDocumentsCount],
         ['With Comments', withCommentsCount]
       ];
@@ -894,11 +1698,12 @@ const BuildMyChurch = () => {
             const descriptionHeight = descriptionLines.length * 5;
 
             const detailRows = [
-              [`Priority: ${task.priority || 'N/A'}`, `Status: ${statusLabelMap[task.status] || task.status || 'N/A'}`],
-              [`Topic: ${task.topic || 'N/A'}`, `Assignee: ${task.assignee || 'Unassigned'}`],
-              [`Start: ${formatDate(task.startDate)}`, `Due: ${formatDate(task.dueDate)}`],
-              [`Created: ${formatDate(task.createdAt)}`, `Updated: ${formatDate(task.updatedAt)}`],
-              [`Documents: ${task.documents?.length || 0}`, `Comments: ${(commentsByTask[task.id] || []).length}`]
+              [`ID #: ${task.ticketId || task.id || 'N/A'}`, `Status: ${statusLabelMap[task.status] || task.status || 'N/A'}`],
+              [`Priority: ${task.priority || 'N/A'}`, `Project: ${task.topic || 'N/A'}`],
+              [`Assignee: ${formatAssigneeDisplay(task.assignee) || 'Unassigned'}`, `Start: ${formatDate(task.startDate)}`],
+              [`Due: ${formatDate(task.dueDate)}`, `Created: ${formatDate(task.createdAt)}`],
+              [`Updated: ${formatDate(task.updatedAt)}`, `Documents: ${task.documents?.length || 0}`],
+              [`Comments: ${(commentsByTask[task.id] || []).length}`, '']
             ];
 
             const detailHeight = (detailRows.length * 5) + 4;
@@ -1008,24 +1813,173 @@ const BuildMyChurch = () => {
   const indexOfFirstTask = indexOfLastTask - tasksPerPage;
   const currentTasks = filteredTasks.slice(indexOfFirstTask, indexOfLastTask);
   const totalPages = Math.ceil(filteredTasks.length / tasksPerPage);
+  const currentTask = taskId ? tasks.find(task => task.id === taskId) : null;
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
   };
 
-  const handleTaskClick = async (task) => {
+  const handleTaskClick = async (event, task) => {
     if (!task || !task.id) return;
-    setSelectedTask(task);
+    if (event) {
+      const interactiveTarget = event.target.closest('button, a, input, textarea, select, label');
+      if (interactiveTarget) return;
+    }
     navigate(`/organization/${id}/build-my-church/task/${task.id}`, {
       state: { from: `${location.pathname}${location.search}${location.hash}` }
     });
   };
 
   const handleCloseDetailView = () => {
-    setSelectedTask(null);
     if (taskId) {
       navigate(`/organization/${id}/build-my-church`, { replace: true });
     }
+  };
+
+  const updateTaskBrimRows = async (taskId, nextRowIds) => {
+    const taskRef = doc(db, 'buildTasks', taskId);
+    const nextUpdatedAt = new Date().toISOString();
+    await updateDoc(taskRef, {
+      brimRowIds: nextRowIds,
+      updatedAt: nextUpdatedAt
+    });
+    setTasks(prev => prev.map(task => (
+      task.id === taskId ? { ...task, brimRowIds: nextRowIds, updatedAt: nextUpdatedAt } : task
+    )));
+  };
+
+  const handleAddBrimRow = async (taskId, rowId) => {
+    if (!taskId || !rowId) return;
+    const task = tasks.find(t => t.id === taskId);
+    const current = Array.isArray(task?.brimRowIds) ? task.brimRowIds : [];
+    if (current.includes(rowId)) return;
+    setSavingBrimLinks(true);
+    try {
+      await updateTaskBrimRows(taskId, [...current, rowId]);
+      safeToast.success('BIM tracker row linked');
+    } catch (error) {
+      console.error('Error linking Brim tracker row:', error);
+      safeToast.error('Failed to link BIM tracker row');
+    } finally {
+      setSavingBrimLinks(false);
+    }
+  };
+
+  const handleRemoveBrimRow = async (taskId, rowId) => {
+    if (!taskId || !rowId) return;
+    const task = tasks.find(t => t.id === taskId);
+    const current = Array.isArray(task?.brimRowIds) ? task.brimRowIds : [];
+    if (!current.includes(rowId)) return;
+    setSavingBrimLinks(true);
+    try {
+      await updateTaskBrimRows(taskId, current.filter(idValue => idValue !== rowId));
+      safeToast.success('BIM tracker row removed');
+    } catch (error) {
+      console.error('Error removing Brim tracker row:', error);
+      safeToast.error('Failed to remove BIM tracker row');
+    } finally {
+      setSavingBrimLinks(false);
+    }
+  };
+
+  const updateAgileTaskBrimRows = async (taskId, nextRowIds) => {
+    const taskRef = doc(db, 'agileTasks', taskId);
+    const nextUpdatedAt = new Date().toISOString();
+    await updateDoc(taskRef, {
+      brimRowIds: nextRowIds,
+      updatedAt: nextUpdatedAt
+    });
+    updateAgileTaskState(taskId, { brimRowIds: nextRowIds, updatedAt: nextUpdatedAt });
+  };
+
+  const handleAddAgileBrimRow = async (taskId, rowId) => {
+    if (!taskId || !rowId) return;
+    const task = agileTasks.find(t => t.id === taskId) || agileDetailTask;
+    const current = Array.isArray(task?.brimRowIds) ? task.brimRowIds : [];
+    if (current.includes(rowId)) return;
+    setSavingBrimLinks(true);
+    try {
+      await updateAgileTaskBrimRows(taskId, [...current, rowId]);
+      await logAgileActivity(taskId, {
+        type: 'bim',
+        message: `${user?.displayName || user?.email || 'Someone'} linked a BIM tracker row`
+      });
+      safeToast.success('BIM tracker row linked');
+    } catch (error) {
+      console.error('Error linking Brim tracker row:', error);
+      safeToast.error('Failed to link BIM tracker row');
+    } finally {
+      setSavingBrimLinks(false);
+    }
+  };
+
+  const handleRemoveAgileBrimRow = async (taskId, rowId) => {
+    if (!taskId || !rowId) return;
+    const task = agileTasks.find(t => t.id === taskId) || agileDetailTask;
+    const current = Array.isArray(task?.brimRowIds) ? task.brimRowIds : [];
+    if (!current.includes(rowId)) return;
+    setSavingBrimLinks(true);
+    try {
+      await updateAgileTaskBrimRows(taskId, current.filter(idValue => idValue !== rowId));
+      await logAgileActivity(taskId, {
+        type: 'bim',
+        message: `${user?.displayName || user?.email || 'Someone'} removed a BIM tracker row link`
+      });
+      safeToast.success('BIM tracker row removed');
+    } catch (error) {
+      console.error('Error removing Brim tracker row:', error);
+      safeToast.error('Failed to remove BIM tracker row');
+    } finally {
+      setSavingBrimLinks(false);
+    }
+  };
+
+  const openBrimRowDetail = async (rowId) => {
+    if (!rowId || !id) return;
+    setBrimRowDetailId(rowId);
+    setBrimRowDetail(null);
+    setBrimRowDetailLoading(true);
+    setBrimRowComments([]);
+    setBrimRowCommentsLoading(true);
+    setBrimRowCommentsError(null);
+    try {
+      const rowRef = doc(db, `churches/${id}/brands`, rowId);
+      const rowSnap = await getDoc(rowRef);
+      if (rowSnap.exists()) {
+        setBrimRowDetail({ id: rowId, ...(rowSnap.data() || {}) });
+      } else {
+        setBrimRowDetail({ id: rowId });
+      }
+      const commentsRef = collection(db, `churches/${id}/brands/${rowId}/comments`);
+      let commentsSnap;
+      try {
+        commentsSnap = await getDocs(query(commentsRef, orderBy('createdAt', 'desc')));
+      } catch (innerError) {
+        if (innerError?.code === 'failed-precondition') {
+          commentsSnap = await getDocs(commentsRef);
+        } else {
+          throw innerError;
+        }
+      }
+      const list = (commentsSnap.docs || []).map(d => ({ id: d.id, ...(d.data() || {}) }));
+      setBrimRowComments(list);
+    } catch (error) {
+      console.error('Error loading Brim row detail:', error);
+      setBrimRowDetail({ id: rowId });
+      setBrimRowCommentsError('Failed to load comments.');
+    } finally {
+      setBrimRowDetailLoading(false);
+      setBrimRowCommentsLoading(false);
+    }
+  };
+
+  const closeBrimRowDetail = () => {
+    setBrimRowDetailId(null);
+    setBrimRowDetail(null);
+    setBrimRowDetailLoading(false);
+    setBrimRowComments([]);
+    setBrimRowCommentsLoading(false);
+    setBrimRowCommentsError(null);
   };
 
   const getTaskUrl = (taskId) => {
@@ -1048,7 +2002,6 @@ const BuildMyChurch = () => {
     const matchedTask = tasks.find(task => task.id === taskId);
     if (!matchedTask) return;
 
-    setSelectedTask(matchedTask);
     setExpandedTaskId(taskId);
 
     const taskIndex = tasks.findIndex(task => task.id === taskId);
@@ -1064,57 +2017,362 @@ const BuildMyChurch = () => {
     });
   }, [taskId, tasks, location.state]);
 
-  const DetailView = ({ task }) => {
+  const DetailView = ({ task, isPage = false }) => {
+    const [commentDraftText, setCommentDraftText] = useState('');
+    const [commentDraftFiles, setCommentDraftFiles] = useState([]);
+    const [brimSearch, setBrimSearch] = useState('');
+    const [selectedBrimRowId, setSelectedBrimRowId] = useState('');
+    const [pageDates, setPageDates] = useState({ startDate: '', dueDate: '' });
+    const [savingDates, setSavingDates] = useState(false);
+
+    useEffect(() => {
+      if (!task?.id) return;
+      setCommentDraftText('');
+      setCommentDraftFiles([]);
+      setBrimSearch('');
+      setSelectedBrimRowId('');
+      setPageDates({
+        startDate: task.startDate || '',
+        dueDate: task.dueDate || ''
+      });
+    }, [task?.id]);
+
+    useEffect(() => {
+      if (!task?.id || isPage) return;
+      if (editingTaskId !== task.id) {
+        handleEditTask(task);
+      }
+    }, [task?.id, editingTaskId, isPage]);
+
     if (!task) return null;
 
+    const handleSaveDates = async () => {
+      if (!task?.id) return;
+      if (savingDates) return;
+      const nextStart = pageDates.startDate || '';
+      const nextDue = pageDates.dueDate || '';
+      if (task.startDate === nextStart && task.dueDate === nextDue) {
+        return;
+      }
+      if (nextStart && nextDue && new Date(nextDue) < new Date(nextStart)) {
+        safeToast.error('Due date cannot be before start date');
+        return;
+      }
+
+      try {
+        setSavingDates(true);
+        const updatedAt = new Date().toISOString();
+        await updateDoc(doc(db, 'buildTasks', task.id), {
+          startDate: nextStart,
+          dueDate: nextDue,
+          updatedAt
+        });
+        setTasks(prev => prev.map(item => (
+          item.id === task.id
+            ? { ...item, startDate: nextStart, dueDate: nextDue, updatedAt }
+            : item
+        )));
+        safeToast.success('Task dates updated');
+      } catch (error) {
+        console.error('Error updating task dates:', error);
+        safeToast.error('Failed to update task dates');
+      } finally {
+        setSavingDates(false);
+      }
+    };
+
     const qrValue = getTaskUrl(task.id);
+    const linkedBrimRowIds = Array.isArray(task.brimRowIds) ? task.brimRowIds : [];
+    const filteredBrimRows = brimRows.filter(row =>
+      row.label.toLowerCase().includes(brimSearch.toLowerCase())
+    );
+
+    const overlayStyle = isPage ? { padding: "0" } : {
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1000
+    };
+
+    const contentStyle = isPage ? {
+      backgroundColor: "white",
+      borderRadius: "8px",
+      padding: "24px",
+      width: "100%",
+      maxWidth: "100%",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
+    } : {
+      backgroundColor: "white",
+      borderRadius: "8px",
+      padding: "24px",
+      width: "90%",
+      maxWidth: "800px",
+      maxHeight: "90vh",
+      overflow: "auto"
+    };
 
     return (
-      <div style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0,0,0,0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000
-      }}>
-        <div style={{
-          backgroundColor: "white",
-          borderRadius: "8px",
-          padding: "24px",
-          width: "90%",
-          maxWidth: "800px",
-          maxHeight: "90vh",
-          overflow: "auto"
-        }}>
+      <div style={overlayStyle}>
+        <div style={contentStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-            <h2 style={{ margin: 0 }}>{task.title}</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <button
+                type="button"
+                onClick={handleCloseDetailView}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 10px",
+                  backgroundColor: "#E5E7EB",
+                  color: "#111827",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "0.875rem",
+                  fontWeight: "600"
+                }}
+              >
+                <FaChevronLeft /> Back
+              </button>
+              <h2 style={{ margin: 0 }}>{task.title}</h2>
+            </div>
             <button onClick={handleCloseDetailView} style={{ background: "none", border: "none", cursor: "pointer" }}>
               <FaTimes />
             </button>
           </div>
 
-          <div style={{ marginBottom: "20px" }}>
-            <span className={`status-badge ${task.status}`} style={{ marginRight: "10px" }}>
-              {task.status.toUpperCase()}
-            </span>
-            <span className={`priority-badge ${task.priority}`}>
-              {task.priority.toUpperCase()}
-            </span>
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <p style={{ whiteSpace: "pre-wrap" }}>{task.description}</p>
-          </div>
-
-          {task.assignee && (
+          {isPage ? (
             <div style={{ marginBottom: "20px" }}>
-              <strong>Assigned to:</strong> {task.assignee}
+              <h3 style={{ marginBottom: "12px" }}>Task Details</h3>
+              <div style={{ display: "grid", gap: "10px" }}>
+                <div>
+                  <strong>Description:</strong>{' '}
+                  {task.description ? task.description : 'No description'}
+                </div>
+                <div>
+                  <strong>Ticket ID:</strong>{' '}
+                  {task.ticketId ? task.ticketId : '—'}
+                </div>
+                <div>
+                  <strong>Priority:</strong>{' '}
+                  {task.priority ? task.priority : '—'}
+                </div>
+                <div>
+                  <strong>Status:</strong>{' '}
+                  {task.status ? task.status : '—'}
+                </div>
+                <div>
+                  <strong>Project:</strong>{' '}
+                  {task.topic ? task.topic : '—'}
+                </div>
+                <div>
+                  <strong>Assigned To:</strong>{' '}
+                  {formatAssigneeDisplay(task.assignee) || 'Unassigned'}
+                </div>
+                <div>
+                  <strong>Start Date:</strong>{' '}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={pageDates.startDate}
+                      onChange={(e) => setPageDates(prev => ({ ...prev, startDate: e.target.value }))}
+                    />
+                    <span style={{ color: '#6B7280', fontSize: '0.875rem' }}>
+                      {task.startDate ? new Date(task.startDate).toLocaleDateString() : '—'}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <strong>Due Date:</strong>{' '}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={pageDates.dueDate}
+                      onChange={(e) => setPageDates(prev => ({ ...prev, dueDate: e.target.value }))}
+                    />
+                    <span style={{ color: '#6B7280', fontSize: '0.875rem' }}>
+                      {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '—'}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="edit-button save"
+                    onClick={handleSaveDates}
+                    disabled={savingDates}
+                  >
+                    <FaCheck /> {savingDates ? 'Saving...' : 'Save Dates'}
+                  </button>
+                  <button
+                    type="button"
+                    className="edit-button delete"
+                    onClick={() => handleDeleteTask(task.id)}
+                  >
+                    <FaTrash /> Delete Task
+                  </button>
+                </div>
+              </div>
             </div>
+          ) : (
+            <form onSubmit={(e) => handleUpdateTask(e, { keepEditing: true })} className="edit-task-form" style={{ marginBottom: "20px" }}>
+              <div className="form-group">
+                <label className="form-label">Title</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Description</label>
+                <textarea
+                  className="form-textarea"
+                  value={newTask.description}
+                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Ticket ID</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={newTask.ticketId}
+                  onChange={(e) => setNewTask({ ...newTask, ticketId: e.target.value })}
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Priority</label>
+                  <select
+                    className="form-select"
+                    value={newTask.priority}
+                    onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Status</label>
+                  <select
+                    className="form-select"
+                    value={newTask.status}
+                    onChange={(e) => setNewTask({ ...newTask, status: e.target.value })}
+                  >
+                    <option value="ready">Ready</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="on-hold">On Hold</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Project</label>
+                <div className="topic-input-group">
+                  <select
+                    className="form-select"
+                    value={newTask.topic}
+                    onChange={(e) => setNewTask({ ...newTask, topic: e.target.value })}
+                  >
+                    <option value="">Select Project</option>
+                    {topics.map(topic => (
+                      <option key={topic.id} value={topic.name}>{topic.name}</option>
+                    ))}
+                    <option value="new">+ Add New Project</option>
+                  </select>
+
+                  {newTask.topic === 'new' && (
+                    <div className="new-topic-input">
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={newTask.customTopic}
+                        onChange={(e) => setNewTask({ ...newTask, customTopic: e.target.value })}
+                        placeholder="Enter new project"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Assigned To</label>
+                <AssigneeSelect
+                  value={newTask.assignee}
+                  onChange={(assignee) => setNewTask({ ...newTask, assignee })}
+                  placeholder="Select or add assignee"
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Start Date</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={newTask.startDate}
+                    onChange={(e) => setNewTask({ ...newTask, startDate: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Due Date</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={newTask.dueDate}
+                    onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Upload Documents</label>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(e) => handleFileUpload(e, task.id)}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="edit-actions">
+                <button type="submit" className="edit-button save">
+                  <FaCheck /> Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleEditTask(task)}
+                  className="edit-button cancel"
+                >
+                  <FaTimes /> Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTask(task.id)}
+                  className="edit-button delete"
+                >
+                  <FaTrash /> Delete
+                </button>
+              </div>
+            </form>
           )}
 
           <div style={{ marginBottom: "20px" }}>
@@ -1124,20 +2382,6 @@ const BuildMyChurch = () => {
                 <div>Last Updated: {new Date(task.updatedAt).toLocaleDateString()}</div>
               )}
             </div>
-            {(task.startDate || task.dueDate) && (
-              <div style={{ display: "flex", gap: "20px", marginTop: "8px", fontSize: "14px" }}>
-                {task.startDate && (
-                  <div style={{ color: "#2563EB" }}>
-                    <strong>📅 Start:</strong> {new Date(task.startDate).toLocaleDateString()}
-                  </div>
-                )}
-                {task.dueDate && (
-                  <div style={{ color: "#D97706" }}>
-                    <strong>⏰ Due:</strong> {new Date(task.dueDate).toLocaleDateString()}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {task.documents && task.documents.length > 0 && (
@@ -1167,7 +2411,102 @@ const BuildMyChurch = () => {
             </div>
           )}
 
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginBottom: "20px" }} onClick={(e) => e.stopPropagation()}>
+            <h3>BIM Tracker Rows</h3>
+            <p style={{ color: '#6B7280', marginTop: '4px' }}>
+              Link one or more BIM tracker rows to this task and open their details.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+              <input
+                type="text"
+                value={brimSearch}
+                onChange={(e) => setBrimSearch(e.target.value)}
+                placeholder="Search rows..."
+                style={{ padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB', minWidth: '220px' }}
+              />
+              <select
+                value={selectedBrimRowId}
+                onChange={(e) => setSelectedBrimRowId(e.target.value)}
+                style={{ padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB', minWidth: '240px' }}
+              >
+                <option value="">Select a row</option>
+                {filteredBrimRows.map(row => (
+                  <option key={row.id} value={row.id} disabled={linkedBrimRowIds.includes(row.id)}>
+                    {row.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!selectedBrimRowId || savingBrimLinks}
+                onClick={async () => {
+                  await handleAddBrimRow(task.id, selectedBrimRowId);
+                  setSelectedBrimRowId('');
+                }}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#4F46E5',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: selectedBrimRowId ? 'pointer' : 'not-allowed'
+                }}
+              >
+                {savingBrimLinks ? 'Saving...' : 'Add Row'}
+              </button>
+            </div>
+            {brimRowsLoading && (
+              <div style={{ color: '#6B7280', marginTop: '8px' }}>Loading BIM tracker rows...</div>
+            )}
+            {brimRowsError && (
+              <div style={{ color: '#ef4444', marginTop: '8px' }}>{brimRowsError}</div>
+            )}
+            {linkedBrimRowIds.length === 0 ? (
+              <div style={{ color: '#6B7280', marginTop: '8px' }}>No linked BIM tracker rows yet.</div>
+            ) : (
+              <ul style={{ listStyle: 'none', padding: 0, marginTop: '12px' }}>
+                {linkedBrimRowIds.map(rowId => {
+                  const rowLabel = brimRows.find(row => row.id === rowId)?.label || `Row ${rowId}`;
+                  return (
+                    <li key={rowId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '8px', border: '1px solid #E5E7EB', borderRadius: '6px', marginBottom: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => openBrimRowDetail(rowId)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#2563eb',
+                          textDecoration: 'underline',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          padding: 0
+                        }}
+                      >
+                        {rowLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBrimRow(task.id, rowId)}
+                        disabled={savingBrimLinks}
+                        style={{
+                          padding: '6px 10px',
+                          backgroundColor: '#ef4444',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div style={{ marginBottom: '20px' }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
             <h3>Comments</h3>
             {!showCommentForm[task.id] ? (
               <button
@@ -1182,9 +2521,10 @@ const BuildMyChurch = () => {
             ) : (
               <div style={{ marginBottom: '10px' }}>
                 <textarea
-                  value={newCommentText}
-                  onChange={(e) => setNewCommentText(e.target.value)}
+                  value={commentDraftText}
+                  onChange={(e) => setCommentDraftText(e.target.value)}
                   onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
                   placeholder="Add a comment..."
                   rows={3}
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
@@ -1192,8 +2532,9 @@ const BuildMyChurch = () => {
                 <input
                   type="file"
                   multiple
-                  onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
+                  onChange={(e) => setCommentDraftFiles(Array.from(e.target.files))}
                   onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
                   style={{ marginTop: '8px' }}
                 />
                 <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
@@ -1201,7 +2542,9 @@ const BuildMyChurch = () => {
                     onClick={async (e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      await handleAddComment(task.id);
+                      await handleAddComment(task.id, commentDraftText, commentDraftFiles);
+                      setCommentDraftText('');
+                      setCommentDraftFiles([]);
                       setShowCommentForm(prev => ({...prev, [task.id]: false}));
                     }}
                     style={{ padding: '8px 12px', backgroundColor: '#10B981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
@@ -1210,8 +2553,8 @@ const BuildMyChurch = () => {
                     onClick={(e) => {
                       e.stopPropagation();
                       setShowCommentForm(prev => ({...prev, [task.id]: false}));
-                      setNewCommentText('');
-                      setNewCommentFiles([]);
+                      setCommentDraftText('');
+                      setCommentDraftFiles([]);
                     }}
                     style={{ padding: '8px 12px', backgroundColor: '#6B7280', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
                   >Cancel</button>
@@ -1256,6 +2599,8 @@ const BuildMyChurch = () => {
                         <textarea
                           value={editingCommentText}
                           onChange={(e) => setEditingCommentText(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
                           rows={3}
                           style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
                         />
@@ -1371,7 +2716,7 @@ const BuildMyChurch = () => {
                 borderRadius: "8px",
                 border: "1px solid #E5E7EB"
               }}>
-                <QRCodeSVG value={qrValue} size={256} />
+                <QRCodeSVG value={qrValue} size={160} />
               </div>
               
               <div>
@@ -1397,47 +2742,36 @@ const BuildMyChurch = () => {
             </div>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-            <button 
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleEditTask(task);
-              }}
-              style={{ 
-                padding: "8px 16px",
-                backgroundColor: "#4F46E5",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer"
-              }}
-            >
-              Edit Task
-            </button>
-          </div>
         </div>
       </div>
     );
   };
 
   const AssigneeSelect = React.memo(({ value, onChange, placeholder = "Select or add assignee" }) => {
-    const [isAddingNew, setIsAddingNew] = useState(false);
     const [newAssigneeName, setNewAssigneeName] = useState('');
+    const selectedAssignees = normalizeAssigneeList(value);
 
     const handleAddAssignee = async () => {
-      if (!newAssigneeName.trim()) return;
+      const nextName = newAssigneeName.trim();
+      if (!nextName) return;
+
+      const existing = assignees.find(assignee => assignee.name.toLowerCase() === nextName.toLowerCase());
+      if (existing) {
+        handleToggleAssignee(existing.name);
+        setNewAssigneeName('');
+        return;
+      }
       
       try {
         const assigneeRef = await addDoc(collection(db, 'buildAssignees'), {
-          name: newAssigneeName.trim(),
+          name: nextName,
           churchId: id,
           createdAt: new Date().toISOString()
         });
-        setAssignees(prev => [...prev, { id: assigneeRef.id, name: newAssigneeName.trim() }]);
-        onChange(newAssigneeName.trim());
+        setAssignees(prev => [...prev, { id: assigneeRef.id, name: nextName }]);
+        const nextAssignees = Array.from(new Set([...selectedAssignees, nextName]));
+        onChange(nextAssignees);
         setNewAssigneeName('');
-        setIsAddingNew(false);
         toast.success('Assignee added successfully');
       } catch (error) {
         console.error('Error adding assignee:', error);
@@ -1445,86 +2779,140 @@ const BuildMyChurch = () => {
       }
     };
 
-    const handleSelectChange = (e) => {
-      const selectedValue = e.target.value;
-      if (selectedValue === 'add-new') {
-        setIsAddingNew(true);
-      } else {
-        onChange(selectedValue);
-      }
+    const handleToggleAssignee = (assigneeName) => {
+      const next = selectedAssignees.includes(assigneeName)
+        ? selectedAssignees.filter(name => name !== assigneeName)
+        : [...selectedAssignees, assigneeName];
+      onChange(next);
     };
 
     return (
-      <div style={{ position: 'relative' }}>
-        {!isAddingNew ? (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <select
-              value={value || ''}
-              onChange={handleSelectChange}
-              className="form-input"
-              style={{ flex: 1 }}
-            >
-              <option value="">{placeholder}</option>
-              {assignees.map(assignee => (
-                <option key={assignee.id} value={assignee.name}>
-                  {assignee.name}
-                </option>
-              ))}
-              <option value="add-new">+ Add New Assignee</option>
-            </select>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="text"
-              value={newAssigneeName}
-              onChange={(e) => setNewAssigneeName(e.target.value)}
-              placeholder="Enter new assignee name"
-              className="form-input"
-              style={{ flex: 1 }}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  handleAddAssignee();
-                }
-              }}
-              autoFocus
-            />
-            <button
-              type="button"
-              onClick={handleAddAssignee}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: '#10B981',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              ✓
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsAddingNew(false);
-                setNewAssigneeName('');
-              }}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: '#6B7280',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
+      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {selectedAssignees.length === 0 ? (
+            <span style={{ color: '#9CA3AF', fontSize: '0.875rem' }}>{placeholder}</span>
+          ) : (
+            selectedAssignees.map(name => (
+              <span
+                key={name}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 8px',
+                  borderRadius: '999px',
+                  backgroundColor: '#EEF2FF',
+                  color: '#1F2937',
+                  fontSize: '0.875rem'
+                }}
+              >
+                {name}
+                <button
+                  type="button"
+                  onClick={() => handleToggleAssignee(name)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    color: '#6B7280',
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={newAssigneeName}
+            onChange={(e) => setNewAssigneeName(e.target.value)}
+            placeholder="Type name and press Enter"
+            className="form-input"
+            style={{ flex: 1 }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleAddAssignee();
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleAddAssignee}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: '#4F46E5',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {assignees.map(assignee => {
+            const isSelected = selectedAssignees.includes(assignee.name);
+            return (
+              <button
+                key={assignee.id}
+                type="button"
+                onClick={() => handleToggleAssignee(assignee.name)}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '999px',
+                  border: `1px solid ${isSelected ? '#4F46E5' : '#D1D5DB'}`,
+                  backgroundColor: isSelected ? '#EEF2FF' : 'white',
+                  color: '#1F2937',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem'
+                }}
+              >
+                {assignee.name}
+              </button>
+            );
+          })}
+        </div>
       </div>
     );
   });
+
+  const agileProjectOptions = Array.from(new Set([
+    ...agileTasks.map(task => task.project).filter(Boolean),
+    (agileEdit.project || '').trim()
+  ].filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+  const agileAssigneeOptions = Array.from(new Set([
+    ...agileTasks.map(task => task.assignee).filter(Boolean),
+    (agileEdit.assignee || '').trim()
+  ].filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+  const agileLinkedBrimRowIds = Array.isArray(agileDetailTask?.brimRowIds)
+    ? agileDetailTask.brimRowIds
+    : [];
+  const agileFilteredBrimRows = brimRows.filter(row =>
+    row.label.toLowerCase().includes(agileBrimSearch.toLowerCase())
+  );
+
+  const buildTaskById = new Map(tasks.map(task => [task.id, task]));
+  const ganttTasks = agileTasks.map(task => {
+    const sourceTask = task.sourceTaskId ? buildTaskById.get(task.sourceTaskId) : null;
+    const fallbackAssignee = sourceTask ? formatAssigneeDisplay(sourceTask.assignee) : '';
+    return {
+      ...task,
+      assignedTo: task.assignee || fallbackAssignee || 'Unassigned',
+      startDate: task.startDate || sourceTask?.startDate || '',
+      dueDate: task.dueDate || sourceTask?.dueDate || '',
+      statusChangeLog: Array.isArray(task.statusChangeLog) ? task.statusChangeLog : []
+    };
+  });
+  const ganttStatusOptions = AGILE_STATUSES.map(status => status.value);
+  const ganttActualStartStatuses = ganttStatusOptions.filter(status => status !== 'ready');
 
   return (
     <div className="build-my-church-container" style={{ position: "relative" }}>
@@ -1662,33 +3050,6 @@ const BuildMyChurch = () => {
           </div>
           <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
             <button
-              onClick={() => navigate(`/organization/${id}/build/bi-dashboard`)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                padding: "0.75rem 1.5rem",
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                color: "white",
-                border: "none",
-                borderRadius: "0.5rem",
-                cursor: "pointer",
-                fontSize: "0.875rem",
-                fontWeight: "600",
-                transition: "transform 0.2s, box-shadow 0.2s"
-              }}
-              onMouseOver={(e) => {
-                e.target.style.transform = "translateY(-1px)";
-                e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.4)";
-              }}
-              onMouseOut={(e) => {
-                e.target.style.transform = "translateY(0)";
-                e.target.style.boxShadow = "none";
-              }}
-            >
-              <FaChartBar /> Business Intelligence
-            </button>
-            <button
               onClick={exportToPDF}
               style={{
                 display: "flex",
@@ -1727,29 +3088,49 @@ const BuildMyChurch = () => {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="tabs-container">
-          <button
-            className={`tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
-            onClick={() => setActiveTab('tasks')}
-          >
-            📋 Tasks
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'assignees' ? 'active' : ''}`}
-            onClick={() => setActiveTab('assignees')}
-          >
-            👥 Manage Assignees
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'progress' ? 'active' : ''}`}
-            onClick={() => setActiveTab('progress')}
-          >
-            📊 Progress Status
-          </button>
-        </div>
+        {taskId ? (
+          currentTask ? (
+            <DetailView task={currentTask} isPage />
+          ) : (
+            <div className="empty-state">Task not found.</div>
+          )
+        ) : (
+          <>
+            {/* Tabs */}
+            <div className="tabs-container">
+              <button
+                className={`tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
+                onClick={() => setActiveTab('tasks')}
+              >
+                📋 Tasks
+              </button>
+              <button
+                className={`tab-button ${activeTab === 'assignees' ? 'active' : ''}`}
+                onClick={() => setActiveTab('assignees')}
+              >
+                👥 Manage Assignees
+              </button>
+              <button
+                className={`tab-button ${activeTab === 'progress' ? 'active' : ''}`}
+                onClick={() => setActiveTab('progress')}
+              >
+                📊 Progress Status
+              </button>
+              <button
+                className={`tab-button ${activeTab === 'gantt' ? 'active' : ''}`}
+                onClick={() => setActiveTab('gantt')}
+              >
+                📅 Gantt Schedule
+              </button>
+              <button
+                className={`tab-button ${activeTab === 'agile' ? 'active' : ''}`}
+                onClick={() => setActiveTab('agile')}
+              >
+                🧩 Agile
+              </button>
+            </div>
 
-        {activeTab === 'tasks' && (
+            {activeTab === 'tasks' && (
           <div className="task-grid">
           <div className="task-form-container">
             <h2 className="section-title">Create New Task</h2>
@@ -1795,7 +3176,7 @@ const BuildMyChurch = () => {
                   value={newTask.status}
                   onChange={(e) => setNewTask({...newTask, status: e.target.value})}
                 >
-                  {STATUS_OPTIONS.map(option => (
+                  {AGILE_STATUSES.map(option => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -1804,18 +3185,18 @@ const BuildMyChurch = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Topic</label>
+                <label className="form-label">Project</label>
                 <div className="topic-input-group">
                   <select
                     className="form-select"
                     value={newTask.topic}
                     onChange={(e) => setNewTask({...newTask, topic: e.target.value})}
                   >
-                    <option value="">Select Topic</option>
+                    <option value="">Select Project</option>
                     {topics.map(topic => (
                       <option key={topic.id} value={topic.name}>{topic.name}</option>
                     ))}
-                    <option value="new">+ Add New Topic</option>
+                    <option value="new">+ Add New Project</option>
                   </select>
                   
                   {newTask.topic === 'new' && (
@@ -1825,7 +3206,7 @@ const BuildMyChurch = () => {
                         className="form-input"
                         value={newTask.customTopic}
                         onChange={(e) => setNewTask({...newTask, customTopic: e.target.value})}
-                        placeholder="Enter new topic"
+                        placeholder="Enter new project"
                       />
                     </div>
                   )}
@@ -1896,7 +3277,7 @@ const BuildMyChurch = () => {
                   className="filter-select"
                 >
                   <option value="all">All Status</option>
-                  {STATUS_OPTIONS.map(option => (
+                  {AGILE_STATUSES.map(option => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -1919,7 +3300,7 @@ const BuildMyChurch = () => {
                   onChange={(e) => setFilterTopic(e.target.value)}
                   className="filter-select"
                 >
-                  <option value="all">All Topics</option>
+                  <option value="all">All Projects</option>
                   {topics.map(topic => (
                     <option key={topic.id} value={topic.name}>{topic.name}</option>
                   ))}
@@ -2005,7 +3386,7 @@ const BuildMyChurch = () => {
                       key={task.id} 
                       data-task-id={task.id}
                       className={`task-card priority-${task.priority}`}
-                      onClick={() => handleTaskClick(task)}
+                      onClick={(e) => handleTaskClick(e, task)}
                       style={{ cursor: 'pointer' }}
                     >
                       {editingTaskId === task.id ? (
@@ -2048,7 +3429,7 @@ const BuildMyChurch = () => {
                                 value={newTask.status}
                                 onChange={(e) => setNewTask({...newTask, status: e.target.value})}
                               >
-                                {STATUS_OPTIONS.map(option => (
+                                {AGILE_STATUSES.map(option => (
                                   <option key={option.value} value={option.value}>
                                     {option.label}
                                   </option>
@@ -2058,18 +3439,18 @@ const BuildMyChurch = () => {
                           </div>
 
                           <div className="form-group">
-                            <label className="form-label">Topic</label>
+                            <label className="form-label">Project</label>
                             <div className="topic-input-group">
                               <select
                                 className="form-select"
                                 value={newTask.topic}
                                 onChange={(e) => setNewTask({...newTask, topic: e.target.value})}
                               >
-                                <option value="">Select Topic</option>
+                                <option value="">Select Project</option>
                                 {topics.map(topic => (
                                   <option key={topic.id} value={topic.name}>{topic.name}</option>
                                 ))}
-                                <option value="new">+ Add New Topic</option>
+                                <option value="new">+ Add New Project</option>
                               </select>
                               
                               {newTask.topic === 'new' && (
@@ -2079,7 +3460,7 @@ const BuildMyChurch = () => {
                                     className="form-input"
                                     value={newTask.customTopic}
                                     onChange={(e) => setNewTask({...newTask, customTopic: e.target.value})}
-                                    placeholder="Enter new topic"
+                                    placeholder="Enter new project"
                                   />
                                 </div>
                               )}
@@ -2141,68 +3522,19 @@ const BuildMyChurch = () => {
                         <>
                           <div className="task-header">
                             <h3 className="task-title">{task.title}</h3>
-                            <div className="task-actions" onClick={e => e.stopPropagation()}>
-                              <button 
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleEditTask(task);
-                                }} 
-                                className="edit-button"
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  padding: '8px 12px',
-                                  backgroundColor: '#4F46E5',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  fontSize: '0.875rem',
-                                  fontWeight: '500',
-                                  zIndex: 20,
-                                  position: 'relative'
-                                }}
-                              >
-                                <FaEdit /> Edit
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDeleteTask(task.id);
-                                }} 
-                                className="delete-button"
-                              >
-                                <FaTrash /> Delete
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  toggleTaskExpand(task.id);
-                                }}
-                                className="expand-button"
-                              >
-                                {expandedTaskId === task.id ? <FaChevronUp /> : <FaChevronDown />}
-                              </button>
-                            </div>
                           </div>
-                          <p className={`task-description ${expandedTaskId === task.id ? 'expanded' : ''}`}>
-                            {task.description}
+                          <p className="task-description">
+                            {task.description.length > 150 ? `${task.description.substring(0, 150)}...` : task.description}
                           </p>
                           <div className="task-metadata">
-                            {task.assignee && (
+                            {formatAssigneeDisplay(task.assignee) && (
                               <span className="assignee-badge">
                                 <span className="assignee-icon">👤</span>
-                                {task.assignee}
+                                {formatAssigneeDisplay(task.assignee)}
                               </span>
                             )}
-                            {task.topic && <span className="topic-badge">{task.topic}</span>}
+                            {task.ticketId && <span className="ticket-badge">ID #{task.ticketId}</span>}
+                            {task.topic && <span className="topic-badge">Project: {task.topic}</span>}
                             {task.startDate && (
                               <span className="date-badge start-date">
                                 <span className="date-icon">📅</span>
@@ -2241,275 +3573,6 @@ const BuildMyChurch = () => {
                               );
                             })()}
                           </div>
-                          {expandedTaskId === task.id && (
-                            <div className="task-details">
-                              <div className="detail-row">
-                                <span className="detail-label">Created:</span>
-                                <span>{new Date(task.createdAt).toLocaleDateString()}</span>
-                              </div>
-                              {task.updatedAt && (
-                                <div className="detail-row">
-                                  <span className="detail-label">Last Updated:</span>
-                                  <span>{new Date(task.updatedAt).toLocaleDateString()}</span>
-                                </div>
-                              )}
-                              {task.documents && task.documents.length > 0 && (
-                                <div className="documents-section" onClick={(e) => e.stopPropagation()}>
-                                  <h4 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setExpandedDocuments(prev => ({...prev, [`detail-${task.id}`]: !prev[`detail-${task.id}`]}));
-                                    }}
-                                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', userSelect: 'none' }}
-                                  >
-                                    {expandedDocuments[`detail-${task.id}`] ? <FaChevronDown /> : <FaChevronRight />}
-                                    Documents ({task.documents.length})
-                                  </h4>
-                                  {expandedDocuments[`detail-${task.id}`] && (
-                                    <ul>
-                                      {task.documents.map((doc, index) => (
-                                        <li key={index}>
-                                          <a href={doc.url} target="_blank" rel="noopener noreferrer">
-                                            {doc.name}
-                                          </a>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleDeleteFile(task.id, index)}
-                                            className="delete-file-button"
-                                          >
-                                            <FaTrash /> Delete
-                                          </button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              )}
-                              <div className="comments-section">
-                                <h4>Comments</h4>
-                                {!showCommentForm[`detail-${task.id}`] ? (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: true}));
-                                    }}
-                                    style={{ padding: '8px 16px', backgroundColor: '#4F46E5', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginBottom: '10px' }}
-                                  >
-                                    + Add Comment
-                                  </button>
-                                ) : (
-                                  <div style={{ marginBottom: '10px' }}>
-                                    <textarea
-                                      value={newCommentText}
-                                      onChange={(e) => setNewCommentText(e.target.value)}
-                                      onClick={(e) => e.stopPropagation()}
-                                      placeholder="Add a comment..."
-                                      rows={3}
-                                      style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
-                                    />
-                                    <input
-                                      type="file"
-                                      multiple
-                                      onChange={(e) => setNewCommentFiles(Array.from(e.target.files))}
-                                      onClick={(e) => e.stopPropagation()}
-                                      style={{ marginTop: '8px' }}
-                                    />
-                                    <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
-                                      <button
-                                        type="button"
-                                        onClick={async (e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          await handleAddComment(task.id);
-                                          setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: false}));
-                                        }}
-                                        className="add-comment-button"
-                                      >
-                                        Submit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setShowCommentForm(prev => ({...prev, [`detail-${task.id}`]: false}));
-                                          setNewCommentText('');
-                                          setNewCommentFiles([]);
-                                        }}
-                                        style={{ padding: '8px 16px', backgroundColor: '#6B7280', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div>
-                                  {(commentsByTask[task.id] || []).length === 0 && (
-                                    <div style={{ color: '#6B7280' }}>No comments yet</div>
-                                  )}
-                                  <ul style={{ listStyle: 'none', padding: 0 }}>
-                                    {(commentsByTask[task.id] || []).map(comment => (
-                                      <li key={comment.id} style={{ marginBottom: '12px', padding: '8px', background: '#fff', borderRadius: '6px', border: '1px solid #E5E7EB' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                handleToggleCommentStatus(task.id, comment.id, comment.inGoodStanding);
-                                              }}
-                                              className={`comment-status-checkbox ${comment.inGoodStanding ? 'checked' : ''}`}
-                                              title={comment.inGoodStanding ? 'In good standing - Click to unmark' : 'Click to mark as in good standing'}
-                                            >
-                                              {comment.inGoodStanding && (
-                                                <FaCheck style={{ color: 'white', fontSize: '14px' }} />
-                                              )}
-                                            </button>
-                                            <div style={{ fontWeight: 600 }}>{comment.author?.displayName || comment.author?.uid}</div>
-                                          </div>
-                                          <div style={{ color: '#6B7280', fontSize: '12px' }}>
-                                            {new Date(comment.createdAt).toLocaleString()}
-                                            {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
-                                              <span> (edited)</span>
-                                            )}
-                                          </div>
-                                        </div>
-                                        {editingCommentId === comment.id ? (
-                                          <div style={{ marginTop: '6px' }}>
-                                            <textarea
-                                              value={editingCommentText}
-                                              onChange={(e) => setEditingCommentText(e.target.value)}
-                                              onClick={(e) => e.stopPropagation()}
-                                              rows={3}
-                                              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB' }}
-                                            />
-                                            <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                  handleUpdateComment(task.id, comment.id);
-                                                }}
-                                                style={{ padding: '4px 8px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                              >
-                                                Save
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                  setEditingCommentId(null);
-                                                  setEditingCommentText('');
-                                                }}
-                                                style={{ padding: '4px 8px', backgroundColor: '#6B7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                              >
-                                                Cancel
-                                              </button>
-                                            </div>
-                                          </div>
-                                        ) : (
-                                          <div style={{ whiteSpace: 'pre-wrap', marginTop: '6px' }}>{convertUrlsToLinks(comment.text)}</div>
-                                        )}
-                                        {comment.files && comment.files.length > 0 && (
-                                          <div style={{ marginTop: '8px' }}>
-                                            <strong>Attachments:</strong>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '8px' }}>
-                                              {comment.files.map((f, i) => {
-                                                const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(f.name);
-                                                return (
-                                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                                    {isImage ? (
-                                                      <a href={f.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
-                                                        <img 
-                                                          src={f.url} 
-                                                          alt={f.name}
-                                                          style={{ 
-                                                            maxWidth: '150px', 
-                                                            maxHeight: '150px', 
-                                                            objectFit: 'cover',
-                                                            borderRadius: '6px',
-                                                            border: '1px solid #E5E7EB',
-                                                            cursor: 'pointer'
-                                                          }}
-                                                        />
-                                                      </a>
-                                                    ) : (
-                                                      <a href={f.url} target="_blank" rel="noreferrer" style={{ color: '#3B82F6' }}>
-                                                        📄 {f.name}
-                                                      </a>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-                                        <div style={{ marginTop: '8px' }}>
-                                          {(user && (user.uid === comment.author?.uid || user.role === 'admin' || user.role === 'global_admin')) && editingCommentId !== comment.id && (
-                                            <>
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                  setEditingCommentId(comment.id);
-                                                  setEditingCommentText(comment.text);
-                                                }}
-                                                style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', marginRight: '8px' }}
-                                              >
-                                                Edit
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                  handleDeleteComment(task.id, comment.id);
-                                                }}
-                                                className="delete-comment-button"
-                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                                              >
-                                                Delete
-                                              </button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              </div>
-                              <div style={{ marginTop: '15px' }}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setSelectedTask(task);
-                                  }}
-                                  className="qr-button"
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    padding: '8px 12px',
-                                    backgroundColor: '#10B981',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    fontSize: '0.875rem',
-                                    fontWeight: '500'
-                                  }}
-                                >
-                                  <span style={{ fontSize: '16px' }}>📱</span> View QR Code
-                                </button>
-                              </div>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
@@ -2549,6 +3612,380 @@ const BuildMyChurch = () => {
             )}
           </div>
         </div>
+        )}
+
+        {activeTab === 'gantt' && (
+          <div className="gantt-content">
+            <TaskGantt
+              tasks={ganttTasks}
+              statusOptions={ganttStatusOptions}
+              actualStartStatuses={ganttActualStartStatuses}
+              completedStatuses={['completed']}
+              personLabelResolver={(task) => task.assignedTo}
+            />
+          </div>
+        )}
+
+        {activeTab === 'agile' && (
+          <div className="agile-container">
+            <div className="agile-legend">
+              <span className="agile-legend-title">Projects</span>
+              <div className="agile-legend-items">
+                {Array.from(new Set(agileTasks.map(task => task.project).filter(Boolean)))
+                  .sort((a, b) => a.localeCompare(b))
+                  .map(project => (
+                    <div key={project} className="agile-legend-item">
+                      <span
+                        className="agile-legend-dot"
+                        style={{ backgroundColor: getProjectColor(project) }}
+                      />
+                      <span>{project}</span>
+                    </div>
+                  ))}
+                {agileTasks.filter(task => !task.project).length > 0 && (
+                  <div className="agile-legend-item">
+                    <span
+                      className="agile-legend-dot"
+                      style={{ backgroundColor: getProjectColor('Unassigned') }}
+                    />
+                    <span>Unassigned</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="agile-board">
+              {AGILE_STATUSES.map(status => {
+                const columnTasks = agileTasks.filter(task => task.status === status.value);
+                return (
+                  <div
+                    key={status.value}
+                    className={`agile-column ${agileDragOverStatus === status.value ? 'drag-over' : ''}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragEnter={() => setAgileDragOverStatus(status.value)}
+                    onDragLeave={() => {
+                      setAgileDragOverStatus(prev => (prev === status.value ? null : prev));
+                    }}
+                    onDrop={(event) => handleAgileDrop(status.value, event)}
+                  >
+                    <div className="agile-column-header">
+                      <span>{status.label}</span>
+                      <span className="agile-count">{columnTasks.length}</span>
+                    </div>
+                    <div className="agile-column-body">
+                      {columnTasks.length === 0 ? (
+                        <div className="agile-empty">No tasks</div>
+                      ) : (
+                        columnTasks.map(task => (
+                          <div
+                            key={task.id}
+                            className="agile-card"
+                            style={{ borderLeftColor: getProjectColor(task.project) }}
+                            draggable
+                            onDragStart={(event) => handleAgileDragStart(task.id, event)}
+                            onDragEnd={handleAgileDragEnd}
+                            onClick={() => openAgileDetail(task)}
+                          >
+                            <div className="agile-card-header">
+                              <div className="agile-title">{task.title}</div>
+                            </div>
+                            <div className="agile-assignee">Assigned: {task.assignee || 'Unassigned'}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {agileDetailTask && (
+              <div className="agile-modal-overlay" onClick={closeAgileDetail}>
+                <div className="agile-modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="agile-modal-header">
+                    <div>
+                      <h3>{agileDetailTask.title || 'Task Detail'}</h3>
+                      <p className="agile-modal-subtitle">Assigned: {agileDetailTask.assignee || 'Unassigned'}</p>
+                    </div>
+                    <button type="button" className="agile-modal-close" onClick={closeAgileDetail}>×</button>
+                  </div>
+
+                  {agileDetailLoading ? (
+                    <div className="agile-modal-loading">Loading details...</div>
+                  ) : (
+                    <div className="agile-modal-content">
+                      <div className="agile-modal-section">
+                        <h4>Edit Task</h4>
+                        <div className="agile-modal-grid">
+                          <div>
+                            <label>Title</label>
+                            <input
+                              type="text"
+                              value={agileEdit.title}
+                              onChange={(event) => setAgileEdit(prev => ({ ...prev, title: event.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label>Assignee</label>
+                            <select
+                              value={agileEdit.assignee}
+                              onChange={(event) => setAgileEdit(prev => ({ ...prev, assignee: event.target.value }))}
+                            >
+                              <option value="">Unassigned</option>
+                              {agileAssigneeOptions.map(assignee => (
+                                <option key={assignee} value={assignee}>
+                                  {assignee}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label>Project</label>
+                            <select
+                              value={agileEdit.project}
+                              onChange={(event) => setAgileEdit(prev => ({ ...prev, project: event.target.value }))}
+                            >
+                              <option value="">Unassigned</option>
+                              {agileProjectOptions.map(project => (
+                                <option key={project} value={project}>
+                                  {project}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label>Status</label>
+                            <select
+                              value={agileEdit.status}
+                              onChange={(event) => setAgileEdit(prev => ({ ...prev, status: event.target.value }))}
+                            >
+                              {AGILE_STATUSES.map(option => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label>Priority</label>
+                            <select
+                              value={agileEdit.priority}
+                              onChange={(event) => setAgileEdit(prev => ({ ...prev, priority: event.target.value }))}
+                            >
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="agile-modal-field">
+                          <label>Description</label>
+                          <textarea
+                            rows={3}
+                            value={agileEdit.description}
+                            onChange={(event) => setAgileEdit(prev => ({ ...prev, description: event.target.value }))}
+                          />
+                        </div>
+                        <button type="button" className="agile-modal-save" onClick={handleAgileSaveEdits}>
+                          Save Changes
+                        </button>
+                      </div>
+
+                      <div className="agile-modal-section">
+                        <h4>BIM Tracker Rows</h4>
+                        <p style={{ color: '#6B7280', marginTop: '4px' }}>
+                          Link one or more BIM tracker rows to this task and open their details.
+                        </p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                          <input
+                            type="text"
+                            value={agileBrimSearch}
+                            onChange={(e) => setAgileBrimSearch(e.target.value)}
+                            placeholder="Search rows..."
+                            style={{ padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB', minWidth: '220px' }}
+                          />
+                          <select
+                            value={agileSelectedBrimRowId}
+                            onChange={(e) => setAgileSelectedBrimRowId(e.target.value)}
+                            style={{ padding: '8px', borderRadius: '6px', border: '1px solid #E5E7EB', minWidth: '240px' }}
+                          >
+                            <option value="">Select a row</option>
+                            {agileFilteredBrimRows.map(row => (
+                              <option key={row.id} value={row.id} disabled={agileLinkedBrimRowIds.includes(row.id)}>
+                                {row.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={!agileSelectedBrimRowId || savingBrimLinks}
+                            onClick={async () => {
+                              await handleAddAgileBrimRow(agileDetailTask.id, agileSelectedBrimRowId);
+                              setAgileSelectedBrimRowId('');
+                            }}
+                            style={{
+                              padding: '8px 12px',
+                              backgroundColor: '#4F46E5',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: agileSelectedBrimRowId ? 'pointer' : 'not-allowed'
+                            }}
+                          >
+                            {savingBrimLinks ? 'Saving...' : 'Add Row'}
+                          </button>
+                        </div>
+                        {brimRowsLoading && (
+                          <div style={{ color: '#6B7280', marginTop: '8px' }}>Loading BIM tracker rows...</div>
+                        )}
+                        {brimRowsError && (
+                          <div style={{ color: '#ef4444', marginTop: '8px' }}>{brimRowsError}</div>
+                        )}
+                        {agileLinkedBrimRowIds.length === 0 ? (
+                          <div style={{ color: '#6B7280', marginTop: '8px' }}>No linked BIM tracker rows yet.</div>
+                        ) : (
+                          <ul style={{ listStyle: 'none', padding: 0, marginTop: '12px' }}>
+                            {agileLinkedBrimRowIds.map(rowId => {
+                              const rowLabel = brimRows.find(row => row.id === rowId)?.label || `Row ${rowId}`;
+                              return (
+                                <li key={rowId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '8px', border: '1px solid #E5E7EB', borderRadius: '6px', marginBottom: '8px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => openBrimRowDetail(rowId)}
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: '#2563eb',
+                                      textDecoration: 'underline',
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
+                                      padding: 0
+                                    }}
+                                  >
+                                    {rowLabel}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAgileBrimRow(agileDetailTask.id, rowId)}
+                                    disabled={savingBrimLinks}
+                                    style={{
+                                      padding: '6px 10px',
+                                      backgroundColor: '#ef4444',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div className="agile-modal-section">
+                        <h4>Comments</h4>
+                        <div className="agile-modal-comment">
+                          <textarea
+                            rows={3}
+                            placeholder="Add a comment..."
+                            value={agileCommentDraft}
+                            onChange={(event) => setAgileCommentDraft(event.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '10px',
+                              borderRadius: '8px',
+                              border: '1px solid #E5E7EB',
+                              fontSize: '14px',
+                              resize: 'vertical',
+                              marginBottom: '10px'
+                            }}
+                          />
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                            <input
+                              type="file"
+                              multiple
+                              onChange={(event) => setAgileCommentFiles(Array.from(event.target.files || []))}
+                              style={{ flex: 1 }}
+                            />
+                            <button type="button" onClick={handleAgileAddComment} disabled={agileCommentUploading}>
+                              {agileCommentUploading ? 'Uploading...' : 'Add Comment'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="agile-modal-list">
+                          {agileComments.length === 0 ? (
+                            <p className="agile-modal-empty">No comments yet.</p>
+                          ) : (
+                            agileComments.map(comment => (
+                              <div key={comment.id} className="agile-modal-item">
+                                <div className="agile-modal-item-header">
+                                  <span>{comment.author?.displayName || 'Unknown'}</span>
+                                  <span>{comment.createdAt ? new Date(comment.createdAt).toLocaleString() : ''}</span>
+                                </div>
+                                <p>{comment.text}</p>
+                                {comment.files && comment.files.length > 0 && (
+                                  <div style={{ marginTop: '8px' }}>
+                                    <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '6px' }}>Attachments</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                                      {comment.files.map((file, index) => {
+                                        const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(file.name || '');
+                                        return (
+                                          <div key={`${comment.id}-file-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {isImage ? (
+                                              <a href={file.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                                                <img
+                                                  src={file.url}
+                                                  alt={file.name || 'attachment'}
+                                                  style={{ width: '140px', height: '120px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                                                />
+                                              </a>
+                                            ) : (
+                                              <a href={file.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>
+                                                {file.name || 'Attachment'}
+                                              </a>
+                                            )}
+                                            {file.name && !isImage && (
+                                              <div style={{ fontSize: '12px', color: '#6B7280' }}>{file.name}</div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="agile-modal-section">
+                        <h4>Activity Log</h4>
+                        <div className="agile-modal-list">
+                          {agileActivity.length === 0 ? (
+                            <p className="agile-modal-empty">No activity yet.</p>
+                          ) : (
+                            agileActivity.map(entry => (
+                              <div key={entry.id || entry.createdAt} className="agile-modal-item">
+                                <div className="agile-modal-item-header">
+                                  <span>{entry.user?.displayName || 'Unknown'}</span>
+                                  <span>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : ''}</span>
+                                </div>
+                                <p>{entry.message}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {activeTab === 'assignees' && (
@@ -2591,7 +4028,7 @@ const BuildMyChurch = () => {
               </p>
             </div>
             <div className="progress-grid">
-              {STATUS_OPTIONS.map(status => {
+              {AGILE_STATUSES.map(status => {
                 const statusTasks = tasks.filter(task => task.status === status.value);
                 return (
                   <div key={status.value} className="status-column">
@@ -2610,7 +4047,7 @@ const BuildMyChurch = () => {
                           <div
                             key={task.id}
                             className="progress-task-card"
-                            onClick={() => handleTaskClick(task)}
+                            onClick={(e) => handleTaskClick(e, task)}
                           >
                             <div className="progress-task-header">
                               <h4 className="progress-task-title">{task.title}</h4>
@@ -2625,7 +4062,9 @@ const BuildMyChurch = () => {
                             </p>
                             <div className="progress-task-meta">
                               <span className="progress-assignee">
-                                {task.assignee ? `👤 ${task.assignee}` : 'Unassigned'}
+                                {formatAssigneeDisplay(task.assignee)
+                                  ? `👤 ${formatAssigneeDisplay(task.assignee)}`
+                                  : 'Unassigned'}
                               </span>
                               <span className="progress-due-date">
                                 {task.dueDate ? `📅 ${new Date(task.dueDate).toLocaleDateString()}` : ''}
@@ -2641,9 +4080,155 @@ const BuildMyChurch = () => {
             </div>
           </div>
         )}
+          </>
+        )}
       </div>
 
-      {selectedTask && <DetailView task={selectedTask} />}
+      {brimRowDetailId && (
+        <div
+          onClick={closeBrimRowDetail}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '10px',
+              padding: '24px',
+              width: '90%',
+              maxWidth: '900px',
+              maxHeight: '85vh',
+              overflow: 'auto'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <button
+                type="button"
+                onClick={closeBrimRowDetail}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 10px',
+                  backgroundColor: '#E5E7EB',
+                  color: '#111827',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: '600'
+                }}
+              >
+                <FaChevronLeft /> Back
+              </button>
+              <Link
+                to={`/organization/${id}/time-tracker/brands/${brimRowDetailId}`}
+                style={{ color: '#2563eb', textDecoration: 'underline', fontWeight: 600 }}
+              >
+                Open full detail
+              </Link>
+            </div>
+
+            {brimRowDetailLoading ? (
+              <div style={{ color: '#6B7280' }}>Loading BIM tracker details...</div>
+            ) : (
+              <div>
+                <h3 style={{ marginTop: 0 }}>BIM Tracker Row</h3>
+                {brimRowDetail && Object.keys(brimRowDetail).length > 1 ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                    {Object.entries(brimRowDetail)
+                      .filter(([key]) => key !== 'id')
+                      .map(([key, value]) => (
+                        <div key={key} style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ fontSize: '12px', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                            {key}
+                          </div>
+                          <div style={{ marginTop: '6px', color: '#111827', wordBreak: 'break-word' }}>
+                            {formatBrimValue(value)}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div style={{ color: '#6B7280' }}>No detail data available.</div>
+                )}
+
+                <div style={{ marginTop: '20px' }}>
+                  <h4 style={{ marginBottom: '10px' }}>Comments</h4>
+                  {brimRowCommentsLoading && (
+                    <div style={{ color: '#6B7280' }}>Loading comments...</div>
+                  )}
+                  {brimRowCommentsError && (
+                    <div style={{ color: '#ef4444' }}>{brimRowCommentsError}</div>
+                  )}
+                  {!brimRowCommentsLoading && !brimRowCommentsError && brimRowComments.length === 0 && (
+                    <div style={{ color: '#6B7280' }}>No comments yet.</div>
+                  )}
+                  {!brimRowCommentsLoading && !brimRowCommentsError && brimRowComments.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {brimRowComments.map(comment => (
+                        <div key={comment.id} style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                            <div style={{ fontWeight: 600 }}>
+                              {comment.createdBy || comment.author?.displayName || 'Unknown'}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6B7280' }}>
+                              {formatBrimCommentDate(comment.createdAt)}
+                            </div>
+                          </div>
+                          {comment.text && (
+                            <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap' }}>
+                              {comment.text}
+                            </div>
+                          )}
+                          {comment.attachments && comment.attachments.length > 0 && (
+                            <div style={{ marginTop: '10px' }}>
+                              <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '6px' }}>Attachments</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                                {comment.attachments.map((file, index) => (
+                                  <div key={`${comment.id}-file-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {isBrimImageAttachment(file) ? (
+                                      <a href={file.url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                                        <img
+                                          src={file.url}
+                                          alt={file.name || 'attachment'}
+                                          style={{ width: '140px', height: '120px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #E5E7EB' }}
+                                        />
+                                      </a>
+                                    ) : (
+                                      <a href={file.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>
+                                        {file.name || 'Attachment'}
+                                      </a>
+                                    )}
+                                    {file.name && !isBrimImageAttachment(file) && (
+                                      <div style={{ fontSize: '12px', color: '#6B7280' }}>{file.name}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

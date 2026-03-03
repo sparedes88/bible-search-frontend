@@ -45,6 +45,7 @@ const TaskManager = () => {
     description: '',
     priority: 'medium',
     status: 'todo',
+    startDate: '',
     dueDate: '',
     assignedTo: '',
     forecastedHours: 0
@@ -54,6 +55,7 @@ const TaskManager = () => {
     description: '',
     priority: 'medium',
     status: 'todo',
+    startDate: '',
     dueDate: '',
     assignedTo: '',
     forecastedHours: 0
@@ -122,6 +124,12 @@ const TaskManager = () => {
         createdBy: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        statusChangeLog: [{
+          previousStatus: null,
+          newStatus: newTask.status,
+          changedAt: serverTimestamp(),
+          changedBy: user.uid
+        }],
         churchId
       };
 
@@ -132,6 +140,7 @@ const TaskManager = () => {
         description: '',
         priority: 'medium',
         status: 'todo',
+        startDate: '',
         dueDate: '',
         assignedTo: '',
         forecastedHours: 0
@@ -147,10 +156,22 @@ const TaskManager = () => {
   // Update task
   const handleUpdateTask = async (taskId, updates) => {
     try {
-      await updateDoc(doc(db, `churches/${churchId}/tasks/${taskId}`), {
+      const currentTask = tasks.find(task => task.id === taskId);
+      const updatePayload = {
         ...updates,
         updatedAt: serverTimestamp()
-      });
+      };
+
+      if (updates.status && updates.status !== currentTask?.status) {
+        updatePayload.statusChangeLog = arrayUnion({
+          previousStatus: currentTask?.status || null,
+          newStatus: updates.status,
+          changedAt: serverTimestamp(),
+          changedBy: user.uid
+        });
+      }
+
+      await updateDoc(doc(db, `churches/${churchId}/tasks/${taskId}`), updatePayload);
       toast.success('Task updated successfully!');
     } catch (error) {
       console.error('Error updating task:', error);
@@ -166,6 +187,7 @@ const TaskManager = () => {
       description: task.description || '',
       priority: task.priority || 'medium',
       status: task.status || 'todo',
+      startDate: task.startDate || '',
       dueDate: task.dueDate || '',
       assignedTo: task.assignedTo || '',
       forecastedHours: task.forecastedHours || 0
@@ -185,6 +207,7 @@ const TaskManager = () => {
         description: '',
         priority: 'medium',
         status: 'todo',
+        startDate: '',
         dueDate: '',
         assignedTo: '',
         forecastedHours: 0
@@ -573,6 +596,7 @@ const TaskManager = () => {
                 <p>{selectedTask.description}</p>
                 <div className="task-meta-info">
                   <p><strong>Created:</strong> {selectedTask.createdAt.toLocaleString()}</p>
+                  <p><strong>Start Date:</strong> {selectedTask.startDate ? new Date(selectedTask.startDate).toLocaleDateString() : 'Not set'}</p>
                   <p><strong>Due Date:</strong> {selectedTask.dueDate ? new Date(selectedTask.dueDate).toLocaleDateString() : 'Not set'}</p>
                   <p><strong>Forecasted Hours:</strong> {selectedTask.forecastedHours || 0}h</p>
                   <p><strong>Assigned to:</strong> {selectedTask.assignedTo || 'Not assigned'}</p>
@@ -829,6 +853,15 @@ const TaskManager = () => {
                 </div>
 
                 <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={newTask.startDate}
+                    onChange={(e) => setNewTask({...newTask, startDate: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
                   <label>Due Date</label>
                   <input
                     type="date"
@@ -923,6 +956,15 @@ const TaskManager = () => {
                     <option value="review">Review</option>
                     <option value="completed">Completed</option>
                   </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={editTaskData.startDate}
+                    onChange={(e) => setEditTaskData({...editTaskData, startDate: e.target.value})}
+                  />
                 </div>
 
                 <div className="form-group">

@@ -13,14 +13,14 @@ service cloud.firestore {
 
     function isGlobalAdmin() {
       return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'global_admin';
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['global_admin', 'system_global_admin'];
     }
 
     function isChurchAdmin(churchId) {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return isAuthenticated() && (
-        userDoc.data.role == 'global_admin' ||
-        (userDoc.data.role == 'admin' && userDoc.data.churchId == churchId)
+        userDoc.data.role in ['global_admin', 'system_global_admin'] ||
+        (userDoc.data.role in ['admin', 'system_admin'] && userDoc.data.churchId == churchId)
       );
     }
 
@@ -32,7 +32,7 @@ service cloud.firestore {
     // ✅ Users
     match /users/{userId} {
       function isMember() {
-        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'member';
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['member', 'system_member'];
       }
 
       function isOwner() {
@@ -43,7 +43,7 @@ service cloud.firestore {
       allow list: if isAuthenticated() && 
                   ('churchId' in request.query.filters) &&
                   (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == request.query.filters.churchId[0] || 
-                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'global_admin');
+                   isGlobalAdmin());
 
       // Allow querying users by phone or email for lookup purposes (event check-in, login, etc)
       allow list: if isAuthenticated() && 
@@ -116,7 +116,21 @@ service cloud.firestore {
 
       match /broadcasts/{broadcastId} {
         allow read: if true;
-        allow write: if isAuthenticated();
+        function isPublicBroadcastViewerUpdate() {
+          return request.auth == null &&
+            resource.data != null &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'viewerIceCandidate',
+              'answer'
+            ]);
+        }
+
+        allow create, delete: if isAuthenticated();
+        allow update: if isAuthenticated() || isPublicBroadcastViewerUpdate();
+
+        match /viewers/{viewerId} {
+          allow read, write: if true;
+        }
       }
 
       match /songs/{songId} {
@@ -219,6 +233,25 @@ service cloud.firestore {
             isUserInChurch(get(/databases/$(database)/documents/buildTasks/$(taskId)).data.churchId);
         }
       }
+
+      // Agile Tasks - Church members can access tasks for their church
+      match /agileTasks/{taskId} {
+        allow read, write, create, update, delete: if isAuthenticated() &&
+          (
+            isUserInChurch(resource.data.churchId) ||
+            isUserInChurch(request.resource.data.churchId)
+          );
+
+        match /comments/{commentId} {
+          allow read, write, create, update, delete: if isAuthenticated() &&
+            isUserInChurch(get(/databases/$(database)/documents/agileTasks/$(taskId)).data.churchId);
+        }
+
+        match /activity/{activityId} {
+          allow read, write, create, update, delete: if isAuthenticated() &&
+            isUserInChurch(get(/databases/$(database)/documents/agileTasks/$(taskId)).data.churchId);
+        }
+      }
       
       // Task Progress - Users can CRUD their own progress entries
       match /taskProgress/{progressId} {
@@ -256,6 +289,24 @@ service cloud.firestore {
       // Brands (BIM Tracker) - Authenticated users can read and write
       match /brands/{brandId} {
         allow read, write, create, update, delete: if isAuthenticated();
+      }
+
+      // Catalogs for dropdowns (per church)
+      match /catalogs/{catalogId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Collection metadata (per church)
+      match /collectionMetadata/{metaId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Donor settings (role catalogs, etc.)
+      match /donorSettings/{settingId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
       }
     }
 

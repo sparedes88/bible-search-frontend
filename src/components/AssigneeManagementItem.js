@@ -1,15 +1,22 @@
 import React, { useState } from 'react';
 import { FaTrash, FaUser, FaTasks } from 'react-icons/fa';
 
+const normalizeAssigneeList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return [value].filter(Boolean);
+};
+
 const AssigneeManagementItem = ({ assignee, allAssignees, tasks, onRemove, onReassign }) => {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [reassignMode, setReassignMode] = useState(false);
   const [selectedReassignTo, setSelectedReassignTo] = useState('');
 
   // Get tasks assigned to this assignee
-  const assigneeTasks = tasks.filter(task =>
-    task.assignee === assignee.name || task.assignee === assignee.id
-  );
+  const assigneeTasks = tasks.filter(task => {
+    const assignees = normalizeAssigneeList(task.assignee);
+    return assignees.includes(assignee.name) || assignees.includes(assignee.id);
+  });
 
   const handleRemoveClick = () => {
     if (assigneeTasks.length > 0) {

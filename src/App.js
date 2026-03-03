@@ -400,6 +400,22 @@ const App = () => {
             }
           />
           <Route
+            path="/church/:id/broadcast/:broadcastId"
+            element={<BroadcastView />}
+          />
+          <Route
+            path="/church/:id/broadcast3/:broadcastId"
+            element={<BroadcastView3 />}
+          />
+          <Route
+            path="/church/:id/broadcast3/:broadcastId/control"
+            element={
+              <PrivateRoute>
+                <BroadcastView3 isControl={true} />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/member/:profileId"
             element={<MemberProfile />}
           />

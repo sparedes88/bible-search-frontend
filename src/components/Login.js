@@ -95,9 +95,9 @@ const Login = () => {
 
   const checkIfAdminEmail = (email) => {
     const emailLower = email.toLowerCase();
-    return emailLower.includes('admin') || 
-           emailLower.endsWith('@iglesiatech.app') || 
-           emailLower.endsWith('@churchadmin.app');
+    return emailLower.includes("admin") ||
+           emailLower.endsWith("@iglesiatech.app") ||
+           emailLower.endsWith("@churchadmin.app");
   };
 
   const findUserByPhone = async (formattedPhone) => {
@@ -304,9 +304,9 @@ const Login = () => {
         
         if (email) {
           const emailLower = email.toLowerCase();
-          const isLikelyAdmin = emailLower.includes('admin') || 
-                                emailLower.endsWith('@iglesiatech.app') || 
-                                emailLower.endsWith('@churchadmin.app');
+          const isLikelyAdmin = emailLower.includes("admin") ||
+                                emailLower.endsWith("@iglesiatech.app") ||
+                                emailLower.endsWith("@churchadmin.app");
                                 
           if (isLikelyAdmin) {
             console.log("This appears to be an admin account without a Firestore record");
