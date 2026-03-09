@@ -107,6 +107,7 @@ import {
   TeamsPage,
   MaintenancePage
 } from './pages/ChurchSubPages';
+import CampusesPage from './pages/organization/CampusesPage';
 import ChurchRooms from "./pages/church/Rooms";
 import ChurchInventory from "./pages/church/Inventory";
 import ChurchFinances from "./pages/church/Finances";
@@ -146,6 +147,7 @@ import FormEntriesPage from "./components/FormEntriesPage"; // Import FormEntrie
 import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
 import TimerPage from "./components/TimerPage"; // Import TimerPage component
 import TaskProgressDetail from "./components/TaskProgressDetail"; // Import TaskProgressDetail component
+import MySunday from "./components/MySunday";
 import GlobalOrganizationManager from "./components/GlobalOrganizationManager";
 import ChurchProfile from "./components/ChurchProfile";
 import FreshBooksCallback from "./components/FreshBooksCallback";
@@ -432,6 +434,7 @@ const App = () => {
           <Route path="/organization/:id/teams" element={<TeamsPage />} />
           <Route path="/organization/:id/teams/create" element={<CreateTeamPage />} />
           <Route path="/organization/:id/maintenance" element={<MaintenancePage />} />
+          <Route path="/organization/:id/campuses" element={<CampusesPage />} />
           <Route path="/organization/:id/rooms" element={<ChurchRooms />} />
           <Route path="/organization/:id/inventory" element={<ChurchInventory />} />
           <Route path="/organization/:id/finances" element={<ChurchFinances />} />
@@ -683,6 +686,16 @@ const App = () => {
               </PrivateRoute>
             } 
           />
+          <Route
+            path="/organization/:id/my-sunday"
+            element={
+              <PrivateRoute>
+                <ErrorBoundary>
+                  <MySunday />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           
           {/* Public Form Viewer Route */}
           <Route 
@@ -711,6 +724,7 @@ const App = () => {
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
           <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
           <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
           <Route path="/church/:id/form/:formId" element={
             <ErrorBoundary>

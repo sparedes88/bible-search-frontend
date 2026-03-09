@@ -6,7 +6,7 @@ import { db } from '../../firebase';
 import commonStyles from '../../pages/commonStyles';
 import ChurchHeader from '../../components/ChurchHeader';
 import Skeleton from 'react-loading-skeleton';
-import { FaUserPlus, FaCheckCircle, FaTimes, FaEdit, FaUserMinus, FaSearch, FaFilter } from 'react-icons/fa';
+import { FaUserPlus, FaCheckCircle, FaTimes, FaEdit, FaUserMinus, FaSearch, FaFilter, FaPlus } from 'react-icons/fa';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Select from 'react-select';
@@ -34,6 +34,11 @@ const TeamDetailPage = () => {
   const [showMissingRequirements, setShowMissingRequirements] = useState(false);
   const [ageFilter, setAgeFilter] = useState({ min: 0, max: 100 });
   const [genderFilter, setGenderFilter] = useState(null);
+  const [isAddingRole, setIsAddingRole] = useState(false);
+  const [newRole, setNewRole] = useState({ name: '', description: '' });
+  const [editingRoleId, setEditingRoleId] = useState(null);
+  const [selectedRoleForMember, setSelectedRoleForMember] = useState(null);
+  const [changingRoleForMember, setChangingRoleForMember] = useState(null);
   const itemsPerPage = 6;
 
   useEffect(() => {
@@ -121,7 +126,7 @@ const TeamDetailPage = () => {
     }
   };
 
-  const addMemberToTeam = async (userId) => {
+  const addMemberToTeam = async (userId, roleId = null) => {
     try {
       const userDoc = await getDoc(doc(db, 'users', userId));
       if (!userDoc.exists()) return;
@@ -135,11 +140,13 @@ const TeamDetailPage = () => {
           email: userData.email,
           name: userData.name,
           status: 'pending',
+          roleId: roleId,
           addedAt: Timestamp.now()
         }]
       });
 
       toast.success('Member invited to team');
+      setSelectedRoleForMember(null);
       fetchTeamData();
     } catch (error) {
       console.error('Error adding member:', error);
@@ -239,6 +246,90 @@ const TeamDetailPage = () => {
     }
   };
 
+  const addRole = async () => {
+    if (!newRole.name.trim()) {
+      toast.error('Role name is required');
+      return;
+    }
+
+    try {
+      const roleId = Date.now().toString();
+      const teamRef = doc(db, `churches/${id}/teams/${teamId}`);
+      await updateDoc(teamRef, {
+        roles: [...(team.roles || []), {
+          id: roleId,
+          name: newRole.name,
+          description: newRole.description,
+          createdAt: Timestamp.now()
+        }]
+      });
+      setNewRole({ name: '', description: '' });
+      setIsAddingRole(false);
+      toast.success('Role added successfully');
+      fetchTeamData();
+    } catch (error) {
+      console.error('Error adding role:', error);
+      toast.error('Failed to add role');
+    }
+  };
+
+  const updateRole = async (roleId, updatedRole) => {
+    try {
+      const teamRef = doc(db, `churches/${id}/teams/${teamId}`);
+      const updatedRoles = team.roles.map(role => 
+        role.id === roleId ? { ...role, ...updatedRole } : role
+      );
+      await updateDoc(teamRef, { roles: updatedRoles });
+      toast.success('Role updated successfully');
+      setEditingRoleId(null);
+      fetchTeamData();
+    } catch (error) {
+      console.error('Error updating role:', error);
+      toast.error('Failed to update role');
+    }
+  };
+
+  const deleteRole = async (roleId) => {
+    if (!window.confirm('Are you sure you want to delete this role? Members with this role will have it removed.')) {
+      return;
+    }
+
+    try {
+      const teamRef = doc(db, `churches/${id}/teams/${teamId}`);
+      const updatedRoles = team.roles.filter(role => role.id !== roleId);
+      const updatedMembers = team.members.map(member => ({
+        ...member,
+        roleId: member.roleId === roleId ? null : member.roleId
+      }));
+      
+      await updateDoc(teamRef, { 
+        roles: updatedRoles,
+        members: updatedMembers
+      });
+      toast.success('Role deleted successfully');
+      fetchTeamData();
+    } catch (error) {
+      console.error('Error deleting role:', error);
+      toast.error('Failed to delete role');
+    }
+  };
+
+  const updateMemberRole = async (userId, roleId) => {
+    try {
+      const teamRef = doc(db, `churches/${id}/teams/${teamId}`);
+      const updatedMembers = team.members.map(member => 
+        member.userId === userId ? { ...member, roleId } : member
+      );
+      await updateDoc(teamRef, { members: updatedMembers });
+      toast.success('Member role updated successfully');
+      setChangingRoleForMember(null);
+      fetchTeamData();
+    } catch (error) {
+      console.error('Error updating member role:', error);
+      toast.error('Failed to update member role');
+    }
+  };
+
   const getFilteredMembers = () => {
     return potentialMembers.filter(({ user, matches, matchScore }) => {
       const matchesSearch = user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -283,7 +374,7 @@ const TeamDetailPage = () => {
   }
 
   return (
-    <div style={commonStyles.container}>
+    <div style={commonStyles.fullWidthContainer}>
       <Link to={`/organization/${id}/teams`} style={commonStyles.backButtonLink}>
         ← Back to Teams
       </Link>
@@ -487,43 +578,208 @@ const TeamDetailPage = () => {
         </div>
         
         <div style={styles.sectionDivider} />
+        
+        {/* Roles Management Section */}
+        <div style={styles.rolesSection}>
+          <div style={styles.sectionHeader}>
+            <h3>Team Roles</h3>
+            {(user.role === 'admin' || user.role === 'global_admin') && (
+              <button 
+                onClick={() => setIsAddingRole(true)}
+                style={styles.addRoleButton}
+              >
+                <FaPlus style={styles.buttonIcon} />
+                Add Role
+              </button>
+            )}
+          </div>
+
+          {isAddingRole && (
+            <div style={styles.roleForm}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Role Name:</label>
+                <input
+                  type="text"
+                  value={newRole.name}
+                  onChange={(e) => setNewRole(prev => ({ ...prev, name: e.target.value }))}
+                  style={styles.input}
+                  placeholder="e.g., Team Leader, Designer, Developer"
+                />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Role Description:</label>
+                <textarea
+                  value={newRole.description}
+                  onChange={(e) => setNewRole(prev => ({ ...prev, description: e.target.value }))}
+                  style={{ ...styles.input, minHeight: '80px' }}
+                  placeholder="Describe the responsibilities of this role..."
+                />
+              </div>
+              <div style={styles.formActions}>
+                <button onClick={addRole} style={styles.saveButton}>
+                  <FaCheckCircle style={styles.buttonIcon} />
+                  Save Role
+                </button>
+                <button 
+                  onClick={() => {
+                    setIsAddingRole(false);
+                    setNewRole({ name: '', description: '' });
+                  }}
+                  style={styles.cancelButton}
+                >
+                  <FaTimes style={styles.buttonIcon} />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {team?.roles?.length > 0 ? (
+            <div style={styles.rolesGrid}>
+              {team.roles.map(role => (
+                <div key={role.id} style={styles.roleCard}>
+                  {editingRoleId === role.id ? (
+                    <div>
+                      <input
+                        type="text"
+                        defaultValue={role.name}
+                        style={styles.input}
+                        onBlur={(e) => updateRole(role.id, { name: e.target.value })}
+                      />
+                      <textarea
+                        defaultValue={role.description}
+                        style={{ ...styles.input, minHeight: '60px', marginTop: '0.5rem' }}
+                        onBlur={(e) => updateRole(role.id, { description: e.target.value })}
+                      />
+                      <button 
+                        onClick={() => setEditingRoleId(null)}
+                        style={styles.doneEditButton}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={styles.roleHeader}>
+                        <h4 style={styles.roleName}>{role.name}</h4>
+                        {(user.role === 'admin' || user.role === 'global_admin') && (
+                          <div style={styles.roleActions}>
+                            <button 
+                              onClick={() => setEditingRoleId(role.id)}
+                              style={styles.iconButton}
+                              title="Edit role"
+                            >
+                              <FaEdit />
+                            </button>
+                            <button 
+                              onClick={() => deleteRole(role.id)}
+                              style={{...styles.iconButton, color: '#EF4444'}}
+                              title="Delete role"
+                            >
+                              <FaTimes />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <p style={styles.roleDescription}>{role.description || 'No description provided'}</p>
+                      <div style={styles.roleMemberCount}>
+                        {team.members?.filter(m => m.roleId === role.id).length || 0} member(s)
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={styles.emptyState}>
+              No roles have been defined for this team yet.
+            </div>
+          )}
+        </div>
+        
+        <div style={styles.sectionDivider} />
         <div style={styles.members}>
           <h3>Current Members</h3>
           {team?.members?.length > 0 ? (
             <div style={styles.membersGrid}>
-              {team.members.map(member => (
-                <div key={member.userId} style={styles.memberCard}>
-                  <div style={styles.memberHeader}>
-                    <img 
-                      src={'https://ui-avatars.com/api/?name=' + encodeURIComponent(member.name)}
-                      alt={member.name}
-                      style={styles.memberAvatar}
-                    />
-                    <div style={styles.memberInfo}>
-                      <h4>{member.name}</h4>
-                      <span style={styles.memberEmail}>{member.email}</span>
-                      <span style={{
-                        ...styles.memberStatus,
-                        backgroundColor: member.status === 'approved' ? '#10B981' : '#F59E0B',
-                        color: 'white',
-                        padding: '2px 8px',
-                        borderRadius: '9999px',
-                        fontSize: '0.75rem',
-                      }}>
-                        {member.status}
-                      </span>
+              {team.members.map(member => {
+                const memberRole = team.roles?.find(r => r.id === member.roleId);
+                return (
+                  <div key={member.userId} style={styles.memberCard}>
+                    <div style={styles.memberHeader}>
+                      <img 
+                        src={'https://ui-avatars.com/api/?name=' + encodeURIComponent(member.name)}
+                        alt={member.name}
+                        style={styles.memberAvatar}
+                      />
+                      <div style={styles.memberInfo}>
+                        <h4>{member.name}</h4>
+                        <span style={styles.memberEmail}>{member.email}</span>
+                        <span style={{
+                          ...styles.memberStatus,
+                          backgroundColor: member.status === 'approved' ? '#10B981' : '#F59E0B',
+                          color: 'white',
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '0.75rem',
+                        }}>
+                          {member.status}
+                        </span>
+                      </div>
                     </div>
+                    
+                    {/* Member Role Section */}
+                    <div style={styles.memberRoleSection}>
+                      <div style={styles.roleLabel}>Role:</div>
+                      {changingRoleForMember === member.userId ? (
+                        <div style={styles.roleChangeContainer}>
+                          <Select
+                            isClearable
+                            placeholder="Select role..."
+                            value={memberRole ? { value: memberRole.id, label: memberRole.name } : null}
+                            onChange={(selected) => updateMemberRole(member.userId, selected?.value || null)}
+                            options={team.roles?.map(r => ({ value: r.id, label: r.name })) || []}
+                            styles={selectStyles}
+                          />
+                          <button 
+                            onClick={() => setChangingRoleForMember(null)}
+                            style={styles.cancelRoleChangeButton}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={styles.currentRole}>
+                          <span style={memberRole ? styles.roleTag : styles.noRoleTag}>
+                            {memberRole ? memberRole.name : 'No role assigned'}
+                          </span>
+                          {(user.role === 'admin' || user.role === 'global_admin') && (
+                            <button 
+                              onClick={() => setChangingRoleForMember(member.userId)}
+                              style={styles.changeRoleButton}
+                              title="Change role"
+                            >
+                              <FaEdit size={12} />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {memberRole && (
+                        <p style={styles.memberRoleDescription}>{memberRole.description}</p>
+                      )}
+                    </div>
+                    
+                    {(user.role === 'admin' || user.role === 'global_admin') && (
+                      <button
+                        onClick={() => removeMemberFromTeam(member.userId)}
+                        style={styles.removeButton}
+                      >
+                        <FaUserMinus /> Remove Member
+                      </button>
+                    )}
                   </div>
-                  {(user.role === 'admin' || user.role === 'global_admin') && (
-                    <button
-                      onClick={() => removeMemberFromTeam(member.userId)}
-                      style={styles.removeButton}
-                    >
-                      <FaUserMinus /> Remove Member
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div style={styles.emptyState}>
@@ -663,12 +919,41 @@ const TeamDetailPage = () => {
                 </div>
 
                 {!team.members?.some(m => m.userId === user.id) && (
-                  <button
-                    onClick={() => addMemberToTeam(user.id)}
-                    style={styles.addButton}
-                  >
-                    <FaUserPlus /> Add to Team
-                  </button>
+                  <div>
+                    {selectedRoleForMember === user.id ? (
+                      <div style={styles.roleSelectionContainer}>
+                        <Select
+                          isClearable
+                          placeholder="Select role (optional)"
+                          onChange={(selected) => {
+                            addMemberToTeam(user.id, selected?.value || null);
+                          }}
+                          options={team.roles?.map(r => ({ value: r.id, label: r.name })) || []}
+                          styles={selectStyles}
+                          menuPosition="fixed"
+                        />
+                        <button
+                          onClick={() => setSelectedRoleForMember(null)}
+                          style={styles.cancelButton}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (team.roles && team.roles.length > 0) {
+                            setSelectedRoleForMember(user.id);
+                          } else {
+                            addMemberToTeam(user.id, null);
+                          }
+                        }}
+                        style={styles.addButton}
+                      >
+                        <FaUserPlus /> Add to Team
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -1025,6 +1310,165 @@ const styles = {
   pageInfo: {
     fontSize: '0.875rem',
     color: '#4B5563',
+  },
+  rolesSection: {
+    marginTop: '2rem',
+  },
+  rolesGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    gap: '1rem',
+    marginTop: '1rem',
+  },
+  roleCard: {
+    padding: '1rem',
+    backgroundColor: '#F9FAFB',
+    borderRadius: '0.5rem',
+    border: '1px solid #E5E7EB',
+  },
+  roleHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '0.5rem',
+  },
+  roleName: {
+    fontSize: '1rem',
+    fontWeight: '600',
+    color: '#111827',
+    margin: 0,
+  },
+  roleDescription: {
+    fontSize: '0.875rem',
+    color: '#6B7280',
+    marginTop: '0.5rem',
+    lineHeight: '1.4',
+  },
+  roleMemberCount: {
+    fontSize: '0.75rem',
+    color: '#9CA3AF',
+    marginTop: '0.5rem',
+    fontStyle: 'italic',
+  },
+  roleActions: {
+    display: 'flex',
+    gap: '0.5rem',
+  },
+  iconButton: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#6B7280',
+    padding: '0.25rem',
+    display: 'flex',
+    alignItems: 'center',
+    fontSize: '1rem',
+  },
+  addRoleButton: {
+    padding: '0.5rem 1rem',
+    backgroundColor: '#4F46E5',
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.375rem',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    fontWeight: '500',
+  },
+  roleForm: {
+    backgroundColor: '#F9FAFB',
+    padding: '1rem',
+    borderRadius: '0.5rem',
+    marginTop: '1rem',
+    border: '1px solid #E5E7EB',
+  },
+  formActions: {
+    display: 'flex',
+    gap: '0.5rem',
+    marginTop: '1rem',
+  },
+  doneEditButton: {
+    marginTop: '0.5rem',
+    padding: '0.5rem 1rem',
+    backgroundColor: '#10B981',
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.375rem',
+    cursor: 'pointer',
+    fontSize: '0.875rem',
+  },
+  memberRoleSection: {
+    marginTop: '1rem',
+    padding: '0.75rem',
+    backgroundColor: '#F9FAFB',
+    borderRadius: '0.375rem',
+    border: '1px solid #E5E7EB',
+  },
+  roleLabel: {
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: '0.5rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  currentRole: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  roleTag: {
+    backgroundColor: '#4F46E5',
+    color: 'white',
+    padding: '0.25rem 0.75rem',
+    borderRadius: '9999px',
+    fontSize: '0.875rem',
+    fontWeight: '500',
+  },
+  noRoleTag: {
+    backgroundColor: '#E5E7EB',
+    color: '#6B7280',
+    padding: '0.25rem 0.75rem',
+    borderRadius: '9999px',
+    fontSize: '0.875rem',
+    fontStyle: 'italic',
+  },
+  changeRoleButton: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#4F46E5',
+    padding: '0.25rem',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  memberRoleDescription: {
+    fontSize: '0.75rem',
+    color: '#6B7280',
+    marginTop: '0.5rem',
+    lineHeight: '1.3',
+  },
+  roleChangeContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+  },
+  cancelRoleChangeButton: {
+    padding: '0.25rem 0.5rem',
+    backgroundColor: '#E5E7EB',
+    color: '#374151',
+    border: 'none',
+    borderRadius: '0.375rem',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+  },
+  roleSelectionContainer: {
+    marginTop: '1rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
   },
 };
 

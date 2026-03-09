@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db } from '../firebase';
 import {
   collection,
@@ -15,9 +15,99 @@ import {
 } from 'firebase/firestore';
 import ChurchHeader from './ChurchHeader';
 import { toast } from 'react-toastify';
-import { FaArrowUp, FaArrowDown, FaEdit, FaTrash, FaPlus, FaPen, FaStickyNote, FaPrint } from 'react-icons/fa';
+import { FaArrowUp, FaArrowDown, FaEdit, FaTrash, FaPlus, FaPen, FaStickyNote, FaPrint, FaChevronDown, FaTimes } from 'react-icons/fa';
 import EventCoordinationPDF from './EventCoordinationPDF';
 import './EventCoordination.css';
+
+// Multi-Select Component
+const MultiSelect = ({ label, items, selectedIds, selectedNames, onToggle, searchable = true }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredItems = searchable 
+    ? items.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    : items;
+
+  const handleItemToggle = (id, name) => {
+    onToggle(id, name);
+  };
+
+  const handleRemoveChip = (id, name) => {
+    if (selectedIds.includes(id)) {
+      handleItemToggle(id, name);
+    }
+  };
+
+  return (
+    <div className="multi-select-wrapper">
+      {label && <label className="multi-select-label">{label}</label>}
+      <div
+        className={`multi-select-input ${isOpen ? 'active' : ''}`}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="multi-select-input-field">
+          {selectedIds.length > 0 ? (
+            selectedNames.map((name, index) => (
+              <span key={index} className="multi-select-chip">
+                {name}
+                <span
+                  className="multi-select-chip-remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveChip(selectedIds[index], name);
+                  }}
+                >
+                  <FaTimes size={10} />
+                </span>
+              </span>
+            ))
+          ) : (
+            <span className="multi-select-placeholder">Select...</span>
+          )}
+        </div>
+        <div className="multi-select-arrow">
+          <FaChevronDown />
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="multi-select-dropdown">
+          {searchable && (
+            <div className="multi-select-dropdown-search">
+              <input
+                type="text"
+                placeholder="Search..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+          <div className="multi-select-options">
+            {filteredItems.length === 0 ? (
+              <div className="multi-select-empty">
+                {searchTerm ? 'No matches found' : 'No items available'}
+              </div>
+            ) : (
+              filteredItems.map((item) => (
+                <div key={item.id} className="multi-select-option">
+                  <input
+                    type="checkbox"
+                    id={`${item.id}-checkbox`}
+                    checked={selectedIds.includes(item.id)}
+                    onChange={() => handleItemToggle(item.id, item.name)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <label htmlFor={`${item.id}-checkbox`}>{item.name}</label>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // Add this helper function at the top of your component
 const convertDurationToMinutes = (duration, unit) => {
@@ -35,8 +125,17 @@ const EventCoordination = () => {
     description: '',
     minutes: '',
     responsible: '',
-    tags: [] // Add tags to task
+    songId: '',
+    songTitle: '',
+    tags: [], // Add tags to task
+    teamIds: [],
+    teamNames: [],
+    teamMemberIds: [],
+    teamMemberNames: []
   });
+  const [songs, setSongs] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [selectedTeamMembers, setSelectedTeamMembers] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -62,6 +161,11 @@ const EventCoordination = () => {
 
   // Add this state for the PDF modal
   const [showPdfModal, setShowPdfModal] = useState(false);
+
+  // Campus states
+  const [campuses, setCampuses] = useState([]);
+  const [selectedCampus, setSelectedCampus] = useState('');
+  const [editingCampus, setEditingCampus] = useState(false);
 
   // Add this function to handle tags
   const handleTagChange = (tags, type, id = null) => {
@@ -163,6 +267,53 @@ const EventCoordination = () => {
   }, [eventId]);
 
   useEffect(() => {
+    const fetchSongs = async () => {
+      try {
+        const songsRef = collection(db, `churches/${id}/songs`);
+        const songsSnap = await getDocs(songsRef);
+        const songsData = songsSnap.docs
+          .map((songDoc) => ({ id: songDoc.id, ...songDoc.data() }))
+          .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        setSongs(songsData);
+      } catch (error) {
+        console.error('Error fetching songs:', error);
+      }
+    };
+
+    const fetchTeams = async () => {
+      try {
+        const teamsRef = collection(db, `churches/${id}/teams`);
+        const teamsSnap = await getDocs(teamsRef);
+        const teamsData = teamsSnap.docs
+          .map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setTeams(teamsData);
+      } catch (error) {
+        console.error('Error fetching teams:', error);
+      }
+    };
+
+    const fetchCampuses = async () => {
+      try {
+        const campusesRef = collection(db, `churches/${id}/campuses`);
+        const campusesSnap = await getDocs(campusesRef);
+        const campusesData = campusesSnap.docs
+          .map((campusDoc) => ({ id: campusDoc.id, ...campusDoc.data() }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setCampuses(campusesData);
+      } catch (error) {
+        console.error('Error fetching campuses:', error);
+      }
+    };
+
+    if (id) {
+      fetchSongs();
+      fetchTeams();
+      fetchCampuses();
+    }
+  }, [id]);
+
+  useEffect(() => {
     const fetchGeneralNotes = async () => {
       try {
         const notesRef = collection(db, 'churches', id, 'events', eventId, 'notes');
@@ -185,6 +336,10 @@ const EventCoordination = () => {
     if (event) {
       console.log('Event data:', event);
       console.log('Start hour:', event.startHour);
+      // Set selected campus if event has one
+      if (event.campusId) {
+        setSelectedCampus(event.campusId);
+      }
     }
   }, [event]);
 
@@ -243,6 +398,74 @@ const EventCoordination = () => {
     return convertToAMPM(newHours, newMinutes);
   };
 
+  const handleTeamToggle = (teamId, teamName) => {
+    const isCurrentlySelected = newTask.teamIds.includes(teamId);
+    let updatedTeamIds, updatedTeamNames;
+    
+    if (isCurrentlySelected) {
+      // Remove team
+      updatedTeamIds = newTask.teamIds.filter(id => id !== teamId);
+      updatedTeamNames = newTask.teamNames.filter(name => name !== teamName);
+    } else {
+      // Add team
+      updatedTeamIds = [...newTask.teamIds, teamId];
+      updatedTeamNames = [...newTask.teamNames, teamName];
+    }
+    
+    // Collect all members from all selected teams
+    const allMembers = [];
+    const memberMap = new Map(); // To avoid duplicates
+    
+    updatedTeamIds.forEach(id => {
+      const team = teams.find(t => t.id === id);
+      if (team && team.members) {
+        team.members.forEach(member => {
+          if (!memberMap.has(member.userId)) {
+            memberMap.set(member.userId, member);
+            allMembers.push(member);
+          }
+        });
+      }
+    });
+    
+    // Remove any selected members that are no longer in the available pool
+    const availableMemberIds = allMembers.map(m => m.userId);
+    const filteredMemberIds = newTask.teamMemberIds.filter(id => availableMemberIds.includes(id));
+    const filteredMemberNames = newTask.teamMemberNames.filter((_, index) => 
+      availableMemberIds.includes(newTask.teamMemberIds[index])
+    );
+    
+    setNewTask({
+      ...newTask,
+      teamIds: updatedTeamIds,
+      teamNames: updatedTeamNames,
+      teamMemberIds: filteredMemberIds,
+      teamMemberNames: filteredMemberNames
+    });
+    setSelectedTeamMembers(allMembers);
+  };
+
+  const handleTeamMemberToggle = (memberId, memberName) => {
+    const isCurrentlySelected = newTask.teamMemberIds.includes(memberId);
+    let updatedMemberIds, updatedMemberNames;
+    
+    if (isCurrentlySelected) {
+      // Remove member
+      updatedMemberIds = newTask.teamMemberIds.filter(id => id !== memberId);
+      updatedMemberNames = newTask.teamMemberNames.filter(name => name !== memberName);
+    } else {
+      // Add member
+      updatedMemberIds = [...newTask.teamMemberIds, memberId];
+      updatedMemberNames = [...newTask.teamMemberNames, memberName];
+    }
+    
+    setNewTask({
+      ...newTask,
+      teamMemberIds: updatedMemberIds,
+      teamMemberNames: updatedMemberNames
+    });
+  };
+
   const handleAddTask = async (e) => {
     e.preventDefault();
     
@@ -258,7 +481,13 @@ const EventCoordination = () => {
         description: newTask.description,
         duration: durationInMinutes,
         responsible: newTask.responsible,
+        songId: newTask.songId || null,
+        songTitle: newTask.songTitle || '',
         tags: newTask.tags,
+        teamIds: newTask.teamIds || [],
+        teamNames: newTask.teamNames || [],
+        teamMemberIds: newTask.teamMemberIds || [],
+        teamMemberNames: newTask.teamMemberNames || [],
         startTime: tasks.length === 0 ? event.startHour : calculateTaskStartTime(tasks, event.startHour),
         eventId,
         createdAt: new Date().toISOString(),
@@ -275,8 +504,15 @@ const EventCoordination = () => {
         description: '',
         minutes: '',
         responsible: '',
-        tags: []
+        songId: '',
+        songTitle: '',
+        tags: [],
+        teamIds: [],
+        teamNames: [],
+        teamMemberIds: [],
+        teamMemberNames: []
       });
+      setSelectedTeamMembers([]);
       setShowAddForm(false);
 
       toast.success('Task added successfully');
@@ -335,8 +571,36 @@ const EventCoordination = () => {
       description: task.description,
       minutes: minutes,
       responsible: task.responsible,
-      tags: task.tags || []
+      songId: task.songId || '',
+      songTitle: task.songTitle || '',
+      tags: task.tags || [],
+      teamIds: task.teamIds || [],
+      teamNames: task.teamNames || [],
+      teamMemberIds: task.teamMemberIds || [],
+      teamMemberNames: task.teamMemberNames || []
     });
+    
+    // If task has teams, populate all members from those teams
+    if (task.teamIds && task.teamIds.length > 0) {
+      const allMembers = [];
+      const memberMap = new Map();
+      
+      task.teamIds.forEach(teamId => {
+        const selectedTeam = teams.find(team => team.id === teamId);
+        if (selectedTeam && selectedTeam.members) {
+          selectedTeam.members.forEach(member => {
+            if (!memberMap.has(member.userId)) {
+              memberMap.set(member.userId, member);
+              allMembers.push(member);
+            }
+          });
+        }
+      });
+      
+      setSelectedTeamMembers(allMembers);
+    } else {
+      setSelectedTeamMembers([]);
+    }
   };
 
   const handleUpdateTask = async (e) => {
@@ -354,7 +618,13 @@ const EventCoordination = () => {
         description: newTask.description,
         duration: durationInMinutes,
         responsible: newTask.responsible,
+        songId: newTask.songId || null,
+        songTitle: newTask.songTitle || '',
         tags: newTask.tags,
+        teamIds: newTask.teamIds || [],
+        teamNames: newTask.teamNames || [],
+        teamMemberIds: newTask.teamMemberIds || [],
+        teamMemberNames: newTask.teamMemberNames || [],
         originalDuration: {
           minutes: newTask.minutes || '0'
         }
@@ -395,8 +665,15 @@ const EventCoordination = () => {
         description: '',
         minutes: '',
         responsible: '',
-        tags: []
+        songId: '',
+        songTitle: '',
+        tags: [],
+        teamIds: [],
+        teamNames: [],
+        teamMemberIds: [],
+        teamMemberNames: []
       });
+      setSelectedTeamMembers([]);
 
       toast.success('Task updated successfully');
     } catch (error) {
@@ -587,6 +864,37 @@ const EventCoordination = () => {
     }
   };
 
+  const handleSaveCampus = async () => {
+    try {
+      // Try to update in eventInstances first
+      const eventInstanceDoc = await getDoc(doc(db, 'eventInstances', eventId));
+      
+      if (eventInstanceDoc.exists()) {
+        await updateDoc(doc(db, 'eventInstances', eventId), {
+          campusId: selectedCampus,
+          campusName: campuses.find(c => c.id === selectedCampus)?.name || ''
+        });
+      } else {
+        // If not in eventInstances, update in events collection
+        await updateDoc(doc(db, 'events', eventId), {
+          campusId: selectedCampus,
+          campusName: campuses.find(c => c.id === selectedCampus)?.name || ''
+        });
+      }
+
+      setEvent(prev => ({
+        ...prev,
+        campusId: selectedCampus,
+        campusName: campuses.find(c => c.id === selectedCampus)?.name || ''
+      }));
+      setEditingCampus(false);
+      toast.success('Campus updated successfully');
+    } catch (error) {
+      console.error('Error updating campus:', error);
+      toast.error('Failed to update campus');
+    }
+  };
+
   return (
     <div className="coordination-container">
       <button onClick={() => navigate(`/organization/${id}/mi-organizacion`)}>
@@ -614,6 +922,108 @@ const EventCoordination = () => {
               <h2>Event Coordination</h2>
               <h3>{event?.title}</h3>
               <p>Event Start Time: {event?.startHour}</p>
+              
+              {/* Campus Selection */}
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {!editingCampus ? (
+                  <>
+                    <span style={{ fontSize: '14px', color: '#6B7280' }}>
+                      <strong>Campus:</strong> {event?.campusName || 'Not set'}
+                    </span>
+                    <button
+                      onClick={() => setEditingCampus(true)}
+                      style={{
+                        padding: '4px 12px',
+                        fontSize: '13px',
+                        backgroundColor: '#EEF2FF',
+                        color: '#4F46E5',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontWeight: '500'
+                      }}
+                    >
+                      <FaPen style={{ marginRight: '4px' }} />
+                      {event?.campusId ? 'Change' : 'Set Campus'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <select
+                      value={selectedCampus}
+                      onChange={(e) => setSelectedCampus(e.target.value)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #D1D5DB',
+                        fontSize: '14px',
+                        minWidth: '200px'
+                      }}
+                    >
+                      <option value="">Select Campus...</option>
+                      {campuses.map(campus => (
+                        <option key={campus.id} value={campus.id}>
+                          {campus.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleSaveCampus}
+                      disabled={!selectedCampus}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '13px',
+                        backgroundColor: '#10B981',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: selectedCampus ? 'pointer' : 'not-allowed',
+                        fontWeight: '500',
+                        opacity: selectedCampus ? 1 : 0.5
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingCampus(false);
+                        setSelectedCampus(event?.campusId || '');
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '13px',
+                        backgroundColor: '#6B7280',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    {campuses.length === 0 && (
+                      <Link
+                        to={`/organization/${id}/campuses`}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '13px',
+                          backgroundColor: '#4F46E5',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          textDecoration: 'none',
+                          fontWeight: '500',
+                          display: 'inline-block'
+                        }}
+                      >
+                        <FaPlus style={{ marginRight: '4px' }} />
+                        Add Campus
+                      </Link>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
             <button 
               onClick={() => setShowPdfModal(true)}
@@ -672,6 +1082,44 @@ const EventCoordination = () => {
                           onChange={(e) => setNewTask({...newTask, responsible: e.target.value})}
                           required
                         />
+                      </div>
+
+                      <MultiSelect
+                        label="Teams (optional)"
+                        items={teams}
+                        selectedIds={newTask.teamIds}
+                        selectedNames={newTask.teamNames}
+                        onToggle={handleTeamToggle}
+                      />
+
+                      {newTask.teamIds.length > 0 && selectedTeamMembers.length > 0 && (
+                        <MultiSelect
+                          label="Team Members (optional)"
+                          items={selectedTeamMembers.map(m => ({ id: m.userId, name: m.name }))}
+                          selectedIds={newTask.teamMemberIds}
+                          selectedNames={newTask.teamMemberNames}
+                          onToggle={handleTeamMemberToggle}
+                        />
+                      )}
+
+                      <div>
+                        <label>Linked Song (optional):</label>
+                        <select
+                          value={newTask.songId}
+                          onChange={(e) => {
+                            const selectedSong = songs.find(song => song.id === e.target.value);
+                            setNewTask({
+                              ...newTask,
+                              songId: e.target.value,
+                              songTitle: selectedSong?.title || ''
+                            });
+                          }}
+                        >
+                          <option value="">No song linked</option>
+                          {songs.map((song) => (
+                            <option key={song.id} value={song.id}>{song.title}</option>
+                          ))}
+                        </select>
                       </div>
 
                       <div>
@@ -742,6 +1190,44 @@ const EventCoordination = () => {
                             />
                           </div>
 
+                          <MultiSelect
+                            label="Teams (optional)"
+                            items={teams}
+                            selectedIds={newTask.teamIds}
+                            selectedNames={newTask.teamNames}
+                            onToggle={handleTeamToggle}
+                          />
+
+                          {newTask.teamIds.length > 0 && selectedTeamMembers.length > 0 && (
+                            <MultiSelect
+                              label="Team Members (optional)"
+                              items={selectedTeamMembers.map(m => ({ id: m.userId, name: m.name }))}
+                              selectedIds={newTask.teamMemberIds}
+                              selectedNames={newTask.teamMemberNames}
+                              onToggle={handleTeamMemberToggle}
+                            />
+                          )}
+
+                          <div>
+                            <label>Linked Song (optional):</label>
+                            <select
+                              value={newTask.songId}
+                              onChange={(e) => {
+                                const selectedSong = songs.find(song => song.id === e.target.value);
+                                setNewTask({
+                                  ...newTask,
+                                  songId: e.target.value,
+                                  songTitle: selectedSong?.title || ''
+                                });
+                              }}
+                            >
+                              <option value="">No song linked</option>
+                              {songs.map((song) => (
+                                <option key={song.id} value={song.id}>{song.title}</option>
+                              ))}
+                            </select>
+                          </div>
+
                           <div>
                             <label>Tags:</label>
                             <input
@@ -763,8 +1249,15 @@ const EventCoordination = () => {
                                   description: '',
                                   minutes: '',
                                   responsible: '',
-                                  tags: []
+                                  songId: '',
+                                  songTitle: '',
+                                  tags: [],
+                                  teamIds: [],
+                                  teamNames: [],
+                                  teamMemberIds: [],
+                                  teamMemberNames: []
                                 });
+                                setSelectedTeamMembers([]);
                               }}
                               className="cancel-button"
                             >
@@ -784,6 +1277,17 @@ const EventCoordination = () => {
                             <div className="task-details">
                               <div className="task-description">{task.description}</div>
                               <div className="task-responsible">👤 {task.responsible}</div>
+                              {task.songTitle && (
+                                <div className="task-responsible">
+                                  🎵 <Link to={`/organization/${id}/song-manager`}>{task.songTitle}</Link>
+                                </div>
+                              )}
+                              {task.teamNames?.length > 0 && (
+                                <div className="task-responsible">
+                                  👥 {task.teamNames.join(', ')}
+                                  {task.teamMemberNames?.length > 0 && ` - ${task.teamMemberNames.join(', ')}`}
+                                </div>
+                              )}
                               {task.tags?.length > 0 && (
                                 <div className="task-tags">
                                   {task.tags.map((tag, i) => (
@@ -1001,6 +1505,44 @@ const EventCoordination = () => {
                           onChange={(e) => setNewTask({...newTask, responsible: e.target.value})}
                           required
                         />
+                      </div>
+
+                      <MultiSelect
+                        label="Teams (optional)"
+                        items={teams}
+                        selectedIds={newTask.teamIds}
+                        selectedNames={newTask.teamNames}
+                        onToggle={handleTeamToggle}
+                      />
+
+                      {newTask.teamIds.length > 0 && selectedTeamMembers.length > 0 && (
+                        <MultiSelect
+                          label="Team Members (optional)"
+                          items={selectedTeamMembers.map(m => ({ id: m.userId, name: m.name }))}
+                          selectedIds={newTask.teamMemberIds}
+                          selectedNames={newTask.teamMemberNames}
+                          onToggle={handleTeamMemberToggle}
+                        />
+                      )}
+
+                      <div>
+                        <label>Linked Song (optional):</label>
+                        <select
+                          value={newTask.songId}
+                          onChange={(e) => {
+                            const selectedSong = songs.find(song => song.id === e.target.value);
+                            setNewTask({
+                              ...newTask,
+                              songId: e.target.value,
+                              songTitle: selectedSong?.title || ''
+                            });
+                          }}
+                        >
+                          <option value="">No song linked</option>
+                          {songs.map((song) => (
+                            <option key={song.id} value={song.id}>{song.title}</option>
+                          ))}
+                        </select>
                       </div>
 
                       <div>

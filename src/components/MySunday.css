@@ -1,0 +1,445 @@
+.my-sunday-page {
+  margin-top: -20px;
+}
+
+.my-sunday-header h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.my-sunday-header p {
+  margin: 8px 0 20px;
+  color: #6b7280;
+}
+
+.my-sunday-service-form {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1.5fr auto;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.my-sunday-service-form input,
+.my-sunday-service-form button,
+.my-sunday-sections-panel textarea,
+.my-sunday-sections-panel input[type="text"],
+.my-sunday-sections-panel input[type="file"] {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+}
+
+.my-sunday-service-form button,
+.my-sunday-section-actions button,
+.my-sunday-panel-head button,
+.my-sunday-attachment-item button {
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+.my-sunday-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+}
+
+.my-sunday-events-hint {
+  margin-top: -10px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.my-sunday-events-hint a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.my-sunday-services-list,
+.my-sunday-sections-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.my-sunday-services-list h2,
+.my-sunday-sections-panel h2 {
+  margin-top: 0;
+}
+
+.my-sunday-service-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  margin-bottom: 10px;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.my-sunday-service-item.active {
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.my-sunday-service-name {
+  font-weight: 600;
+}
+
+.my-sunday-service-meta,
+.my-sunday-muted {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.my-sunday-delete-service {
+  font-size: 12px;
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.my-sunday-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.my-sunday-panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.my-sunday-panel-head-actions .danger {
+  background: #dc2626;
+}
+
+.my-sunday-open-schedule-link {
+  background: #059669;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.my-sunday-section-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+.my-sunday-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+}
+
+.my-sunday-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.my-sunday-section-title-input {
+  min-width: 220px;
+}
+
+.my-sunday-section-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.my-sunday-section-body {
+  border-top: 1px solid #e5e7eb;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.my-sunday-section-body textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.my-sunday-attachments {
+  display: grid;
+  gap: 10px;
+}
+
+.my-sunday-linked-schedule-box {
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 6px;
+}
+
+.my-sunday-linked-schedule-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.my-sunday-linked-schedule-head a {
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.my-sunday-linked-schedule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.my-sunday-linked-schedule-item {
+  display: grid;
+  grid-template-columns: 95px 1fr;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.my-sunday-linked-time {
+  font-weight: 700;
+  color: #1e40af;
+  align-self: center;
+}
+
+.my-sunday-linked-title {
+  font-weight: 600;
+}
+
+.my-sunday-linked-meta {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.my-sunday-linked-song {
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.my-sunday-songs-box {
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 6px;
+}
+
+.my-sunday-songs-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 10px;
+}
+
+.my-sunday-songs-list {
+  display: grid;
+  gap: 6px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.my-sunday-song-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.my-sunday-song-item.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1e40af;
+  font-weight: 600;
+}
+
+.my-sunday-song-badge {
+  font-size: 11px;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-weight: 600;
+}
+
+.my-sunday-song-detail {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 220px;
+}
+
+.my-sunday-song-detail h4 {
+  margin: 0 0 6px;
+}
+
+.my-sunday-song-meta {
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.my-sunday-song-lyrics {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.my-sunday-song-verse {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f9fafb;
+}
+
+.my-sunday-song-verse-title {
+  font-size: 12px;
+  color: #374151;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.my-sunday-song-verse pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+}
+
+.my-sunday-timer-box {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.my-sunday-timer-card {
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.my-sunday-timer-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.my-sunday-timer-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: 0.5px;
+}
+
+.my-sunday-timer-task-name {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.my-sunday-attachment-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.my-sunday-attachment-item img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.my-sunday-file-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+}
+
+.my-sunday-attachment-item a {
+  flex: 1;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.my-sunday-section-actions .secondary,
+.my-sunday-panel-head .secondary {
+  background: #6b7280;
+}
+
+.my-sunday-section-actions .danger,
+.my-sunday-attachment-item .danger {
+  background: #dc2626;
+}
+
+@media (max-width: 900px) {
+  .my-sunday-service-form {
+    grid-template-columns: 1fr;
+  }
+
+  .my-sunday-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .my-sunday-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .my-sunday-timer-box {
+    grid-template-columns: 1fr;
+  }
+
+  .my-sunday-songs-layout {
+    grid-template-columns: 1fr;
+  }
+}
