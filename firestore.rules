@@ -270,6 +270,11 @@ service cloud.firestore {
           allow read: if true;
           allow write, create, update, delete: if isAuthenticated();
         }
+
+        match /rows/{rowId}/comments/{commentId} {
+          allow read: if true;
+          allow write, create, update, delete: if isAuthenticated();
+        }
       }
     }
 

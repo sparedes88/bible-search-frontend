@@ -148,6 +148,7 @@ const FreshBooksCallback = React.lazy(() => import("./components/FreshBooksCallb
 const SqlServerBridge = React.lazy(() => import("./components/SqlServerBridge"));
 const ExcelRowDetail = React.lazy(() => import("./components/ExcelRowDetail"));
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
+const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 
 const App = () => {
   return (
@@ -690,7 +691,23 @@ const App = () => {
           
           <Route path="/organization/:id/leica" element={<LeicaModule />} />
           <Route
+            path="/organization/:id/project-issue-dashboard"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ProjectIssueDashboard />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/bim"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <BIMModule />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/bim/:projectId/view/:bimView"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <BIMModule />

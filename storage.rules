@@ -131,9 +131,17 @@ service firebase.storage {
       allow read: if true;  // Allow anyone to read task comment files
       allow write: if request.auth != null
         && isChurchMember(churchId)
-        && request.resource.size < 10 * 1024 * 1024  // 10MB max for task files
+        && request.resource.size < 10 * 1024 * 1024;  // 10MB max for task files
       allow delete: if request.auth != null
         && isChurchMember(churchId);
+    }
+
+    // BIM row comment attachments
+    match /churches/{churchId}/bimProjects/{projectId}/rows/{rowId}/comments/{commentId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAuthenticated();
     }
 
     // Time entry attachments - allow authenticated church members to upload files

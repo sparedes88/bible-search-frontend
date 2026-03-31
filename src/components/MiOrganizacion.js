@@ -196,6 +196,12 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/bim`
         },
         {
+          title: "Project Issue Dashboard",
+          description: "Track and review project issues by status and owner",
+          icon: "🧩",
+          path: `/organization/${id}/project-issue-dashboard`
+        },
+        {
           title: "Time Tracker",
           description: "Track time and manage tasks with daily progress",
           icon: "⏱️",
