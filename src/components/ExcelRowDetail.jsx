@@ -6,8 +6,10 @@ import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import './DonorUploader.css';
 
-const ExcelRowDetail = () => {
-  const { id, rowId } = useParams();
+const ExcelRowDetail = ({ churchId: overrideChurchId, rowId: overrideRowId } = {}) => {
+  const params = useParams();
+  const id = overrideChurchId || params.id;
+  const rowId = overrideRowId || params.rowId;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -15,6 +17,7 @@ const ExcelRowDetail = () => {
   const [rowData, setRowData] = useState(null);
   const [metaHeaders, setMetaHeaders] = useState([]);
   const [columnTypes, setColumnTypes] = useState({});
+  const [dropdownOptions, setDropdownOptions] = useState({});
   const [formData, setFormData] = useState({});
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -42,6 +45,8 @@ const ExcelRowDetail = () => {
   const [columnBatchStatus, setColumnBatchStatus] = useState(null);
   const [allRows, setAllRows] = useState([]);
   const [dropdownSearches, setDropdownSearches] = useState({});
+  const [dropdownOptionInputs, setDropdownOptionInputs] = useState({});
+  const [savingDropdownOption, setSavingDropdownOption] = useState({});
   const [openDropdowns, setOpenDropdowns] = useState({});
   const [labelColumnSearch, setLabelColumnSearch] = useState('');
   const [openLabelDropdown, setOpenLabelDropdown] = useState(false);
@@ -59,6 +64,7 @@ const ExcelRowDetail = () => {
   const [newRowLabel, setNewRowLabel] = useState('');
   const [creatingNewRow, setCreatingNewRow] = useState(false);
   const [selectedRowDelete, setSelectedRowDelete] = useState('');
+  const [deleteSearchText, setDeleteSearchText] = useState('');
   const [deletingRow, setDeletingRow] = useState(false);
   const fileInputRef = useRef(null);
   const { user, logout } = useAuth();
@@ -162,6 +168,58 @@ const ExcelRowDetail = () => {
 
   const normalizeColumnName = (value) => (value || '').trim().replace(/\s+/g, ' ');
 
+  const normalizeDropdownValues = (value) => {
+    if (value === null || value === undefined) return [];
+    const list = Array.isArray(value) ? value : [value];
+    const flattened = list.flatMap((item) => (Array.isArray(item) ? item : [item]));
+    return flattened
+      .map((item) => {
+        if (item === null || item === undefined) return null;
+        if (typeof item === 'string') {
+          const trimmed = item.trim();
+          return trimmed ? trimmed : null;
+        }
+        if (typeof item === 'number' || typeof item === 'boolean') return item;
+        const fallback = String(item).trim();
+        return fallback ? fallback : null;
+      })
+      .filter((item) => item !== null && item !== '');
+  };
+
+  const getDropdownValueKey = (value) => String(value ?? '').trim();
+
+  const getDropdownOptionsForHeader = (header) => normalizeDropdownValues(dropdownOptions && header ? dropdownOptions[header] : []);
+
+  const addDropdownOption = async (header) => {
+    if (!id || !header) return;
+    const inputValue = (dropdownOptionInputs[header] || '').trim();
+    if (!inputValue) return;
+
+    const current = getDropdownOptionsForHeader(header);
+    const next = current.some((val) => getDropdownValueKey(val) === getDropdownValueKey(inputValue))
+      ? current
+      : [...current, inputValue];
+
+    setSavingDropdownOption((prev) => ({ ...prev, [header]: true }));
+    setDropdownOptions((prev) => ({ ...(prev || {}), [header]: next }));
+    setDropdownOptionInputs((prev) => ({ ...prev, [header]: '' }));
+    setFormData((prev) => {
+      const currentValues = Array.isArray(prev[header]) ? prev[header] : [];
+      const alreadySelected = currentValues.some((val) => getDropdownValueKey(val) === getDropdownValueKey(inputValue));
+      return alreadySelected ? prev : { ...prev, [header]: [...currentValues, inputValue] };
+    });
+
+    try {
+      const metaRef = doc(db, 'churches', String(id), 'collectionMetadata', collectionName);
+      await setDoc(metaRef, { dropdownOptions: { ...(dropdownOptions || {}), [header]: next } }, { merge: true });
+    } catch (err) {
+      console.error('Failed to save dropdown option', err);
+      setError('Failed to save dropdown option.');
+    } finally {
+      setSavingDropdownOption((prev) => ({ ...prev, [header]: false }));
+    }
+  };
+
   const allowedAttachmentExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
   const allowedAttachmentMimeTypes = [
     'image/png',
@@ -251,6 +309,7 @@ const ExcelRowDetail = () => {
   };
 
   const isEditableField = (header) => {
+    if (getColumnTypeConfig(header).dropdown) return true;
     const primary = getPrimaryType(header);
     if (primary === 'date' || primary === 'number') return true;
     const val = rowData ? rowData[header] : null;
@@ -289,11 +348,13 @@ const ExcelRowDetail = () => {
           const meta = metaSnap.data() || {};
           setMetaHeaders(meta.headers || []);
           setColumnTypes(meta.types || {});
+          setDropdownOptions(meta.dropdownOptions || {});
           setDefaultLabelColumn(meta.defaultLabelColumn || '');
           setColumnOrder(meta.columnOrder || meta.headers || []);
         } else {
           setMetaHeaders([]);
           setColumnTypes({});
+          setDropdownOptions({});
           setDefaultLabelColumn('');
           setColumnOrder([]);
         }
@@ -313,12 +374,14 @@ const ExcelRowDetail = () => {
         const q = query(collection(db, `churches/${id}/${collectionName}`));
         const allRowsSnap = await getDocs(q);
         const loadedRows = allRowsSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+        console.log(`Loaded ${loadedRows.length} rows/conduits from database`);
         setAllRows(loadedRows);
 
         // Fetch banner URL from Firebase Storage
         try {
           const bannerRef = ref(storage, `churches/church_${id}/banner`);
           const url = await getDownloadURL(bannerRef);
+          console.log('Banner URL loaded:', url);
           setBannerUrl(url);
         } catch (bannerErr) {
           console.warn(`Banner not found for church ${id}:`, bannerErr.message);
@@ -404,12 +467,11 @@ const ExcelRowDetail = () => {
   useEffect(() => {
     if (!headers.length || !rowData) return;
     setFormData(headers.reduce((acc, h) => {
-      const val = formatForInput(h, rowData[h]);
-      // Convert to array for dropdown fields
-      if (getColumnTypeConfig(h).dropdown && val) {
-        acc[h] = Array.isArray(val) ? val : [val].filter(Boolean);
+      const config = getColumnTypeConfig(h);
+      if (config.dropdown) {
+        acc[h] = normalizeDropdownValues(rowData[h]);
       } else {
-        acc[h] = val;
+        acc[h] = formatForInput(h, rowData[h]);
       }
       return acc;
     }, {}));
@@ -533,7 +595,9 @@ const ExcelRowDetail = () => {
 
         const primary = getPrimaryType(h);
         const value = formData[h];
-        if (primary === 'date') {
+        if (getColumnTypeConfig(h).dropdown) {
+          acc[h] = normalizeDropdownValues(value);
+        } else if (primary === 'date') {
           acc[h] = value ? new Date(value) : null;
         } else if (primary === 'number') {
           acc[h] = value === '' || value === null || value === undefined ? null : (isNaN(parseFloat(value)) ? value : parseFloat(value));
@@ -887,6 +951,7 @@ const ExcelRowDetail = () => {
 
       setSuccess('Row deleted successfully!');
       setSelectedRowDelete('');
+      setDeleteSearchText('');
       setAllRows(prev => prev.filter(r => r.id !== selectedRowDelete));
       setTimeout(() => setSuccess(null), 2000);
     } catch (err) {
@@ -1034,21 +1099,43 @@ const ExcelRowDetail = () => {
 
   return (
     <div style={{ background: '#f9fafb', minHeight: '100vh' }}>
-      {/* Header with Banner */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb' }}>
-        {bannerUrl && (
+      {/* Small Banner at Top */}
+      <div style={{ 
+        width: '100%', 
+        height: '80px', 
+        overflow: 'hidden', 
+        borderBottom: '2px solid #e5e7eb',
+        background: bannerUrl ? 'transparent' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        {bannerUrl ? (
           <img 
             src={bannerUrl}
             alt="Church Banner"
             style={{
               width: '100%',
-              height: 'auto',
-              maxHeight: 180,
+              height: '100%',
               objectFit: 'cover',
               display: 'block'
             }}
           />
+        ) : (
+          <div style={{ 
+            color: 'white', 
+            fontSize: '24px', 
+            fontWeight: '600',
+            textAlign: 'center',
+            padding: '0 20px'
+          }}>
+            📊 BIM Tracker
+          </div>
         )}
+      </div>
+      
+      {/* Header with Banner */}
+      <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb' }}>
         {/* Top Right Logout Button */}
         <div style={{ padding: '12px 20px', background: '#fff', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'flex-end' }}>
           <button
@@ -1494,6 +1581,39 @@ const ExcelRowDetail = () => {
                                   }}
                                 >
                                   <div style={{ padding: 8 }}>
+                                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                      <input
+                                        type="text"
+                                        value={dropdownOptionInputs[header] ?? ''}
+                                        onChange={(e) => setDropdownOptionInputs(prev => ({ ...prev, [header]: e.target.value }))}
+                                        placeholder={`Add ${header.toLowerCase()}...`}
+                                        style={{
+                                          flex: 1,
+                                          padding: '8px 10px',
+                                          borderRadius: 4,
+                                          border: '1px solid #e5e7eb',
+                                          fontSize: 13,
+                                          fontFamily: 'inherit',
+                                          boxSizing: 'border-box',
+                                        }}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => addDropdownOption(header)}
+                                        disabled={savingDropdownOption[header] || !(dropdownOptionInputs[header] || '').trim()}
+                                        style={{
+                                          padding: '8px 12px',
+                                          borderRadius: 4,
+                                          border: '1px solid #e5e7eb',
+                                          background: '#f3f4f6',
+                                          fontSize: 12,
+                                          fontWeight: 600,
+                                          cursor: savingDropdownOption[header] ? 'not-allowed' : 'pointer',
+                                        }}
+                                      >
+                                        {savingDropdownOption[header] ? 'Adding...' : 'Add'}
+                                      </button>
+                                    </div>
                                     <input
                                       type="text"
                                       value={dropdownSearches[header] ?? ''}
@@ -1514,10 +1634,15 @@ const ExcelRowDetail = () => {
                                   </div>
                                   {(() => {
                                     const config = getColumnTypeConfig(header);
-                                    const optionValues = (allRows || [])
-                                      .map(row => row[header])
-                                      .filter(val => val && String(val).trim());
-                                    const deduped = config.showDuplicates ? optionValues : Array.from(new Set(optionValues));
+                                    const optionValues = [
+                                      ...getDropdownOptionsForHeader(header),
+                                      ...(allRows || []).flatMap(row => normalizeDropdownValues(row[header]))
+                                    ];
+                                    const deduped = config.showDuplicates
+                                      ? optionValues
+                                      : Array.from(
+                                          new Map(optionValues.map((val) => [getDropdownValueKey(val), val])).values()
+                                        );
                                     return deduped
                                       .sort((a, b) => String(a).localeCompare(String(b)))
                                       .filter(val => {
@@ -1525,10 +1650,12 @@ const ExcelRowDetail = () => {
                                         return !searchTerm || String(val).toLowerCase().includes(String(searchTerm).toLowerCase());
                                       })
                                       .map((val) => {
-                                      const isSelected = Array.isArray(formData[header]) && formData[header].includes(val);
+                                      const valKey = getDropdownValueKey(val);
+                                      const isSelected = Array.isArray(formData[header])
+                                        && formData[header].some((existing) => getDropdownValueKey(existing) === valKey);
                                       return (
                                         <label
-                                          key={val}
+                                          key={valKey}
                                           style={{
                                             display: 'flex',
                                             alignItems: 'center',
@@ -1554,9 +1681,12 @@ const ExcelRowDetail = () => {
                                               setFormData(prev => {
                                                 const current = Array.isArray(prev[header]) ? prev[header] : [];
                                                 if (isSelected) {
-                                                  return { ...prev, [header]: current.filter(v => v !== val) };
+                                                  return { ...prev, [header]: current.filter(v => getDropdownValueKey(v) !== valKey) };
                                                 } else {
-                                                  return { ...prev, [header]: [...current, val] };
+                                                  const next = current.some((v) => getDropdownValueKey(v) === valKey)
+                                                    ? current
+                                                    : [...current, val];
+                                                  return { ...prev, [header]: next };
                                                 }
                                               });
                                             }}
@@ -1569,10 +1699,15 @@ const ExcelRowDetail = () => {
                                   })()}
                                   {(() => {
                                     const config = getColumnTypeConfig(header);
-                                    const optionValues = (allRows || [])
-                                      .map(row => row[header])
-                                      .filter(val => val && String(val).trim());
-                                    const deduped = config.showDuplicates ? optionValues : Array.from(new Set(optionValues));
+                                    const optionValues = [
+                                      ...getDropdownOptionsForHeader(header),
+                                      ...(allRows || []).flatMap(row => normalizeDropdownValues(row[header]))
+                                    ];
+                                    const deduped = config.showDuplicates
+                                      ? optionValues
+                                      : Array.from(
+                                          new Map(optionValues.map((val) => [getDropdownValueKey(val), val])).values()
+                                        );
                                     return deduped
                                       .filter(val => {
                                         const searchTerm = dropdownSearches[header] || '';
@@ -1686,7 +1821,14 @@ const ExcelRowDetail = () => {
                 <div style={{ background: '#fff', border: '1px solid #fee2e2', borderRadius: 8, overflow: 'hidden' }}>
                   <button
                     type="button"
-                    onClick={() => setExpandDeleteRow(!expandDeleteRow)}
+                    onClick={() => {
+                      setExpandDeleteRow(!expandDeleteRow);
+                      if (expandDeleteRow) {
+                        // Clear search when closing
+                        setDeleteSearchText('');
+                        setSelectedRowDelete('');
+                      }
+                    }}
                     style={{
                       width: '100%',
                       padding: 20,
@@ -1713,11 +1855,80 @@ const ExcelRowDetail = () => {
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
                         <div style={{ minWidth: 220, flex: 1 }}>
                           <label style={{ display: 'block', fontWeight: 600, marginBottom: 6, fontSize: 13, color: '#1f2937' }}>
-                            Select row to delete
+                            Select or type conduit number ({allRows.length} total)
                           </label>
-                          <select
-                            value={selectedRowDelete}
-                            onChange={(e) => setSelectedRowDelete(e.target.value)}
+                          <input
+                            type="text"
+                            list="conduit-list"
+                            value={deleteSearchText}
+                            onChange={(e) => {
+                              const inputValue = e.target.value;
+                              setDeleteSearchText(inputValue);
+                              
+                              // Find matching row by conduit number
+                              const matchingRow = allRows.find(row => {
+                                const conduitFieldNames = [
+                                  'Conduit', 'conduit', 'Conduit Number', 'conduit_number',
+                                  'Conduit Run', 'conduit_run', 'Run', 'run',
+                                  'Conduit #', 'conduit #', 'Number', 'number', '#'
+                                ];
+                                
+                                for (const fieldName of conduitFieldNames) {
+                                  if (row[fieldName] !== null && row[fieldName] !== undefined) {
+                                    const fieldValue = formatValue(row[fieldName]);
+                                    if (fieldValue === inputValue || fieldValue.toLowerCase() === inputValue.toLowerCase()) {
+                                      return true;
+                                    }
+                                  }
+                                }
+                                
+                                if (labelColumn && row[labelColumn]) {
+                                  const labelValue = formatValue(row[labelColumn]);
+                                  if (labelValue === inputValue || labelValue.toLowerCase() === inputValue.toLowerCase()) {
+                                    return true;
+                                  }
+                                }
+                                
+                                for (const header of metaHeaders) {
+                                  const value = row[header];
+                                  if (value !== null && value !== undefined && value !== '') {
+                                    const fieldValue = formatValue(value);
+                                    if (fieldValue === inputValue || fieldValue.toLowerCase() === inputValue.toLowerCase()) {
+                                      return true;
+                                    }
+                                  }
+                                }
+                                
+                                return false;
+                              });
+                              
+                              if (matchingRow) {
+                                setSelectedRowDelete(matchingRow.id);
+                              } else if (inputValue === '') {
+                                setSelectedRowDelete('');
+                              }
+                            }}
+                            onBlur={() => {
+                              // On blur, update text to show the selected conduit clearly
+                              if (selectedRowDelete && !deleteSearchText) {
+                                const row = allRows.find(r => r.id === selectedRowDelete);
+                                if (row) {
+                                  const conduitFieldNames = [
+                                    'Conduit', 'conduit', 'Conduit Number', 'conduit_number',
+                                    'Conduit Run', 'conduit_run', 'Run', 'run',
+                                    'Conduit #', 'conduit #', 'Number', 'number', '#'
+                                  ];
+                                  
+                                  for (const fieldName of conduitFieldNames) {
+                                    if (row[fieldName] !== null && row[fieldName] !== undefined && row[fieldName] !== '') {
+                                      setDeleteSearchText(formatValue(row[fieldName]));
+                                      return;
+                                    }
+                                  }
+                                }
+                              }
+                            }}
+                            placeholder="Type or select a conduit..."
                             disabled={allRows.length === 0}
                             style={{
                               width: '100%',
@@ -1727,21 +1938,63 @@ const ExcelRowDetail = () => {
                               fontSize: 14,
                               fontFamily: 'inherit',
                               background: '#fff',
-                              cursor: allRows.length === 0 ? 'not-allowed' : 'pointer',
+                              cursor: allRows.length === 0 ? 'not-allowed' : 'text',
                               opacity: allRows.length === 0 ? 0.5 : 1
                             }}
-                          >
-                            <option value="">-- Select a row --</option>
-                            {allRows.map((row) => {
-                              const rowLabel = labelColumn && row[labelColumn] ? String(row[labelColumn]) : 'Unnamed';
-                              const rowId = row.id || '';
-                              return (
-                                <option key={rowId} value={rowId}>
-                                  {rowLabel}
-                                </option>
-                              );
-                            })}
-                          </select>
+                          />
+                          <datalist id="conduit-list">
+                            {allRows
+                              .map((row) => {
+                                const rowId = row.id || '';
+                                
+                                // Look for conduit number field
+                                const conduitFieldNames = [
+                                  'Conduit', 'conduit', 'Conduit Number', 'conduit_number',
+                                  'Conduit Run', 'conduit_run', 'Run', 'run',
+                                  'Conduit #', 'conduit #', 'Number', 'number', '#'
+                                ];
+                                
+                                let conduitNumber = '';
+                                for (const fieldName of conduitFieldNames) {
+                                  if (row[fieldName] !== null && row[fieldName] !== undefined && row[fieldName] !== '') {
+                                    conduitNumber = formatValue(row[fieldName]);
+                                    break;
+                                  }
+                                }
+                                
+                                if (!conduitNumber || !conduitNumber.trim()) {
+                                  if (labelColumn && row[labelColumn]) {
+                                    conduitNumber = formatValue(row[labelColumn]);
+                                  } else {
+                                    for (const header of metaHeaders) {
+                                      const value = row[header];
+                                      if (value !== null && value !== undefined && value !== '') {
+                                        conduitNumber = formatValue(value);
+                                        break;
+                                      }
+                                    }
+                                  }
+                                }
+                                
+                                const displayLabel = conduitNumber || `Row ${rowId.substring(0, 8)}`;
+                                
+                                return {
+                                  rowId,
+                                  displayLabel,
+                                  sortValue: conduitNumber ? (isNaN(parseFloat(conduitNumber)) ? conduitNumber : parseFloat(conduitNumber)) : displayLabel
+                                };
+                              })
+                              .sort((a, b) => {
+                                if (typeof a.sortValue === 'number' && typeof b.sortValue === 'number') {
+                                  return a.sortValue - b.sortValue;
+                                }
+                                return String(a.sortValue).localeCompare(String(b.sortValue));
+                              })
+                              .map(({ displayLabel }) => (
+                                <option key={displayLabel} value={displayLabel} />
+                              ))
+                            }
+                          </datalist>
                         </div>
                         <button
                           type="button"
@@ -1775,7 +2028,12 @@ const ExcelRowDetail = () => {
                           {deletingRow ? 'Deleting...' : 'Delete Row'}
                         </button>
                       </div>
-                      <p style={{ fontSize: 12, color: '#991b1b', marginTop: 12, fontWeight: 500 }}>
+                      {allRows.length > 0 && (
+                        <p style={{ fontSize: 12, color: '#059669', marginTop: 12, fontWeight: 500 }}>
+                          ℹ️ Total conduits registered: {allRows.length}
+                        </p>
+                      )}
+                      <p style={{ fontSize: 12, color: '#991b1b', marginTop: 8, fontWeight: 500 }}>
                         ⚠️ Warning: Deleting a row cannot be undone.
                       </p>
                     </div>

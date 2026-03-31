@@ -1,6 +1,19 @@
 import { db } from '../firebase';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
+const normalizeSystemRole = (role) => {
+  switch (role) {
+    case 'system_global_admin':
+      return 'global_admin';
+    case 'system_admin':
+      return 'admin';
+    case 'system_member':
+      return 'member';
+    default:
+      return role;
+  }
+};
+
 /**
  * Enhanced permission system with granular access control
  * Supports both module-level, role-based, and user-specific permissions
@@ -21,10 +34,10 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
   if (!user) return false;
 
   // Global admins have access to everything
-  if (user.role === 'global_admin') return true;
+  if (['global_admin', 'system_global_admin'].includes(user.role)) return true;
 
   // Check if user is a basic admin (for backward compatibility)
-  if (user.role === 'admin') return true;
+  if (['admin', 'system_admin'].includes(user.role)) return true;
 
   try {
     // First check user-specific permissions if checking a specific resource
@@ -36,11 +49,12 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
     }
 
     const userRole = user.customRole || user.role;
+    const normalizedRole = normalizeSystemRole(userRole);
     
     // Check if it's a system role
-    if (userRole === 'member' || userRole === 'admin' || userRole === 'global_admin') {
+    if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
       // Use system role logic
-      const hasModulePermission = await checkSystemRolePermission(userRole, module, action);
+      const hasModulePermission = await checkSystemRolePermission(normalizedRole, module, action);
       
       // If user has module permission but we're checking specific resource
       if (hasModulePermission && resourceId && resourceType) {
@@ -51,21 +65,31 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
     }
 
     // Check custom role from database
-    const rolesQuery = query(
-      collection(db, 'roles'),
-      where('churchId', '==', churchId),
-      where('name', '==', userRole)
-    );
-    
-    const rolesSnapshot = await getDocs(rolesQuery);
-    
-    if (rolesSnapshot.empty) {
-      console.warn(`Role ${userRole} not found for church ${churchId}`);
-      return false;
+    let roleData = null;
+    if (userRole) {
+      const roleRef = doc(db, 'roles', String(userRole));
+      const roleSnap = await getDoc(roleRef);
+      if (roleSnap.exists() && roleSnap.data()?.churchId === churchId) {
+        roleData = roleSnap.data();
+      }
     }
 
-    const roleDoc = rolesSnapshot.docs[0];
-    const roleData = roleDoc.data();
+    if (!roleData) {
+      const rolesQuery = query(
+        collection(db, 'roles'),
+        where('churchId', '==', churchId),
+        where('name', '==', userRole)
+      );
+
+      const rolesSnapshot = await getDocs(rolesQuery);
+
+      if (rolesSnapshot.empty) {
+        console.warn(`Role ${userRole} not found for church ${churchId}`);
+        return false;
+      }
+
+      roleData = rolesSnapshot.docs[0].data();
+    }
     
     // Check module-level permissions first
     const hasModulePermission = checkModulePermission(roleData, module, action);
@@ -144,16 +168,26 @@ const checkResourceSpecificPermission = async (user, churchId, module, action, r
     // If no role data provided, fetch it
     if (!roleData) {
       const userRole = user.customRole || user.role;
-      const rolesQuery = query(
-        collection(db, 'roles'),
-        where('churchId', '==', churchId),
-        where('name', '==', userRole)
-      );
-      
-      const rolesSnapshot = await getDocs(rolesQuery);
-      if (rolesSnapshot.empty) return false;
-      
-      roleData = rolesSnapshot.docs[0].data();
+      const normalizedRole = normalizeSystemRole(userRole);
+      if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
+        return false;
+      }
+      const roleRef = doc(db, 'roles', String(userRole));
+      const roleSnap = await getDoc(roleRef);
+      if (roleSnap.exists() && roleSnap.data()?.churchId === churchId) {
+        roleData = roleSnap.data();
+      } else {
+        const rolesQuery = query(
+          collection(db, 'roles'),
+          where('churchId', '==', churchId),
+          where('name', '==', userRole)
+        );
+
+        const rolesSnapshot = await getDocs(rolesQuery);
+        if (rolesSnapshot.empty) return false;
+
+        roleData = rolesSnapshot.docs[0].data();
+      }
     }
 
     // Check if role has resource-specific permissions defined

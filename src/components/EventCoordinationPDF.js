@@ -213,6 +213,15 @@ const EventCoordinationPDF = ({ event, tasks, generalNotes }) => (
               </View>
               <View style={styles.divider} />
               <Text style={styles.taskDescription}>{task.description}</Text>
+              {task.songTitle && (
+                <Text style={styles.taskResponsible}>Linked song: {task.songTitle}</Text>
+              )}
+              {task.teamNames?.length > 0 && (
+                <Text style={styles.taskResponsible}>
+                  Teams: {task.teamNames.join(', ')}
+                  {task.teamMemberNames?.length > 0 && ` - Members: ${task.teamMemberNames.join(', ')}`}
+                </Text>
+              )}
               {task.tags?.length > 0 && (
                 <View style={styles.taskTags}>
                   {task.tags.map((tag, i) => (

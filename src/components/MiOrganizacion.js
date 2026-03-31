@@ -103,6 +103,47 @@ const MiOrganizacion = () => {
   // Organized navigation cards by section
   const navigationSections = [
     {
+      title: "Coordination",
+      cards: [
+        {
+          title: "My Sunday",
+          description: "Plan Sunday services with sections, files, and notes",
+          icon: "📖",
+          path: `/organization/${id}/my-sunday`
+        },
+        {
+          title: "Events",
+          description: "Manage and coordinate organization events",
+          icon: "📅",
+          path: `/organization/${id}/all-events`
+        },
+        {
+          title: "EasyProjector",
+          description: "Create and manage presentations",
+          icon: "🎥",
+          path: `/organization/${id}/easy-projector`
+        },
+        {
+          title: "Teams",
+          description: "Organize serving teams",
+          icon: "👥",
+          path: `/organization/${id}/teams`
+        },
+        {
+          title: "Song Manager",
+          description: "Create and edit songs for presentations",
+          icon: "🎵",
+          path: `/organization/${id}/song-manager`
+        },
+        {
+          title: "Connection Center",
+          description: "Manage visitors and connections",
+          icon: "🔗",
+          path: `/organization/${id}/admin-connect`
+        }
+      ]
+    },
+    {
       title: "Tools",
       cards: [
         {
@@ -112,16 +153,16 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/user-dashboard`
         },
         {
-          title: "Events",
-          description: "Manage and coordinate organization events",
-          icon: "📅",
-          path: `/organization/${id}/all-events`
-        },
-        {
           title: "Rooms",
           description: "Manage organization rooms and spaces",
           icon: "🏠",
           path: `/organization/${id}/rooms`
+        },
+        {
+          title: "Campuses",
+          description: "Manage campus locations and addresses",
+          icon: "🏫",
+          path: `/organization/${id}/campuses`
         },
         {
           title: "Inventory",
@@ -136,12 +177,6 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/finances`
         },
         {
-          title: "Teams",
-          description: "Organize serving teams",
-          icon: "👥",
-          path: `/organization/${id}/teams`
-        },
-        {
           title: "Maintenance",
           description: "Track repairs and improvements",
           icon: "🔧",
@@ -152,18 +187,6 @@ const MiOrganizacion = () => {
           description: "Post and track building tasks and improvements",
           icon: "🏗️",
           path: `/organization/${id}/build-my-church`
-        },
-        {
-          title: "Connection Center",
-          description: "Manage visitors and connections",
-          icon: "🔗",
-          path: `/organization/${id}/admin-connect`
-        },
-        {
-          title: "EasyProjector",
-          description: "Create and manage presentations",
-          icon: "🎥",
-          path: `/organization/${id}/easy-projector`
         },
         {
           title: "AI Assistant",
@@ -252,12 +275,6 @@ const MiOrganizacion = () => {
           description: "Create and manage photo galleries",
           icon: "🖼️",
           path: `/organization/${id}/gallery-admin`
-        },
-        {
-          title: "Song Manager",
-          description: "Create and edit songs for presentations",
-          icon: "🎵",
-          path: `/organization/${id}/song-manager`
         },
         {
           title: "Organization App",

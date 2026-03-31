@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { getAuth, updateEmail, updatePassword } from 'firebase/auth';
+import { getAuth, updateEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider, verifyBeforeUpdateEmail } from 'firebase/auth';
 import { toast } from 'react-toastify';
 import './MyProfile.css';
 
@@ -21,6 +21,8 @@ const MyProfile = () => {
   });
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [savingChanges, setSavingChanges] = useState(false);
+  const [emailAuthPassword, setEmailAuthPassword] = useState('');
+  const authEmail = getAuth().currentUser?.email || user?.email || '';
 
   // Fetch user profile data
   useEffect(() => {
@@ -33,11 +35,29 @@ const MyProfile = () => {
         
         if (userSnap.exists()) {
           const data = userSnap.data();
-          setUserData(data);
+          const authEmail = getAuth().currentUser?.email || user?.email || '';
+          const effectiveEmail = authEmail || data.email || '';
+          const shouldSyncEmail = !!authEmail && data.email !== authEmail;
+
+          if (shouldSyncEmail) {
+            try {
+              await updateDoc(userRef, {
+                email: authEmail,
+                updatedAt: serverTimestamp()
+              });
+            } catch (syncError) {
+              console.error('Error syncing profile email to login email:', syncError);
+            }
+          }
+
+          setUserData({
+            ...data,
+            email: effectiveEmail
+          });
           setEditData({
             name: data.name || '',
             lastName: data.lastName || '',
-            email: data.email || '',
+            email: effectiveEmail,
             phone: data.phone || '',
             title: data.title || '',
             salaryPerHour: data.salaryPerHour || '',
@@ -117,15 +137,43 @@ const MyProfile = () => {
     try {
       const auth = getAuth();
       const currentUser = auth.currentUser;
+      const isEmailChanged = !!currentUser?.email && currentUser.email !== editData.email;
 
       // Update email if changed
-      if (currentUser.email !== editData.email) {
+      if (isEmailChanged) {
         try {
-          await updateEmail(currentUser, editData.email);
+          if (!emailAuthPassword) {
+            toast.error('Please enter your current password to change your login email');
+            setSavingChanges(false);
+            return;
+          }
+
+          const credential = EmailAuthProvider.credential(currentUser.email, emailAuthPassword);
+          await reauthenticateWithCredential(currentUser, credential);
+          try {
+            await updateEmail(currentUser, editData.email);
+          } catch (emailError) {
+            if (emailError.code === 'auth/operation-not-allowed') {
+              const actionCodeSettings = {
+                url: `${window.location.origin}/organization/${id}/time-tracker?tab=profile`,
+                handleCodeInApp: false
+              };
+              await verifyBeforeUpdateEmail(currentUser, editData.email, actionCodeSettings);
+              toast.info('We sent a verification link to your new email. Please verify it, then try saving again.');
+              setSavingChanges(false);
+              return;
+            }
+            throw emailError;
+          }
         } catch (error) {
           if (error.code === 'auth/requires-recent-login') {
             toast.error('For security, please sign in again before changing your email');
             setEditing(false);
+            setSavingChanges(false);
+            return;
+          }
+          if (error.code === 'auth/wrong-password') {
+            toast.error('Incorrect current password. Please try again.');
             setSavingChanges(false);
             return;
           }
@@ -148,7 +196,11 @@ const MyProfile = () => {
         updatedAt: serverTimestamp()
       });
 
-      setUserData(editData);
+      setUserData(prev => ({
+        ...prev,
+        ...editData
+      }));
+      setEmailAuthPassword('');
       setEditing(false);
       toast.success('Profile updated successfully!');
     } catch (error) {
@@ -205,7 +257,7 @@ const MyProfile = () => {
     }
   };
 
-  if (loading) {
+  if (loading || !userData || !editData) {
     return (
       <div className="my-profile-container">
         <div className="loading">Loading your profile...</div>
@@ -264,6 +316,19 @@ const MyProfile = () => {
                   placeholder="Email"
                 />
               </div>
+
+              {authEmail && editData?.email && authEmail !== editData.email && (
+                <div className="form-group">
+                  <label>Current Password (required to change login email)</label>
+                  <input
+                    type="password"
+                    value={emailAuthPassword}
+                    onChange={(e) => setEmailAuthPassword(e.target.value)}
+                    className="form-control"
+                    placeholder="Enter current password"
+                  />
+                </div>
+              )}
 
               <div className="form-group">
                 <label>Phone</label>
@@ -410,6 +475,7 @@ const MyProfile = () => {
                 onClick={() => {
                   setEditing(false);
                   setEditData(userData);
+                  setEmailAuthPassword('');
                 }}
                 disabled={savingChanges}
               >
@@ -428,6 +494,10 @@ const MyProfile = () => {
               <div className="info-row">
                 <label>Last Name:</label>
                 <span>{userData?.lastName || 'Not provided'}</span>
+              </div>
+              <div className="info-row">
+                <label>Role:</label>
+                <span>{userData?.role ? userData.role.replace('_', ' ') : 'Not provided'}</span>
               </div>
               <div className="info-row">
                 <label>Email:</label>

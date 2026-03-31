@@ -41,6 +41,8 @@ const EasyProjector = () => {
   const [fontSize, setFontSize] = useState("48");
   const [fontColor, setFontColor] = useState("#FFFFFF");
   const peerConnectionRef = useRef(null);
+  const lastViewerCandidateRef = useRef(null);
+  const pendingViewerCandidateRef = useRef(null);
   const [updatingSong, setUpdatingSong] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [bibleVersion, setBibleVersion] = useState("NIV");
@@ -403,6 +405,17 @@ const EasyProjector = () => {
         await peerConnectionRef.current.setRemoteDescription(
           new RTCSessionDescription(answer)
         );
+
+        if (pendingViewerCandidateRef.current) {
+          try {
+            await peerConnectionRef.current.addIceCandidate(
+              new RTCIceCandidate(pendingViewerCandidateRef.current)
+            );
+            pendingViewerCandidateRef.current = null;
+          } catch (candidateErr) {
+            console.error("Error adding pending ICE candidate:", candidateErr);
+          }
+        }
       }
     } catch (err) {
       console.error("Error handling answer:", err);
@@ -473,6 +486,22 @@ const EasyProjector = () => {
             if (data?.answer && pc.currentRemoteDescription === null) {
               handleIncomingAnswer(data.answer);
             }
+
+            if (data?.viewerIceCandidate) {
+              const nextCandidate = JSON.stringify(data.viewerIceCandidate);
+              if (lastViewerCandidateRef.current !== nextCandidate) {
+                lastViewerCandidateRef.current = nextCandidate;
+                if (pc.currentRemoteDescription) {
+                  pc.addIceCandidate(new RTCIceCandidate(data.viewerIceCandidate)).catch(
+                    (err) => {
+                      console.error("Error adding viewer ICE candidate:", err);
+                    }
+                  );
+                } else {
+                  pendingViewerCandidateRef.current = data.viewerIceCandidate;
+                }
+              }
+            }
           }
         );
 
@@ -496,6 +525,7 @@ const EasyProjector = () => {
           offer: null,
           answer: null,
           iceCandidate: null,
+          viewerIceCandidate: null,
         });
 
         toast.success("Microphone disabled");

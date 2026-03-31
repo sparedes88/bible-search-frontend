@@ -23,6 +23,7 @@ const BroadcastView = () => {
   const [viewerCount, setViewerCount] = useState(0);
   const audioRef = useRef(null);
   const peerConnectionRef = useRef(null);
+  const lastOfferCandidateRef = useRef(null);
   const [audioAutoplayFailed, setAudioAutoplayFailed] = useState(false);
   const [audioPermissionGranted, setAudioPermissionGranted] = useState(false);
   const [audioStream, setAudioStream] = useState(null);
@@ -163,7 +164,7 @@ const BroadcastView = () => {
           const data = docSnapshot.data();
           // Only update what's needed
           setBroadcast(prev => ({
-            ...prev,
+            ...(prev || {}),
             backgroundColor: data.backgroundColor,
             fontColor: data.fontColor,
             fontSize: data.fontSize,
@@ -280,6 +281,7 @@ const BroadcastView = () => {
           console.log('Received audio track');
           if (audioRef.current) {
             audioRef.current.srcObject = event.streams[0];
+            setAudioStream(event.streams[0]);
             audioRef.current.play()
               .then(() => {
                 console.log('Audio playing');
@@ -289,6 +291,16 @@ const BroadcastView = () => {
                 console.log('Autoplay failed, waiting for user interaction');
                 setAudioAutoplayFailed(true);
               });
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            updateDoc(doc(db, `churches/${id}/broadcasts`, broadcastId), {
+              viewerIceCandidate: event.candidate.toJSON(),
+            }).catch((err) => {
+              console.error('Error sending viewer ICE candidate:', err);
+            });
           }
         };
 
@@ -326,6 +338,20 @@ const BroadcastView = () => {
       }
     };
   }, [broadcast?.micEnabled, broadcast?.offer]);
+
+  useEffect(() => {
+    if (!peerConnection || !broadcast?.iceCandidate) return;
+
+    const nextCandidate = JSON.stringify(broadcast.iceCandidate);
+    if (lastOfferCandidateRef.current === nextCandidate) return;
+
+    lastOfferCandidateRef.current = nextCandidate;
+    peerConnection
+      .addIceCandidate(new RTCIceCandidate(broadcast.iceCandidate))
+      .catch((err) => {
+        console.error('Error adding offer ICE candidate:', err);
+      });
+  }, [peerConnection, broadcast?.iceCandidate]);
 
   useEffect(() => {
     if (!id || !broadcastId) return;

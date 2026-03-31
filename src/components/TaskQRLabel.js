@@ -1,6 +1,6 @@
 import React from 'react';
 import { Page, Text, Document, StyleSheet, Image, View } from '@react-pdf/renderer';
-import { QRCodeSVG } from "qrcode.react";
+import QRCodeGenerator from 'qrcode';
 
 const getPriorityColor = (priority) => {
   switch (priority) {
@@ -71,25 +71,26 @@ const TaskQRLabel = ({ task, qrUrl, church }) => {
     }
   };
 
+  const isValidImageSrc = (src) => {
+    if (!src || typeof src !== 'string') return false;
+    const trimmed = src.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith('data:image/')) return true;
+    return /\.(png|jpg|jpeg|gif|webp)(\?.*)?$/i.test(trimmed);
+  };
+
   React.useEffect(() => {
     const generateQR = async () => {
       try {
-        const svg = document.querySelector('#task-qr-code svg');
-        if (svg) {
-          const svgData = new XMLSerializer().serializeToString(svg);
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.drawImage(img, 0, 0);
-            setQrDataURL(canvas.toDataURL());
-          };
-          img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+        if (!qrUrl) {
+          setQrDataURL('');
+          return;
         }
+        const dataUrl = await QRCodeGenerator.toDataURL(qrUrl, { margin: 0, width: 200 });
+        setQrDataURL(dataUrl || '');
       } catch (err) {
         console.error('Error generating QR code:', err);
+        setQrDataURL('');
       }
     };
     generateQR();
@@ -99,24 +100,21 @@ const TaskQRLabel = ({ task, qrUrl, church }) => {
     <Document>
       <Page size={{ width: 432, height: 144 }} style={styles.page}>
         <View style={styles.qrCodeContainer}>
-          <div id="task-qr-code" style={{ display: 'none' }}>
-            <QRCodeSVG value={qrUrl} size={200} level="H" />
-          </div>
           {qrDataURL && <Image src={qrDataURL} />}
-          {church?.logo && <Image src={church.logo} style={styles.logo} />}
+          {isValidImageSrc(church?.logo) && <Image src={church.logo} style={styles.logo} />}
         </View>
         <View style={styles.textContainer}>
           <Text style={styles.text}>{church?.nombre || 'Church Name'}</Text>
-          <Text style={styles.text}>{task.title}</Text>
+          <Text style={styles.text}>{task?.title || 'Untitled Task'}</Text>
           <Text style={{
             ...styles.priority,
-            backgroundColor: getPriorityColor(task.priority) + '20',
-            color: getPriorityColor(task.priority),
+            backgroundColor: getPriorityColor(task?.priority || 'medium') + '20',
+            color: getPriorityColor(task?.priority || 'medium'),
           }}>
-            {task.priority.toUpperCase()}
+            {(task?.priority || 'medium').toUpperCase()}
           </Text>
-          <Text style={styles.text}>ID: {task.id}</Text>
-          <Text style={styles.text}>Status: {task.status}</Text>
+          <Text style={styles.text}>ID: {task?.id || 'Unknown'}</Text>
+          <Text style={styles.text}>Status: {task?.status || 'Unknown'}</Text>
         </View>
       </Page>
     </Document>

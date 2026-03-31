@@ -23,8 +23,6 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 import { toast } from 'react-toastify';
 import { canAccessModule } from '../utils/permissions';
-import TaskProgress from './TaskProgress';
-import TaskManager from './TaskManager';
 import MyProfile from './MyProfile';
 import MyTeam from './MyTeam';
 import EmployeeExpenses from './EmployeeExpenses';
@@ -33,11 +31,12 @@ import commonStyles from '../pages/commonStyles';
 import './TimeTracker.css';
 import ExcelUploader from './ExcelUploader';
 import ExcelManager from './ExcelManager';
+import ExcelRowDetail from './ExcelRowDetail';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 // History Tooltip Component
-const HistoryTooltip = ({ history, users }) => {
+const HistoryTooltip = ({ history, users, tasks = [] }) => {
   if (!history || history.length === 0) {
     return <div className="history-tooltip">No edit history available</div>;
   }
@@ -357,7 +356,7 @@ const createChangeHistory = (originalEntry, updatedData, changedBy) => {
 };
 
 // Helper function to export time entries to PDF
-const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCodes, filters = {}) => {
+const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCodes, taskOptions = [], filters = {}) => {
   const doc = new jsPDF();
   
   // Add title
@@ -399,7 +398,7 @@ const exportTimeEntriesToPDF = (entries, users, projects, areasOfFocus, costCode
       projects.find(p => p.id === entry.project)?.name || 'Unknown Project',
       areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area',
       costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code',
-      entry.taskId ? tasks.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-',
+      entry.taskId ? taskOptions.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-',
       entry.note || '-'
     ];
   });
@@ -733,8 +732,8 @@ const TimeTracker = () => {
   // Debounced tab switching to prevent Firestore listener issues
   const handleTabChange = (newTab) => {
     console.log('🔄 Tab change requested:', newTab, 'Current role:', user?.role);
-    // Prevent members from accessing restricted tabs (but allow tasks, progress, brands, profile)
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(newTab)) {
+    // Prevent members from accessing restricted tabs (but allow brands, profile)
+    if (user?.role === 'member' && !['timer', 'brands', 'brandC040', 'profile'].includes(newTab)) {
       console.log('❌ Tab blocked for member:', newTab);
       return;
     }
@@ -763,7 +762,7 @@ const TimeTracker = () => {
     try {
       const params = new URLSearchParams(location.search);
       const tabParam = params.get('tab');
-      if (tabParam) {
+      if (tabParam && !['gantt', 'tasks', 'progress'].includes(tabParam)) {
         setActiveTab(tabParam);
       }
     } catch (e) {
@@ -786,6 +785,7 @@ const TimeTracker = () => {
   
   // Task Management State
   const [tasks, setTasks] = useState([]);
+  const [buildTasks, setBuildTasks] = useState([]);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -1247,7 +1247,7 @@ const TimeTracker = () => {
 
   // Role-based tab restriction for members
   useEffect(() => {
-    if (user?.role === 'member' && !['timer', 'tasks', 'progress', 'brands', 'profile'].includes(activeTab)) {
+    if (user?.role === 'member' && !['timer', 'brands', 'brandC040', 'profile'].includes(activeTab)) {
       setActiveTab('timer');
     }
   }, [user?.role, activeTab]);
@@ -1330,6 +1330,45 @@ const TimeTracker = () => {
     };
   }, [user?.uid, churchId]);
 
+  // Fetch build-my-church tasks for time entries
+  useEffect(() => {
+    if (!churchId) return;
+
+    let isMounted = true;
+
+    const buildTasksRef = collection(db, 'buildTasks');
+    const buildTasksQuery = query(buildTasksRef, where('churchId', '==', churchId));
+
+    const unsubscribe = onSnapshot(
+      buildTasksQuery,
+      (snapshot) => {
+        if (!isMounted) return;
+
+        try {
+          const buildTaskList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })).sort((a, b) => {
+            const aDate = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
+            const bDate = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
+            return bDate - aDate;
+          });
+          setBuildTasks(buildTaskList);
+        } catch (error) {
+          console.error('Error processing build tasks:', error);
+        }
+      },
+      (error) => {
+        console.error('Error fetching build tasks:', error);
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [churchId]);
+
   // Fetch tasks
   useEffect(() => {
     if (!user || !churchId) return;
@@ -1337,10 +1376,9 @@ const TimeTracker = () => {
     let isMounted = true;
 
     const tasksRef = collection(db, `churches/${churchId}/tasks`);
-    const taskQuery = query(
-      tasksRef,
-      where('userId', '==', user.uid)
-    );
+    const taskQuery = user.role === 'member'
+      ? query(tasksRef, where('userId', '==', user.uid))
+      : query(tasksRef);
 
     const unsubscribe = onSnapshot(taskQuery,
       (snapshot) => {
@@ -4498,7 +4536,7 @@ const TimeTracker = () => {
               <div>
                 <div style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: '500' }}>Your Role</div>
                 <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#1F2937', textTransform: 'capitalize' }}>
-                  {user?.role?.replace('_', ' ') || 'Member'}
+                  {user?.role ? user.role.replace('_', ' ') : 'Role not loaded'}
                 </div>
               </div>
             </div>
@@ -4533,26 +4571,18 @@ const TimeTracker = () => {
         >
           ⏱️ Time Tracker
         </button>
-        {/* Tasks - Available to members */}
-        <button 
-          className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
-          onClick={() => handleTabChange('tasks')}
-        >
-          📋 Tasks & Submissions
-        </button>
-        {/* Progress - Available to members */}
-        <button 
-          className={`tab-btn ${activeTab === 'progress' ? 'active' : ''}`}
-          onClick={() => handleTabChange('progress')}
-        >
-          📊 Task Progress
-        </button>
         {/* Brands - Available to members */}
         <button 
           className={`tab-btn ${activeTab === 'brands' ? 'active' : ''}`}
           onClick={() => handleTabChange('brands')}
         >
           🏷️ BIM Tracker
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'brandC040' ? 'active' : ''}`}
+          onClick={() => handleTabChange('brandC040')}
+        >
+          🧾 C040
         </button>
         {/* Profile - Available to all users */}
         <button 
@@ -4670,6 +4700,7 @@ const TimeTracker = () => {
                       projects,
                       areasOfFocus,
                       costCodes,
+                      buildTasks,
                       { dateFrom: filterDateFrom, dateTo: filterDateTo }
                     )} 
                     className="export-pdf-btn"
@@ -4928,7 +4959,7 @@ const TimeTracker = () => {
                                 className="inline-edit-select"
                               >
                                 <option value="">Select Task (Optional)</option>
-                                {tasks.map(task => (
+                                {buildTasks.map(task => (
                                   <option key={task.id} value={task.id}>{task.title}</option>
                                 ))}
                               </select>
@@ -4977,7 +5008,7 @@ const TimeTracker = () => {
                             <td>{projects.find(p => p.id === entry.project)?.name || 'Unknown Project'}</td>
                             <td>{areasOfFocus.find(a => a.id === entry.areaOfFocus)?.name || 'Unknown Area'}</td>
                             <td>{costCodes.find(c => c.code === entry.costCode)?.code || 'Unknown Code'}</td>
-                            <td>{entry.taskId ? tasks.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-'}</td>
+                            <td>{entry.taskId ? buildTasks.find(t => t.id === entry.taskId)?.title || 'Unknown Task' : '-'}</td>
                             <td>{entry.note || '-'}</td>
                             <td>
                               <div className="action-buttons">
@@ -4986,7 +5017,7 @@ const TimeTracker = () => {
                                 {entry.history && entry.history.length > 0 && (
                                   <div className="history-tooltip-container">
                                     <button className="history-btn" title="View edit history">📝</button>
-                                    <HistoryTooltip history={entry.history} users={users} />
+                                    <HistoryTooltip history={entry.history} users={users} tasks={buildTasks} />
                                   </div>
                                 )}
                               </div>
@@ -5174,7 +5205,7 @@ const TimeTracker = () => {
                             className="inline-edit-select"
                           >
                             <option value="">Select Task (Optional)</option>
-                            {tasks.map(task => (
+                            {buildTasks.map(task => (
                               <option key={task.id} value={task.id}>{task.title}</option>
                             ))}
                           </select>
@@ -5203,11 +5234,6 @@ const TimeTracker = () => {
       )}
 
 
-      {activeTab === 'tasks' && (
-        <>
-          <TaskManager />
-        </>
-      )}
 
       {activeTab === 'areasOfFocus' && (
         <div className="areas-of-focus-tab-content">
@@ -6161,6 +6187,17 @@ const TimeTracker = () => {
         </div>
       )}
 
+      {activeTab === 'brandC040' && (
+        <div className="brands-tab-content" style={{ width: '100%' }}>
+          <div style={{ marginBottom: 12 }}>
+            <h1 style={{ margin: '0 0 12px 0' }}>BIM Tracker - C040</h1>
+          </div>
+          <div style={{ width: '100%' }}>
+            <ExcelRowDetail churchId={churchId} rowId="15Anrio4jfzHu2J9hUXs" />
+          </div>
+        </div>
+      )}
+
       {activeTab === 'profile' && (
         <div className="profile-tab-content" style={{ width: '100%' }}>
           <MyProfile />
@@ -7015,8 +7052,6 @@ const TimeTracker = () => {
           </div>
         </div>
       )}
-
-      {activeTab === 'progress' && <TaskProgress />}
 
       </div>
       </div>
