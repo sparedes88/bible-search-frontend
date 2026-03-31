@@ -84,7 +84,6 @@ const MiOrganizacion = React.lazy(() => import("./components/MiOrganizacion"));
 const AllEvents = React.lazy(() => import("./components/AllEvents"));
 const ChurchApp = React.lazy(() => import("./components/ChurchApp"));
 const EventDetails = React.lazy(() => import("./components/EventDetails"));
-<<<<<<< HEAD
 const VisitorDetails = React.lazy(() => import("./components/VisitorDetails"));
 const EventCoordination = React.lazy(() => import("./components/EventCoordination"));
 const ManageGroups = React.lazy(() => import("./components/ManageGroups"));
@@ -143,82 +142,15 @@ const FormEntriesPage = React.lazy(() => import("./components/FormEntriesPage"))
 const TimeTracker = React.lazy(() => import("./components/TimeTracker"));
 const TimerPage = React.lazy(() => import("./components/TimerPage"));
 const TaskProgressDetail = React.lazy(() => import("./components/TaskProgressDetail"));
+const MySunday = React.lazy(() => import("./components/MySunday"));
 const GlobalOrganizationManager = React.lazy(() => import("./components/GlobalOrganizationManager"));
 const ChurchProfile = React.lazy(() => import("./components/ChurchProfile"));
 const FreshBooksCallback = React.lazy(() => import("./components/FreshBooksCallback"));
 const SqlServerBridge = React.lazy(() => import("./components/SqlServerBridge"));
 const ExcelRowDetail = React.lazy(() => import("./components/ExcelRowDetail"));
+const CampusesPage = React.lazy(() => import("./pages/organization/CampusesPage"));
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
-=======
-import VisitorDetails from "./components/VisitorDetails";
-import EventCoordination from "./components/EventCoordination";
-import ManageGroups from "./components/ManageGroups";
-import GroupDetails from "./components/GroupDetails";
-import AsistentePastoral from "./components/AsistentePastoral";
-import EasyProjector from "./components/EasyProjector"; // Import EasyProjector component
-import BroadcastView from "./components/BroadcastView";
-import BroadcastView3 from './components/BroadcastView3';
-import MemberProfile from './components/MemberProfile';
-import MemberDashboard from './components/MemberDashboard'; // Import MemberDashboard component
-import VisitorMessages from './components/VisitorMessages'; // Import VisitorMessages component
-import DonorUploader from './components/DonorUploader';
-import DonorManager from './components/DonorManager';
-import DonorsPage from './components/DonorsPage';
-import {
-  RoomsPage,
-  InventoryPage,
-  FinancesPage,
-  TeamsPage,
-  MaintenancePage
-} from './pages/ChurchSubPages';
-import CampusesPage from './pages/organization/CampusesPage';
-import ChurchRooms from "./pages/church/Rooms";
-import ChurchInventory from "./pages/church/Inventory";
-import ChurchFinances from "./pages/church/Finances";
-import ChurchTeams from "./pages/church/Teams";
-import ChurchMaintenance from "./pages/church/Maintenance";
-import Rooms from './pages/church/Rooms';
-import Inventory from './pages/church/Inventory';
-import Finances from './pages/church/Finances';
-import Teams from './pages/church/Teams';
-import Maintenance from './pages/church/Maintenance';
-import CreateTeamPage from './pages/ChurchSubPages/CreateTeamPage'; // Update import path
-import TeamDetailPage from './pages/ChurchSubPages/TeamDetailPage';
-import EventRegistration from "./components/EventRegistration";
-import EventRegistrationAdmin from "./components/EventRegistrationAdmin"; // Import EventRegistrationAdmin component
-import MemberSignup from "./components/MemberSignup.clean";
-import BuildMyChurch from './components/BuildMyChurch';
-import Messages from './components/Messages';
-import BalanceManager from "./components/BalanceManager"; // Import BalanceManager component
-import SongManager from "./components/SongManager"; // Import SongManager component
-import InventoryItemDetail from "./components/InventoryItemDetail"; // Import InventoryItemDetail component
-import MessageLogView from "./components/MessageLogView"; // Import MessageLogView component
-import CourseAnalytics from "./components/CourseAnalytics"; // Import CourseAnalytics component
-import BIDashboard from "./components/BIDashboard"; // Import BIDashboard component
-import UserBIDashboard from "./components/UserBIDashboard"; // Import UserBIDashboard component
-import MyPlan from "./components/MyPlan"; // Import MyPlan component
-import ProductManager from "./components/ProductManager"; // Import ProductManager component
-import InvoiceManager from "./components/InvoiceManager"; // Add this import
-import SocialMedia from "./components/SocialMedia"; // Import SocialMedia component
-import SocialMediaAccounts from "./components/SocialMediaAccounts"; // Import SocialMediaAccounts component
-import LeicaModule from "./components/LeicaModule";
-import RoleManager from "./components/RoleManager"; // Import RoleManager component
-import UserRoleAssignment from "./components/UserRoleAssignment"; // Import UserRoleAssignment component
-import Forms from "./components/Forms"; // Import Forms component
-import FormViewer from "./components/FormViewer"; // Import FormViewer component
-import FormEmbed from "./components/FormEmbed"; // Import FormEmbed component
-import FormEntriesPage from "./components/FormEntriesPage"; // Import FormEntriesPage component
-import TimeTracker from "./components/TimeTracker"; // Import TimeTracker component
-import TimerPage from "./components/TimerPage"; // Import TimerPage component
-import TaskProgressDetail from "./components/TaskProgressDetail"; // Import TaskProgressDetail component
-import MySunday from "./components/MySunday";
-import GlobalOrganizationManager from "./components/GlobalOrganizationManager";
-import ChurchProfile from "./components/ChurchProfile";
-import FreshBooksCallback from "./components/FreshBooksCallback";
-import SqlServerBridge from "./components/SqlServerBridge";
-import ExcelRowDetail from "./components/ExcelRowDetail";
->>>>>>> a9f287621fea87e41e80addac008388e602a9522
 
 const App = () => {
   return (

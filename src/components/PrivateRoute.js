@@ -46,7 +46,11 @@ const PrivateRoute = ({ children, roles = [] }) => {
   }
 
   if (!user) {
-    return <NotAuthorized message="Please sign in to access this page." />;
+    const returnUrl = `${location.pathname}${location.search}`;
+    const loginBasePath = routeType === 'church'
+      ? `/church/${churchId}/login`
+      : `/organization/${churchId}/login`;
+    return <Navigate to={`${loginBasePath}?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
   }
 
   if (roles.length > 0 && !allowedRoles.includes(resolvedRole)) {

@@ -885,7 +885,7 @@ const BIMModule = () => {
   const { id, projectId: routeProjectId, rowNumber, bimView } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const fileInputRef = useRef(null);
   const [commentAttachmentInputKey, setCommentAttachmentInputKey] = useState(0);
   const [editAttachmentInputKey, setEditAttachmentInputKey] = useState(0);
@@ -1069,6 +1069,18 @@ const BIMModule = () => {
 
   const closeLightbox = () => {
     setLightboxImage(null);
+  };
+
+  const handleLogout = async () => {
+    const returnUrl = `${location.pathname}${location.search}`;
+
+    try {
+      await logout();
+      navigate(`/organization/${id}/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replace: true });
+    } catch (error) {
+      console.error("Error logging out from BIM module:", error);
+      toast.error("Could not log out. Please try again.");
+    }
   };
 
   const handleCreateProject = async () => {
@@ -3210,17 +3222,26 @@ const BIMModule = () => {
               Create projects, upload Excel, and render one card per data row using the first row as field names.
             </p>
           </div>
-          <label className={`bim-upload-btn ${uploading ? "is-disabled" : ""}`}>
-            {uploading ? "Uploading..." : "Upload Excel"}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleUploadFile}
-              disabled={uploading}
-              hidden
-            />
-          </label>
+          <div className="bim-header-actions">
+            <label className={`bim-upload-btn ${uploading ? "is-disabled" : ""}`}>
+              {uploading ? "Uploading..." : "Upload Excel"}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleUploadFile}
+                disabled={uploading}
+                hidden
+              />
+            </label>
+            <button
+              type="button"
+              className="bim-logout-btn"
+              onClick={handleLogout}
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="bim-grid">
