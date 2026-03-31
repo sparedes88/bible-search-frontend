@@ -31,6 +31,9 @@ service cloud.firestore {
 
     // ✅ Users
     match /users/{userId} {
+      // Explicit self document access for AuthContext profile load.
+      allow get: if isAuthenticated() && request.auth.uid == userId;
+
       function isMember() {
         return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'member';
       }
@@ -256,6 +259,17 @@ service cloud.firestore {
       // Brands (BIM Tracker) - Authenticated users can read and write
       match /brands/{brandId} {
         allow read, write, create, update, delete: if isAuthenticated();
+      }
+
+      // BIM Projects - Authenticated users can read and write
+      match /bimProjects/{projectId} {
+        allow read: if true;
+        allow write, create, update, delete: if isAuthenticated();
+
+        match /uploadLogs/{logId} {
+          allow read: if true;
+          allow write, create, update, delete: if isAuthenticated();
+        }
       }
     }
 

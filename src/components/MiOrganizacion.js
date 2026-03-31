@@ -81,6 +81,11 @@ const MiOrganizacion = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const normalizedRole = String(user?.role || user?.customRole || "").trim().toLowerCase();
+  const isGlobalAdminUser = ["global_admin", "system_global_admin"].includes(normalizedRole);
+  const isAdminUser = isGlobalAdminUser || ["admin", "system_admin"].includes(normalizedRole);
+  const sameOrganization = String(user?.churchId || "") === String(id || "");
+  const roleLabel = normalizedRole ? normalizedRole.replace(/_/g, " ") : "member";
   const [loading, setLoading] = useState(true);
   const [organizationData, setOrganizationData] = useState(null);
   const [error, setError] = useState(null);
@@ -183,6 +188,12 @@ const MiOrganizacion = () => {
           description: "Upload and analyze CSV or text files",
           icon: "📁",
           path: `/organization/${id}/leica`
+        },
+        {
+          title: "BIM Projects",
+          description: "Create BIM projects and upload Excel data as cards",
+          icon: "🏢",
+          path: `/organization/${id}/bim`
         },
         {
           title: "Time Tracker",
@@ -303,7 +314,7 @@ const MiOrganizacion = () => {
       // Check if user has access to this organization
       // Global admins can access any organization
       // Regular users (admin, member) can only access their assigned church
-      if (user.role !== 'global_admin' && user.churchId && user.churchId !== id) {
+      if (!isGlobalAdminUser && user.churchId && String(user.churchId) !== String(id)) {
         setError("Access Denied: You don't have permission to access this organization.");
         setLoading(false);
         return;
@@ -355,15 +366,14 @@ const MiOrganizacion = () => {
       } catch (error) {
         console.error('Error checking permissions:', error);
         // Fallback to basic role checking
-        const isAdmin = user.role === 'admin' || user.role === 'global_admin';
         setUserPermissions({
-          forms: isAdmin,
+          forms: isAdminUser,
         });
       }
     };
 
     checkPermissions();
-  }, [user, id]);
+  }, [user, id, isAdminUser]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -547,13 +557,12 @@ const MiOrganizacion = () => {
             <div>
               <div style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: '500' }}>Your Role</div>
               <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#1F2937', textTransform: 'capitalize' }}>
-                {user?.role?.replace('_', ' ') || 'Member'}
+                {roleLabel}
               </div>
             </div>
           </div>
         </div>
-        {(user && (user.role === "global_admin" ||
-          (user.role === "admin" && user.churchId == id))) && (
+        {(user && (isGlobalAdminUser || (isAdminUser && (!user?.churchId || sameOrganization)))) && (
           <div
             style={{
               display: "flex",

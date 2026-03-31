@@ -8,6 +8,8 @@ const PrivateRoute = ({ children, roles = [] }) => {
   const pathParts = location.pathname.split('/');
   const routeType = pathParts[1]; // 'organization' or 'church'
   const churchId = pathParts[2];
+  const resolvedRole = String(user?.role || user?.customRole || '').trim().toLowerCase();
+  const allowedRoles = roles.map((role) => String(role).trim().toLowerCase());
 
   if (loading) {
     return (
@@ -47,7 +49,7 @@ const PrivateRoute = ({ children, roles = [] }) => {
     return <NotAuthorized message="Please sign in to access this page." />;
   }
 
-  if (roles.length > 0 && !roles.includes(user.role)) {
+  if (roles.length > 0 && !allowedRoles.includes(resolvedRole)) {
     return <NotAuthorized message="You don't have permission to access this page." showLogin={false} />;
   }
 

@@ -2,9 +2,41 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { auth, db, storage } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { getDownloadURL, ref } from 'firebase/storage';
-import { signOut } from 'firebase/auth';
+import { signOut, getIdTokenResult } from 'firebase/auth';
 
 const AuthContext = createContext();
+
+const isPermissionDeniedError = (error) =>
+  error?.code === 'permission-denied' ||
+  error?.code === 'firestore/permission-denied';
+
+const buildFallbackUser = async (firebaseUser) => {
+  const tokenResult = await getIdTokenResult(firebaseUser).catch(() => null);
+  const storedChurchId = localStorage.getItem('userChurchId');
+  const fallbackRole = tokenResult?.claims?.role || localStorage.getItem('userRole') || null;
+
+  return {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    role: fallbackRole,
+    churchId: storedChurchId || null,
+  };
+};
+
+const loadUserProfile = async (firebaseUser) => {
+  const userRef = doc(db, 'users', firebaseUser.uid);
+
+  try {
+    return await getDoc(userRef);
+  } catch (error) {
+    if (!isPermissionDeniedError(error)) {
+      throw error;
+    }
+
+    await firebaseUser.getIdToken(true);
+    return getDoc(userRef);
+  }
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -12,36 +44,47 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
-    // Set loading to false immediately to show UI
-    setLoading(false);
-
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
+      setLoading(true);
+
       if (firebaseUser) {
         try {
-          // Load user data with timeout
-          const userDocPromise = getDoc(doc(db, 'users', firebaseUser.uid));
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout')), 3000)
-          );
-          
-          const userDoc = await Promise.race([userDocPromise, timeoutPromise]);
+          const userDoc = await loadUserProfile(firebaseUser);
           
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            const resolvedRole = userData?.role || userData?.customRole || null;
+
             setUser({
               ...userData,
               uid: firebaseUser.uid,
+              role: resolvedRole,
             });
+
+            localStorage.setItem("userId", firebaseUser.uid);
+            if (resolvedRole) {
+              localStorage.setItem("userRole", resolvedRole);
+            }
+            if (userData?.churchId) {
+              localStorage.setItem("userChurchId", String(userData.churchId));
+            }
+          } else {
+            setUser(await buildFallbackUser(firebaseUser));
+
             localStorage.setItem("userId", firebaseUser.uid);
           }
+
           setAuthError(null);
         } catch (error) {
-          console.error('AuthContext - Error fetching user data:', error);
-          // Don't block on error - set user with minimal data
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email
-          });
+          if (isPermissionDeniedError(error)) {
+            console.warn('AuthContext - User profile read denied, using fallback auth state.');
+          } else {
+            console.error('AuthContext - Error fetching user data:', error);
+          }
+
+          // Don't block on error - set user with best-effort role fallback
+          setUser(await buildFallbackUser(firebaseUser));
+          localStorage.setItem("userId", firebaseUser.uid);
           setAuthError(null);
         }
       } else {
@@ -66,6 +109,8 @@ export function AuthProvider({ children }) {
       await signOut(auth);
       setUser(null);
       localStorage.removeItem("userId");
+      localStorage.removeItem("userRole");
+      localStorage.removeItem("userChurchId");
     } catch (error) {
       console.error('Logout error:', error);
       throw error;

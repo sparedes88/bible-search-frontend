@@ -12,10 +12,8 @@ import { db, storage } from "../firebase";
 
 export const getChurchData = async (id) => {
   try {
-    const dbInstance = getFirestore();
-
     // Fetch church data from Firestore
-    const churchRef = doc(dbInstance, "churches", id);
+    const churchRef = doc(db, "churches", id);
     const churchSnap = await getDoc(churchRef);
     const churchData = churchSnap.data();
 
@@ -29,21 +27,23 @@ export const getChurchData = async (id) => {
     let bannerURL = null;
 
     if (storage) {
-      try {
-        if (churchData.logo) {
-          logoURL = await getDownloadURL(ref(storage, churchData.logo));
-        }
-      } catch (logoError) {
-        console.warn("Failed to get logo URL:", logoError.message);
-      }
+      const [resolvedLogoUrl, resolvedBannerUrl] = await Promise.all([
+        churchData.logo
+          ? getDownloadURL(ref(storage, churchData.logo)).catch((logoError) => {
+              console.warn("Failed to get logo URL:", logoError.message);
+              return null;
+            })
+          : Promise.resolve(null),
+        churchData.banner
+          ? getDownloadURL(ref(storage, churchData.banner)).catch((bannerError) => {
+              console.warn("Failed to get banner URL:", bannerError.message);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
 
-      try {
-        if (churchData.banner) {
-          bannerURL = await getDownloadURL(ref(storage, churchData.banner));
-        }
-      } catch (bannerError) {
-        console.warn("Failed to get banner URL:", bannerError.message);
-      }
+      logoURL = resolvedLogoUrl;
+      bannerURL = resolvedBannerUrl;
     } else {
       console.warn("Storage not available, using fallback images for church data");
     }

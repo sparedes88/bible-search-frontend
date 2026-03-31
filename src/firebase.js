@@ -1,24 +1,37 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, connectAuthEmulator } from "firebase/auth";
 import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  connectAuthEmulator,
+  getAuth,
+  initializeAuth,
+} from "firebase/auth";
+import {
+  initializeFirestore,
   getFirestore,
-  enableIndexedDbPersistence,
-  enableMultiTabIndexedDbPersistence,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   connectFirestoreEmulator,
   doc,
-  onSnapshot,
   collection,
   setDoc,
   getDoc,
 } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
-import { getDatabase, connectDatabaseEmulator } from "firebase/database";
+import { getDatabase, connectDatabaseEmulator, onValue, ref as dbRef } from "firebase/database";
 
 // Debug logger with timestamp
+const isFirebaseDebugEnabled = process.env.REACT_APP_ENABLE_FIREBASE_DEBUG === "true";
 const debugLog = (message) => {
-  console.log(`[Firebase Debug] ${new Date().toISOString()}: ${message}`);
+  if (isFirebaseDebugEnabled) {
+    console.log(`[Firebase Debug] ${new Date().toISOString()}: ${message}`);
+  }
 };
+
+const isRunningOnLocalhost =
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 // Environment detection
 const isLocal = false; // Change this to false to prevent forced offline mode
@@ -35,24 +48,98 @@ const firebaseConfig = {
     : process.env.REACT_APP_FIREBASE_DATABASE_URL,
 };
 
-// Debug: Log the Firebase configuration
-console.log("Firebase Config Debug:", {
-  apiKey: firebaseConfig.apiKey ? "✓ Set" : "✗ Missing",
-  authDomain: firebaseConfig.authDomain ? "✓ Set" : "✗ Missing",
-  projectId: firebaseConfig.projectId ? "✓ Set" : "✗ Missing",
-  storageBucket: firebaseConfig.storageBucket ? "✓ Set" : "✗ Missing",
-  appId: firebaseConfig.appId ? "✓ Set" : "✗ Missing",
-  measurementId: firebaseConfig.measurementId ? "✓ Set" : "✗ Missing",
-  databaseURL: firebaseConfig.databaseURL ? "✓ Set" : "✗ Missing",
-});
+const isRealtimeDbEnabled =
+  process.env.REACT_APP_ENABLE_REALTIME_DB === "true";
+const hasRealtimeDatabaseUrl = Boolean(
+  firebaseConfig.databaseURL && /^https?:\/\//.test(firebaseConfig.databaseURL)
+);
+
+const hasRealMeasurementId = Boolean(
+  firebaseConfig.measurementId &&
+  firebaseConfig.measurementId !== "G-XXXXXXXXXX"
+);
+
+if (isFirebaseDebugEnabled) {
+  console.log("Firebase Config Debug:", {
+    apiKey: firebaseConfig.apiKey ? "✓ Set" : "✗ Missing",
+    authDomain: firebaseConfig.authDomain ? "✓ Set" : "✗ Missing",
+    projectId: firebaseConfig.projectId ? "✓ Set" : "✗ Missing",
+    storageBucket: firebaseConfig.storageBucket ? "✓ Set" : "✗ Missing",
+    appId: firebaseConfig.appId ? "✓ Set" : "✗ Missing",
+    measurementId: firebaseConfig.measurementId ? "✓ Set" : "✗ Missing",
+    databaseURL: firebaseConfig.databaseURL ? "✓ Set" : "✗ Missing",
+  });
+}
+
+const clearStaleFirebaseAuthState = (currentApiKey) => {
+  if (!isRunningOnLocalhost || typeof window === "undefined") {
+    return;
+  }
+
+  let foundStaleKey = false;
+
+  const removeStaleKeys = (storage) => {
+    if (!storage) return;
+
+    Object.keys(storage).forEach((key) => {
+      if (!key.startsWith("firebase:")) {
+        return;
+      }
+
+      if (key.includes(currentApiKey)) {
+        return;
+      }
+
+      foundStaleKey = true;
+      storage.removeItem(key);
+    });
+  };
+
+  try {
+    removeStaleKeys(window.localStorage);
+    removeStaleKeys(window.sessionStorage);
+
+    if (foundStaleKey && window.indexedDB) {
+      window.indexedDB.deleteDatabase("firebaseLocalStorageDb");
+    }
+
+    if (foundStaleKey) {
+      debugLog("Cleared stale Firebase auth state for localhost");
+    }
+  } catch (error) {
+    console.warn("Failed to clear stale Firebase auth state:", error);
+  }
+};
+
+clearStaleFirebaseAuthState(firebaseConfig.apiKey);
 
 // Initialize Firebase
 debugLog("Initializing Firebase");
 const app = initializeApp(firebaseConfig);
 
 // Initialize services
-const auth = getAuth(app);
-const db = getFirestore(app);
+const auth = isRunningOnLocalhost
+  ? initializeAuth(app, {
+      persistence: [browserLocalPersistence, browserSessionPersistence],
+    })
+  : getAuth(app);
+let db;
+try {
+  if (isRunningOnLocalhost) {
+    db = getFirestore(app);
+    debugLog("Firestore initialized without persistent local cache on localhost");
+  } else {
+    db = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+    debugLog("Firestore initialized with modern persistent local cache");
+  }
+} catch (error) {
+  db = getFirestore(app);
+  debugLog(`Firestore fallback initialization used: ${error.message}`);
+}
 
 // Initialize storage with better error handling - make it optional
 let storage = null;
@@ -60,31 +147,47 @@ try {
   // Try to initialize storage with explicit bucket first
   if (firebaseConfig.storageBucket) {
     storage = getStorage(app, firebaseConfig.storageBucket);
-    console.log("Firebase storage initialized with explicit bucket:", firebaseConfig.storageBucket);
+    debugLog(`Firebase storage initialized with explicit bucket: ${firebaseConfig.storageBucket}`);
   } else {
     // Fallback to default bucket
     storage = getStorage(app);
-    console.log("Firebase storage initialized with default bucket");
+    debugLog("Firebase storage initialized with default bucket");
   }
 } catch (error) {
-  console.warn("Firebase storage initialization failed:", error.message);
+  if (isFirebaseDebugEnabled) {
+    console.warn("Firebase storage initialization failed:", error.message);
+  }
   storage = null;
 }
 
 // If storage is still null, log a warning but don't crash
 if (!storage) {
-  console.warn("Firebase Storage is not available. File upload features will be disabled.");
+  if (isFirebaseDebugEnabled) {
+    console.warn("Firebase Storage is not available. File upload features will be disabled.");
+  }
 }
 
 // Lazy initialize database to avoid initialization errors
 let databaseInstance = null;
 const getDatabaseInstance = () => {
+  if (!isRealtimeDbEnabled || !hasRealtimeDatabaseUrl) {
+    if (isFirebaseDebugEnabled) {
+      const reason = !isRealtimeDbEnabled
+        ? "disabled via REACT_APP_ENABLE_REALTIME_DB"
+        : "missing/invalid REACT_APP_FIREBASE_DATABASE_URL";
+      debugLog(`Realtime Database skipped (${reason})`);
+    }
+    return null;
+  }
+
   if (!databaseInstance) {
     try {
       databaseInstance = getDatabase(app);
-      console.log("Firebase database initialized successfully");
+      debugLog("Firebase database initialized successfully");
     } catch (error) {
-      console.warn("Firebase Realtime Database is not available:", error.message);
+      if (isFirebaseDebugEnabled) {
+        console.warn("Firebase Realtime Database is not available:", error.message);
+      }
       databaseInstance = null;
     }
   }
@@ -113,38 +216,8 @@ const initializeFirebase = async () => {
       debugLog("Connected to local emulators");
     }
 
-    // Enable offline persistence (multi-tab first, then fallback)
-    enableMultiTabIndexedDbPersistence(db)
-      .then(() => {
-        debugLog("Multi-tab persistence enabled");
-      })
-      .catch((err) => {
-        if (err.code === "unimplemented") {
-          debugLog("Browser doesn't support multi-tab persistence");
-        } else if (err.code === "failed-precondition") {
-          debugLog("Multi-tab persistence failed-precondition");
-        } else {
-          debugLog(`Multi-tab persistence error: ${err.message}`);
-        }
-
-        // Fallback to single-tab persistence
-        return enableIndexedDbPersistence(db)
-          .then(() => {
-            debugLog("Single-tab persistence enabled");
-          })
-          .catch((fallbackErr) => {
-            if (fallbackErr.code === "failed-precondition") {
-              debugLog("Multiple tabs open, persistence enabled in another tab");
-            } else if (fallbackErr.code === "unimplemented") {
-              debugLog("Browser doesn't support persistence");
-            } else {
-              debugLog(`Persistence error: ${fallbackErr.message}`);
-            }
-          });
-      });
-
-    // Initialize Analytics only in production and after everything else is set up
-    if (!isLocal) {
+    // Initialize analytics only when a real measurement ID exists.
+    if (!isLocal && hasRealMeasurementId) {
       try {
         analytics = getAnalytics(app);
         debugLog("Analytics initialized");
@@ -152,19 +225,22 @@ const initializeFirebase = async () => {
         debugLog(`Analytics initialization failed: ${analyticsError.message}`);
         analytics = null;
       }
+    } else {
+      debugLog("Analytics skipped (missing or placeholder measurement ID)");
     }
 
-    // Set up connection monitoring (non-blocking, async)
+    // Set up connection monitoring from Realtime Database (non-blocking, async)
     setTimeout(() => {
       try {
-        const connectedRef = doc(db, ".info/connected");
-        onSnapshot(
+        const databaseInstance = getDatabaseInstance();
+        if (!databaseInstance) return;
+
+        const connectedRef = dbRef(databaseInstance, ".info/connected");
+        onValue(
           connectedRef,
           (snap) => {
-            const isConnected = snap.exists() && snap.data()?.connected;
-            debugLog(
-              `Connection state: ${isConnected ? "Connected" : "Disconnected"}`
-            );
+            const isConnected = !!snap.val();
+            debugLog(`Connection state: ${isConnected ? "Connected" : "Disconnected"}`);
           },
           (error) => debugLog(`Connection monitoring error: ${error.message}`)
         );

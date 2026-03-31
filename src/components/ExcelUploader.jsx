@@ -50,10 +50,53 @@ const ExcelUploader = ({ churchId = null, collectionName = 'brands' }) => {
 
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: false, cellDates: true });
+      const rangeRef = worksheet && worksheet['!ref'];
+      if (!rangeRef) {
+        throw new Error('Worksheet is empty');
+      }
 
-      // collect headers (union of keys)
-      const hdrs = Array.from(new Set(json.flatMap(r => Object.keys(r))));
+      const range = XLSX.utils.decode_range(rangeRef);
+      const headerRow = range.s.r;
+      const headerCols = [];
+
+      for (let c = range.s.c; c <= range.e.c; c += 1) {
+        const headerCell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c })];
+        const headerName = String(headerCell?.w ?? headerCell?.v ?? '').trim();
+        if (headerName) {
+          headerCols.push({ c, header: headerName });
+        }
+      }
+
+      if (!headerCols.length) {
+        throw new Error('No header row found in worksheet');
+      }
+
+      const parsedRows = [];
+      for (let r = headerRow + 1; r <= range.e.r; r += 1) {
+        const rowObj = {};
+        let hasValue = false;
+
+        headerCols.forEach(({ c, header }) => {
+          const cell = worksheet[XLSX.utils.encode_cell({ r, c })];
+          const hyperlinkTarget = cell?.l?.Target;
+          const rawValue = hyperlinkTarget || (cell?.w ?? cell?.v ?? '');
+          const normalizedValue = rawValue === undefined || rawValue === null ? '' : String(rawValue);
+
+          rowObj[header] = normalizedValue;
+          if (normalizedValue.trim() !== '') {
+            hasValue = true;
+          }
+        });
+
+        if (hasValue) {
+          parsedRows.push(rowObj);
+        }
+      }
+
+      const json = parsedRows;
+
+      // collect headers (preserve worksheet order)
+      const hdrs = headerCols.map(({ header }) => header);
       setHeaders(hdrs);
       // default header types to savedHeaderTypes (from metadata) or existing headerTypes or 'auto'
       const types = {};

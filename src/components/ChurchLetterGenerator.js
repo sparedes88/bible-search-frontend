@@ -23,10 +23,16 @@ import commonStyles from "../pages/commonStyles";
 
 // Load OpenAI API Key from .env
 const OPENAI_API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
-});
+const getOpenAIClient = () => {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
+
+  return new OpenAI({
+    apiKey: OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true,
+  });
+};
 
 const API_BASE_URL = "https://iglesia-tech-api.e2api.com";
 
@@ -70,6 +76,13 @@ const ChurchLetterGenerator = () => {
 
     if (!OPENAI_API_KEY) {
       setError("⚠ Error: La clave de OpenAI no está configurada en el archivo .env.");
+      setLoading(false);
+      return;
+    }
+
+    const openai = getOpenAIClient();
+    if (!openai) {
+      setError("⚠ Error: No se pudo inicializar OpenAI. Revise su configuración.");
       setLoading(false);
       return;
     }

@@ -8,8 +8,28 @@ import App from './App';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 
-// Register Service Worker for aggressive caching
-if ('serviceWorker' in navigator) {
+const clearDevelopmentServiceWorkers = async () => {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+
+    if ('caches' in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+    }
+
+    console.log('Cleared development service workers and caches.');
+  } catch (error) {
+    console.warn('Failed to clear development service workers:', error);
+  }
+};
+
+// Register Service Worker only in production to avoid dev request interference.
+if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
@@ -19,6 +39,8 @@ if ('serviceWorker' in navigator) {
         console.log('Service Worker registration failed:', error);
       });
   });
+} else if (process.env.NODE_ENV !== 'production') {
+  clearDevelopmentServiceWorkers();
 }
 
 const container = document.getElementById('root');

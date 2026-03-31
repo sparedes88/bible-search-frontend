@@ -48,3 +48,7 @@ body {
 .react-datepicker__day--keyboard-selected {
   background-color: #93c5fd;
 }
+
+.Toastify__close-button {
+  display: none !important;
+}

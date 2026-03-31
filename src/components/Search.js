@@ -4,19 +4,25 @@ import { db, auth, firebaseDebug, storage } from "../firebase";
 import { ref, getDownloadURL } from "firebase/storage";
 import "./Search.css";
 import "./Search.responsive.css";
-import { 
-  collection, 
-  getDocs, 
+import {
+  collection,
+  getDocs,
   setDoc,
   doc,
   writeBatch,
   query,
-  limit,
   where,
   orderBy
 } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { onAuthStateChanged } from "firebase/auth";
+
+const ENABLE_SEARCH_DEBUG = false;
+const searchDebug = (...args) => {
+  if (ENABLE_SEARCH_DEBUG) {
+    console.log(...args);
+  }
+};
 
 const Search = () => {
   const navigate = useNavigate();
@@ -36,9 +42,9 @@ const Search = () => {
 
   // Debug environment variables
   useEffect(() => {
-    console.log('Search component - Environment variables:');
-    console.log('REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET);
-    console.log('Firebase storage object:', storage);
+    searchDebug('Search component - Environment variables:');
+    searchDebug('REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET);
+    searchDebug('Firebase storage object:', storage);
   }, []);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,7 +60,7 @@ const Search = () => {
   // Function to get Firebase Storage download URL
   const getImageUrl = async (imagePath) => {
     if (!imagePath) {
-      console.log('getImageUrl: No image path provided');
+      searchDebug('getImageUrl: No image path provided');
       return null;
     }
 
@@ -67,15 +73,15 @@ const Search = () => {
     try {
       // If it's already a full URL, return as is
       if (imagePath.startsWith('http')) {
-        console.log('getImageUrl: Already a full URL:', imagePath);
+        searchDebug('getImageUrl: Already a full URL:', imagePath);
         return imagePath;
       }
       
-      console.log('getImageUrl: Getting download URL for path:', imagePath);
+      searchDebug('getImageUrl: Getting download URL for path:', imagePath);
       // If it's a Firebase Storage path, get download URL with token
       const imageRef = ref(storage, imagePath);
       const downloadUrl = await getDownloadURL(imageRef);
-      console.log('getImageUrl: Successfully got download URL:', downloadUrl);
+      searchDebug('getImageUrl: Successfully got download URL:', downloadUrl);
       return downloadUrl;
     } catch (error) {
       console.warn('getImageUrl: Failed to get image URL for path:', imagePath, 'Error:', error);
@@ -111,22 +117,16 @@ const Search = () => {
       try {
         setError(null);
         
-        // Set timeout to prevent long blocking (reduced to 2 seconds for faster feedback)
+        // Set timeout to prevent long blocking while allowing larger church datasets to load.
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), 2000)
+          setTimeout(() => reject(new Error('Request timeout')), 15000)
         );
         
         const fetchPromise = (async () => {
-          firebaseDebug('Fetching churches from Firestore (limited)');
-          
-          // CRITICAL: Only fetch first 36 churches for fast initial load
-          // This reduces data transfer from potentially 100+ to just 36
+          firebaseDebug('Fetching churches from Firestore');
+
           const churchesRef = collection(db, "churches");
-          const q = query(
-            churchesRef,
-            where("isActive", "==", true),
-            limit(36) // Only load 36 churches initially
-          );
+          const q = query(churchesRef, where("isActive", "==", true));
           
           const querySnapshot = await getDocs(q);
           
@@ -135,7 +135,7 @@ const Search = () => {
             ...doc.data() 
           }));
           
-          firebaseDebug(`Successfully fetched ${activeChurches.length} active churches (limited)`);
+          firebaseDebug(`Successfully fetched ${activeChurches.length} active churches`);
           return activeChurches;
         })();
         
@@ -152,7 +152,7 @@ const Search = () => {
           try {
             firebaseDebug('Retrying without isActive filter');
             const churchesRef = collection(db, "churches");
-            const q = query(churchesRef, limit(36));
+            const q = query(churchesRef);
             const querySnapshot = await getDocs(q);
             const churchData = querySnapshot.docs.map(doc => ({ 
               id: doc.id, 
@@ -161,7 +161,7 @@ const Search = () => {
             const activeChurches = churchData.filter(church => {
               return church.isActive === true || church.isActive === "true" || church.isActive === undefined;
             });
-            setChurches(activeChurches.slice(0, 36));
+            setChurches(activeChurches);
             setIsLoading(false);
             return;
           } catch (retryError) {
@@ -253,9 +253,9 @@ const Search = () => {
 
   // Debug: Log when selectedBrand or brandLogos change
   useEffect(() => {
-    console.log('Selected brand changed:', selectedBrand);
-    console.log('Available brand logos:', Object.keys(brandLogos));
-    console.log('Current logo URL:', selectedBrand ? brandLogos[selectedBrand] : 'none');
+    searchDebug('Selected brand changed:', selectedBrand);
+    searchDebug('Available brand logos:', Object.keys(brandLogos));
+    searchDebug('Current logo URL:', selectedBrand ? brandLogos[selectedBrand] : 'none');
   }, [selectedBrand, brandLogos]);
 
   // Handle URL parameter changes for brand
@@ -303,14 +303,7 @@ const Search = () => {
 
   const [showBrandDebug, setShowBrandDebug] = React.useState(false);
 
-  const visibleBrands = brands.filter(brand => {
-    try {
-      const count = churches.filter(church => matchesBrand(church, brand.id) || matchesBrand(church, brand.name)).length;
-      return count > 0;
-    } catch (e) {
-      return false;
-    }
-  });
+  const visibleBrands = brands;
 
   // When a brand is selected, fetch all churches from Firestore to avoid the initial 36-item limit
   useEffect(() => {
@@ -413,24 +406,24 @@ const Search = () => {
   // Filter churches based on search query and brand
   useEffect(() => {
     let filtered = churches;
-    console.log('Filtering churches - selectedBrand:', selectedBrand, 'searchQuery:', searchQuery);
-    console.log('Total churches before filtering:', churches.length);
+    searchDebug('Filtering churches - selectedBrand:', selectedBrand, 'searchQuery:', searchQuery);
+    searchDebug('Total churches before filtering:', churches.length);
 
     // Filter by brand first
     if (selectedBrand) {
-      console.log('Filtering by brand:', selectedBrand, 'type:', typeof selectedBrand);
-      console.log('Available brands:', brands.map(b => ({id: b.id, name: b.name})));
+      searchDebug('Filtering by brand:', selectedBrand, 'type:', typeof selectedBrand);
+      searchDebug('Available brands:', brands.map(b => ({id: b.id, name: b.name})));
       
       // Debug: Show churches with any brand field
       const churchesWithBrands = churches.filter(church => church.brand || church.brandId || church.brand_id);
-      console.log('Churches with any brand field:', churchesWithBrands.length, churchesWithBrands.map(c => `${c.nombre}: ${c.brand || c.brandId || c.brand_id}`));
+      searchDebug('Churches with any brand field:', churchesWithBrands.length, churchesWithBrands.map(c => `${c.nombre}: ${c.brand || c.brandId || c.brand_id}`));
       
       if (selectedBrand === 'unassigned') {
         // Show churches without brand assignments
         filtered = churches.filter(church => {
           const churchBrand = church.brand || church.brandId || church.brand_id || '';
           const hasNoBrand = !churchBrand || String(churchBrand).trim() === '';
-          console.log(`Church ${church.nombre}: brand=${church.brand}, hasNoBrand=${hasNoBrand}`);
+          searchDebug(`Church ${church.nombre}: brand=${church.brand}, hasNoBrand=${hasNoBrand}`);
           return hasNoBrand;
         });
       } else {
@@ -444,11 +437,11 @@ const Search = () => {
 
         filtered = churches.filter(church => {
           const match = matches(church);
-          console.log(`Church ${church.nombre}: brandRaw=${JSON.stringify(church.brand||church.brandId||church.brand_id||'')}, matches=${match}`);
+          searchDebug(`Church ${church.nombre}: brandRaw=${JSON.stringify(church.brand||church.brandId||church.brand_id||'')}, matches=${match}`);
           return match;
         });
       }
-      console.log('Churches after brand filter:', filtered.length);
+      searchDebug('Churches after brand filter:', filtered.length);
     }
 
     // Then filter by search query
@@ -461,7 +454,7 @@ const Search = () => {
       filtered = [];
     }
 
-    console.log('Final filtered churches:', filtered.length);
+    searchDebug('Final filtered churches:', filtered.length);
     setFilteredChurches(filtered);
   }, [searchQuery, churches, selectedBrand]);
 
@@ -577,8 +570,8 @@ const Search = () => {
   };
 
   const handleBrandChange = (brandId) => {
-    console.log('handleBrandChange called with:', brandId, 'type:', typeof brandId);
-    console.log('Available brand logos:', brandLogos);
+    searchDebug('handleBrandChange called with:', brandId, 'type:', typeof brandId);
+    searchDebug('Available brand logos:', brandLogos);
     setSelectedBrand(brandId);
     setCurrentPage(1); // Reset to first page
     
@@ -597,13 +590,13 @@ const Search = () => {
         {/* Logo - changes based on selected brand */}
         <div className="search-logo-container" key={`logo-${selectedBrand}`}>
           {(() => {
-            console.log('=== LOGO DISPLAY DEBUG ===');
-            console.log('selectedBrand:', selectedBrand);
-            console.log('brandLogos keys:', Object.keys(brandLogos));
-            console.log('brandLogos[selectedBrand]:', brandLogos[selectedBrand]);
-            console.log('brands array:', brands.map(b => ({id: b.id, name: b.name, logo: b.logo, imageUrl: b.imageUrl})));
-            console.log('condition check:', selectedBrand && brandLogos[selectedBrand]);
-            console.log('========================');
+            searchDebug('=== LOGO DISPLAY DEBUG ===');
+            searchDebug('selectedBrand:', selectedBrand);
+            searchDebug('brandLogos keys:', Object.keys(brandLogos));
+            searchDebug('brandLogos[selectedBrand]:', brandLogos[selectedBrand]);
+            searchDebug('brands array:', brands.map(b => ({id: b.id, name: b.name, logo: b.logo, imageUrl: b.imageUrl})));
+            searchDebug('condition check:', selectedBrand && brandLogos[selectedBrand]);
+            searchDebug('========================');
             
             return selectedBrand && brandLogos[selectedBrand] ? (
               <img 
@@ -734,10 +727,10 @@ const Search = () => {
                     className="header-image" 
                     loading="lazy"
                     onError={(e) => {
-                      console.log('Header image failed to load for church:', church.nombre, 'Using fallback');
-                      console.log('Failed image src was:', e.target.src);
-                      console.log('Church banner path:', church.banner);
-                      console.log('Preloaded banner URL:', imageUrls[`${church.id}_banner`]);
+                      searchDebug('Header image failed to load for church:', church.nombre, 'Using fallback');
+                      searchDebug('Failed image src was:', e.target.src);
+                      searchDebug('Church banner path:', church.banner);
+                      searchDebug('Preloaded banner URL:', imageUrls[`${church.id}_banner`]);
                       const baseUrl = process.env.PUBLIC_URL || '';
                       e.target.src = `${baseUrl}/img/banner-fallback.svg`;
                     }}
@@ -761,17 +754,17 @@ const Search = () => {
                             const baseUrl = process.env.PUBLIC_URL || '';
                             url = `${baseUrl}/img/logo-fallback.svg`;
                           }
-                          console.log('Logo URL for church', church.nombre, ':', url, 'Original paths - logo:', church.logo, 'Logo:', church.Logo);
+                          searchDebug('Logo URL for church', church.nombre, ':', url, 'Original paths - logo:', church.logo, 'Logo:', church.Logo);
                           return url;
                         })()
                       }
                       alt={`${church.nombre} logo`} 
                       className="card-logo" 
                       onError={(e) => {
-                        console.log('Logo image failed to load for church:', church.nombre, 'Using fallback');
-                        console.log('Failed logo src was:', e.target.src);
-                        console.log('Church logo paths - logo:', church.logo, 'Logo:', church.Logo);
-                        console.log('Preloaded logo URL:', imageUrls[`${church.id}_logo`]);
+                        searchDebug('Logo image failed to load for church:', church.nombre, 'Using fallback');
+                        searchDebug('Failed logo src was:', e.target.src);
+                        searchDebug('Church logo paths - logo:', church.logo, 'Logo:', church.Logo);
+                        searchDebug('Preloaded logo URL:', imageUrls[`${church.id}_logo`]);
                         const baseUrl = process.env.PUBLIC_URL || '';
                       e.target.src = `${baseUrl}/img/logo-fallback.svg`;
                       }}

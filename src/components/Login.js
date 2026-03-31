@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import {
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -11,11 +11,13 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { doc, getDoc, collection, query, where, getDocs, limit, setDoc } from "firebase/firestore";
 import "react-loading-skeleton/dist/skeleton.css";
 import commonStyles from "../pages/commonStyles";
-import "./Register.css";
-import ChurchHeader from "./ChurchHeader";
 import "../styles/LoginStyles.css";
+import "./Register.css";
+
+const ChurchHeader = React.lazy(() => import("./ChurchHeader"));
 
 const Login = () => {
+  const MAX_COOLDOWN_SECONDS = 120;
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -30,6 +32,10 @@ const Login = () => {
   const [loginDisabled, setLoginDisabled] = useState(false);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [rememberMe, setRememberMe] = useState(true);
+  const [providerDisabled, setProviderDisabled] = useState(false);
+  const safeCooldownTime = Number.isFinite(cooldownTime)
+    ? Math.max(0, Math.min(Math.floor(cooldownTime), MAX_COOLDOWN_SECONDS))
+    : 0;
   
   // Extract return URL from query parameters if present
   const urlParams = new URLSearchParams(location.search);
@@ -58,20 +64,26 @@ const Login = () => {
   // Cooldown timer for rate limiting
   useEffect(() => {
     let timer;
-    if (loginDisabled && cooldownTime > 0) {
+    if (loginDisabled && safeCooldownTime > 0) {
       timer = setInterval(() => {
         setCooldownTime(prevTime => {
-          if (prevTime <= 1) {
+          const normalizedPrevTime = Number.isFinite(prevTime)
+            ? Math.max(0, Math.min(Math.floor(prevTime), MAX_COOLDOWN_SECONDS))
+            : 0;
+
+          if (normalizedPrevTime <= 1) {
             clearInterval(timer);
             setLoginDisabled(false);
             return 0;
           }
-          return prevTime - 1;
+          return normalizedPrevTime - 1;
         });
       }, 1000);
+    } else if (loginDisabled && safeCooldownTime <= 0) {
+      setLoginDisabled(false);
     }
     return () => clearInterval(timer);
-  }, [loginDisabled, cooldownTime]);
+  }, [loginDisabled, safeCooldownTime]);
 
   // Check if input is an email or phone number
   const isEmail = (value) => {
@@ -144,8 +156,13 @@ const Login = () => {
       return;
     }
 
+    if (providerDisabled) {
+      setError("❌ El inicio de sesión por correo/contraseña está deshabilitado en Firebase para este proyecto. Actívelo en Authentication > Sign-in method.");
+      return;
+    }
+
     if (loginDisabled) {
-      setError(`❌ Demasiados intentos. Por favor espere ${cooldownTime} segundos.`);
+      setError(`❌ Demasiados intentos. Por favor espere ${safeCooldownTime} segundos.`);
       return;
     }
 
@@ -220,7 +237,22 @@ const Login = () => {
 
   // Centralized error handler
   const handleAuthError = (err) => {
-    console.error("Authentication error:", err);
+    const expectedAuthCodes = new Set([
+      "auth/network-request-failed",
+      "auth/user-not-found",
+      "auth/invalid-credential",
+      "auth/wrong-password",
+      "auth/too-many-requests",
+      "auth/user-disabled",
+      "auth/invalid-email",
+      "auth/operation-not-allowed",
+    ]);
+
+    if (expectedAuthCodes.has(err?.code)) {
+      console.warn(`Authentication handled error: ${err.code}`);
+    } else {
+      console.error("Authentication error:", err);
+    }
     
     let errorMessage = "❌ ";
     let cooldown = 0;
@@ -250,6 +282,12 @@ const Login = () => {
       case "auth/invalid-email":
         errorMessage += "Formato de correo electrónico inválido.";
         break;
+      case "auth/operation-not-allowed":
+        errorMessage += "El inicio de sesión por correo/contraseña no está habilitado en Firebase Auth para este proyecto. Active Email/Password en Authentication > Sign-in method.";
+        setProviderDisabled(true);
+        setLoginDisabled(false);
+        setCooldownTime(0);
+        break;
       default:
         errorMessage += err.message || "Error desconocido. Por favor intente más tarde.";
     }
@@ -257,9 +295,9 @@ const Login = () => {
     setError(errorMessage);
     
     // Implement cooldown if needed
-    if (cooldown > 0) {
+    if (cooldown > 0 && !providerDisabled) {
       setLoginDisabled(true);
-      setCooldownTime(cooldown);
+      setCooldownTime(Math.min(cooldown, MAX_COOLDOWN_SECONDS));
     }
     
     // Track retry count for network issues
@@ -405,7 +443,11 @@ const Login = () => {
         </button>
       </div>
 
-      {id && <ChurchHeader id={id} applyShadow={false} />}
+      {id && (
+        <Suspense fallback={<div style={{ minHeight: 120 }} />}>
+          <ChurchHeader id={id} applyShadow={false} />
+        </Suspense>
+      )}
 
       {/* Network Status */}
       {!isOnline && (
@@ -420,7 +462,7 @@ const Login = () => {
 
         {error && <p style={{ color: "red" }}>{error}</p>}
 
-        {loginDisabled && cooldownTime > 0 && (
+        {loginDisabled && safeCooldownTime > 0 && (
           <div style={{
             backgroundColor: "#FEE2E2",
             color: "#B91C1C",
@@ -429,7 +471,7 @@ const Login = () => {
             marginBottom: "15px",
             textAlign: "center"
           }}>
-            Por favor espere {cooldownTime} segundos antes de intentar nuevamente.
+            Por favor espere {safeCooldownTime} segundos antes de intentar nuevamente.
           </div>
         )}
 

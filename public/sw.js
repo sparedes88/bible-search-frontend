@@ -82,8 +82,13 @@ self.addEventListener('fetch', (event) => {
   
   // For other requests, try network first, then cache
   event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
+    fetch(event.request).catch(async () => {
+      const cached = await caches.match(event.request);
+      return cached || new Response('Offline', {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': 'text/plain' }
+      });
     })
   );
 });

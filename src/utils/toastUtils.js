@@ -8,6 +8,7 @@ export const toastConfig = {
   autoClose: 3000,
   hideProgressBar: false,
   closeOnClick: true,
+  closeButton: false,
   pauseOnHover: true,
   draggable: true,
   pauseOnFocusLoss: false, // Prevent pausing on focus loss which can cause stale references
@@ -51,6 +52,7 @@ export const SafeToastContainer = () => (
     hideProgressBar={false}
     newestOnTop={true}
     closeOnClick
+    closeButton={false}
     rtl={false}
     pauseOnFocusLoss={false}
     draggable={true}

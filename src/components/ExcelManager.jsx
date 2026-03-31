@@ -186,6 +186,15 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
     } catch (e) { return false; }
   };
 
+  const isSnapshotColumn = (header) => /snapshot/i.test(String(header || ''));
+
+  const normalizeUrl = (val) => {
+    const raw = typeof val === 'string' ? val : formatValue(val);
+    if (!raw) return '';
+    if (/^www\./i.test(raw)) return `https://${raw}`;
+    return raw;
+  };
+
   const formatDateOnly = (val, header) => {
     if (!val) return '';
     let d = null;
@@ -1183,7 +1192,32 @@ const ExcelManager = ({ churchId = null, collectionName = 'brands' }) => {
                                 )
                               ) : (
                                 isUrl(r[h]) ? (
-                                  <a className="cell-view" href={typeof r[h] === 'string' ? r[h] : formatValue(r[h])} target="_blank" rel="noreferrer">link</a>
+                                  isSnapshotColumn(h) ? (
+                                    <a
+                                      className="cell-view"
+                                      href={normalizeUrl(r[h])}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      title="Open snapshot"
+                                      style={{ display: 'inline-flex', alignItems: 'center' }}
+                                    >
+                                      <img
+                                        src={normalizeUrl(r[h])}
+                                        alt="Card snapshot"
+                                        loading="lazy"
+                                        style={{
+                                          width: 56,
+                                          height: 56,
+                                          objectFit: 'cover',
+                                          borderRadius: 8,
+                                          border: '1px solid #e5e7eb',
+                                          background: '#f8fafc'
+                                        }}
+                                      />
+                                    </a>
+                                  ) : (
+                                    <a className="cell-view" href={normalizeUrl(r[h])} target="_blank" rel="noreferrer">link</a>
+                                  )
                                 ) : (
                                   <div
                                     className="cell-view"
