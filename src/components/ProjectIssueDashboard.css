@@ -11,6 +11,34 @@
   padding: 1.25rem;
 }
 
+.project-issue-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.project-issue-email-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  background: #2563eb;
+  color: #ffffff;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.project-issue-email-btn:hover {
+  background: #1d4ed8;
+}
+
 .project-issue-title {
   margin: 0;
   color: #102a43;
@@ -21,6 +49,52 @@
   color: #486581;
 }
 
+.project-issue-summary-chart {
+  margin-top: 0.8rem;
+  width: 100%;
+  max-width: 460px;
+  background: transparent;
+  border: 1px solid #dbe7ff;
+  border-radius: 10px;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.project-issue-summary-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.project-issue-summary-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #334e68;
+  font-size: 0.9rem;
+}
+
+.project-issue-summary-meta strong {
+  color: #102a43;
+}
+
+.project-issue-summary-track {
+  height: 12px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.project-issue-summary-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb 0%, #60a5fa 100%);
+}
+
+.project-issue-summary-fill.is-filtered {
+  background: linear-gradient(90deg, #14532d 0%, #16a34a 100%);
+}
+
 .project-issue-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -29,9 +103,15 @@
 
 .project-issue-filters {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(260px, 1fr);
+  grid-template-columns: minmax(200px, 260px) minmax(200px, 260px) minmax(200px, 260px) minmax(260px, 1fr);
   gap: 0.75rem;
   align-items: start;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .project-issue-filter {
@@ -42,12 +122,29 @@
   width: 100%;
   border: 1px solid #cbd2d9;
   background: #ffffff;
-  color: #102a43;
+  color: #000000;
   border-radius: 10px;
   padding: 0.58rem 0.72rem;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+}
+
+.project-issue-filter-trigger.is-selected {
+  border-color: #14532d;
+  background: #14532d;
+  color: #ffffff;
+}
+
+.project-issue-filter-trigger option {
+  background: #ffffff;
+  color: #000000;
+}
+
+.project-issue-filter-trigger option:checked,
+.project-issue-filter-trigger option[selected] {
+  background: #14532d;
+  color: #ffffff;
 }
 
 .project-issue-filter-trigger:focus-visible,
@@ -188,7 +285,7 @@
 .project-issue-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 980px;
+  min-width: 1120px;
 }
 
 .project-issue-table th,
@@ -199,8 +296,20 @@
 }
 
 .project-issue-table thead th {
+  position: sticky;
+  top: 61px;
+  z-index: 2;
   background-color: #f8fafc;
   color: #334e68;
+  box-shadow: 0 1px 0 #e5e7eb;
+}
+
+.project-issue-table tbody tr:nth-child(odd) {
+  background-color: #ffffff;
+}
+
+.project-issue-table tbody tr:nth-child(even) {
+  background-color: #f5f7fa;
 }
 
 .project-issue-empty {
@@ -208,11 +317,149 @@
   color: #64748b;
 }
 
+.project-issue-cell-input {
+  width: 100%;
+  min-width: 150px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  color: #102a43;
+  background: #ffffff;
+}
+
+.project-issue-cell-input:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 1px;
+  border-color: #0f766e;
+}
+
+.project-issue-cell-input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.project-issue-id-link {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.project-issue-id-link:hover {
+  text-decoration: underline;
+  color: #1d4ed8;
+}
+
+/* ── Snapshot column ────────────────────────────── */
+.project-issue-snapshot-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 90px;
+}
+
+.project-issue-snapshot-thumb-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.project-issue-snapshot-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #cbd2d9;
+  display: block;
+}
+
+.project-issue-snapshot-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1.5px dashed #94a3b8;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 1.1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.project-issue-snapshot-upload-btn:hover {
+  border-color: #0f766e;
+  background: #f0fdf4;
+  color: #0f766e;
+}
+
+@keyframes pid-spin {
+  to { transform: rotate(360deg); }
+}
+
+.project-issue-snapshot-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #cbd2d9;
+  border-top-color: #0f766e;
+  border-radius: 50%;
+  animation: pid-spin 0.7s linear infinite;
+}
+
+/* ── Lightbox ───────────────────────────────────── */
+.project-issue-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-issue-lightbox-img {
+  max-width: 90vw;
+  max-height: 88vh;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  object-fit: contain;
+}
+
+.project-issue-lightbox-close {
+  position: absolute;
+  top: 1rem;
+  right: 1.25rem;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  color: #ffffff;
+  font-size: 1.4rem;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-issue-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
 .issue-status {
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 600;
+  display: inline-block;
+}
+
+.project-issue-table td[data-label="Status"] {
+  text-align: left;
 }
 
 .issue-status-open {
