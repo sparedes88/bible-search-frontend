@@ -5,7 +5,7 @@ import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db } from "../firebase";
-import { E2_STATUS_UPDATE_FORMATS_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID, STATUS_FORMATS_FIELD, TAG_ALIASES_FIELD } from "./projectIssueConstants";
+import { E2_STATUS_UPDATE_FORMATS_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID, PROJECT_NAME_FORMATS_FIELD, STATUS_FORMATS_FIELD, TAG_ALIASES_FIELD } from "./projectIssueConstants";
 import "./TagAliasManager.css";
 
 const normalizeValue = (value) => {
@@ -76,18 +76,24 @@ const TagAliasManager = () => {
   const [loadingTags, setLoadingTags] = useState(true);
   const [loadingStatuses, setLoadingStatuses] = useState(true);
   const [loadingAliases, setLoadingAliases] = useState(true);
+  const [loadingProjectNames, setLoadingProjectNames] = useState(true);
   const [distinctTags, setDistinctTags] = useState([]);
+  const [distinctTagZonePairs, setDistinctTagZonePairs] = useState([]);
   const [distinctStatuses, setDistinctStatuses] = useState([]);
   const [distinctE2StatusUpdates, setDistinctE2StatusUpdates] = useState([]);
+  const [distinctProjectNames, setDistinctProjectNames] = useState([]);
   const [tagAliases, setTagAliases] = useState({});
   const [statusFormats, setStatusFormats] = useState({});
   const [e2StatusUpdateFormats, setE2StatusUpdateFormats] = useState({});
+  const [projectNameFormats, setProjectNameFormats] = useState({});
   const [draftAliases, setDraftAliases] = useState({});
   const [draftStatusFormats, setDraftStatusFormats] = useState({});
   const [draftE2StatusUpdateFormats, setDraftE2StatusUpdateFormats] = useState({});
-  const [savingTag, setSavingTag] = useState("");
+  const [draftProjectNameFormats, setDraftProjectNameFormats] = useState({});
+  const [savingTag, setSavingTag] = useState(null);
   const [savingStatus, setSavingStatus] = useState("");
   const [savingE2StatusUpdate, setSavingE2StatusUpdate] = useState("");
+  const [savingProjectName, setSavingProjectName] = useState("");
 
   useEffect(() => {
     if (!id) return undefined;
@@ -98,7 +104,7 @@ const TagAliasManager = () => {
     const unsubscribeProjects = onSnapshot(
       projectsRef,
       (snapshot) => {
-        const uniqueByKey = new Map();
+        const pairsByKey = new Map();
         const uniqueStatusesByKey = new Map();
         const snapshotE2ByKey = new Map();
 
@@ -111,17 +117,26 @@ const TagAliasManager = () => {
           rows.forEach((row) => {
             const rowData = row?.rowData || {};
             const tagsField = findFieldByAliases(fields, rowData, ["tags", "tag", "labels", "label"]);
+            const zoneField = findFieldByAliases(fields, rowData, ["zone", "zones", "zone name", "area", "section", "location zone"]);
             const statusField = findFieldByAliases(fields, rowData, ["status", "state", "task status"]);
             const e2StatusUpdateField = findFieldByAliases(fields, rowData, ["e2 status update", "e2statusupdate"]);
 
-            if (tagsField) {
-              const values = extractTagValues(rowData[tagsField]);
-              values.forEach((value) => {
-                const key = value.toLowerCase();
-                if (!uniqueByKey.has(key)) {
-                  uniqueByKey.set(key, value);
+            const tagValues = tagsField ? extractTagValues(rowData[tagsField]) : [];
+            const zoneValue = normalizeValue(zoneField ? rowData[zoneField] : "");
+
+            if (tagValues.length > 0) {
+              tagValues.forEach((tagValue) => {
+                const pairKey = `${tagValue.toLowerCase()}|${zoneValue.toLowerCase()}`;
+                if (!pairsByKey.has(pairKey)) {
+                  pairsByKey.set(pairKey, { tag: tagValue, zone: zoneValue });
                 }
               });
+            } else if (zoneValue) {
+              // Row has a zone but no tags — record it with an empty tag so it's visible.
+              const pairKey = `|${zoneValue.toLowerCase()}`;
+              if (!pairsByKey.has(pairKey)) {
+                pairsByKey.set(pairKey, { tag: "", zone: zoneValue });
+              }
             }
 
             const statusValue = normalizeValue(statusField ? rowData[statusField] : "");
@@ -142,25 +157,33 @@ const TagAliasManager = () => {
           });
         });
 
-        const nextTags = Array.from(uniqueByKey.values()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+        const nextPairs = Array.from(pairsByKey.values()).sort((a, b) => {
+          const tagCompare = a.tag.localeCompare(b.tag, undefined, { sensitivity: "base" });
+          if (tagCompare !== 0) return tagCompare;
+          return a.zone.localeCompare(b.zone, undefined, { sensitivity: "base" });
+        });
         const nextStatuses = Array.from(uniqueStatusesByKey.values()).sort((a, b) =>
           a.localeCompare(b, undefined, { sensitivity: "base" })
         );
         const nextE2StatusUpdates = Array.from(snapshotE2ByKey.values()).sort((a, b) =>
           a.localeCompare(b, undefined, { sensitivity: "base" })
         );
-        setDistinctTags(nextTags);
+        setDistinctTagZonePairs(nextPairs);
+        setDistinctTags(nextPairs.map((p) => p.tag));
         setDistinctStatuses(nextStatuses);
         setDistinctE2StatusUpdates(nextE2StatusUpdates);
         setLoadingTags(false);
         setLoadingStatuses(false);
       },
       () => {
+        setDistinctTagZonePairs([]);
         setDistinctTags([]);
         setDistinctStatuses([]);
         setDistinctE2StatusUpdates([]);
+        setDistinctProjectNames([]);
         setLoadingTags(false);
         setLoadingStatuses(false);
+        setLoadingProjectNames(false);
       }
     );
 
@@ -177,10 +200,14 @@ const TagAliasManager = () => {
         const e2Formats = data[E2_STATUS_UPDATE_FORMATS_FIELD] && typeof data[E2_STATUS_UPDATE_FORMATS_FIELD] === "object"
           ? data[E2_STATUS_UPDATE_FORMATS_FIELD]
           : {};
+        const projectNameFmts = data[PROJECT_NAME_FORMATS_FIELD] && typeof data[PROJECT_NAME_FORMATS_FIELD] === "object"
+          ? data[PROJECT_NAME_FORMATS_FIELD]
+          : {};
 
         setTagAliases(aliases);
         setStatusFormats(formats);
         setE2StatusUpdateFormats(e2Formats);
+        setProjectNameFormats(projectNameFmts);
         setDraftAliases((previous) => {
           const next = { ...previous };
           Object.entries(aliases).forEach(([tag, alias]) => {
@@ -213,12 +240,24 @@ const TagAliasManager = () => {
           });
           return next;
         });
+        setDraftProjectNameFormats((previous) => {
+          const next = { ...previous };
+          Object.entries(projectNameFmts).forEach(([projectName, format]) => {
+            if (next[projectName] !== undefined) return;
+            next[projectName] = {
+              textColor: normalizeValue(format?.textColor) || defaultStatusDraft.textColor,
+              backgroundColor: normalizeValue(format?.backgroundColor) || defaultStatusDraft.backgroundColor,
+            };
+          });
+          return next;
+        });
         setLoadingAliases(false);
       },
       () => {
         setTagAliases({});
         setStatusFormats({});
         setE2StatusUpdateFormats({});
+        setProjectNameFormats({});
         setLoadingAliases(false);
       }
     );
@@ -229,12 +268,40 @@ const TagAliasManager = () => {
     };
   }, [id]);
 
+  // Compute distinct project name display values from tag/zone pairs and their aliases
+  useEffect(() => {
+    const displayValuesByKey = new Map();
+    distinctTagZonePairs.forEach((pair) => {
+      const aliasKey = pair.tag || pair.zone;
+      const aliasValue = normalizeValue(tagAliases[aliasKey]);
+      if (aliasValue) {
+        const displayKey = aliasValue.toLowerCase();
+        if (!displayValuesByKey.has(displayKey)) {
+          displayValuesByKey.set(displayKey, aliasValue);
+        }
+      }
+    });
+    const nextProjectNames = Array.from(displayValuesByKey.values()).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+    setDistinctProjectNames(nextProjectNames);
+    setLoadingProjectNames(false);
+  }, [distinctTagZonePairs, tagAliases]);
+
   const loading = loadingTags || loadingStatuses || loadingAliases;
 
-  const rows = useMemo(
-    () => distinctTags.map((tag) => ({ tag, alias: normalizeValue(tagAliases[tag]) })),
-    [distinctTags, tagAliases]
-  );
+  const rows = useMemo(() => {
+    return distinctTagZonePairs.map((pair) => {
+      const aliasKey = pair.tag || pair.zone;
+      return {
+        tag: pair.tag,
+        zone: pair.zone,
+        tagPlusZone: pair.tag && pair.zone ? `${pair.tag}, ${pair.zone}` : pair.tag || pair.zone || "",
+        aliasKey,
+        alias: normalizeValue(tagAliases[aliasKey]),
+      };
+    });
+  }, [distinctTagZonePairs, tagAliases]);
 
   const statusRows = useMemo(
     () => distinctStatuses.map((status) => ({ status, format: statusFormats[status] || {} })),
@@ -246,11 +313,16 @@ const TagAliasManager = () => {
     [distinctE2StatusUpdates, e2StatusUpdateFormats]
   );
 
-  const persistAlias = async (tag, aliasValue) => {
-    if (!id || !tag) return;
+  const projectNameRows = useMemo(
+    () => distinctProjectNames.map((projectName) => ({ projectName, format: projectNameFormats[projectName] || {} })),
+    [distinctProjectNames, projectNameFormats]
+  );
+
+  const persistAlias = async (aliasKey, aliasValue) => {
+    if (!id || !aliasKey) return;
 
     const cleanAlias = normalizeValue(aliasValue);
-    const currentAlias = normalizeValue(tagAliases[tag]);
+    const currentAlias = normalizeValue(tagAliases[aliasKey]);
 
     if (cleanAlias === currentAlias) {
       toast.info("No changes to save.");
@@ -259,12 +331,12 @@ const TagAliasManager = () => {
 
     const nextAliases = { ...tagAliases };
     if (cleanAlias) {
-      nextAliases[tag] = cleanAlias;
+      nextAliases[aliasKey] = cleanAlias;
     } else {
-      delete nextAliases[tag];
+      delete nextAliases[aliasKey];
     }
 
-    setSavingTag(tag);
+    setSavingTag(aliasKey);
     try {
       await setDoc(
         doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID),
@@ -276,13 +348,13 @@ const TagAliasManager = () => {
       );
 
       setTagAliases(nextAliases);
-      setDraftAliases((previous) => ({ ...previous, [tag]: cleanAlias }));
+      setDraftAliases((previous) => ({ ...previous, [aliasKey]: cleanAlias }));
       toast.success("Alias saved.");
     } catch (error) {
       console.error("Error saving tag alias:", error);
       toast.error("Could not save alias.");
     } finally {
-      setSavingTag("");
+      setSavingTag(null);
     }
   };
 
@@ -375,6 +447,77 @@ const TagAliasManager = () => {
     }
   };
 
+  const persistProjectNameFormat = async (projectName, draftFormat) => {
+    if (!id || !projectName) return;
+
+    const currentFormat = projectNameFormats[projectName] || {};
+    const nextFormat = {
+      textColor: normalizeValue(draftFormat?.textColor) || defaultStatusDraft.textColor,
+      backgroundColor: normalizeValue(draftFormat?.backgroundColor) || defaultStatusDraft.backgroundColor,
+    };
+
+    const unchanged =
+      normalizeValue(currentFormat.textColor || defaultStatusDraft.textColor).toLowerCase() ===
+        nextFormat.textColor.toLowerCase() &&
+      normalizeValue(currentFormat.backgroundColor || defaultStatusDraft.backgroundColor).toLowerCase() ===
+        nextFormat.backgroundColor.toLowerCase();
+
+    if (unchanged) {
+      toast.info("No changes to save.");
+      return;
+    }
+
+    const nextFormats = { ...projectNameFormats, [projectName]: nextFormat };
+
+    setSavingProjectName(projectName);
+    try {
+      await setDoc(
+        doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID),
+        { [PROJECT_NAME_FORMATS_FIELD]: nextFormats, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      setProjectNameFormats(nextFormats);
+      setDraftProjectNameFormats((previous) => ({ ...previous, [projectName]: nextFormat }));
+      toast.success("Format saved.");
+    } catch (error) {
+      console.error("Error saving project name format:", error);
+      toast.error("Could not save format.");
+    } finally {
+      setSavingProjectName("");
+    }
+  };
+
+  const clearProjectNameFormat = async (projectName) => {
+    if (!id || !projectName) return;
+    if (!projectNameFormats[projectName]) {
+      toast.info("No saved format to clear.");
+      return;
+    }
+
+    const nextFormats = { ...projectNameFormats };
+    delete nextFormats[projectName];
+
+    setSavingProjectName(projectName);
+    try {
+      await setDoc(
+        doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID),
+        { [PROJECT_NAME_FORMATS_FIELD]: nextFormats, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      setProjectNameFormats(nextFormats);
+      setDraftProjectNameFormats((previous) => ({
+        ...previous,
+        [projectName]: { ...defaultStatusDraft },
+      }));
+      toast.success("Format cleared.");
+    } catch (error) {
+      console.error("Error clearing project name format:", error);
+      toast.error("Could not clear format.");
+    } finally {
+      setSavingProjectName("");
+    }
+  };
+
   const clearE2StatusUpdateFormat = async (updateValue) => {
     if (!id || !updateValue) return;
     if (!e2StatusUpdateFormats[updateValue]) {
@@ -460,11 +603,11 @@ const TagAliasManager = () => {
         <div className="tag-alias-card">
           <div className="tag-alias-meta">
             <strong>Tags Values</strong>
-            <span>{loading ? "Loading..." : `${rows.length} value(s)`}</span>
+            <span>{loading ? "Loading..." : `${distinctTagZonePairs.length} distinct value(s)`}</span>
           </div>
 
           {loading ? <div className="tag-alias-empty">Loading tags...</div> : null}
-          {!loading && !rows.length ? <div className="tag-alias-empty">No tags found in BIM project rows.</div> : null}
+          {!loading && !rows.length ? <div className="tag-alias-empty">No tags or zone values found in BIM project rows.</div> : null}
 
           {!loading && rows.length ? (
             <div className="tag-alias-table-wrap">
@@ -472,19 +615,23 @@ const TagAliasManager = () => {
                 <thead>
                   <tr>
                     <th>Tags</th>
+                    <th>Zone</th>
+                    <th>Tags plus Zone</th>
                     <th>Tags Alias</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(({ tag, alias }) => {
-                    const draft = draftAliases[tag] ?? alias;
+                  {rows.map(({ tag, zone, tagPlusZone, aliasKey, alias }, index) => {
+                    const draft = draftAliases[aliasKey] ?? alias;
                     const isDirty = normalizeValue(draft) !== normalizeValue(alias);
-                    const isSaving = savingTag === tag;
+                    const isSaving = savingTag !== null && savingTag === aliasKey;
 
                     return (
-                      <tr key={tag}>
+                      <tr key={`${tag}|${zone}|${index}`}>
                         <td>{tag}</td>
+                        <td>{zone}</td>
+                        <td>{tagPlusZone}</td>
                         <td>
                           <input
                             type="text"
@@ -494,7 +641,7 @@ const TagAliasManager = () => {
                             onChange={(event) =>
                               setDraftAliases((previous) => ({
                                 ...previous,
-                                [tag]: event.target.value,
+                                [aliasKey]: event.target.value,
                               }))
                             }
                             disabled={isSaving}
@@ -505,7 +652,7 @@ const TagAliasManager = () => {
                             <button
                               type="button"
                               className="tag-alias-btn tag-alias-btn-primary"
-                              onClick={() => persistAlias(tag, draft)}
+                              onClick={() => persistAlias(aliasKey, draft)}
                               disabled={!isDirty || isSaving}
                             >
                               {isSaving ? "Saving..." : "Save"}
@@ -513,7 +660,7 @@ const TagAliasManager = () => {
                             <button
                               type="button"
                               className="tag-alias-btn"
-                              onClick={() => persistAlias(tag, "")}
+                              onClick={() => persistAlias(aliasKey, "")}
                               disabled={!alias || isSaving}
                             >
                               Clear
@@ -760,6 +907,114 @@ const TagAliasManager = () => {
                               type="button"
                               className="tag-alias-btn"
                               onClick={() => clearE2StatusUpdateFormat(value)}
+                              disabled={!hasSavedFormat || isSaving}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+        <div className="tag-alias-card">
+          <div className="tag-alias-meta">
+            <strong>Project Name Formatting</strong>
+            <span>{loading ? "Loading..." : `${projectNameRows.length} value(s)`}</span>
+          </div>
+
+          {loading ? <div className="tag-alias-empty">Loading project names...</div> : null}
+          {!loading && !projectNameRows.length ? (
+            <div className="tag-alias-empty">No project names found in BIM projects.</div>
+          ) : null}
+
+          {!loading && projectNameRows.length ? (
+            <div className="tag-alias-table-wrap">
+              <table className="tag-alias-table">
+                <thead>
+                  <tr>
+                    <th>Project Name</th>
+                    <th>Font Color</th>
+                    <th>Background Color</th>
+                    <th>Preview</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projectNameRows.map(({ projectName, format }) => {
+                    const draft = draftProjectNameFormats[projectName] || {
+                      textColor: normalizeValue(format?.textColor) || defaultStatusDraft.textColor,
+                      backgroundColor: normalizeValue(format?.backgroundColor) || defaultStatusDraft.backgroundColor,
+                    };
+                    const savedFormat = {
+                      textColor: normalizeValue(format?.textColor) || defaultStatusDraft.textColor,
+                      backgroundColor: normalizeValue(format?.backgroundColor) || defaultStatusDraft.backgroundColor,
+                    };
+                    const isDirty =
+                      normalizeValue(draft.textColor).toLowerCase() !== savedFormat.textColor.toLowerCase() ||
+                      normalizeValue(draft.backgroundColor).toLowerCase() !== savedFormat.backgroundColor.toLowerCase();
+                    const isSaving = savingProjectName === projectName;
+                    const hasSavedFormat = !!projectNameFormats[projectName];
+
+                    return (
+                      <tr key={projectName}>
+                        <td>{projectName}</td>
+                        <td>
+                          <input
+                            type="color"
+                            className="tag-alias-color-input"
+                            value={draft.textColor}
+                            onChange={(event) =>
+                              setDraftProjectNameFormats((previous) => ({
+                                ...previous,
+                                [projectName]: { ...draft, textColor: event.target.value },
+                              }))
+                            }
+                            disabled={isSaving}
+                            aria-label={`Font color for ${projectName}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="color"
+                            className="tag-alias-color-input"
+                            value={draft.backgroundColor}
+                            onChange={(event) =>
+                              setDraftProjectNameFormats((previous) => ({
+                                ...previous,
+                                [projectName]: { ...draft, backgroundColor: event.target.value },
+                              }))
+                            }
+                            disabled={isSaving}
+                            aria-label={`Background color for ${projectName}`}
+                          />
+                        </td>
+                        <td>
+                          <span
+                            className="tag-alias-preview-badge"
+                            style={{ color: draft.textColor, backgroundColor: draft.backgroundColor }}
+                          >
+                            {projectName}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="tag-alias-actions">
+                            <button
+                              type="button"
+                              className="tag-alias-btn tag-alias-btn-primary"
+                              onClick={() => persistProjectNameFormat(projectName, draft)}
+                              disabled={!isDirty || isSaving}
+                            >
+                              {isSaving ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              className="tag-alias-btn"
+                              onClick={() => clearProjectNameFormat(projectName)}
                               disabled={!hasSavedFormat || isSaving}
                             >
                               Clear

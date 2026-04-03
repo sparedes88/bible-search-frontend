@@ -26,3 +26,4 @@ export const E2_STATUS_UPDATE_OPTIONS_FIELD = "e2StatusUpdateOptions";
 export const TAG_ALIASES_FIELD = "tagAliases";
 export const STATUS_FORMATS_FIELD = "statusFormats";
 export const E2_STATUS_UPDATE_FORMATS_FIELD = "e2StatusUpdateFormats";
+export const PROJECT_NAME_FORMATS_FIELD = "projectNameFormats";

@@ -150,8 +150,20 @@
 
 /* ── field selector bar ──────────────────────────────────────────────────────── */
 
+.pid-detail-main-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.pid-detail-main-content {
+  min-width: 0;
+}
+
 .pid-detail-field-bar {
-  position: relative;
+  position: sticky;
+  top: 0.9rem;
 }
 
 .pid-detail-fields-btn {
@@ -181,17 +193,27 @@
 }
 
 .pid-detail-field-selector {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 50;
+  position: static;
   background: #ffffff;
   border: 1px solid #dde3ec;
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.13);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   padding: 0.85rem 1rem;
-  min-width: 260px;
-  max-width: 380px;
+  width: 100%;
+}
+
+.pid-detail-fields-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.7rem;
+}
+
+.pid-detail-fields-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #0f172a;
 }
 
 .pid-detail-fs-actions {
@@ -233,7 +255,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  max-height: 320px;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -344,6 +366,14 @@
 /* ── responsive ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
+  .pid-detail-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pid-detail-field-bar {
+    position: static;
+  }
+
   .pid-detail-field-name {
     width: 110px;
     min-width: 80px;
@@ -361,7 +391,7 @@
   }
 
   .pid-detail-field-selector {
-    max-width: calc(100vw - 2rem);
+    max-width: 100%;
   }
 }
 

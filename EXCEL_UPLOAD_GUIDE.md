@@ -98,7 +98,7 @@ firestore
 
 Once uploaded, the data will:
 1. Appear in the **Project Issue Dashboard** for that organization
-2. Be queryable with filters (Project Name, Status, E2 Detailer, etc.)
+2. Be queryable with filters (Project Name, Status, E2 Lead Detailer, etc.)
 3. Support editable columns (E2 Status Update, Snapshots, etc.)
 4. Be linked to issue tracking workflow
 
@@ -134,7 +134,7 @@ Once uploaded, the data will:
 After uploading:
 - Test the filters in ProjectIssueDashboard
 - Verify all columns are correctly mapped
-- Configure E2 Detailer assignments if needed
+- Configure E2 Lead Detailer assignments if needed
 - Set up any required status updates
 
 ---

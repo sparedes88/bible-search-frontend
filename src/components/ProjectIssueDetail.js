@@ -50,6 +50,48 @@ const isUrl = (str) => /^https?:\/\//i.test(String(str || ""));
 
 const STORAGE_PREFIX = "pid-detail-fields-";
 
+const DEFAULT_SELECTED_FIELDS = [
+  "GUID",
+  "ID",
+  "Snapshot",
+  "Created",
+  "Status",
+  "Priority",
+  "Title",
+  "Assignee",
+  "Reporter",
+  "Deadline",
+  "Watchers",
+  "Tags",
+  "Level",
+  "Room",
+  "Area",
+  "Zone",
+  "E2 Detailer",
+  "E2 Status Update",
+  "E2 Status Date",
+  "Markup",
+  "Comment",
+  "Comment reporter",
+  "Comment date",
+  "View in Revizto",
+  "Grid",
+  "Link to markup",
+  "Assignee location",
+  "View in web issue tracker",
+  "Clashes",
+  "Clashing models",
+  "Issue type",
+  "Status category",
+  "Coordinate on alignment",
+  "Technical Details Available",
+  "E2 Detailer Support Team",
+];
+
+const DEFAULT_SELECTED_FIELD_KEYS = new Set(
+  DEFAULT_SELECTED_FIELDS.map((f) => normalizeFieldKey(f))
+);
+
 // ── component ──────────────────────────────────────────────────────────────────
 
 const ProjectIssueDetail = () => {
@@ -61,7 +103,6 @@ const ProjectIssueDetail = () => {
   const [rowData, setRowData] = useState({});
   const [fields, setFields] = useState([]);
   const [projectName, setProjectName] = useState("");
-  const [showFieldSelector, setShowFieldSelector] = useState(false);
 
   const [hiddenFields, setHiddenFields] = useState(() => {
     try {
@@ -147,6 +188,23 @@ const ProjectIssueDetail = () => {
     () => orderedFields.filter((f) => !hiddenFields[f]),
     [orderedFields, hiddenFields]
   );
+
+  useEffect(() => {
+    if (!projectDocId || !orderedFields.length) return;
+    let hasStoredPreferences = false;
+    try {
+      hasStoredPreferences = localStorage.getItem(`${STORAGE_PREFIX}${projectDocId}`) !== null;
+    } catch {}
+    if (hasStoredPreferences) return;
+
+    const nextHidden = {};
+    orderedFields.forEach((fieldName) => {
+      nextHidden[fieldName] = !DEFAULT_SELECTED_FIELD_KEYS.has(normalizeFieldKey(fieldName));
+    });
+
+    setHiddenFields(nextHidden);
+    persistHidden(nextHidden);
+  }, [projectDocId, orderedFields]);
 
   const idFieldName = useMemo(
     () => findFieldByAliases(fields, rowData, ["id", "issue id", "task id", "card id", "row id"]),
@@ -406,21 +464,16 @@ const ProjectIssueDetail = () => {
               )}
             </div>
 
-            {/* Field selector bar */}
-            <div className="pid-detail-field-bar">
-              <button
-                type="button"
-                className="pid-detail-fields-btn"
-                onClick={() => setShowFieldSelector((v) => !v)}
-              >
-                ⚙ Fields {showFieldSelector ? "▲" : "▼"}{" "}
-                <span className="pid-detail-fields-count">
-                  ({visibleFields.length} / {orderedFields.length})
-                </span>
-              </button>
-
-              {showFieldSelector && (
+            <div className="pid-detail-main-grid">
+              {/* Field selector panel (always visible, left side) */}
+              <aside className="pid-detail-field-bar">
                 <div className="pid-detail-field-selector">
+                  <div className="pid-detail-fields-heading">
+                    <span className="pid-detail-fields-title">Fields</span>
+                    <span className="pid-detail-fields-count">
+                      ({visibleFields.length} / {orderedFields.length})
+                    </span>
+                  </div>
                   <div className="pid-detail-fs-actions">
                     <button
                       type="button"
@@ -450,67 +503,69 @@ const ProjectIssueDetail = () => {
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
+              </aside>
 
-            {/* Detail table */}
-            {visibleFields.length === 0 ? (
-              <p className="pid-detail-no-fields">
-                All fields are hidden. Use the Fields selector above to show fields.
-              </p>
-            ) : (
-              <div className="pid-detail-table-wrap">
-                <table className="pid-detail-table">
-                  <tbody>
-                    {visibleFields.map((fieldName) => {
-                      const raw = normalizeValue(rowData[fieldName]);
-                      const isEmpty = !raw;
-                      const isImageField =
-                        /snapshot|photo|image|picture/i.test(fieldName);
-                      const isUrlValue = isUrl(raw);
+              {/* Detail table */}
+              <div className="pid-detail-main-content">
+                {visibleFields.length === 0 ? (
+                  <p className="pid-detail-no-fields">
+                    All fields are hidden. Use the Fields panel on the left to show fields.
+                  </p>
+                ) : (
+                  <div className="pid-detail-table-wrap">
+                    <table className="pid-detail-table">
+                      <tbody>
+                        {visibleFields.map((fieldName) => {
+                          const raw = normalizeValue(rowData[fieldName]);
+                          const isEmpty = !raw;
+                          const isImageField =
+                            /snapshot|photo|image|picture/i.test(fieldName);
+                          const isUrlValue = isUrl(raw);
 
-                      return (
-                        <tr key={fieldName} className="pid-detail-row">
-                          <th className="pid-detail-field-name">{fieldName}</th>
-                          <td
-                            className={`pid-detail-field-value${
-                              isEmpty ? " pid-detail-field-value--empty" : ""
-                            }`}
-                          >
-                            {isEmpty ? (
-                              <span className="pid-detail-empty">—</span>
-                            ) : isImageField && isUrlValue ? (
-                              <a
-                                href={raw}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                          return (
+                            <tr key={fieldName} className="pid-detail-row">
+                              <th className="pid-detail-field-name">{fieldName}</th>
+                              <td
+                                className={`pid-detail-field-value${
+                                  isEmpty ? " pid-detail-field-value--empty" : ""
+                                }`}
                               >
-                                <img
-                                  src={raw}
-                                  alt={fieldName}
-                                  className="pid-detail-inline-img"
-                                />
-                              </a>
-                            ) : isUrlValue ? (
-                              <a
-                                href={raw}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="pid-detail-link"
-                              >
-                                {raw}
-                              </a>
-                            ) : (
-                              raw
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                                {isEmpty ? (
+                                  <span className="pid-detail-empty">—</span>
+                                ) : isImageField && isUrlValue ? (
+                                  <a
+                                    href={raw}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <img
+                                      src={raw}
+                                      alt={fieldName}
+                                      className="pid-detail-inline-img"
+                                    />
+                                  </a>
+                                ) : isUrlValue ? (
+                                  <a
+                                    href={raw}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="pid-detail-link"
+                                  >
+                                    {raw}
+                                  </a>
+                                ) : (
+                                  raw
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
 
             {/* E2 Comments & Documents Section */}
             <div className="pid-detail-e2-section">

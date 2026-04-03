@@ -14,7 +14,7 @@ service firebase.storage {
     function isChurchAdmin(churchId) {
       let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
       return isAuthenticated() && (
-        (user.role == 'admin' && user.churchId == churchId) || 
+        (user.role == 'admin' && (user.churchId == churchId || string(user.churchId) == churchId)) || 
         user.role == 'global_admin'
       );
     }
@@ -23,6 +23,7 @@ service firebase.storage {
       let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
       return isAuthenticated() && (
         user.churchId == churchId || 
+        string(user.churchId) == churchId ||
         user.role == 'global_admin'
       );
     }
@@ -142,6 +143,26 @@ service firebase.storage {
       allow write: if isAuthenticated()
         && request.resource.size < 10 * 1024 * 1024;
       allow delete: if isAuthenticated();
+    }
+
+    // Project Issue Dashboard E2 document attachments
+    match /churches/{churchId}/bimProjects/{projectId}/e2-documents/{issueKey}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 20 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('application/pdf') ||
+          request.resource.contentType.matches('application/msword') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
+          request.resource.contentType.matches('application/vnd.ms-excel') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
+          request.resource.contentType.matches('application/vnd.ms-powerpoint') ||
+          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.presentationml.presentation') ||
+          request.resource.contentType.matches('text/plain') ||
+          request.resource.contentType.matches('image/.*')
+        );
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
     }
 
     // Time entry attachments - allow authenticated church members to upload files

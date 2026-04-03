@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
-import { collection, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
@@ -15,17 +15,20 @@ import {
   E2_STATUS_UPDATE_FORMATS_FIELD,
   E2_STATUS_UPDATE_OPTIONS_FIELD,
   PROJECT_ISSUE_CONFIG_DOC_ID,
+  PROJECT_NAME_FORMATS_FIELD,
   STATUS_FORMATS_FIELD,
   TAG_ALIASES_FIELD,
 } from "./projectIssueConstants";
 import "./ProjectIssueDashboard.css";
 
-const E2_DETAILER_FIELD = "E2 Detailer";
+const E2_DETAILER_FIELD = "E2 Lead Detailer";
+const E2_DETAILER_SUPPORT_TEAM_FIELD = "E2 Detailer Support Team";
 
 const E2_STATUS_UPDATE_FIELD = "E2 Status Update";
 
 const E2_STATUS_DATE_FIELD = "E2 Status Date";
 const TECH_DETAILS_FIELD = "Technical Details Available";
+const TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES = ["Stop and Start", "Steer with current task", "Add to Queue"];
 const PIE_FALLBACK_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#f97316"];
 
 const SNAPSHOT_FIELD = "Snapshot URL";
@@ -162,6 +165,47 @@ const getDefaultE2StatusUpdate = (value) => normalizeValue(value) || DEFAULT_E2_
 
 const getDefaultE2StatusDate = (value) => normalizeValue(value) || getTodayMMDDYY();
 
+const getDefaultTechDetailsAvailable = (value) => normalizeValue(value) || "No";
+
+const parseSupportTeamValues = (value) => {
+  const rawValues = Array.isArray(value) ? value : String(value || "").split(",");
+  const normalized = rawValues
+    .map((item) => normalizeValue(item))
+    .filter(Boolean)
+    .filter((item, index, array) => array.findIndex((candidate) => candidate.toLowerCase() === item.toLowerCase()) === index);
+  return normalized;
+};
+
+const formatSupportTeamValue = (value) => parseSupportTeamValues(value).join(", ");
+
+const sanitizeSupportTeamValues = (value, allowedOptions = []) => {
+  const allowedSet = new Set(
+    (Array.isArray(allowedOptions) ? allowedOptions : [])
+      .map((item) => normalizeValue(item).toLowerCase())
+      .filter(Boolean)
+  );
+
+  if (!allowedSet.size) return [];
+
+  return parseSupportTeamValues(value).filter(
+    (item) => allowedSet.has(item.toLowerCase())
+  );
+};
+
+const isDetailerInSupportTeam = (detailerValue, supportTeamValue) => {
+  const normalizedDetailer = normalizeValue(detailerValue).toLowerCase();
+  if (!normalizedDetailer) return false;
+
+  return parseSupportTeamValues(supportTeamValue).some(
+    (value) => value.toLowerCase() === normalizedDetailer
+  );
+};
+
+const buildDetailerSupportTeamConflictMessage = (detailerValue) => {
+  const safeName = normalizeValue(detailerValue) || "this user";
+  return `${safeName} is already in E2 Detailer Support Team. Remove this value from E2 Detailer Support Team first to assign it in E2 Lead Detailer.`;
+};
+
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value.trim();
@@ -204,7 +248,16 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const priorityField = findFieldByAliases(fields, rowData, ["priority"]);
   const zoneField = findFieldByAliases(fields, rowData, ["zone", "area", "section", "location zone"]);
   const assigneeField = findFieldByAliases(fields, rowData, ["assignee", "assigned to", "owner", "responsible"]);
-  const e2DetailerField = findFieldByAliases(fields, rowData, ["e2 detailer", "e2detailer"]);
+  const e2DetailerField = findFieldByAliases(
+    fields,
+    rowData,
+    ["e2 lead detailer", "e2leaddetailer", "e2 detailer", "e2detailer"]
+  );
+  const e2DetailerSupportTeamField = findFieldByAliases(
+    fields,
+    rowData,
+    ["e2 detailer support team", "e2 detailer support", "e2 support team", "support team"]
+  );
   const e2StatusUpdateField = findFieldByAliases(fields, rowData, ["e2 status update", "e2statusupdate"]);
   const e2StatusDateField = findFieldByAliases(fields, rowData, ["e2 status date", "e2statusdate"]);
   const techDetailsField = findFieldByAliases(fields, rowData, ["technical details available", "technical details", "techdetailsavailable"]);
@@ -223,9 +276,12 @@ const getCardPreview = (rowData = {}, fields = []) => {
     zone: normalizeValue(zoneField ? rowData?.[zoneField] : ""),
     assignee: normalizeValue(assigneeField ? rowData?.[assigneeField] : ""),
     e2Detailer: normalizeValue(e2DetailerField ? rowData?.[e2DetailerField] : ""),
+    e2DetailerSupportTeam: formatSupportTeamValue(
+      e2DetailerSupportTeamField ? rowData?.[e2DetailerSupportTeamField] : ""
+    ),
     e2StatusUpdate: getDefaultE2StatusUpdate(e2StatusUpdateField ? rowData?.[e2StatusUpdateField] : ""),
     e2StatusDate: getDefaultE2StatusDate(e2StatusDateField ? rowData?.[e2StatusDateField] : ""),
-    techDetailsAvailable: normalizeValue(techDetailsField ? rowData?.[techDetailsField] : ""),
+    techDetailsAvailable: getDefaultTechDetailsAvailable(techDetailsField ? rowData?.[techDetailsField] : ""),
     snapshotUrl: normalizeValue(snapshotField ? rowData?.[snapshotField] : ""),
     link: normalizeValue(linkField ? rowData?.[linkField] : ""),
     deadline: normalizeValue(deadlineField ? rowData?.[deadlineField] : ""),
@@ -359,26 +415,128 @@ const normalizeIssueIdDisplay = (value) => {
 const ProjectIssueDashboard = () => {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const filterVisibilityStorageKey = `project-issue-filter-visibility-${id || "default"}`;
 
   const [activeTab, setActiveTab] = useState(() => searchParams.get("status") || "All");
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedProjectName, setSelectedProjectName] = useState(() => searchParams.get("projectName") || "");
+  const [selectedIssueId, setSelectedIssueId] = useState(() => searchParams.get("issueId") || "");
   const [selectedE2Detailer, setSelectedE2Detailer] = useState(() => searchParams.get("e2Detailer") || "");
+  const [selectedE2StatusUpdate, setSelectedE2StatusUpdate] = useState(() => searchParams.get("e2StatusUpdate") || "");
+  const [selectedTechDetails, setSelectedTechDetails] = useState(() => searchParams.get("techDetails") || "");
   const [globalSearch, setGlobalSearch] = useState(() => searchParams.get("search") || "");
   const [selectedDateRange, setSelectedDateRange] = useState(() => searchParams.get("dateRange") || "All");
   const [chartTab, setChartTab] = useState("overview");
+  const [filterVisibility, setFilterVisibility] = useState(() => {
+    const defaults = {
+      projectName: true,
+      issueId: true,
+      status: true,
+      e2LeadDetailer: true,
+      e2StatusUpdate: true,
+      techDetails: true,
+      statusUpdateDate: true,
+      globalSearch: true,
+    };
+    try {
+      const stored = localStorage.getItem(filterVisibilityStorageKey);
+      if (!stored) return defaults;
+      const parsed = JSON.parse(stored);
+      return { ...defaults, ...parsed };
+    } catch {
+      return defaults;
+    }
+  });
 
   // Keep URL in sync with filter state
   useEffect(() => {
     const params = {};
     if (activeTab !== "All") params.status = activeTab;
     if (selectedProjectName) params.projectName = selectedProjectName;
+    if (selectedIssueId) params.issueId = selectedIssueId;
     if (selectedE2Detailer) params.e2Detailer = selectedE2Detailer;
+    if (selectedE2StatusUpdate) params.e2StatusUpdate = selectedE2StatusUpdate;
+    if (selectedTechDetails) params.techDetails = selectedTechDetails;
     if (globalSearch) params.search = globalSearch;
     if (selectedDateRange !== "All") params.dateRange = selectedDateRange;
     setSearchParams(params, { replace: true });
-  }, [activeTab, selectedProjectName, selectedE2Detailer, globalSearch, selectedDateRange, setSearchParams]);
+  }, [activeTab, selectedProjectName, selectedIssueId, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, globalSearch, selectedDateRange, setSearchParams]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(filterVisibilityStorageKey, JSON.stringify(filterVisibility));
+    } catch {}
+  }, [filterVisibility, filterVisibilityStorageKey]);
+
+  const resetFilterValueByKey = (key) => {
+    if (key === "projectName") {
+      setSelectedProjectName("");
+      return;
+    }
+    if (key === "issueId") {
+      setSelectedIssueId("");
+      return;
+    }
+    if (key === "status") {
+      setActiveTab("All");
+      return;
+    }
+    if (key === "e2LeadDetailer") {
+      setSelectedE2Detailer("");
+      return;
+    }
+    if (key === "e2StatusUpdate") {
+      setSelectedE2StatusUpdate("");
+      return;
+    }
+    if (key === "techDetails") {
+      setSelectedTechDetails("");
+      return;
+    }
+    if (key === "statusUpdateDate") {
+      setSelectedDateRange("All");
+      return;
+    }
+    if (key === "globalSearch") {
+      setGlobalSearch("");
+    }
+  };
+
+  const toggleFilterVisibility = (key) => {
+    setFilterVisibility((prev) => {
+      const nextVisible = !prev[key];
+      if (!nextVisible) {
+        resetFilterValueByKey(key);
+      }
+      return { ...prev, [key]: nextVisible };
+    });
+  };
+
+  const setAllFiltersVisibility = (nextVisible) => {
+    if (!nextVisible) {
+      setSelectedProjectName("");
+      setSelectedIssueId("");
+      setActiveTab("All");
+      setSelectedE2Detailer("");
+      setSelectedE2StatusUpdate("");
+      setSelectedTechDetails("");
+      setSelectedDateRange("All");
+      setGlobalSearch("");
+    }
+    setFilterVisibility({
+      projectName: nextVisible,
+      issueId: nextVisible,
+      status: nextVisible,
+      e2LeadDetailer: nextVisible,
+      e2StatusUpdate: nextVisible,
+      techDetails: nextVisible,
+      statusUpdateDate: nextVisible,
+      globalSearch: nextVisible,
+    });
+  };
+
+  const visibleFilterCount = Object.values(filterVisibility).filter(Boolean).length;
   const [projectSources, setProjectSources] = useState({});
   const [savingIssueKeys, setSavingIssueKeys] = useState({});
   const [uploadingSnapshotKeys, setUploadingSnapshotKeys] = useState({});
@@ -397,12 +555,35 @@ const ProjectIssueDashboard = () => {
   const [managedTagAliases, setManagedTagAliases] = useState({});
   const [managedStatusFormats, setManagedStatusFormats] = useState({});
   const [managedE2StatusUpdateFormats, setManagedE2StatusUpdateFormats] = useState({});
+  const [managedProjectNameFormats, setManagedProjectNameFormats] = useState({});
+  const [openSupportTeamMenuKey, setOpenSupportTeamMenuKey] = useState("");
+  const [techDetailsPopup, setTechDetailsPopup] = useState({
+    open: false,
+    issueKey: "",
+    e2StatusUpdate: "",
+    e2Detailer: "",
+    e2DetailerSupportTeam: [],
+  });
+  const [submittingTechDetailsPopup, setSubmittingTechDetailsPopup] = useState(false);
+  const [popupSupportTeamMenuOpen, setPopupSupportTeamMenuOpen] = useState(false);
+  const [detailerConflictPopupMessage, setDetailerConflictPopupMessage] = useState("");
   const dailyIssuesInputRef = useRef(null);
   const actionsMenuRef = useRef(null);
+  const manageFiltersRef = useRef(null);
+
+  const openDetailerConflictPopup = (detailerValue) => {
+    setDetailerConflictPopupMessage(buildDetailerSupportTeamConflictMessage(detailerValue));
+  };
 
   const closeActionsMenu = () => {
     if (actionsMenuRef.current?.open) {
       actionsMenuRef.current.open = false;
+    }
+  };
+
+  const closeManageFilters = () => {
+    if (manageFiltersRef.current?.open) {
+      manageFiltersRef.current.open = false;
     }
   };
 
@@ -472,6 +653,24 @@ const ProjectIssueDashboard = () => {
         setManagedTagAliases(normalizedTagAliases);
         setManagedStatusFormats(normalizedStatusFormats);
 
+        const configuredProjectNameFormats =
+          data[PROJECT_NAME_FORMATS_FIELD] && typeof data[PROJECT_NAME_FORMATS_FIELD] === "object"
+            ? data[PROJECT_NAME_FORMATS_FIELD]
+            : {};
+        const normalizedProjectNameFormats = Object.entries(configuredProjectNameFormats).reduce(
+          (accumulator, [projectName, formatValue]) => {
+            const normalizedKey = normalizeValue(projectName);
+            if (!normalizedKey) return accumulator;
+            accumulator[normalizedKey] = {
+              textColor: normalizeValue(formatValue?.textColor),
+              backgroundColor: normalizeValue(formatValue?.backgroundColor),
+            };
+            return accumulator;
+          },
+          {}
+        );
+        setManagedProjectNameFormats(normalizedProjectNameFormats);
+
         const configuredE2StatusUpdateFormats =
           data[E2_STATUS_UPDATE_FORMATS_FIELD] && typeof data[E2_STATUS_UPDATE_FORMATS_FIELD] === "object"
             ? data[E2_STATUS_UPDATE_FORMATS_FIELD]
@@ -496,6 +695,7 @@ const ProjectIssueDashboard = () => {
         setManagedTagAliases({});
         setManagedStatusFormats({});
         setManagedE2StatusUpdateFormats({});
+        setManagedProjectNameFormats({});
       }
     );
 
@@ -544,8 +744,10 @@ const ProjectIssueDashboard = () => {
               markupLink: preview.markupLink,
               owner: normalizeValue(preview.assignee) || normalizeValue(internalMeta.internalAssignee) || "Unassigned",
               e2Detailer: preview.e2Detailer,
+              e2DetailerSupportTeam: preview.e2DetailerSupportTeam,
               e2StatusUpdate: preview.e2StatusUpdate,
               e2StatusDate: preview.e2StatusDate,
+              techDetailsAvailable: getDefaultTechDetailsAvailable(preview.techDetailsAvailable),
               snapshotUrl: preview.snapshotUrl,
               link: preview.link,
               priority: preview.priority || "-",
@@ -638,14 +840,22 @@ const ProjectIssueDashboard = () => {
 
   const getProjectNameDisplay = (issue) => {
     const normalizedTag = normalizeValue(issue?.tags).toLowerCase();
-    return (normalizedTag && tagAliasByLowerTag[normalizedTag]) || normalizeValue(issue?.zoneCategory) || "-";
+    const normalizedZone = normalizeValue(issue?.zone).toLowerCase();
+    return (
+      (normalizedTag && tagAliasByLowerTag[normalizedTag]) ||
+      (normalizedZone && tagAliasByLowerTag[normalizedZone]) ||
+      "-"
+    );
   };
 
   const visibleIssues = useMemo(() => {
     const normalizedSearch = normalizeValue(globalSearch).toLowerCase();
+    const normalizedIssueIdSearch = normalizeValue(selectedIssueId).toLowerCase();
     const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
 
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
@@ -660,6 +870,25 @@ const ProjectIssueDashboard = () => {
 
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
         return false;
+      }
+
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return false;
+      }
+
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
+        return false;
+      }
+
+      if (normalizedIssueIdSearch) {
+        const normalizedIssueId = normalizeValue(issue.id).toLowerCase();
+        const normalizedIssueIdDisplay = normalizeIssueIdDisplay(issue.id).toLowerCase();
+        if (
+          !normalizedIssueId.includes(normalizedIssueIdSearch) &&
+          !normalizedIssueIdDisplay.includes(normalizedIssueIdSearch)
+        ) {
+          return false;
+        }
       }
 
       if (dateRangeBounds) {
@@ -691,40 +920,73 @@ const ProjectIssueDashboard = () => {
 
       return haystack.includes(normalizedSearch);
     });
-  }, [activeTab, globalSearch, issues, selectedE2Detailer, selectedProjectName, selectedDateRange, tagAliasByLowerTag]);
+  }, [activeTab, globalSearch, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const projectNameOptions = useMemo(() => {
     return Array.from(new Set(issues.map((issue) => getProjectNameDisplay(issue)).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b)
     );
   }, [issues, tagAliasByLowerTag]);
-  const e2DetailerOptions = useMemo(
-    () => {
-      // Respect the managed order; append any values found in issue data that aren't in the managed list
-      const managedLower = new Set(managedE2DetailerOptions.map((v) => v.toLowerCase()));
-      const extra = issues
-        .map((issue) => normalizeValue(issue.e2Detailer))
-        .filter((v) => v && !managedLower.has(v.toLowerCase()))
-        .filter((value, index, array) => array.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
+  const issueIdOptions = useMemo(() => {
+    return Array.from(new Set(issues.map((issue) => normalizeIssueIdDisplay(issue.id)).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }, [issues]);
+  const e2DetailerOptions = useMemo(() => {
+    // Use managed values only so deleted entries are removed from filters/dropdowns everywhere.
+    return managedE2DetailerOptions;
+  }, [managedE2DetailerOptions]);
+  const techDetailsOptions = useMemo(() => {
+    return Array.from(new Set(issues.map((issue) => getDefaultTechDetailsAvailable(issue.techDetailsAvailable)).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }, [issues]);
+  const supportTeamMenuWidthCh = useMemo(() => {
+    const longestOptionLength = e2DetailerOptions.reduce((maxLength, option) => {
+      return Math.max(maxLength, normalizeValue(option).length);
+    }, 0);
 
-      return [...managedE2DetailerOptions, ...extra];
-    },
-    [issues, managedE2DetailerOptions]
+    // Add extra width for checkbox, spacing, and menu padding.
+    return Math.max(longestOptionLength + 8, 24);
+  }, [e2DetailerOptions]);
+  const popupSupportTeamMenuWidthCh = useMemo(
+    () => Math.max(supportTeamMenuWidthCh + 10, 34),
+    [supportTeamMenuWidthCh]
   );
   const e2StatusUpdateOptions = useMemo(() => {
-    // Respect the managed order; append any values found in issue data that aren't in the managed list
+    // Respect the managed order; append required popup options and issue values not in the managed list.
     const managedLower = new Set(managedE2StatusUpdateOptions.map((v) => v.toLowerCase()));
+    const required = TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES.filter(
+      (value) => !managedLower.has(value.toLowerCase())
+    );
+    const requiredLower = new Set(required.map((v) => v.toLowerCase()));
     const extra = issues
       .map((issue) => normalizeValue(issue.e2StatusUpdate))
-      .filter((v) => v && !managedLower.has(v.toLowerCase()))
+      .filter((v) => v && !managedLower.has(v.toLowerCase()) && !requiredLower.has(v.toLowerCase()))
       .filter((value, index, array) => array.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
 
-    return [...managedE2StatusUpdateOptions, ...extra];
+    return [...managedE2StatusUpdateOptions, ...required, ...extra];
   }, [issues, managedE2StatusUpdateOptions]);
+
+  const techDetailsPopupE2StatusOptions = useMemo(() => {
+    const matched = e2StatusUpdateOptions.filter((option) => {
+      const normalizedOption = normalizeValue(option).toLowerCase();
+      return TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES.some((prefix) =>
+        normalizedOption.startsWith(prefix.toLowerCase())
+      );
+    });
+
+    const uniqueMatched = matched.filter(
+      (value, index, array) => array.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index
+    );
+
+    return uniqueMatched.length ? uniqueMatched : TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES;
+  }, [e2StatusUpdateOptions]);
 
   const e2StatusUpdateCounts = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
@@ -734,6 +996,9 @@ const ProjectIssueDashboard = () => {
         return;
       }
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return;
+      }
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return;
       }
       if (activeTab !== "All" && normalizeValue(issue.status).toLowerCase() !== normalizedActiveTab) {
@@ -750,7 +1015,7 @@ const ProjectIssueDashboard = () => {
     return Object.entries(counts)
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
-  }, [issues, selectedProjectName, selectedE2Detailer, activeTab, selectedDateRange, tagAliasByLowerTag]);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedTechDetails, activeTab, selectedDateRange, tagAliasByLowerTag]);
 
   const e2StatusUpdateTimeframeLabel = useMemo(() => {
     const bounds = getDateRangeBounds(selectedDateRange);
@@ -766,6 +1031,8 @@ const ProjectIssueDashboard = () => {
   const scopedIssueCount = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
     return issues.filter((issue) => {
@@ -773,6 +1040,12 @@ const ProjectIssueDashboard = () => {
         return false;
       }
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return false;
+      }
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return false;
+      }
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return false;
       }
       if (dateRangeBounds) {
@@ -781,12 +1054,14 @@ const ProjectIssueDashboard = () => {
       }
       return true;
     }).length;
-  }, [issues, selectedProjectName, selectedE2Detailer, selectedDateRange, tagAliasByLowerTag]);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
   const summaryStatusName = activeTab === "All" ? "All Statuses" : activeTab;
   const statusScopedIssueCount = useMemo(() => {
     const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
     return issues.filter((issue) => {
@@ -795,6 +1070,14 @@ const ProjectIssueDashboard = () => {
       }
 
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return false;
+      }
+
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return false;
+      }
+
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return false;
       }
 
@@ -809,7 +1092,7 @@ const ProjectIssueDashboard = () => {
 
       return true;
     }).length;
-  }, [activeTab, issues, selectedProjectName, selectedE2Detailer, selectedDateRange, tagAliasByLowerTag]);
+  }, [activeTab, issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const overviewTotalStatusFormat = statusFormatByLowerStatus["all statuses"] || {};
   const overviewTotalBackground = normalizeValue(overviewTotalStatusFormat.backgroundColor);
@@ -832,6 +1115,8 @@ const ProjectIssueDashboard = () => {
   const overviewStatusCounts = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
     const countsByStatus = {};
 
@@ -841,6 +1126,14 @@ const ProjectIssueDashboard = () => {
       }
 
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return;
+      }
+
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return;
+      }
+
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return;
       }
 
@@ -864,11 +1157,13 @@ const ProjectIssueDashboard = () => {
         };
       })
       .sort((a, b) => b.count - a.count);
-  }, [issues, selectedProjectName, selectedE2Detailer, selectedDateRange, statusFormatByLowerStatus, tagAliasByLowerTag]);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, statusFormatByLowerStatus, tagAliasByLowerTag]);
 
   const overviewE2BreakdownByStatus = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
     const grouped = {};
 
@@ -878,6 +1173,14 @@ const ProjectIssueDashboard = () => {
       }
 
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return;
+      }
+
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return;
+      }
+
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return;
       }
 
@@ -921,10 +1224,21 @@ const ProjectIssueDashboard = () => {
     issues,
     selectedProjectName,
     selectedE2Detailer,
+    selectedE2StatusUpdate,
+    selectedTechDetails,
     selectedDateRange,
     e2StatusUpdateFormatByLowerValue,
     tagAliasByLowerTag,
   ]);
+
+  const overviewBarColumnWidthPx = useMemo(() => {
+    const maxLabelLen = overviewStatusCounts.reduce((maxLen, item) => {
+      const len = normalizeValue(item?.label).length;
+      return len > maxLen ? len : maxLen;
+    }, 0);
+    // Approximate label text width and clamp to keep columns readable.
+    return Math.max(70, Math.min(220, maxLabelLen * 7 + 18));
+  }, [overviewStatusCounts]);
 
   const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -932,6 +1246,8 @@ const ProjectIssueDashboard = () => {
   const trendChartBuckets = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
@@ -941,6 +1257,12 @@ const ProjectIssueDashboard = () => {
         return false;
       }
       if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return false;
+      }
+      if (selectedE2StatusUpdate && normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !== normalizedSelectedE2StatusUpdate) {
+        return false;
+      }
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return false;
       }
       return true;
@@ -954,7 +1276,13 @@ const ProjectIssueDashboard = () => {
       const buckets = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(weekStart);
         d.setDate(weekStart.getDate() + i);
-        return { key: `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`, label: DAY_ABBR[d.getDay()], count: 0, date: d };
+        return {
+          key: `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`,
+          label: `${d.getMonth() + 1}/${d.getDate()}`,
+          dayLabel: DAY_ABBR[d.getDay()],
+          count: 0,
+          date: d,
+        };
       });
       filtered.forEach((issue) => {
         const d = parseStatusUpdateDate(issue.e2StatusDate);
@@ -970,12 +1298,16 @@ const ProjectIssueDashboard = () => {
     if (selectedDateRange === "MTD") {
       // Buckets: day 1 to today within the current month
       const daysInMonth = today.getDate();
-      const buckets = Array.from({ length: daysInMonth }, (_, i) => ({
-        key: String(i + 1),
-        label: String(i + 1),
-        count: 0,
-        date: new Date(today.getFullYear(), today.getMonth(), i + 1),
-      }));
+      const buckets = Array.from({ length: daysInMonth }, (_, i) => {
+        const d = new Date(today.getFullYear(), today.getMonth(), i + 1);
+        return {
+          key: String(i + 1),
+          label: `${d.getMonth() + 1}/${d.getDate()}`,
+          dayLabel: DAY_ABBR[d.getDay()],
+          count: 0,
+          date: d,
+        };
+      });
       const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
       filtered.forEach((issue) => {
         const d = parseStatusUpdateDate(issue.e2StatusDate);
@@ -988,21 +1320,28 @@ const ProjectIssueDashboard = () => {
     }
 
     if (selectedDateRange === "YTD") {
-      // Buckets: Jan–current month
+      // Buckets: Jan-current month, each bucket stacked by project
+      const yearStart = new Date(today.getFullYear(), 0, 1);
       const buckets = Array.from({ length: today.getMonth() + 1 }, (_, i) => ({
         key: String(i),
-        label: MONTH_ABBR[i],
+        label: `${MONTH_ABBR[i]} '${String(today.getFullYear()).slice(-2)}`,
         count: 0,
+        projectCounts: {},
         date: new Date(today.getFullYear(), i, 1),
       }));
-      const yearStart = new Date(today.getFullYear(), 0, 1);
+
       filtered.forEach((issue) => {
         const d = parseStatusUpdateDate(issue.e2StatusDate);
         if (!d) return;
         if (d < yearStart || d > today) return;
         const monthIdx = d.getMonth();
-        if (buckets[monthIdx]) buckets[monthIdx].count += 1;
+        const projectLabel = normalizeValue(getProjectNameDisplay(issue)) || "Unknown Project";
+        if (!buckets[monthIdx]) return;
+
+        buckets[monthIdx].count += 1;
+        buckets[monthIdx].projectCounts[projectLabel] = (buckets[monthIdx].projectCounts[projectLabel] || 0) + 1;
       });
+
       return buckets;
     }
 
@@ -1021,9 +1360,39 @@ const ProjectIssueDashboard = () => {
         const monthIdx = parseInt(mo, 10);
         return { key, label: `${MONTH_ABBR[monthIdx]} '${String(yr).slice(-2)}`, count: countsByYM[key] };
       });
-  }, [issues, selectedProjectName, selectedE2Detailer, selectedDateRange, tagAliasByLowerTag]);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const trendChartTabTitle = selectedDateRange === "YTD" ? "Trending (YTD)" : "Trending";
+
+  const timeRangeDisplay = useMemo(() => {
+    const now = new Date();
+    const todayStr = `${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}/${now.getFullYear()}`;
+    if (selectedDateRange === "YTD") {
+      const fromStr = `01/01/${now.getFullYear()}`;
+      return `Time Range: From: ${fromStr} To: ${todayStr}`;
+    }
+    if (selectedDateRange === "MTD") {
+      const fromStr = `${String(now.getMonth() + 1).padStart(2, "0")}/01/${now.getFullYear()}`;
+      return `Time Range: From: ${fromStr} To: ${todayStr}`;
+    }
+    if (selectedDateRange === "TW") {
+      const dow = now.getDay();
+      const sunday = new Date(now);
+      sunday.setDate(now.getDate() - dow);
+      const fromStr = `${String(sunday.getMonth() + 1).padStart(2, "0")}/${String(sunday.getDate()).padStart(2, "0")}/${sunday.getFullYear()}`;
+      return `Time Range: From: ${fromStr} To: ${todayStr}`;
+    }
+    // "All" — find oldest status update date across all issues
+    let oldest = null;
+    issues.forEach((issue) => {
+      const d = parseStatusUpdateDate(issue.e2StatusDate);
+      if (d && (!oldest || d < oldest)) oldest = d;
+    });
+    const fromStr = oldest
+      ? `${String(oldest.getMonth() + 1).padStart(2, "0")}/${String(oldest.getDate()).padStart(2, "0")}/${oldest.getFullYear()}`
+      : "--";
+    return `Time Range: From: ${fromStr} To: ${todayStr}`;
+  }, [selectedDateRange, issues]);
 
   const getOverviewSegmentColor = (segment, index) => {
     return normalizeValue(segment?.backgroundColor) || PIE_FALLBACK_COLORS[index % PIE_FALLBACK_COLORS.length];
@@ -1087,8 +1456,12 @@ const ProjectIssueDashboard = () => {
     if (!targetRow) return;
 
     const previousRowData = targetRow?.rowData || {};
+    const detectedDetailerFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["e2 lead detailer", "e2leaddetailer", "e2 detailer", "e2detailer"]) || E2_DETAILER_FIELD;
+    const detectedTechDetailsFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
     const fieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 detailer", "e2detailer"]) || E2_DETAILER_FIELD;
+      detectedDetailerFieldName === detectedTechDetailsFieldName ? E2_DETAILER_FIELD : detectedDetailerFieldName;
     const nextValue = normalizeValue(valueOverride ?? issue.e2Detailer);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
@@ -1120,7 +1493,7 @@ const ProjectIssueDashboard = () => {
         updatedAt: new Date(),
       });
     } catch (error) {
-      console.error("Error updating E2 Detailer:", error);
+      console.error("Error updating E2 Lead Detailer:", error);
       setProjectSources((previous) => ({
         ...previous,
         [issue.projectDocId]: previousSource,
@@ -1134,6 +1507,83 @@ const ProjectIssueDashboard = () => {
       setSavingIssueKeys((previous) => {
         const next = { ...previous };
         delete next[issue.key];
+        return next;
+      });
+    }
+  };
+
+  const handleE2DetailerSupportTeamChange = (issueKey, selectedValues) => {
+    const formattedValue = formatSupportTeamValue(selectedValues);
+    setIssues((previous) =>
+      previous.map((issue) =>
+        issue.key === issueKey ? { ...issue, e2DetailerSupportTeam: formattedValue } : issue
+      )
+    );
+  };
+
+  const handleE2DetailerSupportTeamSave = async (issue, selectedValuesOverride) => {
+    if (!id || !issue?.projectDocId) return;
+
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) return;
+
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) return;
+
+    const previousRowData = targetRow?.rowData || {};
+    const fieldName =
+      findFieldByAliases(
+        previousFields,
+        previousRowData,
+        ["e2 detailer support team", "e2 detailer support", "e2 support team", "support team"]
+      ) || E2_DETAILER_SUPPORT_TEAM_FIELD;
+    const nextValue = formatSupportTeamValue(selectedValuesOverride ?? issue.e2DetailerSupportTeam);
+    const previousValue = formatSupportTeamValue(previousRowData[fieldName]);
+
+    if (nextValue === previousValue) return;
+
+    const updatedRowData = {
+      ...previousRowData,
+      [fieldName]: nextValue,
+    };
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    const updatedFields = previousFields.includes(fieldName) ? previousFields : [...previousFields, fieldName];
+    const previousSource = projectSource;
+
+    setProjectSources((previous) => ({
+      ...previous,
+      [issue.projectDocId]: {
+        fields: updatedFields,
+        rows: updatedRows,
+      },
+    }));
+    setSavingIssueKeys((previous) => ({ ...previous, [`supportteam:${issue.key}`]: true }));
+
+    try {
+      await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+        fields: updatedFields,
+        rows: updatedRows,
+        updatedAt: new Date(),
+      });
+    } catch (error) {
+      console.error("Error updating E2 Detailer Support Team:", error);
+      setProjectSources((previous) => ({
+        ...previous,
+        [issue.projectDocId]: previousSource,
+      }));
+      setIssues((previous) =>
+        previous.map((item) =>
+          item.key === issue.key ? { ...item, e2DetailerSupportTeam: previousValue } : item
+        )
+      );
+    } finally {
+      setSavingIssueKeys((previous) => {
+        const next = { ...previous };
+        delete next[`supportteam:${issue.key}`];
         return next;
       });
     }
@@ -1213,8 +1663,9 @@ const ProjectIssueDashboard = () => {
   };
 
   const handleTechDetailsChange = (issueKey, value) => {
+    const normalizedValue = getDefaultTechDetailsAvailable(value);
     setIssues((previous) =>
-      previous.map((issue) => (issue.key === issueKey ? { ...issue, techDetailsAvailable: value } : issue))
+      previous.map((issue) => (issue.key === issueKey ? { ...issue, techDetailsAvailable: normalizedValue } : issue))
     );
   };
 
@@ -1232,7 +1683,7 @@ const ProjectIssueDashboard = () => {
     const previousRowData = targetRow?.rowData || {};
     const fieldName =
       findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
-    const nextValue = normalizeValue(valueOverride ?? issue.techDetailsAvailable);
+    const nextValue = getDefaultTechDetailsAvailable(valueOverride ?? issue.techDetailsAvailable);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
     if (nextValue === previousValue) return;
@@ -1271,6 +1722,222 @@ const ProjectIssueDashboard = () => {
         return next;
       });
     }
+  };
+
+  const openTechDetailsPopup = (issue) => {
+    if (!issue?.key) return;
+    setTechDetailsPopup({
+      open: true,
+      issueKey: issue.key,
+      e2StatusUpdate: "",
+      e2Detailer: "",
+      e2DetailerSupportTeam: sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions),
+    });
+    setPopupSupportTeamMenuOpen(false);
+  };
+
+  const handleTechDetailsPopupSubmit = async () => {
+    const selectedStatus = normalizeValue(techDetailsPopup.e2StatusUpdate);
+    const selectedDetailer = normalizeValue(techDetailsPopup.e2Detailer);
+    const selectedSupportTeamValues = sanitizeSupportTeamValues(
+      techDetailsPopup.e2DetailerSupportTeam,
+      e2DetailerOptions
+    );
+
+    if (isDetailerInSupportTeam(selectedDetailer, selectedSupportTeamValues)) {
+      openDetailerConflictPopup(selectedDetailer);
+      return;
+    }
+
+    if (!selectedStatus || !selectedDetailer) {
+      toast.error("Select both E2 Status Update and E2 Lead Detailer before submitting.");
+      return;
+    }
+
+    const issue = issues.find((item) => item.key === techDetailsPopup.issueKey);
+    if (!issue) {
+      toast.error("Issue data was not found. Please refresh and try again.");
+      return;
+    }
+
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) {
+      toast.error("Project data is not available. Please refresh and try again.");
+      return;
+    }
+
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) {
+      toast.error("Issue row was not found. Please refresh and try again.");
+      return;
+    }
+
+    const previousRowData = targetRow?.rowData || {};
+    const techDetailsFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
+    const e2StatusFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+    const e2DetailerFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["e2 lead detailer", "e2leaddetailer", "e2 detailer", "e2detailer"]) || E2_DETAILER_FIELD;
+    const e2StatusDateFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["e2 status date", "e2statusdate"]) || E2_STATUS_DATE_FIELD;
+
+    const todayDate = getTodayMMDDYY();
+    const previousTechDetailsValue = normalizeValue(previousRowData[techDetailsFieldName]);
+    const previousStatusValue = normalizeValue(previousRowData[e2StatusFieldName]);
+    const previousDetailerValue = normalizeValue(previousRowData[e2DetailerFieldName]);
+    const e2SupportTeamFieldName =
+      findFieldByAliases(
+        previousFields,
+        previousRowData,
+        ["e2 detailer support team", "e2 detailer support", "e2 support team", "support team"]
+      ) || E2_DETAILER_SUPPORT_TEAM_FIELD;
+    const previousSupportTeamValue = formatSupportTeamValue(previousRowData[e2SupportTeamFieldName]);
+    const previousStatusDateValue = normalizeValue(previousRowData[e2StatusDateFieldName]);
+
+    const updatedRowData = {
+      ...previousRowData,
+      [techDetailsFieldName]: "Yes",
+      [e2StatusFieldName]: selectedStatus,
+      [e2DetailerFieldName]: selectedDetailer,
+      [e2SupportTeamFieldName]: formatSupportTeamValue(selectedSupportTeamValues),
+      [e2StatusDateFieldName]: todayDate,
+    };
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    let updatedFields = previousFields.includes(techDetailsFieldName)
+      ? previousFields
+      : [...previousFields, techDetailsFieldName];
+    updatedFields = updatedFields.includes(e2StatusFieldName) ? updatedFields : [...updatedFields, e2StatusFieldName];
+    updatedFields = updatedFields.includes(e2DetailerFieldName)
+      ? updatedFields
+      : [...updatedFields, e2DetailerFieldName];
+    updatedFields = updatedFields.includes(e2SupportTeamFieldName)
+      ? updatedFields
+      : [...updatedFields, e2SupportTeamFieldName];
+    updatedFields = updatedFields.includes(e2StatusDateFieldName)
+      ? updatedFields
+      : [...updatedFields, e2StatusDateFieldName];
+    const previousSource = projectSource;
+
+    setSubmittingTechDetailsPopup(true);
+    setSavingIssueKeys((previous) => ({ ...previous, [`popup:${issue.key}`]: true }));
+    try {
+      setProjectSources((previous) => ({
+        ...previous,
+        [issue.projectDocId]: { fields: updatedFields, rows: updatedRows },
+      }));
+      setIssues((previous) =>
+        previous.map((item) =>
+          item.key === issue.key
+            ? {
+                ...item,
+                techDetailsAvailable: "Yes",
+                e2StatusUpdate: selectedStatus,
+                e2Detailer: selectedDetailer,
+                e2DetailerSupportTeam: formatSupportTeamValue(selectedSupportTeamValues),
+                e2StatusDate: todayDate,
+              }
+            : item
+        )
+      );
+
+      await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+        fields: updatedFields,
+        rows: updatedRows,
+        updatedAt: new Date(),
+      });
+
+      // Re-sync the row from Firestore after submit to avoid stale local state.
+      const refreshedProjectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
+      if (refreshedProjectSnapshot.exists()) {
+        const refreshedProjectData = refreshedProjectSnapshot.data() || {};
+        const refreshedFields = Array.isArray(refreshedProjectData.fields) ? refreshedProjectData.fields : [];
+        const refreshedRows = Array.isArray(refreshedProjectData.rows) ? refreshedProjectData.rows : [];
+        const refreshedRow = refreshedRows[issue.rowIndex];
+
+        setProjectSources((previous) => ({
+          ...previous,
+          [issue.projectDocId]: {
+            fields: refreshedFields,
+            rows: refreshedRows,
+            lastUploadAt: refreshedProjectData.lastUploadAt || refreshedProjectData.updatedAt || null,
+          },
+        }));
+
+        if (refreshedRow) {
+          const refreshedRowData = refreshedRow?.rowData || {};
+          const refreshedPreview = getCardPreview(refreshedRowData, refreshedFields);
+
+          setIssues((previous) =>
+            previous.map((item) =>
+              item.key === issue.key
+                ? {
+                    ...item,
+                    techDetailsAvailable: getDefaultTechDetailsAvailable(refreshedPreview.techDetailsAvailable),
+                    e2StatusUpdate: getDefaultE2StatusUpdate(refreshedPreview.e2StatusUpdate),
+                    e2Detailer: normalizeValue(refreshedPreview.e2Detailer),
+                    e2DetailerSupportTeam: formatSupportTeamValue(refreshedPreview.e2DetailerSupportTeam),
+                    e2StatusDate: getDefaultE2StatusDate(refreshedPreview.e2StatusDate),
+                  }
+                : item
+            )
+          );
+        }
+      }
+
+      setTechDetailsPopup({
+        open: false,
+        issueKey: "",
+        e2StatusUpdate: "",
+        e2Detailer: "",
+        e2DetailerSupportTeam: [],
+      });
+      setPopupSupportTeamMenuOpen(false);
+      toast.success("Technical details workflow completed.");
+    } catch (error) {
+      console.error("Error submitting Technical Details popup:", error);
+      setProjectSources((previous) => ({
+        ...previous,
+        [issue.projectDocId]: previousSource,
+      }));
+      setIssues((previous) =>
+        previous.map((item) =>
+          item.key === issue.key
+            ? {
+                ...item,
+                techDetailsAvailable: previousTechDetailsValue,
+                e2StatusUpdate: previousStatusValue,
+                e2Detailer: previousDetailerValue,
+                e2DetailerSupportTeam: previousSupportTeamValue,
+                e2StatusDate: previousStatusDateValue,
+              }
+            : item
+        )
+      );
+      toast.error("Could not save Technical Details workflow values.");
+    } finally {
+      setSavingIssueKeys((previous) => {
+        const next = { ...previous };
+        delete next[`popup:${issue.key}`];
+        return next;
+      });
+      setSubmittingTechDetailsPopup(false);
+    }
+  };
+
+  const handleTechDetailsSelectChange = (issue, value) => {
+    const nextValue = getDefaultTechDetailsAvailable(value);
+    if (nextValue === "Yes") {
+      openTechDetailsPopup(issue);
+      return;
+    }
+
+    handleTechDetailsChange(issue.key, nextValue);
+    handleTechDetailsSave({ ...issue, techDetailsAvailable: nextValue }, nextValue);
   };
 
   const handleE2StatusUpdateSave = async (issue, valueOverride) => {
@@ -1658,13 +2325,25 @@ const ProjectIssueDashboard = () => {
         <div className="project-issue-head">
           <div className="project-issue-head-top">
             <div className="project-issue-title-group">
-              <h1 className="project-issue-title">Project Issue List</h1>
+              <h1 className="project-issue-title">Live Issues Tracker</h1>
               <div className="project-issue-last-update">
                 {lastDailyIssuesUpdate ? `Last Update: ${lastDailyIssuesUpdate}` : "Last Update: --"}
+                {" "}
+                <span className="project-issue-time-range">{timeRangeDisplay}</span>
               </div>
-              <p className="project-issue-subtitle">
-                Tracking live issues from BIM projects.
-              </p>
+              <div className="project-issue-active-filters">
+                {[
+                  selectedProjectName && `Project Name: ${selectedProjectName}`,
+                  selectedIssueId && `Issue ID: ${selectedIssueId}`,
+                  activeTab !== "All" && `Status: ${activeTab}`,
+                  selectedE2Detailer && `E2 Lead Detailer: ${selectedE2Detailer}`,
+                  selectedE2StatusUpdate && `E2 Status Update: ${selectedE2StatusUpdate}`,
+                  selectedTechDetails && `Technical Details Available: ${selectedTechDetails}`,
+                  globalSearch && `Search: ${globalSearch}`,
+                ]
+                  .filter(Boolean)
+                  .join(" | ") || "No filters applied"}
+              </div>
             </div>
             <div className="project-issue-head-actions">
               <input
@@ -1701,7 +2380,7 @@ const ProjectIssueDashboard = () => {
                       className="project-issue-actions-item"
                       onClick={closeActionsMenu}
                     >
-                      Add Aliases
+                      Field Display Formatting
                     </Link>
                   </div>
                 </details>
@@ -1738,6 +2417,9 @@ const ProjectIssueDashboard = () => {
 
             {chartTab === "overview" && (
               <div className="project-issue-summary-chart project-issue-summary-chart--overview" aria-label="Issue summary chart">
+                <div className="project-issue-summary-chart-heading">
+                  <div className="project-issue-summary-chart-timeframe">{e2StatusUpdateTimeframeLabel}</div>
+                </div>
                 <div className="project-issue-summary-row">
                   <div className="project-issue-summary-meta">
                     <span>
@@ -1753,70 +2435,34 @@ const ProjectIssueDashboard = () => {
                   </div>
                 </div>
 
-                {activeTab === "All" ? (
-                  overviewStatusCounts.length === 0 ? (
+                {overviewStatusCounts.length === 0 ? (
                     <div className="project-issue-summary-empty">No data</div>
                   ) : (
-                    overviewStatusCounts.map(({ rawStatus, label, count, backgroundColor }) => {
-                      const pct = scopedIssueCount ? Math.round((count / scopedIssueCount) * 100) : 0;
-                      const barStyle = {
-                        width: `${scopedIssueCount ? Math.max((count / scopedIssueCount) * 100, 2) : 0}%`,
-                      };
-                      if (backgroundColor) {
-                        barStyle.background = backgroundColor;
-                      }
-
-                      return (
-                        <div className="project-issue-summary-row" key={rawStatus}>
-                          <div className="project-issue-summary-meta">
-                            <span>{label}</span>
-                            <span className="project-issue-summary-count-pct">
-                              <strong>{count}</strong>
-                              <span className="project-issue-summary-pct">{pct}%</span>
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            className="project-issue-summary-track-link"
-                            onClick={() => openOverviewPiePopup(rawStatus, label)}
-                            title={`View E2 Status Update breakdown for ${label}`}
+                    <div className="overview-vbar-group">
+                      {overviewStatusCounts.map(({ rawStatus, label, count, backgroundColor }) => {
+                        const pct = scopedIssueCount ? Math.max((count / scopedIssueCount) * 100, 2) : 0;
+                        const fillStyle = { height: `${pct}%` };
+                        if (backgroundColor) fillStyle.background = backgroundColor;
+                        const displayPct = scopedIssueCount ? Math.round((count / scopedIssueCount) * 100) : 0;
+                        const isFiltered = activeTab !== "All";
+                        const isActive = !isFiltered || normalizeValue(rawStatus).toLowerCase() === normalizeValue(activeTab).toLowerCase();
+                        return (
+                          <div
+                            key={rawStatus}
+                            className={`overview-vbar-col${isFiltered && isActive ? " is-highlighted" : ""}${isFiltered && !isActive ? " is-dimmed" : ""}`}
+                            style={{ flex: `0 0 ${overviewBarColumnWidthPx}px`, width: `${overviewBarColumnWidthPx}px` }}
                           >
-                            <div className="project-issue-summary-track">
-                              <div className="project-issue-summary-fill" style={barStyle} />
+                            <span className="overview-vbar-count">{count}</span>
+                            <span className="overview-vbar-pct">{displayPct}%</span>
+                            <div className="overview-vbar-track">
+                              <div className="overview-vbar-fill" style={fillStyle} />
                             </div>
-                          </button>
-                        </div>
-                      );
-                    })
-                  )
-                ) : (
-                  <div className="project-issue-summary-row">
-                    <div className="project-issue-summary-meta">
-                      <span>
-                        Number of Issues with status as <strong>{summaryStatusName}</strong>
-                      </span>
-                      <span className="project-issue-summary-count-pct">
-                        <strong>{statusScopedIssueCount}</strong>
-                        <span className="project-issue-summary-pct">
-                          {scopedIssueCount ? Math.round((statusScopedIssueCount / scopedIssueCount) * 100) : 0}%
-                        </span>
-                      </span>
+                            <span className="overview-vbar-label">{label}</span>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <button
-                      type="button"
-                      className="project-issue-summary-track-link"
-                      onClick={() => openOverviewPiePopup(summaryStatusName, summaryStatusName)}
-                      title={`View E2 Status Update breakdown for ${summaryStatusName}`}
-                    >
-                      <div className="project-issue-summary-track">
-                        <div
-                          className="project-issue-summary-fill is-filtered"
-                          style={overviewFilteredBarStyle}
-                        />
-                      </div>
-                    </button>
-                  </div>
-                )}
+                  )}
               </div>
             )}
 
@@ -1828,18 +2474,25 @@ const ProjectIssueDashboard = () => {
                 {e2StatusUpdateCounts.length === 0 ? (
                   <div className="project-issue-summary-empty">No data</div>
                 ) : (
-                  e2StatusUpdateCounts.map(({ label, count }) => {
-                    const pct = scopedIssueCount ? Math.round((count / scopedIssueCount) * 100) : 0;
+                  (() => {
+                    const e2StatusTotalCount = e2StatusUpdateCounts.reduce((sum, item) => sum + Number(item.count || 0), 0);
+                    const hasE2StatusSelection = !!normalizeValue(selectedE2StatusUpdate);
+                    const selectedE2StatusLower = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+
+                    return e2StatusUpdateCounts.map(({ label, count }) => {
+                      const pct = e2StatusTotalCount ? Math.round((count / e2StatusTotalCount) * 100) : 0;
+                      const isSelected = normalizeValue(label).toLowerCase() === selectedE2StatusLower;
+                      const rowClassName = `project-issue-summary-row e2status-summary-row${hasE2StatusSelection && isSelected ? " is-highlighted" : ""}${hasE2StatusSelection && !isSelected ? " is-dimmed" : ""}`;
                     const e2Format = e2StatusUpdateFormatByLowerValue[label.toLowerCase()] || {};
                     const customBgColor = normalizeValue(e2Format.backgroundColor);
                     const barStyle = {
-                      width: `${scopedIssueCount ? Math.max((count / scopedIssueCount) * 100, 2) : 0}%`,
+                      width: `${e2StatusTotalCount ? Math.max((count / e2StatusTotalCount) * 100, 2) : 0}%`,
                     };
                     if (customBgColor) {
                       barStyle.background = customBgColor;
                     }
                     return (
-                      <div key={label} className="project-issue-summary-row">
+                      <div key={label} className={rowClassName}>
                         <div className="project-issue-summary-meta">
                           <span>{label}</span>
                           <span className="project-issue-summary-count-pct">
@@ -1855,37 +2508,204 @@ const ProjectIssueDashboard = () => {
                         </div>
                       </div>
                     );
-                  })
+                    });
+                  })()
                 )}
               </div>
             )}
 
             {chartTab === "trend" && (() => {
+              const isYtdTrend = selectedDateRange === "YTD";
               const maxCount = Math.max(...trendChartBuckets.map((b) => b.count), 1);
+              const chartWidth = Math.max(trendChartBuckets.length * 54, 520);
+              const chartHeight = 200;
+              const padding = { top: 14, right: 14, bottom: 36, left: 34 };
+              const innerWidth = chartWidth - padding.left - padding.right;
+              const innerHeight = chartHeight - padding.top - padding.bottom;
+              const pointCount = trendChartBuckets.length;
+              const points = trendChartBuckets.map((bucket, index) => {
+                const x =
+                  pointCount <= 1
+                    ? padding.left + innerWidth / 2
+                    : padding.left + (index / (pointCount - 1)) * innerWidth;
+                const y = padding.top + (1 - bucket.count / maxCount) * innerHeight;
+                return { ...bucket, x, y };
+              });
+
+              const linePath = points.length
+                ? points.reduce((path, point, index) => {
+                    if (index === 0) {
+                      return `M ${point.x} ${point.y}`;
+                    }
+                    const prev = points[index - 1];
+                    const controlX = (prev.x + point.x) / 2;
+                    return `${path} C ${controlX} ${prev.y}, ${controlX} ${point.y}, ${point.x} ${point.y}`;
+                  }, "")
+                : "";
+              const yTicks = [0, 0.25, 0.5, 0.75, 1].map((step) => {
+                const value = Math.round(maxCount * step);
+                const y = padding.top + (1 - step) * innerHeight;
+                return { value, y };
+              });
+
               return (
                 <div className="project-issue-summary-chart project-issue-trend-chart" aria-label="Trending chart">
                   {trendChartBuckets.length === 0 ? (
                     <div className="project-issue-summary-empty">No data for the selected period</div>
                   ) : (
-                    <>
-                      <div className="project-issue-trend-bars">
-                        {trendChartBuckets.map((bucket) => {
-                          const heightPct = maxCount ? (bucket.count / maxCount) * 100 : 0;
-                          return (
-                            <div className="project-issue-trend-col" key={bucket.key}>
-                              <span className="project-issue-trend-count">{bucket.count > 0 ? bucket.count : ""}</span>
-                              <div className="project-issue-trend-bar-wrap">
-                                <div
-                                  className="project-issue-trend-bar-fill"
-                                  style={{ height: `${Math.max(heightPct, bucket.count > 0 ? 4 : 0)}%` }}
-                                />
-                              </div>
-                              <span className="project-issue-trend-label">{bucket.label}</span>
-                            </div>
-                          );
-                        })}
+                    isYtdTrend ? (
+                      <div className="project-issue-trend-ytd-wrap">
+                        <div className="project-issue-trend-ytd-bars">
+                          {(() => {
+                            const totalsByProject = trendChartBuckets.reduce((acc, bucket) => {
+                              Object.entries(bucket.projectCounts || {}).forEach(([projectName, count]) => {
+                                acc[projectName] = (acc[projectName] || 0) + count;
+                              });
+                              return acc;
+                            }, {});
+
+                            const ytdProjects = Object.entries(totalsByProject)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([projectName]) => projectName);
+
+                            return trendChartBuckets.map((bucket) => {
+                              const totalBarHeight = maxCount ? (bucket.count / maxCount) * 100 : 0;
+                              return (
+                                <div className="project-issue-trend-ytd-col" key={bucket.key}>
+                                  <div className="project-issue-trend-ytd-bars-pair">
+                                    <div className="project-issue-trend-ytd-total-side">
+                                      <span className="project-issue-trend-ytd-count">{bucket.count}</span>
+                                      <div className="project-issue-trend-ytd-bar-wrap project-issue-trend-ytd-bar-total">
+                                        <div
+                                          className="project-issue-trend-ytd-bar-segment"
+                                          style={{ height: `${totalBarHeight}%`, backgroundColor: "#94a3b8" }}
+                                          title={`Total: ${bucket.count}`}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="project-issue-trend-ytd-stacked-side">
+                                      <span className="project-issue-trend-ytd-count" style={{ visibility: "hidden" }}>0</span>
+                                      <div className="project-issue-trend-ytd-bar-wrap">
+                                        {ytdProjects.map((projectName, projectIndex) => {
+                                          const projectCount = bucket.projectCounts?.[projectName] || 0;
+                                          if (!projectCount) return null;
+                                          const segmentHeight = maxCount ? (projectCount / maxCount) * 100 : 0;
+                                          const pct = bucket.count ? Math.round((projectCount / bucket.count) * 100) : 0;
+                                          const projectFmt = managedProjectNameFormats[normalizeValue(projectName)] || {};
+                                          const segmentColor = projectFmt.backgroundColor || PIE_FALLBACK_COLORS[projectIndex % PIE_FALLBACK_COLORS.length];
+                                          const textColor = projectFmt.textColor || "#ffffff";
+                                          return (
+                                            <div
+                                              key={`${bucket.key}-${projectName}`}
+                                              className="project-issue-trend-ytd-bar-segment"
+                                              style={{ height: `${segmentHeight}%`, backgroundColor: segmentColor }}
+                                              title={`${projectName}: ${projectCount} (${pct}%)`}
+                                            >
+                                              {segmentHeight >= 14 && (
+                                                <div className="project-issue-trend-ytd-seg-label" style={{ color: textColor }}>
+                                                  <span>{projectCount}</span>
+                                                  <span>{pct}%</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="project-issue-trend-ytd-label">{bucket.label}</span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                        <div className="project-issue-trend-ytd-legend">
+                          {(() => {
+                            const totalsByProject = trendChartBuckets.reduce((acc, bucket) => {
+                              Object.entries(bucket.projectCounts || {}).forEach(([projectName, count]) => {
+                                acc[projectName] = (acc[projectName] || 0) + count;
+                              });
+                              return acc;
+                            }, {});
+
+                            return Object.entries(totalsByProject)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([projectName], projectIndex) => {
+                                const projectFmt = managedProjectNameFormats[normalizeValue(projectName)] || {};
+                                const swatchColor = projectFmt.backgroundColor || PIE_FALLBACK_COLORS[projectIndex % PIE_FALLBACK_COLORS.length];
+                                return (
+                                  <span className="project-issue-trend-ytd-legend-item" key={projectName}>
+                                    <span
+                                      className="project-issue-trend-ytd-legend-swatch"
+                                      style={{ backgroundColor: swatchColor }}
+                                    />
+                                    <span className="project-issue-trend-ytd-legend-text">{projectName}</span>
+                                  </span>
+                                );
+                              });
+                          })()}
+                        </div>
                       </div>
-                    </>
+                    ) : (
+                      <div className="project-issue-trend-line-wrap">
+                        <svg
+                          className="project-issue-trend-line-svg"
+                          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                          role="img"
+                          aria-label="Issue trend line chart"
+                          preserveAspectRatio="none"
+                        >
+                          {yTicks.map((tick) => (
+                            <g key={`tick-${tick.value}`}>
+                              <line
+                                x1={padding.left}
+                                y1={tick.y}
+                                x2={chartWidth - padding.right}
+                                y2={tick.y}
+                                className="project-issue-trend-grid-line"
+                              />
+                              <text
+                                x={padding.left - 8}
+                                y={tick.y + 3}
+                                textAnchor="end"
+                                className="project-issue-trend-axis-label"
+                              >
+                                {tick.value}
+                              </text>
+                            </g>
+                          ))}
+
+                          <path d={linePath} className="project-issue-trend-line" fill="none" />
+
+                          {points.map((point) => (
+                            <g key={point.key}>
+                              <circle cx={point.x} cy={point.y} r="4" className="project-issue-trend-point" />
+                              <text
+                                x={point.x}
+                                y={Math.max(point.y - 8, 10)}
+                                textAnchor="middle"
+                                className="project-issue-trend-point-value"
+                              >
+                                {point.count}
+                              </text>
+                              <text
+                                x={point.x}
+                                y={chartHeight - 18}
+                                textAnchor="middle"
+                                className="project-issue-trend-x-label"
+                              >
+                                {point.label}
+                                {(selectedDateRange === "TW" || selectedDateRange === "MTD") && point.dayLabel ? (
+                                  <tspan x={point.x} dy="10" className="project-issue-trend-x-label-day">
+                                    {point.dayLabel}
+                                  </tspan>
+                                ) : null}
+                              </text>
+                            </g>
+                          ))}
+                        </svg>
+                      </div>
+                    )
                   )}
                 </div>
               );
@@ -1894,6 +2714,117 @@ const ProjectIssueDashboard = () => {
         </div>
 
         <div className="project-issue-filters">
+          <div className="project-issue-filter project-issue-filter--visibility">
+            <details className="project-issue-filter-visibility" ref={manageFiltersRef}>
+              <summary className="project-issue-filter-trigger">
+                <span className="project-issue-filter-accordion-label">
+                  Manage Filters ({visibleFilterCount}/8)
+                </span>
+                <span className="project-issue-filter-accordion-icon" aria-hidden="true">▾</span>
+              </summary>
+              <div className="project-issue-filter-panel">
+                <div className="project-issue-filter-options">
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.projectName}
+                      onChange={() => toggleFilterVisibility("projectName")}
+                    />
+                    <span>Project Name</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.status}
+                      onChange={() => toggleFilterVisibility("status")}
+                    />
+                    <span>Status</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.issueId}
+                      onChange={() => toggleFilterVisibility("issueId")}
+                    />
+                    <span>Issue ID</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.e2LeadDetailer}
+                      onChange={() => toggleFilterVisibility("e2LeadDetailer")}
+                    />
+                    <span>E2 Lead Detailer</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.e2StatusUpdate}
+                      onChange={() => toggleFilterVisibility("e2StatusUpdate")}
+                    />
+                    <span>E2 Status Update</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.techDetails}
+                      onChange={() => toggleFilterVisibility("techDetails")}
+                    />
+                    <span>Technical Details Available</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.statusUpdateDate}
+                      onChange={() => toggleFilterVisibility("statusUpdateDate")}
+                    />
+                    <span>Status Update Date</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.globalSearch}
+                      onChange={() => toggleFilterVisibility("globalSearch")}
+                    />
+                    <span>Search</span>
+                  </label>
+                </div>
+                <div className="project-issue-filter-actions">
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={() => setAllFiltersVisibility(true)}
+                  >
+                    Show all
+                  </button>
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={() => setAllFiltersVisibility(false)}
+                  >
+                    Hide all
+                  </button>
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={closeManageFilters}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          {filterVisibility.projectName && (
           <div className="project-issue-filter">
             <select
               className={`project-issue-filter-trigger ${selectedProjectName ? "is-selected" : ""}`}
@@ -1909,7 +2840,28 @@ const ProjectIssueDashboard = () => {
               ))}
             </select>
           </div>
+          )}
 
+          {filterVisibility.issueId && (
+          <div className="project-issue-filter">
+            <input
+              type="text"
+              className="project-issue-global-search"
+              list="project-issue-id-options"
+              placeholder="Filter Issue ID"
+              value={selectedIssueId}
+              onChange={(event) => setSelectedIssueId(event.target.value)}
+              aria-label="Filter Issue ID"
+            />
+            <datalist id="project-issue-id-options">
+              {issueIdOptions.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          </div>
+          )}
+
+          {filterVisibility.status && (
           <div className="project-issue-filter">
             <select
               className={`project-issue-filter-trigger ${activeTab !== "All" ? "is-selected" : ""}`}
@@ -1924,15 +2876,17 @@ const ProjectIssueDashboard = () => {
               ))}
             </select>
           </div>
+          )}
 
+          {filterVisibility.e2LeadDetailer && (
           <div className="project-issue-filter">
             <select
               className={`project-issue-filter-trigger ${selectedE2Detailer ? "is-selected" : ""}`}
               value={selectedE2Detailer}
               onChange={(event) => setSelectedE2Detailer(event.target.value)}
-              aria-label="Filter E2 Detailer"
+              aria-label="Filter E2 Lead Detailer"
             >
-              <option value="">Filter E2 Detailer</option>
+              <option value="">Filter E2 Lead Detailer</option>
               {e2DetailerOptions.map((name) => (
                 <option key={name} value={name}>
                   {name}
@@ -1940,7 +2894,45 @@ const ProjectIssueDashboard = () => {
               ))}
             </select>
           </div>
+          )}
 
+          {filterVisibility.e2StatusUpdate && (
+          <div className="project-issue-filter">
+            <select
+              className={`project-issue-filter-trigger ${selectedE2StatusUpdate ? "is-selected" : ""}`}
+              value={selectedE2StatusUpdate}
+              onChange={(event) => setSelectedE2StatusUpdate(event.target.value)}
+              aria-label="Filter E2 Status Update"
+            >
+              <option value="">Filter E2 Status Update</option>
+              {e2StatusUpdateOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          )}
+
+          {filterVisibility.techDetails && (
+          <div className="project-issue-filter">
+            <select
+              className={`project-issue-filter-trigger ${selectedTechDetails ? "is-selected" : ""}`}
+              value={selectedTechDetails}
+              onChange={(event) => setSelectedTechDetails(event.target.value)}
+              aria-label="Filter Technical Details Available"
+            >
+              <option value="">Filter Technical Details Available</option>
+              {techDetailsOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          )}
+
+          {filterVisibility.statusUpdateDate && (
           <div className="project-issue-filter">
             <select
               className={`project-issue-filter-trigger ${selectedDateRange !== "All" ? "is-selected" : ""}`}
@@ -1954,14 +2946,17 @@ const ProjectIssueDashboard = () => {
               <option value="TW">This Week</option>
             </select>
           </div>
+          )}
 
-          <input
-            type="text"
-            className="project-issue-global-search"
-            placeholder="Search any text, letter, ID, owner, zone..."
-            value={globalSearch}
-            onChange={(event) => setGlobalSearch(event.target.value)}
-          />
+          {filterVisibility.globalSearch && (
+            <input
+              type="text"
+              className="project-issue-global-search"
+              placeholder="Search any text, letter, ID, owner, zone..."
+              value={globalSearch}
+              onChange={(event) => setGlobalSearch(event.target.value)}
+            />
+          )}
         </div>
 
         <div className="project-issue-table-shell">
@@ -1978,15 +2973,16 @@ const ProjectIssueDashboard = () => {
                 <th>Owner</th>
                 <th>Due Date</th>
                 <th>Days Since Created</th>
-                <th>E2 Detailer</th>
+                <th>E2 Lead Detailer</th>
+                <th>E2 Detailer Support Team</th>
                 <th>Technical Details Available</th>
-                <th>Status Update Date</th>
+                <th>Status Update<br />Date</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} className="project-issue-empty">
+                  <td colSpan={14} className="project-issue-empty">
                     Loading BIM issues...
                   </td>
                 </tr>
@@ -2002,8 +2998,11 @@ const ProjectIssueDashboard = () => {
                 };
                 const rowKey = issue.key || `${issue.projectDocId || "project"}-${issue.id || "issue"}-${issue.rowIndex ?? index}-${index}`;
                 const normalizedTag = normalizeValue(issue.tags).toLowerCase();
+                const normalizedZoneForDisplay = normalizeValue(issue.zone).toLowerCase();
                 const projectNameDisplay =
-                  (normalizedTag && tagAliasByLowerTag[normalizedTag]) || normalizeValue(issue.zoneCategory) || "-";
+                  (normalizedTag && tagAliasByLowerTag[normalizedTag]) ||
+                  (normalizedZoneForDisplay && tagAliasByLowerTag[normalizedZoneForDisplay]) ||
+                  "-";
 
                 return (
                 <tr key={rowKey}>
@@ -2090,18 +3089,22 @@ const ProjectIssueDashboard = () => {
                   <td data-label="Owner">{issue.owner}</td>
                   <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>
                   <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>
-                  <td data-label="E2 Detailer">
+                  <td data-label="E2 Lead Detailer">
                     <select
                       className="project-issue-cell-input"
                       value={issue.e2Detailer}
                       onChange={(event) => {
                         const nextValue = event.target.value;
+                        if (isDetailerInSupportTeam(nextValue, issue.e2DetailerSupportTeam)) {
+                          openDetailerConflictPopup(nextValue);
+                          return;
+                        }
                         handleE2DetailerChange(issue.key, nextValue);
                         handleE2DetailerSave({ ...issue, e2Detailer: nextValue }, nextValue);
                       }}
                       disabled={!!savingIssueKeys[issue.key]}
                     >
-                      <option value="">Select E2 Detailer</option>
+                      <option value="">Select E2 Lead Detailer</option>
                       {e2DetailerOptions.map((name) => (
                         <option key={name} value={name}>
                           {name}
@@ -2109,20 +3112,94 @@ const ProjectIssueDashboard = () => {
                       ))}
                     </select>
                   </td>
+                  <td data-label="E2 Detailer Support Team">
+                    {(() => {
+                      const selectedValues = sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions);
+                      const selectedLabel = selectedValues.join(", ") || "Select support team";
+                      const isSaving = !!savingIssueKeys[`supportteam:${issue.key}`];
+                      const isOpen = openSupportTeamMenuKey === issue.key;
+
+                      return (
+                        <div className="project-issue-support-team-dropdown">
+                          <button
+                            type="button"
+                            className="project-issue-support-team-trigger"
+                            aria-label="Select E2 Detailer Support Team"
+                            onClick={() => setOpenSupportTeamMenuKey((previous) => (previous === issue.key ? "" : issue.key))}
+                            disabled={isSaving}
+                          >
+                            <span className="project-issue-support-team-text">{selectedLabel}</span>
+                          </button>
+                          {isOpen ? (
+                          <div
+                            className="project-issue-support-team-menu"
+                            style={{ width: `${supportTeamMenuWidthCh}ch` }}
+                          >
+                            <div className="project-issue-support-team-menu-options">
+                            {e2DetailerOptions.map((name) => {
+                              const isChecked = selectedValues.some(
+                                (item) => item.toLowerCase() === name.toLowerCase()
+                              );
+                              const isCurrentDetailer =
+                                normalizeValue(issue.e2Detailer).toLowerCase() === name.toLowerCase();
+                              return (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  className={`project-issue-support-team-option${
+                                    isChecked ? " is-selected" : ""
+                                  }${
+                                    isCurrentDetailer ? " is-disabled" : ""
+                                  }`}
+                                  disabled={isSaving || isCurrentDetailer}
+                                  onClick={() => {
+                                    const currentValues = sanitizeSupportTeamValues(
+                                      issue.e2DetailerSupportTeam,
+                                      e2DetailerOptions
+                                    );
+                                    const nextValues = currentValues.some(
+                                      (item) => item.toLowerCase() === name.toLowerCase()
+                                    )
+                                      ? currentValues.filter((item) => item.toLowerCase() !== name.toLowerCase())
+                                      : [...currentValues, name];
+                                    handleE2DetailerSupportTeamChange(issue.key, nextValues);
+                                    handleE2DetailerSupportTeamSave(
+                                      { ...issue, e2DetailerSupportTeam: formatSupportTeamValue(nextValues) },
+                                      nextValues
+                                    );
+                                  }}
+                                >
+                                  <span>{name}</span>
+                                </button>
+                              );
+                            })}
+                            </div>
+                            <div className="project-issue-support-team-menu-footer">
+                              <button
+                                type="button"
+                                className="project-issue-support-team-done-btn"
+                                onClick={() => setOpenSupportTeamMenuKey("")}
+                              >
+                                {selectedValues.length > 0 ? `Done (${selectedValues.length} selected)` : "Done"}
+                              </button>
+                            </div>
+                          </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td data-label="Technical Details Available">
                     <select
                       className="project-issue-cell-input"
-                      value={issue.techDetailsAvailable}
+                      value={getDefaultTechDetailsAvailable(issue.techDetailsAvailable)}
                       onChange={(event) => {
-                        const nextValue = event.target.value;
-                        handleTechDetailsChange(issue.key, nextValue);
-                        handleTechDetailsSave({ ...issue, techDetailsAvailable: nextValue }, nextValue);
+                        handleTechDetailsSelectChange(issue, event.target.value);
                       }}
                       disabled={!!savingIssueKeys[`techdetails:${issue.key}`]}
                     >
-                      <option value="">Select...</option>
-                      <option value="Yes">Yes</option>
                       <option value="No">No</option>
+                      <option value="Yes">Yes</option>
                     </select>
                   </td>
                   <td data-label="Status Update Date">
@@ -2146,7 +3223,7 @@ const ProjectIssueDashboard = () => {
               })}
               {!loading && !visibleIssues.length ? (
                 <tr>
-                  <td colSpan={13} className="project-issue-empty">
+                  <td colSpan={14} className="project-issue-empty">
                     No issues in this tab.
                   </td>
                 </tr>
@@ -2237,6 +3314,184 @@ const ProjectIssueDashboard = () => {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {techDetailsPopup.open ? (
+        <div className="project-issue-popup-overlay" role="dialog" aria-modal="true" aria-label="Technical Details Required">
+          <div className="project-issue-tech-details-popup-window" onClick={(event) => event.stopPropagation()}>
+            <div className="project-issue-popup-head">
+              <strong className="project-issue-popup-title">Technical Details Available - Required Information</strong>
+            </div>
+
+            <div className="project-issue-tech-details-popup-body">
+              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-status">
+                E2 Status Update
+              </label>
+              <select
+                id="tech-details-e2-status"
+                className="project-issue-cell-input"
+                value={techDetailsPopup.e2StatusUpdate}
+                onChange={(event) =>
+                  setTechDetailsPopup((previous) => ({
+                    ...previous,
+                    e2StatusUpdate: event.target.value,
+                  }))
+                }
+                disabled={submittingTechDetailsPopup}
+              >
+                <option value="">Select...</option>
+                {techDetailsPopupE2StatusOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+
+              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-detailer">
+                E2 Lead Detailer
+              </label>
+              <select
+                id="tech-details-e2-detailer"
+                className="project-issue-cell-input"
+                value={techDetailsPopup.e2Detailer}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (isDetailerInSupportTeam(nextValue, techDetailsPopup.e2DetailerSupportTeam)) {
+                    openDetailerConflictPopup(nextValue);
+                    return;
+                  }
+
+                  setTechDetailsPopup((previous) => ({
+                    ...previous,
+                    e2Detailer: nextValue,
+                  }));
+                }}
+                disabled={submittingTechDetailsPopup}
+              >
+                <option value="">Select...</option>
+                {e2DetailerOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+
+              <label className="project-issue-tech-details-popup-label">
+                E2 Detailer Support Team
+              </label>
+              <div className="project-issue-support-team-dropdown">
+                <button
+                  type="button"
+                  className="project-issue-support-team-trigger"
+                  aria-label="Select E2 Detailer Support Team"
+                  onClick={() => setPopupSupportTeamMenuOpen((previous) => !previous)}
+                  disabled={submittingTechDetailsPopup}
+                >
+                  <span className="project-issue-support-team-text">
+                    {sanitizeSupportTeamValues(techDetailsPopup.e2DetailerSupportTeam, e2DetailerOptions).join(", ") || "Select support team"}
+                  </span>
+                </button>
+                {popupSupportTeamMenuOpen ? (
+                  <div
+                    className="project-issue-support-team-menu"
+                    style={{ width: `${popupSupportTeamMenuWidthCh}ch` }}
+                  >
+                    <div className="project-issue-support-team-menu-options">
+                    {e2DetailerOptions.map((name) => {
+                      const isSelected = sanitizeSupportTeamValues(
+                        techDetailsPopup.e2DetailerSupportTeam,
+                        e2DetailerOptions
+                      ).some(
+                        (item) => item.toLowerCase() === name.toLowerCase()
+                      );
+                      const isCurrentDetailer =
+                        normalizeValue(techDetailsPopup.e2Detailer).toLowerCase() === name.toLowerCase();
+                      return (
+                        <button
+                          key={`popup-${name}`}
+                          type="button"
+                          className={`project-issue-support-team-option${
+                            isSelected ? " is-selected" : ""
+                          }${isCurrentDetailer ? " is-disabled" : ""}`}
+                          disabled={submittingTechDetailsPopup || isCurrentDetailer}
+                          onClick={() => {
+                            setTechDetailsPopup((previous) => {
+                              const currentValues = sanitizeSupportTeamValues(
+                                previous.e2DetailerSupportTeam,
+                                e2DetailerOptions
+                              );
+                              const nextValues = currentValues.some(
+                                (item) => item.toLowerCase() === name.toLowerCase()
+                              )
+                                ? currentValues.filter((item) => item.toLowerCase() !== name.toLowerCase())
+                                : [...currentValues, name];
+                              return {
+                                ...previous,
+                                e2DetailerSupportTeam: nextValues,
+                              };
+                            });
+                          }}
+                        >
+                          <span>{name}</span>
+                        </button>
+                      );
+                    })}
+                    </div>
+                    <div className="project-issue-support-team-menu-footer">
+                      <button
+                        type="button"
+                        className="project-issue-support-team-done-btn"
+                        onClick={() => setPopupSupportTeamMenuOpen(false)}
+                      >
+                        {(() => {
+                          const n = sanitizeSupportTeamValues(techDetailsPopup.e2DetailerSupportTeam, e2DetailerOptions).length;
+                          return n > 0 ? `Done (${n} selected)` : "Done";
+                        })()}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="project-issue-tech-details-popup-actions">
+                <button
+                  type="button"
+                  className="project-issue-upload-btn"
+                  onClick={handleTechDetailsPopupSubmit}
+                  disabled={
+                    submittingTechDetailsPopup ||
+                    !normalizeValue(techDetailsPopup.e2StatusUpdate) ||
+                    !normalizeValue(techDetailsPopup.e2Detailer)
+                  }
+                >
+                  {submittingTechDetailsPopup ? "Submitting..." : "Submit"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {detailerConflictPopupMessage ? (
+        <div className="project-issue-popup-overlay" role="dialog" aria-modal="true" aria-label="E2 Lead Detailer conflict">
+          <div className="project-issue-tech-details-popup-window" onClick={(event) => event.stopPropagation()}>
+            <div className="project-issue-popup-head">
+              <strong className="project-issue-popup-title">Selection Conflict</strong>
+            </div>
+            <div className="project-issue-tech-details-popup-body">
+              <div className="project-issue-summary-empty">{detailerConflictPopupMessage}</div>
+              <div className="project-issue-tech-details-popup-actions">
+                <button
+                  type="button"
+                  className="project-issue-upload-btn"
+                  onClick={() => setDetailerConflictPopupMessage("")}
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

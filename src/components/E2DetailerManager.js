@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
@@ -16,6 +16,37 @@ import {
 import "./E2DetailerManager.css";
 
 const normalizeOption = (value) => String(value || "").trim();
+
+const normalizeFieldKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
+  const candidates = Array.from(new Set([...(fields || []), ...Object.keys(rowData || {})]));
+  if (!candidates.length) return null;
+
+  for (const alias of aliases) {
+    const key = normalizeFieldKey(alias);
+    const exact = candidates.find((candidate) => normalizeFieldKey(candidate) === key);
+    if (exact) return exact;
+  }
+
+  for (const alias of aliases) {
+    const key = normalizeFieldKey(alias);
+    const contains = candidates.find((candidate) => normalizeFieldKey(candidate).includes(key));
+    if (contains) return contains;
+  }
+
+  return null;
+};
+
+const parseSupportTeamValues = (value) => {
+  const rawValues = Array.isArray(value) ? value : String(value || "").split(",");
+  return rawValues
+    .map((item) => normalizeOption(item))
+    .filter(Boolean)
+    .filter((item, index, array) => array.findIndex((candidate) => candidate.toLowerCase() === item.toLowerCase()) === index);
+};
+
+const formatSupportTeamValues = (value) => parseSupportTeamValues(value).join(", ");
 
 const uniqueOptions = (values = []) => {
   const seen = new Set();
@@ -86,6 +117,162 @@ const E2DetailerManager = () => {
 
     return () => unsubscribe();
   }, [id]);
+
+  const propagateLeadDetailerRename = async (oldValue, newValue) => {
+    const oldNormalized = normalizeOption(oldValue);
+    const newNormalized = normalizeOption(newValue);
+
+    if (!id || !oldNormalized || !newNormalized || oldNormalized.toLowerCase() === newNormalized.toLowerCase()) {
+      return;
+    }
+
+    const projectsRef = collection(db, "churches", id, "bimProjects");
+    const projectSnapshots = await getDocs(projectsRef);
+    let updatedProjectCount = 0;
+
+    for (const projectSnapshot of projectSnapshots.docs) {
+      const projectData = projectSnapshot.data() || {};
+      const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+      const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+      if (!rows.length) continue;
+
+      let projectChanged = false;
+      const nextRows = rows.map((row) => {
+        const rowData = row?.rowData || {};
+        const detailerField = findFieldByAliases(fields, rowData, [
+          "e2 lead detailer",
+          "e2leaddetailer",
+          "e2 detailer",
+          "e2detailer",
+        ]);
+        const supportField = findFieldByAliases(fields, rowData, [
+          "e2 detailer support team",
+          "e2 detailer support",
+          "e2 support team",
+          "support team",
+        ]);
+
+        const nextRowData = { ...rowData };
+        let rowChanged = false;
+
+        if (detailerField) {
+          const currentDetailer = normalizeOption(rowData[detailerField]);
+          if (currentDetailer.toLowerCase() === oldNormalized.toLowerCase()) {
+            nextRowData[detailerField] = newNormalized;
+            rowChanged = true;
+          }
+        }
+
+        if (supportField) {
+          const supportValues = parseSupportTeamValues(rowData[supportField]);
+          const renamedSupportValues = supportValues.map((value) =>
+            value.toLowerCase() === oldNormalized.toLowerCase() ? newNormalized : value
+          );
+          const previousSupport = formatSupportTeamValues(supportValues);
+          const nextSupport = formatSupportTeamValues(renamedSupportValues);
+          if (previousSupport !== nextSupport) {
+            nextRowData[supportField] = nextSupport;
+            rowChanged = true;
+          }
+        }
+
+        if (rowChanged) {
+          projectChanged = true;
+          return { ...row, rowData: nextRowData };
+        }
+
+        return row;
+      });
+
+      if (projectChanged) {
+        await updateDoc(doc(db, "churches", id, "bimProjects", projectSnapshot.id), {
+          rows: nextRows,
+          updatedAt: serverTimestamp(),
+        });
+        updatedProjectCount += 1;
+      }
+    }
+
+    if (updatedProjectCount > 0) {
+      toast.success(`Updated E2 Lead Detailer values in ${updatedProjectCount} project(s).`);
+    }
+  };
+
+  const propagateLeadDetailerDeletion = async (deletedValue) => {
+    const deletedNormalized = normalizeOption(deletedValue);
+    if (!id || !deletedNormalized) return;
+
+    const projectsRef = collection(db, "churches", id, "bimProjects");
+    const projectSnapshots = await getDocs(projectsRef);
+    let updatedProjectCount = 0;
+
+    for (const projectSnapshot of projectSnapshots.docs) {
+      const projectData = projectSnapshot.data() || {};
+      const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+      const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+      if (!rows.length) continue;
+
+      let projectChanged = false;
+      const nextRows = rows.map((row) => {
+        const rowData = row?.rowData || {};
+        const detailerField = findFieldByAliases(fields, rowData, [
+          "e2 lead detailer",
+          "e2leaddetailer",
+          "e2 detailer",
+          "e2detailer",
+        ]);
+        const supportField = findFieldByAliases(fields, rowData, [
+          "e2 detailer support team",
+          "e2 detailer support",
+          "e2 support team",
+          "support team",
+        ]);
+
+        const nextRowData = { ...rowData };
+        let rowChanged = false;
+
+        if (detailerField) {
+          const currentDetailer = normalizeOption(rowData[detailerField]);
+          if (currentDetailer.toLowerCase() === deletedNormalized.toLowerCase()) {
+            nextRowData[detailerField] = "";
+            rowChanged = true;
+          }
+        }
+
+        if (supportField) {
+          const supportValues = parseSupportTeamValues(rowData[supportField]);
+          const filteredSupportValues = supportValues.filter(
+            (value) => value.toLowerCase() !== deletedNormalized.toLowerCase()
+          );
+          const previousSupport = formatSupportTeamValues(supportValues);
+          const nextSupport = formatSupportTeamValues(filteredSupportValues);
+          if (previousSupport !== nextSupport) {
+            nextRowData[supportField] = nextSupport;
+            rowChanged = true;
+          }
+        }
+
+        if (rowChanged) {
+          projectChanged = true;
+          return { ...row, rowData: nextRowData };
+        }
+
+        return row;
+      });
+
+      if (projectChanged) {
+        await updateDoc(doc(db, "churches", id, "bimProjects", projectSnapshot.id), {
+          rows: nextRows,
+          updatedAt: serverTimestamp(),
+        });
+        updatedProjectCount += 1;
+      }
+    }
+
+    if (updatedProjectCount > 0) {
+      toast.success(`Removed deleted E2 Lead Detailer values from ${updatedProjectCount} project(s).`);
+    }
+  };
 
   const persistOptions = async (fieldName, nextOptions) => {
     if (!id) return;
@@ -185,8 +372,19 @@ const E2DetailerManager = () => {
       return;
     }
 
+    const previousValue = source[editingIndex] || "";
     const next = source.map((option, index) => (index === editingIndex ? clean : option));
     await persistOptions(fieldName, next);
+
+    if (editingType === "detailer") {
+      try {
+        await propagateLeadDetailerRename(previousValue, clean);
+      } catch (error) {
+        console.error("Error propagating E2 Lead Detailer rename:", error);
+        toast.warn("E2 Lead Detailer values were saved, but some project rows could not be updated.");
+      }
+    }
+
     cancelEdit();
     toast.success("Value updated.");
   };
@@ -197,11 +395,21 @@ const E2DetailerManager = () => {
     const value = source[index];
     if (!value) return;
 
-    const confirmed = window.confirm(`Delete \"${value}\" from E2 Detailer options?`);
+    const confirmed = window.confirm(`Delete \"${value}\" from E2 Lead Detailer options?`);
     if (!confirmed) return;
 
     const next = source.filter((_, currentIndex) => currentIndex !== index);
     await persistOptions(fieldName, next);
+
+    if (type === "detailer") {
+      try {
+        await propagateLeadDetailerDeletion(value);
+      } catch (error) {
+        console.error("Error propagating E2 Lead Detailer deletion:", error);
+        toast.warn("E2 Lead Detailer value was deleted, but some project rows could not be updated.");
+      }
+    }
+
     if (editingIndex === index && editingType === type) {
       cancelEdit();
     }
@@ -257,7 +465,7 @@ const E2DetailerManager = () => {
         <div className="e2-detailer-header">
           <h1 className="e2-detailer-title">Manage E2 fields</h1>
           <p className="e2-detailer-subtitle">
-            Add, edit, and remove values for E2 Detailer and E2 Status Update fields.
+            Add, edit, and remove values for E2 Lead Detailer and E2 Status Update fields.
           </p>
         </div>
 
@@ -265,7 +473,7 @@ const E2DetailerManager = () => {
           <div className="e2-detailer-list-wrap">
             <div className="e2-detailer-list-head">
               <div className="e2-detailer-list-meta">
-                <strong>E2 Detailer Values</strong>
+                <strong>E2 Lead Detailer Values</strong>
                 <span>{loading ? "Loading..." : `${options.length} value(s)`}</span>
               </div>
               <button
@@ -282,7 +490,7 @@ const E2DetailerManager = () => {
               <input
                 type="text"
                 className="e2-detailer-input"
-                placeholder="Type a new E2 Detailer value"
+                placeholder="Type a new E2 Lead Detailer value"
                 value={newValue}
                 onChange={(event) => setNewValue(event.target.value)}
                 disabled={saving}
