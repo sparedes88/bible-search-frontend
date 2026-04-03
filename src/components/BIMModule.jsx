@@ -928,6 +928,7 @@ const BIMModule = () => {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [lightboxImage, setLightboxImage] = useState(null);
   const [deletingProjectId, setDeletingProjectId] = useState("");
+  const [clearingProjectId, setClearingProjectId] = useState("");
   const [renamingProjectId, setRenamingProjectId] = useState("");
   const [selectedDetailFieldKey, setSelectedDetailFieldKey] = useState("");
   const [comments, setComments] = useState([]);
@@ -1254,6 +1255,70 @@ const BIMModule = () => {
       toast.error("Could not delete BIM project.");
     } finally {
       setDeletingProjectId("");
+    }
+  };
+
+  const handleClearProjectRows = async (project) => {
+    if (!project?.id) return;
+
+    const projectName = normalizeValue(project.name) || project.id;
+    const confirmed = window.confirm(
+      `Delete all rows from BIM project "${projectName}" and keep the existing columns?`
+    );
+    if (!confirmed) return;
+
+    setClearingProjectId(project.id);
+    try {
+      const nextFields = Array.isArray(project.fields) ? project.fields : [];
+      const projectRef = doc(db, "churches", id, "bimProjects", project.id);
+
+      await setDoc(projectRef, {
+        fields: nextFields,
+        rows: [],
+        rowCount: 0,
+        internalCardMeta: {},
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || null,
+        updatedByEmail: user?.email || null,
+      }, { merge: true });
+
+      setProjects((previousProjects) => previousProjects.map((item) => (
+        item.id === project.id
+          ? {
+              ...item,
+              fields: nextFields,
+              rows: [],
+              rowCount: 0,
+              internalCardMeta: {},
+            }
+          : item
+      )));
+
+      if (activeProjectId === project.id) {
+        setActiveProject((previousProject) => (
+          previousProject
+            ? {
+                ...previousProject,
+                fields: nextFields,
+                rows: [],
+                rowCount: 0,
+                internalCardMeta: {},
+              }
+            : previousProject
+        ));
+        setLogs([]);
+      }
+
+      toast.success("All BIM rows were deleted. Columns were preserved.");
+      await loadProjects();
+      if (activeProjectId === project.id) {
+        await loadProjectDetails(project.id);
+      }
+    } catch (error) {
+      console.error("Error clearing BIM project rows:", error);
+      toast.error("Could not delete BIM rows.");
+    } finally {
+      setClearingProjectId("");
     }
   };
 
@@ -3379,9 +3444,27 @@ const BIMModule = () => {
                   <div className="bim-project-actions">
                     <button
                       type="button"
+                      className="bim-project-clear"
+                      onClick={() => handleClearProjectRows(project)}
+                      disabled={
+                        clearingProjectId === project.id ||
+                        renamingProjectId === project.id ||
+                        deletingProjectId === project.id
+                      }
+                      aria-label={`Clear rows from ${project.name}`}
+                      title="Delete all rows and keep columns"
+                    >
+                      {clearingProjectId === project.id ? "Clearing..." : "Clear Rows"}
+                    </button>
+                    <button
+                      type="button"
                       className="bim-project-rename"
                       onClick={() => handleRenameProject(project)}
-                      disabled={renamingProjectId === project.id || deletingProjectId === project.id}
+                      disabled={
+                        renamingProjectId === project.id ||
+                        deletingProjectId === project.id ||
+                        clearingProjectId === project.id
+                      }
                       aria-label={`Rename ${project.name}`}
                       title="Rename project"
                     >
@@ -3391,7 +3474,11 @@ const BIMModule = () => {
                       type="button"
                       className="bim-project-delete"
                       onClick={() => handleDeleteProject(project)}
-                      disabled={deletingProjectId === project.id || renamingProjectId === project.id}
+                      disabled={
+                        deletingProjectId === project.id ||
+                        renamingProjectId === project.id ||
+                        clearingProjectId === project.id
+                      }
                       aria-label={`Delete ${project.name}`}
                       title="Delete project"
                     >

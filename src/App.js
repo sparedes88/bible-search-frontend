@@ -151,6 +151,9 @@ const ExcelRowDetail = React.lazy(() => import("./components/ExcelRowDetail"));
 const CampusesPage = React.lazy(() => import("./pages/organization/CampusesPage"));
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
+const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
+const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
+const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 
 const App = () => {
   return (
@@ -724,6 +727,30 @@ const App = () => {
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ProjectIssueDashboard />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/project-issue-dashboard/issue/:projectDocId/:issueId"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ProjectIssueDetail />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/project-issue-dashboard/e2-detailers"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <E2DetailerManager />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/project-issue-dashboard/tag-aliases"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <TagAliasManager />
               </PrivateRoute>
             }
           />

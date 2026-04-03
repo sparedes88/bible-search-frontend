@@ -165,6 +165,16 @@
   border-left: 1px solid #e5e7eb;
 }
 
+.bim-project-clear {
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff7ed;
+  color: #c2410c;
+  padding: 0.58rem 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .bim-project-rename {
   border: none;
   border-bottom: 1px solid #e5e7eb;
@@ -184,6 +194,7 @@
   cursor: pointer;
 }
 
+.bim-project-clear:disabled,
 .bim-project-rename:disabled,
 .bim-project-delete:disabled {
   opacity: 0.65;

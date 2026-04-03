@@ -1,0 +1,149 @@
+.tag-alias-page {
+  margin-top: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.tag-alias-header {
+  background: linear-gradient(120deg, #f5f7ff 0%, #e6f4ff 100%);
+  border: 1px solid #dbe7ff;
+  border-radius: 14px;
+  padding: 1.2rem;
+}
+
+.tag-alias-title {
+  margin: 0;
+  color: #102a43;
+}
+
+.tag-alias-subtitle {
+  margin: 0.4rem 0 0;
+  color: #486581;
+}
+
+.tag-alias-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.tag-alias-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #334e68;
+}
+
+.tag-alias-meta strong {
+  color: #102a43;
+}
+
+.tag-alias-empty {
+  color: #64748b;
+}
+
+.tag-alias-table-wrap {
+  overflow-x: auto;
+}
+
+.tag-alias-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.tag-alias-table th,
+.tag-alias-table td {
+  border-bottom: 1px solid #eef2f7;
+  padding: 0.72rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.tag-alias-table thead th {
+  background: #f8fafc;
+  color: #334e68;
+}
+
+.tag-alias-input {
+  width: 100%;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  color: #102a43;
+  background: #ffffff;
+}
+
+.tag-alias-input:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 1px;
+  border-color: #0f766e;
+}
+
+.tag-alias-color-input {
+  width: 46px;
+  height: 34px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  padding: 0.2rem;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.tag-alias-preview-badge {
+  display: inline-block;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  line-height: 1.2;
+}
+
+.tag-alias-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tag-alias-btn {
+  border: 1px solid #cbd2d9;
+  background: #ffffff;
+  color: #102a43;
+  border-radius: 8px;
+  font-weight: 600;
+  padding: 0.38rem 0.65rem;
+  cursor: pointer;
+}
+
+.tag-alias-btn:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.tag-alias-btn-primary {
+  border-color: #14532d;
+  background: #14532d;
+  color: #ffffff;
+}
+
+.tag-alias-btn-primary:hover:not(:disabled) {
+  background: #166534;
+}
+
+.tag-alias-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .tag-alias-header,
+  .tag-alias-card {
+    padding: 0.85rem;
+  }
+
+  .tag-alias-table {
+    min-width: 540px;
+  }
+}
