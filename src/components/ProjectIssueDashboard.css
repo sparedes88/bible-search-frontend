@@ -33,6 +33,13 @@
   margin-left: auto;
 }
 
+.project-issue-head-actions-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
 .project-issue-upload-group {
   display: inline-flex;
   flex-direction: column;
@@ -150,6 +157,25 @@
 .project-issue-upload-btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.project-issue-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 170px;
+  padding: 0.5rem 0.9rem;
+  background: #0f766e;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.project-issue-add-btn:hover {
+  background: #115e59;
 }
 
 .project-issue-title {
@@ -993,6 +1019,32 @@
   color: #64748b;
 }
 
+.project-issue-th-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.project-issue-th-info-btn {
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.project-issue-th-info-btn:hover {
+  color: #1e40af;
+}
+
+.project-issue-th-info-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .project-issue-cell-input--multi {
   min-height: 78px;
 }
@@ -1361,6 +1413,191 @@
   border-radius: 12px;
   box-shadow: 0 28px 48px rgba(15, 23, 42, 0.35);
   overflow: visible;
+}
+.project-issue-e2info-window {
+  width: min(96vw, 760px);
+  max-height: 90vh;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  box-shadow: 0 28px 48px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.project-issue-e2info-body {
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.55rem;
+  overflow: auto;
+}
+.project-issue-e2info-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.62rem 0.72rem;
+  background: #f8fafc;
+}
+.project-issue-e2info-value {
+  color: #102a43;
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+  font-size: 0.88rem;
+}
+.project-issue-e2info-description {
+  color: #334e68;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.project-issue-e2info-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.project-issue-e2info-edit-btn {
+  padding: 0.28rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.project-issue-e2info-edit-btn:hover {
+  background: #dbeafe;
+}
+
+.project-issue-e2info-save-btn {
+  padding: 0.28rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #16a34a;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.project-issue-e2info-save-btn:hover:not(:disabled) {
+  background: #dcfce7;
+}
+
+.project-issue-e2info-save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.project-issue-e2info-edit-textarea {
+  width: 100%;
+  font-size: 0.82rem;
+  color: #334e68;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.35;
+  background: #f8fafc;
+  box-sizing: border-box;
+}
+
+.project-issue-e2info-edit-textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #fff;
+}
+
+.project-issue-add-window {
+  width: min(96vw, 980px);
+  max-height: 90vh;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  box-shadow: 0 28px 48px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-issue-add-form {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.project-issue-add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.8rem;
+}
+
+.project-issue-add-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.project-issue-add-label {
+  color: #334e68;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.project-issue-add-required {
+  color: #dc2626;
+  margin-left: 0.2rem;
+}
+
+.project-issue-add-input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.9rem;
+  color: #102a43;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.project-issue-add-input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.project-issue-add-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.project-issue-add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.project-issue-add-save-btn {
+  border: none;
+  border-radius: 8px;
+  background: #14532d;
+  color: #ffffff;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.project-issue-add-save-btn:hover:not(:disabled) {
+  background: #166534;
+}
+
+.project-issue-add-save-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .project-issue-tech-details-popup-body {

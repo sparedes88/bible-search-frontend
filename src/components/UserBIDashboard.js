@@ -11,7 +11,7 @@ import './UserBIDashboard.css';
 Chart.register(...registerables);
 
 const UserBIDashboard = () => {
-  const { currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState(null);

@@ -5,7 +5,15 @@ import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db } from "../firebase";
-import { E2_STATUS_UPDATE_FORMATS_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID, PROJECT_NAME_FORMATS_FIELD, STATUS_FORMATS_FIELD, TAG_ALIASES_FIELD } from "./projectIssueConstants";
+import {
+  DEFAULT_E2_STATUS_UPDATE_OPTIONS,
+  E2_STATUS_UPDATE_FORMATS_FIELD,
+  E2_STATUS_UPDATE_OPTIONS_FIELD,
+  PROJECT_ISSUE_CONFIG_DOC_ID,
+  PROJECT_NAME_FORMATS_FIELD,
+  STATUS_FORMATS_FIELD,
+  TAG_ALIASES_FIELD,
+} from "./projectIssueConstants";
 import "./TagAliasManager.css";
 
 const normalizeValue = (value) => {
@@ -81,6 +89,7 @@ const TagAliasManager = () => {
   const [distinctTagZonePairs, setDistinctTagZonePairs] = useState([]);
   const [distinctStatuses, setDistinctStatuses] = useState([]);
   const [distinctE2StatusUpdates, setDistinctE2StatusUpdates] = useState([]);
+  const [configuredE2StatusUpdates, setConfiguredE2StatusUpdates] = useState(DEFAULT_E2_STATUS_UPDATE_OPTIONS);
   const [distinctProjectNames, setDistinctProjectNames] = useState([]);
   const [tagAliases, setTagAliases] = useState({});
   const [statusFormats, setStatusFormats] = useState({});
@@ -200,6 +209,11 @@ const TagAliasManager = () => {
         const e2Formats = data[E2_STATUS_UPDATE_FORMATS_FIELD] && typeof data[E2_STATUS_UPDATE_FORMATS_FIELD] === "object"
           ? data[E2_STATUS_UPDATE_FORMATS_FIELD]
           : {};
+        const configuredE2Values = Array.isArray(data[E2_STATUS_UPDATE_OPTIONS_FIELD])
+          ? data[E2_STATUS_UPDATE_OPTIONS_FIELD]
+              .map((item) => normalizeValue(item))
+              .filter(Boolean)
+          : [];
         const projectNameFmts = data[PROJECT_NAME_FORMATS_FIELD] && typeof data[PROJECT_NAME_FORMATS_FIELD] === "object"
           ? data[PROJECT_NAME_FORMATS_FIELD]
           : {};
@@ -207,6 +221,13 @@ const TagAliasManager = () => {
         setTagAliases(aliases);
         setStatusFormats(formats);
         setE2StatusUpdateFormats(e2Formats);
+        setConfiguredE2StatusUpdates(
+          configuredE2Values.length
+            ? Array.from(new Set(configuredE2Values.map((value) => value.toLowerCase()))).map(
+                (key) => configuredE2Values.find((value) => value.toLowerCase() === key)
+              )
+            : DEFAULT_E2_STATUS_UPDATE_OPTIONS
+        );
         setProjectNameFormats(projectNameFmts);
         setDraftAliases((previous) => {
           const next = { ...previous };
@@ -257,6 +278,7 @@ const TagAliasManager = () => {
         setTagAliases({});
         setStatusFormats({});
         setE2StatusUpdateFormats({});
+        setConfiguredE2StatusUpdates(DEFAULT_E2_STATUS_UPDATE_OPTIONS);
         setProjectNameFormats({});
         setLoadingAliases(false);
       }
@@ -309,8 +331,23 @@ const TagAliasManager = () => {
   );
 
   const e2StatusUpdateRows = useMemo(
-    () => distinctE2StatusUpdates.map((value) => ({ value, format: e2StatusUpdateFormats[value] || {} })),
-    [distinctE2StatusUpdates, e2StatusUpdateFormats]
+    () => {
+      const valuesByKey = new Map();
+
+      [...configuredE2StatusUpdates, ...distinctE2StatusUpdates, ...Object.keys(e2StatusUpdateFormats)].forEach((value) => {
+        const normalized = normalizeValue(value);
+        if (!normalized) return;
+        const key = normalized.toLowerCase();
+        if (!valuesByKey.has(key)) {
+          valuesByKey.set(key, normalized);
+        }
+      });
+
+      return Array.from(valuesByKey.values())
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        .map((value) => ({ value, format: e2StatusUpdateFormats[value] || {} }));
+    },
+    [configuredE2StatusUpdates, distinctE2StatusUpdates, e2StatusUpdateFormats]
   );
 
   const projectNameRows = useMemo(

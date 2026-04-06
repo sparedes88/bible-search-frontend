@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
+import { FaInfoCircle } from "react-icons/fa";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db, storage } from "../firebase";
@@ -12,6 +13,7 @@ import {
   DEFAULT_E2_STATUS_UPDATE,
   DEFAULT_E2_STATUS_UPDATE_OPTIONS,
   E2_DETAILER_OPTIONS_FIELD,
+  E2_STATUS_UPDATE_DEFINITIONS_FIELD,
   E2_STATUS_UPDATE_FORMATS_FIELD,
   E2_STATUS_UPDATE_OPTIONS_FIELD,
   PROJECT_ISSUE_CONFIG_DOC_ID,
@@ -23,10 +25,23 @@ import "./ProjectIssueDashboard.css";
 
 const E2_DETAILER_FIELD = "E2 Lead Detailer";
 const E2_DETAILER_SUPPORT_TEAM_FIELD = "E2 Detailer Support Team";
+const ISSUE_ID_FIELD_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
+const TITLE_FIELD_ALIASES = ["title", "task title", "name"];
+const PROJECT_NAME_FIELD_ALIASES = ["project name", "projectname"];
+const OWNER_FIELD_ALIASES = ["assignee", "assigned to", "owner", "responsible"];
+const E2_STATUS_UPDATE_FIELD_ALIASES = ["e2 status update", "e2statusupdate"];
 
 const E2_STATUS_UPDATE_FIELD = "E2 Status Update";
 
 const E2_STATUS_DATE_FIELD = "E2 Status Date";
+const E2_STATUS_DATE_FIELD_ALIASES = [
+  "e2 status date",
+  "e2statusdate",
+  "status update date",
+  "statusupdatedate",
+  "status date",
+  "statusdate",
+];
 const TECH_DETAILS_FIELD = "Technical Details Available";
 const TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES = ["Stop and Start", "Steer with current task", "Add to Queue"];
 const PIE_FALLBACK_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#f97316"];
@@ -37,12 +52,25 @@ const DAILY_ISSUES_TARGET_PROJECT_NAME = "STANFORD -  FF / RAD";
 const DAILY_ISSUES_SHEET_NAME = "Issues with one last comment";
 const DAILY_ISSUES_EXPORTS_HINT = "C:/Users/BenSolorzano/OneDrive - E2 Tech Support/E2 Tech Team - VDC Project - Equipo Operativo/Exports";
 
+const E2_STATUS_UPDATE_INFO_BY_KEY = {
+  received: "Issue has been received and logged by the E2 team.",
+  "stop and send": "Pause current work and send the issue to the next workflow step.",
+  "send to queue": "Issue is ready and waiting in queue for assignment or execution.",
+  "steer with message": "Issue is redirected with written context/instructions for follow-up.",
+  "in progress": "Issue is actively being worked on.",
+  completed: "Issue is finished and no further action is currently required.",
+  "steer to technical details": "Issue requires Technical Details workflow before continuing.",
+};
+
 const getTodayMMDDYY = () => {
   const now = new Date();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
   const yy = String(now.getFullYear()).slice(-2);
-  return `${mm}/${dd}/${yy}`;
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `${mm}/${dd}/${yy} ${hh}:${min}:${ss}`;
 };
 
 const formatUpdateTimestamp = (value) => {
@@ -163,7 +191,31 @@ const formatChartRangeDate = (value) => {
 
 const getDefaultE2StatusUpdate = (value) => normalizeValue(value) || DEFAULT_E2_STATUS_UPDATE;
 
-const getDefaultE2StatusDate = (value) => normalizeValue(value) || getTodayMMDDYY();
+const getDefaultE2StatusDate = (value) => {
+  const normalized = normalizeValue(value);
+  return normalized === "-" ? "" : normalized;
+};
+
+const hasMeaningfulStatusUpdateDate = (value) => Boolean(parseStatusUpdateDate(value));
+
+const isReceivedStatusUpdate = (value) =>
+  normalizeValue(value).toLowerCase() === DEFAULT_E2_STATUS_UPDATE.toLowerCase();
+
+const resolveStatusDateForStatusTransition = (nextStatusValue, previousStatusValue, existingDateValue) => {
+  const nextStatus = normalizeValue(nextStatusValue);
+  const previousStatus = normalizeValue(previousStatusValue);
+  const existing = getDefaultE2StatusDate(existingDateValue);
+
+  if (nextStatus === previousStatus) {
+    return existing;
+  }
+
+  if (isReceivedStatusUpdate(nextStatus)) {
+    return existing || getTodayMMDDYY();
+  }
+
+  return getTodayMMDDYY();
+};
 
 const getDefaultTechDetailsAvailable = (value) => normalizeValue(value) || "No";
 
@@ -241,6 +293,7 @@ const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
 
 const getCardPreview = (rowData = {}, fields = []) => {
   const titleField = findFieldByAliases(fields, rowData, ["title", "task title", "name"]);
+  const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_FIELD_ALIASES);
   const tagsField = findFieldByAliases(fields, rowData, ["tags", "tag", "labels", "label"]);
   const markupField = findFieldByAliases(fields, rowData, ["markup", "mark up"]);
   const markupLinkField = findFieldByAliases(fields, rowData, ["link to markup", "markup link"]);
@@ -259,7 +312,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
     ["e2 detailer support team", "e2 detailer support", "e2 support team", "support team"]
   );
   const e2StatusUpdateField = findFieldByAliases(fields, rowData, ["e2 status update", "e2statusupdate"]);
-  const e2StatusDateField = findFieldByAliases(fields, rowData, ["e2 status date", "e2statusdate"]);
+  const e2StatusDateField = findFieldByAliases(fields, rowData, E2_STATUS_DATE_FIELD_ALIASES);
   const techDetailsField = findFieldByAliases(fields, rowData, ["technical details available", "technical details", "techdetailsavailable"]);
   const snapshotField = findFieldByAliases(fields, rowData, ["snapshot url", "snapshoturl", "snapshot", "picture", "photo", "image"]);
   const linkField = findFieldByAliases(fields, rowData, ["link", "url", "issue url", "card url", "task url", "issue link", "card link"]);
@@ -268,6 +321,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
 
   return {
     title: normalizeValue(titleField ? rowData?.[titleField] : ""),
+    projectName: normalizeValue(projectNameField ? rowData?.[projectNameField] : ""),
     tags: normalizeValue(tagsField ? rowData?.[tagsField] : ""),
     markup: normalizeValue(markupField ? rowData?.[markupField] : ""),
     markupLink: normalizeValue(markupLinkField ? rowData?.[markupLinkField] : ""),
@@ -410,6 +464,20 @@ const normalizeIssueIdDisplay = (value) => {
   }
 
   return raw.toUpperCase().replace(/\s+/g, "-");
+};
+
+const buildNextTDIssueId = (issueIds = []) => {
+  const highestSequence = issueIds.reduce((highest, value) => {
+    const raw = String(value || "").trim().replace(/\s+/g, "");
+    const match = raw.match(/^TD[-_]?(\d+)$/i);
+    if (!match) return highest;
+    const numericValue = parseInt(match[1], 10);
+    return Number.isFinite(numericValue) ? Math.max(highest, numericValue) : highest;
+  }, 0);
+
+  const nextSequence = highestSequence + 1;
+  const width = Math.max(4, String(nextSequence).length);
+  return `TD-${String(nextSequence).padStart(width, "0")}`;
 };
 
 const ProjectIssueDashboard = () => {
@@ -567,12 +635,48 @@ const ProjectIssueDashboard = () => {
   const [submittingTechDetailsPopup, setSubmittingTechDetailsPopup] = useState(false);
   const [popupSupportTeamMenuOpen, setPopupSupportTeamMenuOpen] = useState(false);
   const [detailerConflictPopupMessage, setDetailerConflictPopupMessage] = useState("");
+  const [showE2StatusInfoPopup, setShowE2StatusInfoPopup] = useState(false);
+  const [managedE2StatusDefinitions, setManagedE2StatusDefinitions] = useState({});
+  const [e2InfoEditMode, setE2InfoEditMode] = useState(false);
+  const [e2InfoDrafts, setE2InfoDrafts] = useState({});
+  const [savingE2InfoDefinitions, setSavingE2InfoDefinitions] = useState(false);
+  const [showAddIssuePopup, setShowAddIssuePopup] = useState(false);
+  const [newIssueFormData, setNewIssueFormData] = useState({});
+  const [savingNewIssue, setSavingNewIssue] = useState(false);
   const dailyIssuesInputRef = useRef(null);
   const actionsMenuRef = useRef(null);
   const manageFiltersRef = useRef(null);
 
   const openDetailerConflictPopup = (detailerValue) => {
     setDetailerConflictPopupMessage(buildDetailerSupportTeamConflictMessage(detailerValue));
+  };
+
+  const handleOpenE2InfoEdit = () => {
+    const drafts = {};
+    e2StatusUpdateInfoItems.forEach((item) => {
+      drafts[item.value.toLowerCase()] = item.description;
+    });
+    setE2InfoDrafts(drafts);
+    setE2InfoEditMode(true);
+  };
+
+  const handleCancelE2InfoEdit = () => {
+    setE2InfoEditMode(false);
+    setE2InfoDrafts({});
+  };
+
+  const handleSaveE2StatusDefinitions = async () => {
+    setSavingE2InfoDefinitions(true);
+    try {
+      const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+      await setDoc(configRef, { [E2_STATUS_UPDATE_DEFINITIONS_FIELD]: e2InfoDrafts }, { merge: true });
+      setE2InfoEditMode(false);
+      setE2InfoDrafts({});
+    } catch (err) {
+      console.error("Failed to save E2 status definitions:", err);
+    } finally {
+      setSavingE2InfoDefinitions(false);
+    }
   };
 
   const closeActionsMenu = () => {
@@ -584,6 +688,175 @@ const ProjectIssueDashboard = () => {
   const closeManageFilters = () => {
     if (manageFiltersRef.current?.open) {
       manageFiltersRef.current.open = false;
+    }
+  };
+
+  const dailyIssuesProjectSource = projectSources[DAILY_ISSUES_TARGET_PROJECT_ID] || null;
+
+  const newIssueFieldConfig = useMemo(() => {
+    const sourceFields = Array.isArray(dailyIssuesProjectSource?.fields)
+      ? dailyIssuesProjectSource.fields.map((field) => normalizeValue(field)).filter(Boolean)
+      : [];
+    const issueIdField = findFieldByAliases(sourceFields, {}, ISSUE_ID_FIELD_ALIASES) || "Issue ID";
+    const titleField = findFieldByAliases(sourceFields, {}, TITLE_FIELD_ALIASES) || "Title";
+    const projectNameField = findFieldByAliases(sourceFields, {}, PROJECT_NAME_FIELD_ALIASES) || "Project Name";
+    const ownerField = findFieldByAliases(sourceFields, {}, OWNER_FIELD_ALIASES) || "Owner";
+    const e2StatusUpdateField = findFieldByAliases(sourceFields, {}, E2_STATUS_UPDATE_FIELD_ALIASES) || E2_STATUS_UPDATE_FIELD;
+    const e2StatusDateField = findFieldByAliases(sourceFields, {}, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
+    const techDetailsField =
+      findFieldByAliases(sourceFields, {}, ["technical details available", "technical details", "techdetailsavailable"]) ||
+      TECH_DETAILS_FIELD;
+    const orderedFields = [];
+    const seen = new Set();
+    [
+      issueIdField,
+      titleField,
+      projectNameField,
+      ownerField,
+      e2StatusUpdateField,
+      e2StatusDateField,
+      techDetailsField,
+      ...sourceFields,
+    ].forEach((field) => {
+      const normalizedField = normalizeValue(field);
+      const key = normalizedField.toLowerCase();
+      if (!normalizedField || seen.has(key)) return;
+      seen.add(key);
+      orderedFields.push(normalizedField);
+    });
+
+    return {
+      fields: orderedFields,
+      fieldNames: {
+        issueId: issueIdField,
+        title: titleField,
+        projectName: projectNameField,
+        owner: ownerField,
+        e2StatusUpdate: e2StatusUpdateField,
+        e2StatusDate: e2StatusDateField,
+        techDetails: techDetailsField,
+      },
+    };
+  }, [dailyIssuesProjectSource]);
+
+  const buildNewIssueFormData = () => {
+    const generatedIssueId = buildNextTDIssueId(issues.map((issue) => issue.id));
+    const nextFormData = newIssueFieldConfig.fields.reduce((accumulator, field) => {
+      accumulator[field] = "";
+      return accumulator;
+    }, {});
+
+    nextFormData[newIssueFieldConfig.fieldNames.issueId] = generatedIssueId;
+    nextFormData[newIssueFieldConfig.fieldNames.projectName] = normalizeValue(selectedProjectName);
+    nextFormData[newIssueFieldConfig.fieldNames.e2StatusUpdate] = DEFAULT_E2_STATUS_UPDATE;
+    nextFormData[newIssueFieldConfig.fieldNames.e2StatusDate] = getTodayMMDDYY();
+    nextFormData[newIssueFieldConfig.fieldNames.techDetails] = "No";
+    return nextFormData;
+  };
+
+  const openAddIssuePopup = () => {
+    setNewIssueFormData(buildNewIssueFormData());
+    setShowAddIssuePopup(true);
+  };
+
+  const closeAddIssuePopup = () => {
+    if (savingNewIssue) return;
+    setShowAddIssuePopup(false);
+    setNewIssueFormData({});
+  };
+
+  const handleNewIssueFieldChange = (field, value) => {
+    if (
+      field === newIssueFieldConfig.fieldNames.issueId ||
+      field === newIssueFieldConfig.fieldNames.e2StatusUpdate ||
+      field === newIssueFieldConfig.fieldNames.e2StatusDate
+    ) {
+      return;
+    }
+
+    setNewIssueFormData((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  };
+
+  const handleCreateNewIssue = async (event) => {
+    event.preventDefault();
+    if (!id) return;
+
+    const { issueId, title, projectName, owner, e2StatusUpdate, e2StatusDate, techDetails } = newIssueFieldConfig.fieldNames;
+    const titleValue = normalizeValue(newIssueFormData[title]);
+    const projectNameValue = normalizeValue(newIssueFormData[projectName]);
+    const ownerValue = normalizeValue(newIssueFormData[owner]);
+
+    if (!titleValue || !projectNameValue || !ownerValue) {
+      toast.error("Title, Project Name, and Owner are required.");
+      return;
+    }
+
+    setSavingNewIssue(true);
+    try {
+      const existingSource = projectSources[DAILY_ISSUES_TARGET_PROJECT_ID] || {};
+      const existingRows = Array.isArray(existingSource.rows) ? existingSource.rows : [];
+      const existingFields = Array.isArray(existingSource.fields) ? existingSource.fields : [];
+      const existingIssueIds = issues.map((issue) => issue.id);
+      let nextIssueId = normalizeValue(newIssueFormData[issueId]) || buildNextTDIssueId(existingIssueIds);
+      if (existingIssueIds.some((value) => normalizeValue(value).toLowerCase() === nextIssueId.toLowerCase())) {
+        nextIssueId = buildNextTDIssueId([...existingIssueIds, nextIssueId]);
+      }
+
+      const nextFields = Array.from(
+        new Set([
+          ...existingFields.map((field) => normalizeValue(field)).filter(Boolean),
+          ...newIssueFieldConfig.fields,
+        ])
+      );
+      const rowData = nextFields.reduce((accumulator, field) => {
+        accumulator[field] = normalizeValue(newIssueFormData[field]);
+        return accumulator;
+      }, {});
+
+      rowData[issueId] = nextIssueId;
+      rowData[title] = titleValue;
+      rowData[projectName] = projectNameValue;
+      rowData[owner] = ownerValue;
+      rowData[e2StatusUpdate] = DEFAULT_E2_STATUS_UPDATE;
+      rowData[e2StatusDate] = getTodayMMDDYY();
+      rowData[techDetails] = normalizeValue(rowData[techDetails]) || "No";
+
+      const nextRows = [
+        ...existingRows.map((row) => ({
+          ...row,
+          rowData: { ...(row?.rowData || {}) },
+        })),
+        {
+          rowNumber: existingRows.length + 1,
+          rowData,
+        },
+      ];
+
+      await setDoc(
+        doc(db, "churches", id, "bimProjects", DAILY_ISSUES_TARGET_PROJECT_ID),
+        {
+          name: DAILY_ISSUES_TARGET_PROJECT_NAME,
+          fields: nextFields,
+          rows: nextRows,
+          rowCount: nextRows.length,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setShowAddIssuePopup(false);
+      setNewIssueFormData({});
+      setSelectedIssueId(nextIssueId);
+      setSelectedProjectName(projectNameValue);
+      toast.success(`Issue ${nextIssueId} was created.`);
+    } catch (error) {
+      console.error("Error creating new issue:", error);
+      toast.error("Could not create the new issue.");
+    } finally {
+      setSavingNewIssue(false);
     }
   };
 
@@ -688,6 +961,22 @@ const ProjectIssueDashboard = () => {
           {}
         );
         setManagedE2StatusUpdateFormats(normalizedE2StatusUpdateFormats);
+
+        const configuredE2Definitions =
+          data[E2_STATUS_UPDATE_DEFINITIONS_FIELD] && typeof data[E2_STATUS_UPDATE_DEFINITIONS_FIELD] === "object"
+            ? data[E2_STATUS_UPDATE_DEFINITIONS_FIELD]
+            : {};
+        const normalizedE2Definitions = Object.entries(configuredE2Definitions).reduce(
+          (accumulator, [key, value]) => {
+            const normalizedKey = normalizeValue(key).toLowerCase();
+            if (normalizedKey && typeof value === "string" && value.trim()) {
+              accumulator[normalizedKey] = value.trim();
+            }
+            return accumulator;
+          },
+          {}
+        );
+        setManagedE2StatusDefinitions(normalizedE2Definitions);
       },
       () => {
         setManagedE2DetailerOptions(DEFAULT_E2_DETAILER_OPTIONS);
@@ -696,6 +985,7 @@ const ProjectIssueDashboard = () => {
         setManagedStatusFormats({});
         setManagedE2StatusUpdateFormats({});
         setManagedProjectNameFormats({});
+        setManagedE2StatusDefinitions({});
       }
     );
 
@@ -756,6 +1046,7 @@ const ProjectIssueDashboard = () => {
               status: preview.status || "Open",
               dueDate: preview.deadline || "-",
               project: projectName,
+              projectName: preview.projectName || projectName,
               projectDocId: projectDoc.id,
               rowIndex,
               createdAt: createdAtValue,
@@ -844,6 +1135,8 @@ const ProjectIssueDashboard = () => {
     return (
       (normalizedTag && tagAliasByLowerTag[normalizedTag]) ||
       (normalizedZone && tagAliasByLowerTag[normalizedZone]) ||
+      normalizeValue(issue?.projectName) ||
+      normalizeValue(issue?.project) ||
       "-"
     );
   };
@@ -982,6 +1275,31 @@ const ProjectIssueDashboard = () => {
 
     return uniqueMatched.length ? uniqueMatched : TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES;
   }, [e2StatusUpdateOptions]);
+
+  const e2StatusUpdateInfoItems = useMemo(() => {
+    return e2StatusUpdateOptions.map((statusValue) => {
+      const key = normalizeValue(statusValue).toLowerCase();
+      return {
+        value: statusValue,
+        description:
+          managedE2StatusDefinitions[key] ||
+          E2_STATUS_UPDATE_INFO_BY_KEY[key] ||
+          "Status used in your workflow. Configure this explanation if your process needs a more specific definition.",
+      };
+    });
+  }, [e2StatusUpdateOptions, managedE2StatusDefinitions]);
+
+  const newIssueRequiredFields = useMemo(
+    () =>
+      new Set([
+        newIssueFieldConfig.fieldNames.issueId,
+        newIssueFieldConfig.fieldNames.title,
+        newIssueFieldConfig.fieldNames.projectName,
+        newIssueFieldConfig.fieldNames.owner,
+        newIssueFieldConfig.fieldNames.e2StatusUpdate,
+      ]),
+    [newIssueFieldConfig]
+  );
 
   const e2StatusUpdateCounts = useMemo(() => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
@@ -1591,10 +1909,19 @@ const ProjectIssueDashboard = () => {
 
   const handleE2StatusUpdateChange = (issueKey, value) => {
     const normalizedValue = getDefaultE2StatusUpdate(value);
-    const today = getTodayMMDDYY();
     setIssues((previous) =>
       previous.map((issue) =>
-        issue.key === issueKey ? { ...issue, e2StatusUpdate: normalizedValue, e2StatusDate: today } : issue
+        issue.key === issueKey
+          ? {
+              ...issue,
+              e2StatusUpdate: normalizedValue,
+              e2StatusDate: resolveStatusDateForStatusTransition(
+                normalizedValue,
+                issue.e2StatusUpdate,
+                issue.e2StatusDate
+              ),
+            }
+          : issue
       )
     );
   };
@@ -1620,7 +1947,7 @@ const ProjectIssueDashboard = () => {
 
     const previousRowData = targetRow?.rowData || {};
     const fieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 status date", "e2statusdate"]) || E2_STATUS_DATE_FIELD;
+      findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
     const nextValue = getDefaultE2StatusDate(valueOverride ?? issue.e2StatusDate);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
@@ -1782,9 +2109,8 @@ const ProjectIssueDashboard = () => {
     const e2DetailerFieldName =
       findFieldByAliases(previousFields, previousRowData, ["e2 lead detailer", "e2leaddetailer", "e2 detailer", "e2detailer"]) || E2_DETAILER_FIELD;
     const e2StatusDateFieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 status date", "e2statusdate"]) || E2_STATUS_DATE_FIELD;
+      findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
 
-    const todayDate = getTodayMMDDYY();
     const previousTechDetailsValue = normalizeValue(previousRowData[techDetailsFieldName]);
     const previousStatusValue = normalizeValue(previousRowData[e2StatusFieldName]);
     const previousDetailerValue = normalizeValue(previousRowData[e2DetailerFieldName]);
@@ -1796,6 +2122,11 @@ const ProjectIssueDashboard = () => {
       ) || E2_DETAILER_SUPPORT_TEAM_FIELD;
     const previousSupportTeamValue = formatSupportTeamValue(previousRowData[e2SupportTeamFieldName]);
     const previousStatusDateValue = normalizeValue(previousRowData[e2StatusDateFieldName]);
+    const resolvedStatusDate = resolveStatusDateForStatusTransition(
+      selectedStatus,
+      previousStatusValue,
+      previousStatusDateValue
+    );
 
     const updatedRowData = {
       ...previousRowData,
@@ -1803,7 +2134,7 @@ const ProjectIssueDashboard = () => {
       [e2StatusFieldName]: selectedStatus,
       [e2DetailerFieldName]: selectedDetailer,
       [e2SupportTeamFieldName]: formatSupportTeamValue(selectedSupportTeamValues),
-      [e2StatusDateFieldName]: todayDate,
+      [e2StatusDateFieldName]: resolvedStatusDate,
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
@@ -1839,7 +2170,7 @@ const ProjectIssueDashboard = () => {
                 e2StatusUpdate: selectedStatus,
                 e2Detailer: selectedDetailer,
                 e2DetailerSupportTeam: formatSupportTeamValue(selectedSupportTeamValues),
-                e2StatusDate: todayDate,
+                e2StatusDate: resolvedStatusDate,
               }
             : item
         )
@@ -1960,14 +2291,18 @@ const ProjectIssueDashboard = () => {
     if (nextValue === previousValue) return;
 
     const dateFieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 status date", "e2statusdate"]) || E2_STATUS_DATE_FIELD;
-    const todayDate = getTodayMMDDYY();
+      findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
     const previousDateValue = normalizeValue(previousRowData[dateFieldName]);
+    const resolvedStatusDate = resolveStatusDateForStatusTransition(
+      nextValue,
+      previousValue,
+      previousDateValue
+    );
 
     const updatedRowData = {
       ...previousRowData,
       [fieldName]: nextValue,
-      [dateFieldName]: todayDate,
+      [dateFieldName]: resolvedStatusDate,
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
@@ -2131,12 +2466,65 @@ const ProjectIssueDashboard = () => {
         new Set([
           ...existingFields.map((field) => normalizeValue(field)).filter(Boolean),
           ...excelHeaders,
+          E2_STATUS_UPDATE_FIELD,
+          E2_STATUS_DATE_FIELD,
         ])
       );
 
       const getPrimaryIssueId = (rowData = {}) => {
         const idField = findFieldByAliases(mergedFields, rowData, ["issue id", "id", "task id", "card id", "row id"]);
         return normalizeValue(idField ? rowData?.[idField] : "");
+      };
+
+      const getImportedStatusFieldName = (rowData = {}) =>
+        findFieldByAliases(mergedFields, rowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+
+      const getImportedStatusDateFieldName = (rowData = {}) =>
+        findFieldByAliases(mergedFields, rowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
+
+      const buildImportedRowData = (incomingRowData = {}, existingRowData = {}, isNewRow = false) => {
+        const rowContext = { ...existingRowData, ...incomingRowData };
+        const statusFieldName = getImportedStatusFieldName(rowContext);
+        const statusDateFieldName = getImportedStatusDateFieldName(rowContext);
+        const previousStatusValue = normalizeValue(existingRowData[statusFieldName]);
+        const previousStatusDateValue = getDefaultE2StatusDate(existingRowData[statusDateFieldName]);
+        const rawIncomingStatusValue = normalizeValue(incomingRowData[statusFieldName]);
+        const rawIncomingStatusDateValue = getDefaultE2StatusDate(incomingRowData[statusDateFieldName]);
+        const shouldApplyIncomingStatus = Boolean(rawIncomingStatusValue);
+        const nextRowData = { ...existingRowData };
+
+        Object.entries(incomingRowData).forEach(([field, value]) => {
+          if (field === statusFieldName || field === statusDateFieldName) {
+            return;
+          }
+          nextRowData[field] = value;
+        });
+
+        const nextStatusValue = getDefaultE2StatusUpdate(
+          rawIncomingStatusValue || previousStatusValue || DEFAULT_E2_STATUS_UPDATE
+        );
+
+        let nextStatusDateValue = previousStatusDateValue;
+
+        if (isNewRow) {
+          nextStatusDateValue = hasMeaningfulStatusUpdateDate(rawIncomingStatusDateValue)
+            ? rawIncomingStatusDateValue
+            : getTodayMMDDYY();
+        } else if (shouldApplyIncomingStatus) {
+          nextStatusDateValue =
+            resolveStatusDateForStatusTransition(nextStatusValue, previousStatusValue, previousStatusDateValue) ||
+            (hasMeaningfulStatusUpdateDate(rawIncomingStatusDateValue) ? rawIncomingStatusDateValue : "") ||
+            getTodayMMDDYY();
+        } else if (!hasMeaningfulStatusUpdateDate(previousStatusDateValue)) {
+          nextStatusDateValue = hasMeaningfulStatusUpdateDate(rawIncomingStatusDateValue)
+            ? rawIncomingStatusDateValue
+            : getTodayMMDDYY();
+        }
+
+        nextRowData[statusFieldName] = nextStatusValue;
+        nextRowData[statusDateFieldName] = nextStatusDateValue;
+
+        return nextRowData;
       };
 
       const existingRowsById = new Map();
@@ -2168,26 +2556,26 @@ const ProjectIssueDashboard = () => {
 
         const existingIndex = existingRowsById.get(issueId);
         if (existingIndex === undefined) {
+          const nextRowData = buildImportedRowData(incomingRowData, {}, true);
           nextRows.push({
             rowNumber: nextRows.length + 1,
-            rowData: { ...incomingRowData },
+            rowData: nextRowData,
           });
           existingRowsById.set(issueId, nextRows.length - 1);
           insertedRowsCount += 1;
-          changedCells += Object.keys(incomingRowData).length;
+          changedCells += Object.keys(nextRowData).length;
           return;
         }
 
         const existingRow = nextRows[existingIndex] || {};
         const existingRowData = existingRow?.rowData || {};
+        const mergedRowData = buildImportedRowData(incomingRowData, existingRowData, false);
         let rowChanged = false;
-        const mergedRowData = { ...existingRowData };
 
-        Object.entries(incomingRowData).forEach(([field, incomingValue]) => {
+        Object.entries(mergedRowData).forEach(([field, incomingValue]) => {
           const previousValue = normalizeValue(existingRowData[field]);
           const nextValue = normalizeValue(incomingValue);
           if (previousValue !== nextValue) {
-            mergedRowData[field] = nextValue;
             changedCells += 1;
             rowChanged = true;
           }
@@ -2353,37 +2741,42 @@ const ProjectIssueDashboard = () => {
                 className="project-issue-upload-input"
                 onChange={handleDailyIssuesUpload}
               />
-              <div className="project-issue-actions-menu">
-                <details className="project-issue-actions-dropdown" ref={actionsMenuRef}>
-                  <summary className="project-issue-actions-trigger">Actions</summary>
-                  <div className="project-issue-actions-list" role="menu" aria-label="Project issue actions">
-                    <button
-                      type="button"
-                      className="project-issue-actions-item"
-                      onClick={async () => {
-                        closeActionsMenu();
-                        await handleDailyIssuesPicker();
-                      }}
-                      disabled={uploadingDailyIssues}
-                    >
-                      {uploadingDailyIssues ? "Uploading Daily Issues List..." : "Upload Daily Issues List"}
-                    </button>
-                    <Link
-                      to={`/organization/${id}/project-issue-dashboard/e2-detailers`}
-                      className="project-issue-actions-item"
-                      onClick={closeActionsMenu}
-                    >
-                      Manage E2 fields
-                    </Link>
-                    <Link
-                      to={`/organization/${id}/project-issue-dashboard/tag-aliases`}
-                      className="project-issue-actions-item"
-                      onClick={closeActionsMenu}
-                    >
-                      Field Display Formatting
-                    </Link>
-                  </div>
-                </details>
+              <div className="project-issue-head-actions-stack">
+                <div className="project-issue-actions-menu">
+                  <details className="project-issue-actions-dropdown" ref={actionsMenuRef}>
+                    <summary className="project-issue-actions-trigger">Actions</summary>
+                    <div className="project-issue-actions-list" role="menu" aria-label="Project issue actions">
+                      <button
+                        type="button"
+                        className="project-issue-actions-item"
+                        onClick={async () => {
+                          closeActionsMenu();
+                          await handleDailyIssuesPicker();
+                        }}
+                        disabled={uploadingDailyIssues}
+                      >
+                        {uploadingDailyIssues ? "Uploading Daily Issues List..." : "Upload Daily Issues List"}
+                      </button>
+                      <Link
+                        to={`/organization/${id}/project-issue-dashboard/e2-detailers`}
+                        className="project-issue-actions-item"
+                        onClick={closeActionsMenu}
+                      >
+                        Manage E2 fields
+                      </Link>
+                      <Link
+                        to={`/organization/${id}/project-issue-dashboard/tag-aliases`}
+                        className="project-issue-actions-item"
+                        onClick={closeActionsMenu}
+                      >
+                        Field Display Formatting
+                      </Link>
+                    </div>
+                  </details>
+                </div>
+                <button type="button" className="project-issue-add-btn" onClick={openAddIssuePopup}>
+                  Add New Issue
+                </button>
               </div>
             </div>
           </div>
@@ -2968,7 +3361,20 @@ const ProjectIssueDashboard = () => {
                 <th>Project Name</th>
                 <th>Markup</th>
                 <th style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}>Status</th>
-                <th>E2 Status Update</th>
+                <th>
+                  <span className="project-issue-th-with-info">
+                    <span>E2 Status Update</span>
+                    <button
+                      type="button"
+                      className="project-issue-th-info-btn"
+                      onClick={() => setShowE2StatusInfoPopup(true)}
+                      aria-label="Show E2 Status Update information"
+                      title="Status definitions"
+                    >
+                      <FaInfoCircle aria-hidden="true" className="project-issue-th-info-icon" />
+                    </button>
+                  </span>
+                </th>
                 <th>Priority</th>
                 <th>Owner</th>
                 <th>Due Date</th>
@@ -2997,12 +3403,7 @@ const ProjectIssueDashboard = () => {
                   backgroundColor: normalizeValue(statusFormat.backgroundColor) || undefined,
                 };
                 const rowKey = issue.key || `${issue.projectDocId || "project"}-${issue.id || "issue"}-${issue.rowIndex ?? index}-${index}`;
-                const normalizedTag = normalizeValue(issue.tags).toLowerCase();
-                const normalizedZoneForDisplay = normalizeValue(issue.zone).toLowerCase();
-                const projectNameDisplay =
-                  (normalizedTag && tagAliasByLowerTag[normalizedTag]) ||
-                  (normalizedZoneForDisplay && tagAliasByLowerTag[normalizedZoneForDisplay]) ||
-                  "-";
+                const projectNameDisplay = getProjectNameDisplay(issue);
 
                 return (
                 <tr key={rowKey}>
@@ -3206,7 +3607,7 @@ const ProjectIssueDashboard = () => {
                     <input
                       type="text"
                       className="project-issue-cell-input"
-                      placeholder="MM/DD/YY"
+                      placeholder="MM/DD/YY HH:mm:ss"
                       value={getDefaultE2StatusDate(issue.e2StatusDate)}
                       onChange={(event) => handleE2StatusDateChange(issue.key, event.target.value)}
                       onBlur={(event) =>
@@ -3316,6 +3717,167 @@ const ProjectIssueDashboard = () => {
                 })}
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showE2StatusInfoPopup ? (
+        <div
+          className="project-issue-popup-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="E2 Status Update information"
+          onClick={() => { if (!e2InfoEditMode) setShowE2StatusInfoPopup(false); }}
+        >
+          <div className="project-issue-e2info-window" onClick={(event) => event.stopPropagation()}>
+            <div className="project-issue-popup-head">
+              <strong className="project-issue-popup-title">E2 Status Update Definitions</strong>
+              <div className="project-issue-e2info-head-actions">
+                {e2InfoEditMode ? (
+                  <>
+                    <button
+                      type="button"
+                      className="project-issue-e2info-save-btn"
+                      onClick={handleSaveE2StatusDefinitions}
+                      disabled={savingE2InfoDefinitions}
+                    >
+                      {savingE2InfoDefinitions ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      className="project-issue-popup-close"
+                      onClick={handleCancelE2InfoEdit}
+                      disabled={savingE2InfoDefinitions}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="project-issue-e2info-edit-btn"
+                      onClick={handleOpenE2InfoEdit}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="project-issue-popup-close"
+                      onClick={() => setShowE2StatusInfoPopup(false)}
+                    >
+                      Close
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="project-issue-e2info-body">
+              {e2StatusUpdateInfoItems.map((item) => (
+                <div className="project-issue-e2info-row" key={item.value}>
+                  <div className="project-issue-e2info-value">{item.value}</div>
+                  {e2InfoEditMode ? (
+                    <textarea
+                      className="project-issue-e2info-edit-textarea"
+                      value={e2InfoDrafts[item.value.toLowerCase()] ?? item.description}
+                      onChange={(event) =>
+                        setE2InfoDrafts((previous) => ({
+                          ...previous,
+                          [item.value.toLowerCase()]: event.target.value,
+                        }))
+                      }
+                      rows={2}
+                    />
+                  ) : (
+                    <div className="project-issue-e2info-description">{item.description}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showAddIssuePopup ? (
+        <div
+          className="project-issue-popup-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add a new issue"
+          onClick={closeAddIssuePopup}
+        >
+          <div className="project-issue-add-window" onClick={(event) => event.stopPropagation()}>
+            <div className="project-issue-popup-head">
+              <strong className="project-issue-popup-title">Add New Issue</strong>
+              <button type="button" className="project-issue-popup-close" onClick={closeAddIssuePopup}>
+                Close
+              </button>
+            </div>
+            <form className="project-issue-add-form" onSubmit={handleCreateNewIssue}>
+              <div className="project-issue-add-grid">
+                {newIssueFieldConfig.fields.map((field) => {
+                  const value = newIssueFormData[field] ?? "";
+                  const isRequired = newIssueRequiredFields.has(field);
+                  const isIssueIdField = field === newIssueFieldConfig.fieldNames.issueId;
+                  const isStatusField = field === newIssueFieldConfig.fieldNames.e2StatusUpdate;
+                  const isStatusDateField = field === newIssueFieldConfig.fieldNames.e2StatusDate;
+                  const isTechDetailsField = field === newIssueFieldConfig.fieldNames.techDetails;
+                  const isE2DetailerField = normalizeFieldKey(field) === normalizeFieldKey(E2_DETAILER_FIELD);
+
+                  return (
+                    <label className="project-issue-add-field" key={field}>
+                      <span className="project-issue-add-label">
+                        {field}
+                        {isRequired ? <span className="project-issue-add-required">*</span> : null}
+                      </span>
+                      {isStatusField ? (
+                        <input className="project-issue-add-input" value={DEFAULT_E2_STATUS_UPDATE} disabled />
+                      ) : isIssueIdField || isStatusDateField ? (
+                        <input className="project-issue-add-input" value={value} disabled />
+                      ) : isTechDetailsField ? (
+                        <select
+                          className="project-issue-add-input"
+                          value={value}
+                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
+                        >
+                          <option value="">Select value</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      ) : isE2DetailerField ? (
+                        <select
+                          className="project-issue-add-input"
+                          value={value}
+                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
+                        >
+                          <option value="">Select detailer</option>
+                          {managedE2DetailerOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field === newIssueFieldConfig.fieldNames.e2StatusUpdate ? null : (
+                        <input
+                          className="project-issue-add-input"
+                          value={value}
+                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
+                          placeholder={isRequired ? "Required" : "Optional"}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="project-issue-add-actions">
+                <button type="button" className="project-issue-popup-close" onClick={closeAddIssuePopup} disabled={savingNewIssue}>
+                  Cancel
+                </button>
+                <button type="submit" className="project-issue-add-save-btn" disabled={savingNewIssue}>
+                  {savingNewIssue ? "Saving..." : "Create Issue"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
