@@ -272,6 +272,22 @@ const normalizeValue = (value) => {
   return String(value).trim();
 };
 
+const parseStatusFilterParam = (value) => {
+  const seen = new Set();
+  return normalizeValue(value)
+    .split(",")
+    .map((item) => normalizeValue(item))
+    .filter((item) => item && item.toLowerCase() !== "all")
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const serializeStatusFilterParam = (values = []) => parseStatusFilterParam(values.join(",")).join(",");
+
 const normalizeFieldKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const parseTagValues = (value) => {
@@ -503,7 +519,9 @@ const ProjectIssueDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const filterVisibilityStorageKey = `project-issue-filter-visibility-${id || "default"}`;
 
-  const [activeTab, setActiveTab] = useState(() => searchParams.get("status") || "All");
+  const [activeTab, setActiveTab] = useState(() =>
+    serializeStatusFilterParam(parseStatusFilterParam(searchParams.get("status")))
+  );
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedProjectName, setSelectedProjectName] = useState(() => searchParams.get("projectName") || "");
@@ -538,7 +556,7 @@ const ProjectIssueDashboard = () => {
   // Keep URL in sync with filter state
   useEffect(() => {
     const params = {};
-    if (activeTab !== "All") params.status = activeTab;
+    if (activeTab) params.status = activeTab;
     if (selectedProjectName) params.projectName = selectedProjectName;
     if (selectedIssueId) params.issueId = selectedIssueId;
     if (selectedE2Detailer) params.e2Detailer = selectedE2Detailer;
@@ -565,7 +583,7 @@ const ProjectIssueDashboard = () => {
       return;
     }
     if (key === "status") {
-      setActiveTab("All");
+      setActiveTab("");
       return;
     }
     if (key === "e2LeadDetailer") {
@@ -603,7 +621,7 @@ const ProjectIssueDashboard = () => {
     if (!nextVisible) {
       setSelectedProjectName("");
       setSelectedIssueId("");
-      setActiveTab("All");
+      setActiveTab("");
       setSelectedE2Detailer("");
       setSelectedE2StatusUpdate("");
       setSelectedTechDetails("");
@@ -673,9 +691,37 @@ const ProjectIssueDashboard = () => {
   const dailyIssuesInputRef = useRef(null);
   const actionsMenuRef = useRef(null);
   const manageFiltersRef = useRef(null);
+  const statusFilterRef = useRef(null);
+
+  const selectedStatuses = useMemo(() => parseStatusFilterParam(activeTab), [activeTab]);
+  const hasStatusFilter = selectedStatuses.length > 0;
+  const selectedStatusSet = useMemo(
+    () => new Set(selectedStatuses.map((status) => normalizeValue(status).toLowerCase())),
+    [selectedStatuses]
+  );
 
   const openDetailerConflictPopup = (detailerValue) => {
     setDetailerConflictPopupMessage(buildDetailerSupportTeamConflictMessage(detailerValue));
+  };
+
+  const closeStatusFilter = () => {
+    if (statusFilterRef.current?.open) {
+      statusFilterRef.current.open = false;
+    }
+  };
+
+  const toggleStatusSelection = (statusValue) => {
+    const normalizedStatus = normalizeValue(statusValue);
+    if (!normalizedStatus) return;
+
+    setActiveTab((previous) => {
+      const previousValues = parseStatusFilterParam(previous);
+      const exists = previousValues.some((value) => value.toLowerCase() === normalizedStatus.toLowerCase());
+      const nextValues = exists
+        ? previousValues.filter((value) => value.toLowerCase() !== normalizedStatus.toLowerCase())
+        : [...previousValues, normalizedStatus];
+      return serializeStatusFilterParam(nextValues);
+    });
   };
 
   const handleOpenE2InfoEdit = () => {
@@ -1211,6 +1257,7 @@ const ProjectIssueDashboard = () => {
     const dynamicStatuses = Array.from(new Set(issues.map((issue) => normalizeValue(issue.status)).filter(Boolean)));
     return ["All", ...dynamicStatuses];
   }, [issues]);
+  const statusFilterOptions = useMemo(() => tabs.filter((tab) => tab !== "All"), [tabs]);
 
   const tagAliasByLowerTag = useMemo(() => {
     return Object.entries(managedTagAliases).reduce((accumulator, [tagValue, aliasValue]) => {
@@ -1273,7 +1320,6 @@ const ProjectIssueDashboard = () => {
   const visibleIssues = useMemo(() => {
     const normalizedSearch = normalizeValue(globalSearch).toLowerCase();
     const normalizedIssueIdSearch = normalizeValue(selectedIssueId).toLowerCase();
-    const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
     const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
@@ -1282,7 +1328,7 @@ const ProjectIssueDashboard = () => {
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
     return issues.filter((issue) => {
-      if (activeTab !== "All" && normalizeValue(issue.status).toLowerCase() !== normalizedActiveTab) {
+      if (hasStatusFilter && !selectedStatusSet.has(normalizeValue(issue.status).toLowerCase())) {
         return false;
       }
 
@@ -1343,7 +1389,7 @@ const ProjectIssueDashboard = () => {
 
       return haystack.includes(normalizedSearch);
     });
-  }, [activeTab, globalSearch, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
+  }, [globalSearch, hasStatusFilter, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedStatusSet, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const projectNameOptions = useMemo(() => {
     return Array.from(new Set(issues.map((issue) => getProjectNameDisplay(issue)).filter(Boolean))).sort((a, b) =>
@@ -1473,7 +1519,6 @@ const ProjectIssueDashboard = () => {
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
     const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
-    const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const dateRangeBounds = getDateRangeBounds(selectedDateRange);
 
     const counts = {};
@@ -1487,7 +1532,7 @@ const ProjectIssueDashboard = () => {
       if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
         return;
       }
-      if (activeTab !== "All" && normalizeValue(issue.status).toLowerCase() !== normalizedActiveTab) {
+      if (hasStatusFilter && !selectedStatusSet.has(normalizeValue(issue.status).toLowerCase())) {
         return;
       }
       if (dateRangeBounds) {
@@ -1501,7 +1546,7 @@ const ProjectIssueDashboard = () => {
     return Object.entries(counts)
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
-  }, [issues, selectedProjectName, selectedE2Detailer, selectedTechDetails, activeTab, selectedDateRange, tagAliasByLowerTag]);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedTechDetails, hasStatusFilter, selectedStatusSet, selectedDateRange, tagAliasByLowerTag]);
 
   const e2StatusUpdateTimeframeLabel = useMemo(() => {
     const bounds = getDateRangeBounds(selectedDateRange);
@@ -1541,9 +1586,8 @@ const ProjectIssueDashboard = () => {
       return true;
     }).length;
   }, [issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
-  const summaryStatusName = activeTab === "All" ? "All Statuses" : activeTab;
+  const summaryStatusName = hasStatusFilter ? selectedStatuses.join(", ") : "All Statuses";
   const statusScopedIssueCount = useMemo(() => {
-    const normalizedActiveTab = normalizeValue(activeTab).toLowerCase();
     const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
     const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
     const normalizedSelectedE2StatusUpdate = normalizeValue(selectedE2StatusUpdate).toLowerCase();
@@ -1567,7 +1611,7 @@ const ProjectIssueDashboard = () => {
         return false;
       }
 
-      if (activeTab !== "All" && normalizeValue(issue.status).toLowerCase() !== normalizedActiveTab) {
+      if (hasStatusFilter && !selectedStatusSet.has(normalizeValue(issue.status).toLowerCase())) {
         return false;
       }
 
@@ -1578,7 +1622,7 @@ const ProjectIssueDashboard = () => {
 
       return true;
     }).length;
-  }, [activeTab, issues, selectedProjectName, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
+  }, [hasStatusFilter, issues, selectedProjectName, selectedStatuses, selectedE2Detailer, selectedE2StatusUpdate, selectedStatusSet, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const overviewTotalStatusFormat = statusFormatByLowerStatus["all statuses"] || {};
   const overviewTotalBackground = normalizeValue(overviewTotalStatusFormat.backgroundColor);
@@ -1919,10 +1963,12 @@ const ProjectIssueDashboard = () => {
   }, [overviewPiePopup.segments]);
 
   useEffect(() => {
-    if (!tabs.includes(activeTab)) {
-      setActiveTab("All");
+    const validStatuses = selectedStatuses.filter((status) => tabs.includes(status));
+    const serializedValidStatuses = serializeStatusFilterParam(validStatuses);
+    if (serializedValidStatuses !== activeTab) {
+      setActiveTab(serializedValidStatuses);
     }
-  }, [activeTab, tabs]);
+  }, [activeTab, selectedStatuses, tabs]);
 
   const handleE2DetailerChange = (issueKey, value) => {
     setIssues((previous) =>
@@ -3082,7 +3128,7 @@ const ProjectIssueDashboard = () => {
                 {[
                   selectedProjectName && `Project Name: ${selectedProjectName}`,
                   selectedIssueId && `Issue ID: ${selectedIssueId}`,
-                  activeTab !== "All" && `Status: ${activeTab}`,
+                  hasStatusFilter && `Status: ${selectedStatuses.join(", ")}`,
                   selectedE2Detailer && `E2 Lead Detailer: ${selectedE2Detailer}`,
                   selectedE2StatusUpdate && `E2 Status Update: ${selectedE2StatusUpdate}`,
                   selectedTechDetails && `Technical Details Available: ${selectedTechDetails}`,
@@ -3199,8 +3245,8 @@ const ProjectIssueDashboard = () => {
                         const fillStyle = { height: `${pct}%` };
                         if (backgroundColor) fillStyle.background = backgroundColor;
                         const displayPct = scopedIssueCount ? Math.round((count / scopedIssueCount) * 100) : 0;
-                        const isFiltered = activeTab !== "All";
-                        const isActive = !isFiltered || normalizeValue(rawStatus).toLowerCase() === normalizeValue(activeTab).toLowerCase();
+                        const isFiltered = hasStatusFilter;
+                        const isActive = !isFiltered || selectedStatusSet.has(normalizeValue(rawStatus).toLowerCase());
                         return (
                           <div
                             key={rawStatus}
@@ -3618,18 +3664,55 @@ const ProjectIssueDashboard = () => {
 
           {filterVisibility.status && (
           <div className="project-issue-filter">
-            <select
-              className={`project-issue-filter-trigger ${activeTab !== "All" ? "is-selected" : ""}`}
-              value={activeTab}
-              onChange={(event) => setActiveTab(event.target.value)}
-              aria-label="Filter Status"
-            >
-              {tabs.map((tab) => (
-                <option key={tab} value={tab}>
-                  {tab === "All" ? "Filter Status" : tab}
-                </option>
-              ))}
-            </select>
+            <details className="project-issue-filter-visibility" ref={statusFilterRef}>
+              <summary className={`project-issue-filter-trigger ${hasStatusFilter ? "is-selected" : ""}`}>
+                <span className="project-issue-filter-accordion-label">
+                  {hasStatusFilter ? `Status: ${selectedStatuses.join(", ")}` : "Filter Status"}
+                </span>
+                <span className="project-issue-filter-accordion-icon" aria-hidden="true">▾</span>
+              </summary>
+              <div className="project-issue-filter-panel">
+                <div className="project-issue-filter-options">
+                  {statusFilterOptions.map((statusValue) => {
+                    const checked = selectedStatusSet.has(normalizeValue(statusValue).toLowerCase());
+                    return (
+                      <label key={statusValue} className="project-issue-filter-option">
+                        <input
+                          type="checkbox"
+                          className="project-issue-filter-checkbox"
+                          checked={checked}
+                          onChange={() => toggleStatusSelection(statusValue)}
+                        />
+                        <span>{statusValue}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="project-issue-filter-actions">
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={() => setActiveTab(serializeStatusFilterParam(statusFilterOptions))}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={() => setActiveTab("")}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    className="project-issue-filter-clear"
+                    onClick={closeStatusFilter}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </details>
           </div>
           )}
 
