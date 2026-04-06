@@ -30,6 +30,8 @@ const TITLE_FIELD_ALIASES = ["title", "task title", "name"];
 const PROJECT_NAME_FIELD_ALIASES = ["project name", "projectname"];
 const OWNER_FIELD_ALIASES = ["assignee", "assigned to", "owner", "responsible"];
 const E2_STATUS_UPDATE_FIELD_ALIASES = ["e2 status update", "e2statusupdate"];
+const TAG_FIELD_ALIASES = ["tags", "tag", "labels", "label"];
+const E2_TAGS_FIELD_ALIASES = ["e2 tags", "e2 tag", "e2tags", "e2tag"];
 
 const E2_STATUS_UPDATE_FIELD = "E2 Status Update";
 
@@ -272,6 +274,20 @@ const normalizeValue = (value) => {
 
 const normalizeFieldKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+const parseTagValues = (value) => {
+  const seen = new Set();
+  return normalizeValue(value)
+    .split(/[,;|]/)
+    .map((item) => normalizeValue(item))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
 const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   const candidates = Array.from(new Set([...(fields || []), ...Object.keys(rowData || {})]));
   if (!candidates.length) return null;
@@ -294,7 +310,8 @@ const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
 const getCardPreview = (rowData = {}, fields = []) => {
   const titleField = findFieldByAliases(fields, rowData, ["title", "task title", "name"]);
   const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_FIELD_ALIASES);
-  const tagsField = findFieldByAliases(fields, rowData, ["tags", "tag", "labels", "label"]);
+  const tagsField = findFieldByAliases(fields, rowData, TAG_FIELD_ALIASES);
+  const e2TagsField = findFieldByAliases(fields, rowData, E2_TAGS_FIELD_ALIASES);
   const markupField = findFieldByAliases(fields, rowData, ["markup", "mark up"]);
   const markupLinkField = findFieldByAliases(fields, rowData, ["link to markup", "markup link"]);
   const statusField = findFieldByAliases(fields, rowData, ["status", "state", "task status"]);
@@ -323,6 +340,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
     title: normalizeValue(titleField ? rowData?.[titleField] : ""),
     projectName: normalizeValue(projectNameField ? rowData?.[projectNameField] : ""),
     tags: normalizeValue(tagsField ? rowData?.[tagsField] : ""),
+    e2Tags: normalizeValue(e2TagsField ? rowData?.[e2TagsField] : ""),
     markup: normalizeValue(markupField ? rowData?.[markupField] : ""),
     markupLink: normalizeValue(markupLinkField ? rowData?.[markupLinkField] : ""),
     status: normalizeValue(statusField ? rowData?.[statusField] : ""),
@@ -609,8 +627,11 @@ const ProjectIssueDashboard = () => {
   const [savingIssueKeys, setSavingIssueKeys] = useState({});
   const [uploadingSnapshotKeys, setUploadingSnapshotKeys] = useState({});
   const [lightboxUrl, setLightboxUrl] = useState("");
-  const [markupPopup, setMarkupPopup] = useState({ url: "", label: "" });
+  const [markupPopup, setMarkupPopup] = useState({ url: "", label: "", issueId: "", issueKey: "" });
   const [markupPopupSize, setMarkupPopupSize] = useState({ width: 960, height: 640 });
+  const [markupTagInput, setMarkupTagInput] = useState("");
+  const [markupTagValues, setMarkupTagValues] = useState([]);
+  const [savingMarkupTags, setSavingMarkupTags] = useState(false);
   const [overviewPiePopup, setOverviewPiePopup] = useState({
     statusKey: "",
     statusLabel: "",
@@ -643,6 +664,12 @@ const ProjectIssueDashboard = () => {
   const [showAddIssuePopup, setShowAddIssuePopup] = useState(false);
   const [newIssueFormData, setNewIssueFormData] = useState({});
   const [savingNewIssue, setSavingNewIssue] = useState(false);
+  const [showReceivedReporting, setShowReceivedReporting] = useState(false);
+  const [editingReceivedTagsKeys, setEditingReceivedTagsKeys] = useState(new Set());
+  const [receivedTagsDrafts, setReceivedTagsDrafts] = useState({});
+  const [savingReceivedTagsKeys, setSavingReceivedTagsKeys] = useState({});
+  const [pendingTechDetailsIssueKey, setPendingTechDetailsIssueKey] = useState("");
+  const techDetailsFieldRefs = useRef({});
   const dailyIssuesInputRef = useRef(null);
   const actionsMenuRef = useRef(null);
   const manageFiltersRef = useRef(null);
@@ -860,6 +887,107 @@ const ProjectIssueDashboard = () => {
     }
   };
 
+  const receivedIssues = useMemo(() => {
+    return issues.filter((issue) => {
+      const normalizedStatus = normalizeValue(issue.e2StatusUpdate).toLowerCase();
+      return normalizedStatus === DEFAULT_E2_STATUS_UPDATE.toLowerCase();
+    });
+  }, [issues]);
+
+  const openReceivedReporting = () => {
+    setShowReceivedReporting(true);
+    setEditingReceivedTagsKeys(new Set());
+    setReceivedTagsDrafts({});
+  };
+
+  const closeReceivedReporting = () => {
+    setShowReceivedReporting(false);
+    setEditingReceivedTagsKeys(new Set());
+    setReceivedTagsDrafts({});
+  };
+
+  const handleReceivedTagsEdit = (issueKey) => {
+    setEditingReceivedTagsKeys((prev) => new Set([...prev, issueKey]));
+    const issue = receivedIssues.find((i) => i.key === issueKey);
+    if (issue) {
+      setReceivedTagsDrafts((prev) => ({
+        ...prev,
+        [issueKey]: normalizeValue(issue.e2Tags) || "",
+      }));
+    }
+  };
+
+  const handleReceivedTagsChange = (issueKey, value) => {
+    setReceivedTagsDrafts((prev) => ({
+      ...prev,
+      [issueKey]: value,
+    }));
+  };
+
+  const handleReceivedTagsSave = async (issue) => {
+    if (!id || !issue?.projectDocId) return;
+
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) return;
+
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) return;
+
+    const previousRowData = targetRow?.rowData || {};
+    const tagsFieldName = findFieldByAliases(previousFields, previousRowData, E2_TAGS_FIELD_ALIASES) || "E2 Tags";
+
+    const nextValue = normalizeValue(receivedTagsDrafts[issue.key] ?? "");
+    const previousValue = normalizeValue(previousRowData[tagsFieldName]);
+
+    if (nextValue === previousValue) {
+      setEditingReceivedTagsKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(issue.key);
+        return next;
+      });
+      return;
+    }
+
+    const updatedRowData = { ...previousRowData, [tagsFieldName]: nextValue };
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    const updatedFields = previousFields.includes(tagsFieldName) ? previousFields : [...previousFields, tagsFieldName];
+    const previousSource = projectSource;
+
+    setSavingReceivedTagsKeys((prev) => ({ ...prev, [issue.key]: true }));
+
+    try {
+      await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+        fields: updatedFields,
+        rows: updatedRows,
+        updatedAt: new Date(),
+      });
+
+      setEditingReceivedTagsKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(issue.key);
+        return next;
+      });
+      toast.success("E2 Tags updated successfully.");
+    } catch (error) {
+      console.error("Error updating E2 Tags:", error);
+      toast.error("Could not update E2 Tags.");
+      setProjectSources((prev) => ({
+        ...prev,
+        [issue.projectDocId]: previousSource,
+      }));
+    } finally {
+      setSavingReceivedTagsKeys((prev) => {
+        const next = { ...prev };
+        delete next[issue.key];
+        return next;
+      });
+    }
+  };
+
   useEffect(() => {
     if (!id) return undefined;
 
@@ -1030,6 +1158,7 @@ const ProjectIssueDashboard = () => {
               id: preview.id || String(row?.rowNumber || rowIndex + 1),
               title: preview.title || "Untitled issue",
               tags: preview.tags || "-",
+              e2Tags: preview.e2Tags || "",
               markup: preview.markup,
               markupLink: preview.markupLink,
               owner: normalizeValue(preview.assignee) || normalizeValue(internalMeta.internalAssignee) || "Unassigned",
@@ -1196,6 +1325,7 @@ const ProjectIssueDashboard = () => {
         issue.id,
         issue.title,
         issue.tags,
+        issue.e2Tags,
         issue.markup,
         issue.markupLink,
         issue.owner,
@@ -1225,6 +1355,44 @@ const ProjectIssueDashboard = () => {
       a.localeCompare(b)
     );
   }, [issues]);
+
+  const e2TagSuggestions = useMemo(() => {
+    const map = new Map();
+
+    issues.forEach((issue) => {
+      const raw = normalizeValue(issue.e2Tags);
+      if (!raw) return;
+
+      raw
+        .split(/[,;|]/)
+        .map((value) => normalizeValue(value))
+        .filter(Boolean)
+        .forEach((value) => {
+          const key = value.toLowerCase();
+          if (!map.has(key)) map.set(key, value);
+        });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [issues]);
+  const markupNavigableIssues = useMemo(() => {
+    return visibleIssues.filter((issue) => Boolean(normalizeValue(issue.markupLink)));
+  }, [visibleIssues]);
+  const currentMarkupPopupIssue = useMemo(() => {
+    if (!markupPopup.issueKey) return null;
+    return issues.find((issue) => issue.key === markupPopup.issueKey) || null;
+  }, [issues, markupPopup.issueKey]);
+  const markupPopupIssueIndex = useMemo(() => {
+    if (!markupPopup.issueKey) return -1;
+    return markupNavigableIssues.findIndex((issue) => issue.key === markupPopup.issueKey);
+  }, [markupNavigableIssues, markupPopup.issueKey]);
+  const canNavigateMarkupPrev = markupPopupIssueIndex > 0;
+  const canNavigateMarkupNext =
+    markupPopupIssueIndex >= 0 && markupPopupIssueIndex < markupNavigableIssues.length - 1;
+  const markupPopupTagSuggestions = useMemo(() => {
+    const selected = new Set(markupTagValues.map((value) => value.toLowerCase()));
+    return e2TagSuggestions.filter((tag) => !selected.has(tag.toLowerCase()));
+  }, [e2TagSuggestions, markupTagValues]);
   const e2DetailerOptions = useMemo(() => {
     // Use managed values only so deleted entries are removed from filters/dropdowns everywhere.
     return managedE2DetailerOptions;
@@ -2063,6 +2231,30 @@ const ProjectIssueDashboard = () => {
     setPopupSupportTeamMenuOpen(false);
   };
 
+  const openTechDetailsRequiredInformationPopup = (issue) => {
+    if (!issue?.key) return;
+
+    setPendingTechDetailsIssueKey("");
+
+    const launchPopup = () => {
+      setTechDetailsPopup({
+        open: true,
+        issueKey: issue.key,
+        e2StatusUpdate: "",
+        e2Detailer: "",
+        e2DetailerSupportTeam: sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions),
+      });
+      setPopupSupportTeamMenuOpen(false);
+    };
+
+    if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+      window.setTimeout(launchPopup, 0);
+      return;
+    }
+
+    launchPopup();
+  };
+
   const handleTechDetailsPopupSubmit = async () => {
     const selectedStatus = normalizeValue(techDetailsPopup.e2StatusUpdate);
     const selectedDetailer = normalizeValue(techDetailsPopup.e2Detailer);
@@ -2262,6 +2454,11 @@ const ProjectIssueDashboard = () => {
 
   const handleTechDetailsSelectChange = (issue, value) => {
     const nextValue = getDefaultTechDetailsAvailable(value);
+
+    if (issue?.key && issue.key === pendingTechDetailsIssueKey && nextValue === "Yes") {
+      setPendingTechDetailsIssueKey("");
+    }
+
     if (nextValue === "Yes") {
       openTechDetailsPopup(issue);
       return;
@@ -2674,16 +2871,178 @@ const ProjectIssueDashboard = () => {
     }
   };
 
-  const openMarkupPopup = (url, label = "") => {
+  const openMarkupPopup = (url, label = "", issueId = "", issueKey = "", tags = "") => {
     const safeUrl = normalizeValue(url);
     if (!safeUrl) return;
     setMarkupPopupSize({ width: 960, height: 640 });
-    setMarkupPopup({ url: safeUrl, label: normalizeValue(label) });
+    setMarkupTagValues(parseTagValues(tags));
+    setMarkupTagInput("");
+    setMarkupPopup({
+      url: safeUrl,
+      label: normalizeValue(label),
+      issueId: normalizeValue(issueId),
+      issueKey: normalizeValue(issueKey),
+    });
+  };
+
+  const openMarkupPopupForIssue = (issue) => {
+    if (!issue || !normalizeValue(issue.markupLink)) return;
+    if (!markupNavigableIssues.some((item) => item.key === issue.key)) return;
+    openMarkupPopup(issue.markupLink, issue.markup || issue.id, issue.id, issue.key, issue.e2Tags);
   };
 
   const closeMarkupPopup = () => {
-    setMarkupPopup({ url: "", label: "" });
+    setMarkupPopup({ url: "", label: "", issueId: "", issueKey: "" });
     setMarkupPopupSize({ width: 960, height: 640 });
+    setMarkupTagInput("");
+    setMarkupTagValues([]);
+    setSavingMarkupTags(false);
+  };
+
+  const handleMarkupTagAdd = (valueOverride = "") => {
+    const candidate = normalizeValue(valueOverride || markupTagInput);
+    if (!candidate) return;
+
+    setMarkupTagValues((previous) => {
+      const exists = previous.some((value) => value.toLowerCase() === candidate.toLowerCase());
+      if (exists) return previous;
+      return [...previous, candidate];
+    });
+    setMarkupTagInput("");
+  };
+
+  const handleMarkupTagRemove = (tagToRemove) => {
+    const removeKey = normalizeValue(tagToRemove).toLowerCase();
+    setMarkupTagValues((previous) => previous.filter((value) => value.toLowerCase() !== removeKey));
+  };
+
+  const handleMarkupNavigate = (step) => {
+    if (!markupNavigableIssues.length) return;
+
+    const currentIndex = markupPopupIssueIndex;
+    if (currentIndex < 0) {
+      openMarkupPopupForIssue(markupNavigableIssues[0]);
+      return;
+    }
+
+    const targetIndex = Math.min(
+      Math.max(currentIndex + step, 0),
+      markupNavigableIssues.length - 1
+    );
+    if (targetIndex === currentIndex) return;
+    openMarkupPopupForIssue(markupNavigableIssues[targetIndex]);
+  };
+
+  useEffect(() => {
+    if (!markupPopup.url) return;
+
+    if (!markupNavigableIssues.length) {
+      setMarkupPopup({ url: "", label: "", issueId: "", issueKey: "" });
+      setMarkupPopupSize({ width: 960, height: 640 });
+      setMarkupTagInput("");
+      setMarkupTagValues([]);
+      setSavingMarkupTags(false);
+      return;
+    }
+
+    const currentVisibleIssue = markupNavigableIssues.find((issue) => issue.key === markupPopup.issueKey);
+    if (currentVisibleIssue) return;
+
+    const firstVisibleIssue = markupNavigableIssues[0];
+    setMarkupPopupSize({ width: 960, height: 640 });
+    setMarkupTagValues(parseTagValues(firstVisibleIssue.e2Tags));
+    setMarkupTagInput("");
+    setMarkupPopup({
+      url: normalizeValue(firstVisibleIssue.markupLink),
+      label: normalizeValue(firstVisibleIssue.markup || firstVisibleIssue.id),
+      issueId: normalizeValue(firstVisibleIssue.id),
+      issueKey: normalizeValue(firstVisibleIssue.key),
+    });
+  }, [markupPopup.url, markupPopup.issueKey, markupNavigableIssues]);
+
+  useEffect(() => {
+    if (!pendingTechDetailsIssueKey) return;
+
+    const field = techDetailsFieldRefs.current[pendingTechDetailsIssueKey];
+    if (!field) return;
+
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    field.focus();
+  }, [pendingTechDetailsIssueKey, visibleIssues]);
+
+  const handleMarkupTagsSave = async () => {
+    if (savingMarkupTags) return;
+
+    const issue = issues.find((item) => item.key === markupPopup.issueKey);
+    if (!id || !issue?.projectDocId) {
+      toast.error("Could not update tags for this issue.");
+      return;
+    }
+
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) {
+      toast.error("Could not load project data for tags.");
+      return;
+    }
+
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) {
+      toast.error("Could not find issue row for tags.");
+      return;
+    }
+
+    const previousRowData = targetRow?.rowData || {};
+    const tagsFieldName = findFieldByAliases(previousFields, previousRowData, E2_TAGS_FIELD_ALIASES) || "E2 Tags";
+    const pendingInput = normalizeValue(markupTagInput);
+    const nextTagValues = pendingInput
+      ? (() => {
+          const exists = markupTagValues.some((value) => value.toLowerCase() === pendingInput.toLowerCase());
+          return exists ? markupTagValues : [...markupTagValues, pendingInput];
+        })()
+      : markupTagValues;
+    const nextValue = nextTagValues.join(", ");
+    const previousValue = normalizeValue(previousRowData[tagsFieldName]);
+
+    if (nextValue === previousValue) {
+      toast.info("No tag changes to save.");
+      return;
+    }
+
+    const updatedRowData = { ...previousRowData, [tagsFieldName]: nextValue };
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    const updatedFields = previousFields.includes(tagsFieldName) ? previousFields : [...previousFields, tagsFieldName];
+
+    setSavingMarkupTags(true);
+
+    try {
+      await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+        fields: updatedFields,
+        rows: updatedRows,
+        updatedAt: new Date(),
+      });
+      setMarkupTagValues(nextTagValues);
+      setMarkupTagInput("");
+
+      const requiresTechnicalDetails = nextTagValues.some(
+        (tag) => normalizeValue(tag).toLowerCase() === "technical details"
+      );
+      if (requiresTechnicalDetails) {
+        openTechDetailsRequiredInformationPopup(issue);
+        toast.info("E2 Tags saved. Technical Details Available - Required Information opened.");
+        return;
+      }
+
+      toast.success("E2 Tags updated successfully.");
+    } catch (error) {
+      console.error("Error updating E2 Tags from markup popup:", error);
+      toast.error("Could not update E2 Tags.");
+    } finally {
+      setSavingMarkupTags(false);
+    }
   };
 
   const handleMarkupImageLoad = (event) => {
@@ -2692,7 +3051,7 @@ const ProjectIssueDashboard = () => {
     if (!naturalWidth || !naturalHeight) return;
 
     const maxWidth = Math.floor((window.innerWidth || 1366) * 0.96);
-    const maxHeight = Math.floor((window.innerHeight || 768) * 0.9) - 56;
+    const maxHeight = Math.floor((window.innerHeight || 768) * 0.9) - 220;
     const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight, 1);
 
     setMarkupPopupSize({
@@ -2776,6 +3135,9 @@ const ProjectIssueDashboard = () => {
                 </div>
                 <button type="button" className="project-issue-add-btn" onClick={openAddIssuePopup}>
                   Add New Issue
+                </button>
+                <button type="button" className="project-issue-reporting-btn" onClick={openReceivedReporting}>
+                  📊 Actionable Reporting
                 </button>
               </div>
             </div>
@@ -3360,6 +3722,7 @@ const ProjectIssueDashboard = () => {
                 <th>Title</th>
                 <th>Project Name</th>
                 <th>Markup</th>
+                <th>E2 Tags</th>
                 <th style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}>Status</th>
                 <th>
                   <span className="project-issue-th-with-info">
@@ -3388,7 +3751,7 @@ const ProjectIssueDashboard = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="project-issue-empty">
+                  <td colSpan={15} className="project-issue-empty">
                     Loading BIM issues...
                   </td>
                 </tr>
@@ -3424,7 +3787,7 @@ const ProjectIssueDashboard = () => {
                         className="project-issue-markup-thumb-btn"
                         onClick={(event) => {
                           event.preventDefault();
-                          openMarkupPopup(issue.markupLink, issue.markup || issue.id);
+                          openMarkupPopupForIssue(issue);
                         }}
                         title={issue.markup || "Open markup"}
                       >
@@ -3438,6 +3801,7 @@ const ProjectIssueDashboard = () => {
                       issue.markup || "-"
                     )}
                   </td>
+                  <td data-label="E2 Tags">{normalizeValue(issue.e2Tags) || "-"}</td>
                   <td
                     data-label="Status"
                     style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}
@@ -3592,7 +3956,10 @@ const ProjectIssueDashboard = () => {
                   </td>
                   <td data-label="Technical Details Available">
                     <select
-                      className="project-issue-cell-input"
+                      ref={(element) => {
+                        techDetailsFieldRefs.current[issue.key] = element;
+                      }}
+                      className={`project-issue-cell-input${pendingTechDetailsIssueKey === issue.key ? " project-issue-cell-input-pending" : ""}`}
                       value={getDefaultTechDetailsAvailable(issue.techDetailsAvailable)}
                       onChange={(event) => {
                         handleTechDetailsSelectChange(issue, event.target.value);
@@ -3624,7 +3991,7 @@ const ProjectIssueDashboard = () => {
               })}
               {!loading && !visibleIssues.length ? (
                 <tr>
-                  <td colSpan={14} className="project-issue-empty">
+                  <td colSpan={15} className="project-issue-empty">
                     No issues in this tab.
                   </td>
                 </tr>
@@ -3665,14 +4032,44 @@ const ProjectIssueDashboard = () => {
             className="project-issue-popup-window"
             style={{
               width: `${markupPopupSize.width}px`,
-              height: `${markupPopupSize.height + 56}px`,
+              height: `${markupPopupSize.height + 220}px`,
             }}
           >
             <div className="project-issue-popup-head">
-              <strong className="project-issue-popup-title">{markupPopup.label || "Markup"}</strong>
-              <button type="button" className="project-issue-popup-close" onClick={closeMarkupPopup}>
-                Close
-              </button>
+              <div className="project-issue-popup-title-group">
+                <strong className="project-issue-popup-title">
+                  {`Issue ID: ${normalizeIssueIdDisplay(markupPopup.issueId || markupPopup.label) || "-"}`}
+                </strong>
+                <span className="project-issue-popup-title-status">
+                  {`E2 Status Update: ${getDefaultE2StatusUpdate(currentMarkupPopupIssue?.e2StatusUpdate) || "-"}`}
+                </span>
+              </div>
+              <div className="project-issue-popup-head-actions">
+                <span className="project-issue-popup-nav-index">
+                  {markupPopupIssueIndex >= 0 ? `${markupPopupIssueIndex + 1} / ${markupNavigableIssues.length}` : `0 / ${markupNavigableIssues.length}`}
+                </span>
+                <button
+                  type="button"
+                  className="project-issue-popup-nav-btn"
+                  onClick={() => handleMarkupNavigate(-1)}
+                  disabled={!canNavigateMarkupPrev}
+                  aria-label="Previous markup"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  className="project-issue-popup-nav-btn"
+                  onClick={() => handleMarkupNavigate(1)}
+                  disabled={!canNavigateMarkupNext}
+                  aria-label="Next markup"
+                >
+                  →
+                </button>
+                <button type="button" className="project-issue-popup-close" onClick={closeMarkupPopup}>
+                  Close
+                </button>
+              </div>
             </div>
             <img
               src={markupPopup.url}
@@ -3680,6 +4077,82 @@ const ProjectIssueDashboard = () => {
               className="project-issue-popup-image"
               onLoad={handleMarkupImageLoad}
             />
+            <div className="project-issue-popup-tags-row">
+              <label className="project-issue-popup-tags-label" htmlFor="markup-e2-tags-input">E2 Tags</label>
+              <div className="project-issue-popup-tags-editor">
+                <div className="project-issue-popup-tags-chips">
+                  {markupTagValues.length ? (
+                    markupTagValues.map((tag) => (
+                      <span className="project-issue-popup-tag-chip" key={tag}>
+                        <span>{tag}</span>
+                        <button
+                          type="button"
+                          className="project-issue-popup-tag-remove"
+                          onClick={() => handleMarkupTagRemove(tag)}
+                          disabled={savingMarkupTags}
+                          aria-label={`Remove tag ${tag}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="project-issue-popup-tags-empty">No E2 Tags selected</span>
+                  )}
+                </div>
+
+                <div className="project-issue-popup-tags-edit">
+                  <input
+                    id="markup-e2-tags-input"
+                    type="text"
+                    className="project-issue-tags-input"
+                    list="project-issue-e2-tags-suggestions"
+                    value={markupTagInput}
+                    onChange={(event) => setMarkupTagInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === "," || event.key === ";") {
+                        event.preventDefault();
+                        handleMarkupTagAdd();
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter"
+                    disabled={savingMarkupTags}
+                  />
+                  <button
+                    type="button"
+                    className="project-issue-popup-tag-add-btn"
+                    onClick={() => handleMarkupTagAdd()}
+                    disabled={savingMarkupTags || !normalizeValue(markupTagInput)}
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    className="project-issue-tags-save-btn"
+                    onClick={handleMarkupTagsSave}
+                    disabled={savingMarkupTags || !markupPopup.issueKey}
+                  >
+                    {savingMarkupTags ? "..." : "Save"}
+                  </button>
+                </div>
+
+                {markupPopupTagSuggestions.length ? (
+                  <div className="project-issue-popup-tags-suggestions">
+                    {markupPopupTagSuggestions.slice(0, 10).map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="project-issue-popup-tag-suggestion"
+                        onClick={() => handleMarkupTagAdd(tag)}
+                        disabled={savingMarkupTags}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
@@ -3895,6 +4368,145 @@ const ProjectIssueDashboard = () => {
           </div>
         </div>
       ) : null}
+
+      {showReceivedReporting ? (
+        <div
+          className="project-issue-popup-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Actionable Reporting - Received Issues"
+          onClick={closeReceivedReporting}
+        >
+          <div className="project-issue-reporting-window" onClick={(event) => event.stopPropagation()}>
+            <div className="project-issue-popup-head">
+              <strong className="project-issue-popup-title">
+                Actionable Reporting - Issues with "Received" Status ({receivedIssues.length})
+              </strong>
+              <button type="button" className="project-issue-popup-close" onClick={closeReceivedReporting}>
+                Close
+              </button>
+            </div>
+            <div className="project-issue-reporting-body">
+              {receivedIssues.length === 0 ? (
+                <div className="project-issue-reporting-empty">No issues with "Received" status</div>
+              ) : (
+                <table className="project-issue-reporting-table">
+                  <thead>
+                    <tr>
+                      <th>Issue ID</th>
+                      <th>E2 Status Update</th>
+                      <th>Project</th>
+                      <th>Snapshot</th>
+                      <th>E2 Tags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receivedIssues.map((issue) => {
+                      const isEditingTags = editingReceivedTagsKeys.has(issue.key);
+                      const draftTags = receivedTagsDrafts[issue.key] ?? normalizeValue(issue.e2Tags);
+                      const isSavingTags = !!savingReceivedTagsKeys[issue.key];
+
+                      return (
+                        <tr key={issue.key} className="project-issue-reporting-row">
+                          <td className="project-issue-reporting-cell project-issue-reporting-id">
+                            <Link
+                              to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${encodeURIComponent(issue.id)}`}
+                              className="project-issue-id-link"
+                            >
+                              <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
+                            </Link>
+                          </td>
+                          <td className="project-issue-reporting-cell">
+                            {getDefaultE2StatusUpdate(issue.e2StatusUpdate)}
+                          </td>
+                          <td className="project-issue-reporting-cell">
+                            {getProjectNameDisplay(issue)}
+                          </td>
+                          <td className="project-issue-reporting-cell project-issue-reporting-snapshot">
+                            {issue.snapshotUrl ? (
+                              <button
+                                type="button"
+                                className="project-issue-snapshot-link"
+                                onClick={() => {
+                                  setLightboxUrl(issue.snapshotUrl);
+                                }}
+                                title="View snapshot"
+                              >
+                                📸 View
+                              </button>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="project-issue-reporting-cell project-issue-reporting-tags">
+                            {isEditingTags ? (
+                              <div className="project-issue-tags-edit">
+                                <input
+                                  type="text"
+                                  className="project-issue-tags-input"
+                                  list="project-issue-e2-tags-suggestions"
+                                  value={draftTags}
+                                  onChange={(event) =>
+                                    handleReceivedTagsChange(issue.key, event.target.value)
+                                  }
+                                  placeholder="Enter tags"
+                                  disabled={isSavingTags}
+                                />
+                                <button
+                                  type="button"
+                                  className="project-issue-tags-save-btn"
+                                  onClick={() => handleReceivedTagsSave(issue)}
+                                  disabled={isSavingTags}
+                                >
+                                  {isSavingTags ? "..." : "✓"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="project-issue-tags-cancel-btn"
+                                  onClick={() => {
+                                    setEditingReceivedTagsKeys((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(issue.key);
+                                      return next;
+                                    });
+                                  }}
+                                  disabled={isSavingTags}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="project-issue-tags-display">
+                                <span className="project-issue-tags-text">
+                                  {normalizeValue(issue.e2Tags) || "-"}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="project-issue-tags-edit-btn"
+                                  onClick={() => handleReceivedTagsEdit(issue.key)}
+                                  title="Edit tags"
+                                >
+                                  ✎
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <datalist id="project-issue-e2-tags-suggestions">
+        {e2TagSuggestions.map((tag) => (
+          <option key={tag} value={tag} />
+        ))}
+      </datalist>
 
       {techDetailsPopup.open ? (
         <div className="project-issue-popup-overlay" role="dialog" aria-modal="true" aria-label="Technical Details Required">
