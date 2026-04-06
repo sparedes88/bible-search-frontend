@@ -3819,6 +3819,7 @@ const ProjectIssueDashboard = () => {
                   const value = newIssueFormData[field] ?? "";
                   const isRequired = newIssueRequiredFields.has(field);
                   const isIssueIdField = field === newIssueFieldConfig.fieldNames.issueId;
+                  const isProjectNameField = field === newIssueFieldConfig.fieldNames.projectName;
                   const isStatusField = field === newIssueFieldConfig.fieldNames.e2StatusUpdate;
                   const isStatusDateField = field === newIssueFieldConfig.fieldNames.e2StatusDate;
                   const isTechDetailsField = field === newIssueFieldConfig.fieldNames.techDetails;
@@ -3834,6 +3835,19 @@ const ProjectIssueDashboard = () => {
                         <input className="project-issue-add-input" value={DEFAULT_E2_STATUS_UPDATE} disabled />
                       ) : isIssueIdField || isStatusDateField ? (
                         <input className="project-issue-add-input" value={value} disabled />
+                      ) : isProjectNameField ? (
+                        <select
+                          className="project-issue-add-input"
+                          value={value}
+                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
+                        >
+                          <option value="">Select project name</option>
+                          {projectNameOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       ) : isTechDetailsField ? (
                         <select
                           className="project-issue-add-input"

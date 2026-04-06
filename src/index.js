@@ -28,18 +28,8 @@ const clearDevelopmentServiceWorkers = async () => {
   }
 };
 
-// Register Service Worker only in production to avoid dev request interference.
-if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('Service Worker registered:', registration);
-      })
-      .catch((error) => {
-        console.log('Service Worker registration failed:', error);
-      });
-  });
-} else if (process.env.NODE_ENV !== 'production') {
+// Force-disable service workers to avoid stale cache white-screen issues.
+if ('serviceWorker' in navigator) {
   clearDevelopmentServiceWorkers();
 }
 

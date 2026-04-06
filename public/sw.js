@@ -3,8 +3,8 @@
  * Makes images load instantly on repeat visits
  */
 
-const CACHE_NAME = 'bible-search-v1';
-const IMAGE_CACHE = 'images-v1';
+const CACHE_NAME = 'bible-search-v2';
+const IMAGE_CACHE = 'images-v2';
 const MAX_CACHE_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // Install event - cache critical resources
@@ -80,16 +80,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // For other requests, try network first, then cache
-  event.respondWith(
-    fetch(event.request).catch(async () => {
-      const cached = await caches.match(event.request);
-      return cached || new Response('Offline', {
-        status: 503,
-        statusText: 'Service Unavailable',
-        headers: { 'Content-Type': 'text/plain' }
-      });
-    })
-  );
+  // Do not intercept non-image requests. Let the browser/network handle app shell,
+  // scripts, and API calls to avoid returning non-JS fallback bodies for JS chunks.
+  return;
 });
 
