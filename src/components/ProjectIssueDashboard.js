@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
-import { FaInfoCircle } from "react-icons/fa";
+import { FaInfoCircle, FaCog } from "react-icons/fa";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db, storage } from "../firebase";
@@ -45,6 +45,7 @@ const E2_STATUS_DATE_FIELD_ALIASES = [
   "statusdate",
 ];
 const TECH_DETAILS_FIELD = "Technical Details Available";
+const TECH_DETAILS_DISPLAY_LABEL = "T.D. Available";
 const TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES = ["Stop and Start", "Steer with current task", "Add to Queue"];
 const PIE_FALLBACK_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#f97316"];
 
@@ -332,6 +333,9 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const markupLinkField = findFieldByAliases(fields, rowData, ["link to markup", "markup link"]);
   const statusField = findFieldByAliases(fields, rowData, ["status", "state", "task status"]);
   const priorityField = findFieldByAliases(fields, rowData, ["priority"]);
+  const gridField = findFieldByAliases(fields, rowData, ["grid", "grid coordinate", "gridlocation"]);
+  const levelField = findFieldByAliases(fields, rowData, ["level", "floor", "story"]);
+  const roomField = findFieldByAliases(fields, rowData, ["room", "room number", "space"]);
   const zoneField = findFieldByAliases(fields, rowData, ["zone", "area", "section", "location zone"]);
   const assigneeField = findFieldByAliases(fields, rowData, ["assignee", "assigned to", "owner", "responsible"]);
   const e2DetailerField = findFieldByAliases(
@@ -361,6 +365,9 @@ const getCardPreview = (rowData = {}, fields = []) => {
     markupLink: normalizeValue(markupLinkField ? rowData?.[markupLinkField] : ""),
     status: normalizeValue(statusField ? rowData?.[statusField] : ""),
     priority: normalizeValue(priorityField ? rowData?.[priorityField] : ""),
+    grid: normalizeValue(gridField ? rowData?.[gridField] : ""),
+    level: normalizeValue(levelField ? rowData?.[levelField] : ""),
+    room: normalizeValue(roomField ? rowData?.[roomField] : ""),
     zone: normalizeValue(zoneField ? rowData?.[zoneField] : ""),
     assignee: normalizeValue(assigneeField ? rowData?.[assigneeField] : ""),
     e2Detailer: normalizeValue(e2DetailerField ? rowData?.[e2DetailerField] : ""),
@@ -529,6 +536,7 @@ const ProjectIssueDashboard = () => {
   const [selectedE2Detailer, setSelectedE2Detailer] = useState(() => searchParams.get("e2Detailer") || "");
   const [selectedE2StatusUpdate, setSelectedE2StatusUpdate] = useState(() => searchParams.get("e2StatusUpdate") || "");
   const [selectedTechDetails, setSelectedTechDetails] = useState(() => searchParams.get("techDetails") || "");
+  const [selectedE2Tags, setSelectedE2Tags] = useState(() => parseTagValues(searchParams.get("e2Tags") || ""));
   const [globalSearch, setGlobalSearch] = useState(() => searchParams.get("search") || "");
   const [selectedDateRange, setSelectedDateRange] = useState(() => searchParams.get("dateRange") || "All");
   const [chartTab, setChartTab] = useState("overview");
@@ -540,6 +548,7 @@ const ProjectIssueDashboard = () => {
       e2LeadDetailer: true,
       e2StatusUpdate: true,
       techDetails: true,
+      e2Tags: true,
       statusUpdateDate: true,
       globalSearch: true,
     };
@@ -562,10 +571,11 @@ const ProjectIssueDashboard = () => {
     if (selectedE2Detailer) params.e2Detailer = selectedE2Detailer;
     if (selectedE2StatusUpdate) params.e2StatusUpdate = selectedE2StatusUpdate;
     if (selectedTechDetails) params.techDetails = selectedTechDetails;
+    if (selectedE2Tags.length) params.e2Tags = selectedE2Tags.join(",");
     if (globalSearch) params.search = globalSearch;
     if (selectedDateRange !== "All") params.dateRange = selectedDateRange;
     setSearchParams(params, { replace: true });
-  }, [activeTab, selectedProjectName, selectedIssueId, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, globalSearch, selectedDateRange, setSearchParams]);
+  }, [activeTab, selectedProjectName, selectedIssueId, selectedE2Detailer, selectedE2StatusUpdate, selectedTechDetails, selectedE2Tags, globalSearch, selectedDateRange, setSearchParams]);
 
   useEffect(() => {
     try {
@@ -598,6 +608,10 @@ const ProjectIssueDashboard = () => {
       setSelectedTechDetails("");
       return;
     }
+    if (key === "e2Tags") {
+      setSelectedE2Tags([]);
+      return;
+    }
     if (key === "statusUpdateDate") {
       setSelectedDateRange("All");
       return;
@@ -625,6 +639,7 @@ const ProjectIssueDashboard = () => {
       setSelectedE2Detailer("");
       setSelectedE2StatusUpdate("");
       setSelectedTechDetails("");
+      setSelectedE2Tags([]);
       setSelectedDateRange("All");
       setGlobalSearch("");
     }
@@ -635,6 +650,7 @@ const ProjectIssueDashboard = () => {
       e2LeadDetailer: nextVisible,
       e2StatusUpdate: nextVisible,
       techDetails: nextVisible,
+      e2Tags: nextVisible,
       statusUpdateDate: nextVisible,
       globalSearch: nextVisible,
     });
@@ -670,8 +686,13 @@ const ProjectIssueDashboard = () => {
     e2StatusUpdate: "",
     e2Detailer: "",
     e2DetailerSupportTeam: [],
+    e2Comments: "",
+    e2Documents: [],
   });
   const [submittingTechDetailsPopup, setSubmittingTechDetailsPopup] = useState(false);
+  const [techDetailsPopupUploadingDocuments, setTechDetailsPopupUploadingDocuments] = useState(false);
+  const [techDetailsPopupSavingComments, setTechDetailsPopupSavingComments] = useState(false);
+  const techDetailsPopupFileInputRef = useRef(null);
   const [popupSupportTeamMenuOpen, setPopupSupportTeamMenuOpen] = useState(false);
   const [detailerConflictPopupMessage, setDetailerConflictPopupMessage] = useState("");
   const [showE2StatusInfoPopup, setShowE2StatusInfoPopup] = useState(false);
@@ -686,7 +707,21 @@ const ProjectIssueDashboard = () => {
   const [editingReceivedTagsKeys, setEditingReceivedTagsKeys] = useState(new Set());
   const [receivedTagsDrafts, setReceivedTagsDrafts] = useState({});
   const [savingReceivedTagsKeys, setSavingReceivedTagsKeys] = useState({});
+  const [selectedE2StatusChartTarget, setSelectedE2StatusChartTarget] = useState("");
   const [pendingTechDetailsIssueKey, setPendingTechDetailsIssueKey] = useState("");
+  const [showColumnVisibilityPopup, setShowColumnVisibilityPopup] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState(() => {
+    const stored = localStorage.getItem("projectIssueGridVisibleColumns");
+    if (stored) {
+      try {
+        return new Set(JSON.parse(stored));
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    }
+    // Default visible columns
+    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Priority", "Due Date", "E2 Lead Detailer", TECH_DETAILS_DISPLAY_LABEL]);
+  });
   const techDetailsFieldRefs = useRef({});
   const dailyIssuesInputRef = useRef(null);
   const actionsMenuRef = useRef(null);
@@ -698,6 +733,11 @@ const ProjectIssueDashboard = () => {
   const selectedStatusSet = useMemo(
     () => new Set(selectedStatuses.map((status) => normalizeValue(status).toLowerCase())),
     [selectedStatuses]
+  );
+  const hasE2TagFilter = selectedE2Tags.length > 0;
+  const selectedE2TagSet = useMemo(
+    () => new Set(selectedE2Tags.map((tag) => normalizeValue(tag).toLowerCase())),
+    [selectedE2Tags]
   );
 
   const openDetailerConflictPopup = (detailerValue) => {
@@ -756,6 +796,34 @@ const ProjectIssueDashboard = () => {
     if (actionsMenuRef.current?.open) {
       actionsMenuRef.current.open = false;
     }
+  };
+
+  const AVAILABLE_COLUMNS = [
+    "Issue ID",
+    "Title",
+    "Project Name",
+    "Markup",
+    "E2 Tags",
+    "Status",
+    "E2 Status Update",
+    "Priority",
+    "Due Date",
+    "Days Since Created",
+    "E2 Lead Detailer",
+    "E2 Detailer Support Team",
+    TECH_DETAILS_DISPLAY_LABEL,
+    "Status Update Date",
+  ];
+
+  const toggleColumnVisibility = (columnName) => {
+    const newVisibleColumns = new Set(visibleColumns);
+    if (newVisibleColumns.has(columnName)) {
+      newVisibleColumns.delete(columnName);
+    } else {
+      newVisibleColumns.add(columnName);
+    }
+    setVisibleColumns(newVisibleColumns);
+    localStorage.setItem("projectIssueGridVisibleColumns", JSON.stringify(Array.from(newVisibleColumns)));
   };
 
   const closeManageFilters = () => {
@@ -1202,6 +1270,7 @@ const ProjectIssueDashboard = () => {
             nextIssues.push({
               key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
               id: preview.id || String(row?.rowNumber || rowIndex + 1),
+              cardMetaKey: cardKey,
               title: preview.title || "Untitled issue",
               tags: preview.tags || "-",
               e2Tags: preview.e2Tags || "",
@@ -1216,6 +1285,9 @@ const ProjectIssueDashboard = () => {
               snapshotUrl: preview.snapshotUrl,
               link: preview.link,
               priority: preview.priority || "-",
+              grid: preview.grid || "-",
+              level: preview.level || "-",
+              room: preview.room || "-",
               zone: preview.zone || "-",
               zoneCategory: getZoneCategory(preview.zone || ""),
               status: preview.status || "Open",
@@ -1225,6 +1297,8 @@ const ProjectIssueDashboard = () => {
               projectDocId: projectDoc.id,
               rowIndex,
               createdAt: createdAtValue,
+              e2Comments: normalizeValue(internalMeta.e2Comments),
+              e2Documents: Array.isArray(internalMeta.e2Documents) ? internalMeta.e2Documents : [],
             });
           });
         });
@@ -1348,6 +1422,31 @@ const ProjectIssueDashboard = () => {
         return false;
       }
 
+      if (hasE2TagFilter) {
+        const issueTags = parseTagValues(issue.e2Tags).map((tag) => tag.toLowerCase());
+        const hasNoTagsSelected = selectedE2TagSet.has("no tags");
+        const hasOtherTagsSelected = selectedE2Tags.some((tag) => normalizeValue(tag).toLowerCase() !== "no tags");
+        
+        if (hasNoTagsSelected && !hasOtherTagsSelected) {
+          // Only "No Tags" is selected, show only records with no tags
+          if (issueTags.length > 0) {
+            return false;
+          }
+        } else if (!hasNoTagsSelected && hasOtherTagsSelected) {
+          // Only other tags are selected, show records with those tags
+          if (!issueTags.some((tag) => selectedE2TagSet.has(tag))) {
+            return false;
+          }
+        } else if (hasNoTagsSelected && hasOtherTagsSelected) {
+          // Both "No Tags" and other tags are selected
+          const hasMatchingTag = issueTags.some((tag) => selectedE2TagSet.has(tag));
+          const hasNoTags = issueTags.length === 0;
+          if (!hasMatchingTag && !hasNoTags) {
+            return false;
+          }
+        }
+      }
+
       if (normalizedIssueIdSearch) {
         const normalizedIssueId = normalizeValue(issue.id).toLowerCase();
         const normalizedIssueIdDisplay = normalizeIssueIdDisplay(issue.id).toLowerCase();
@@ -1389,7 +1488,7 @@ const ProjectIssueDashboard = () => {
 
       return haystack.includes(normalizedSearch);
     });
-  }, [globalSearch, hasStatusFilter, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedStatusSet, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
+  }, [globalSearch, hasE2TagFilter, hasStatusFilter, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedStatusSet, selectedE2TagSet, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
   const projectNameOptions = useMemo(() => {
     return Array.from(new Set(issues.map((issue) => getProjectNameDisplay(issue)).filter(Boolean))).sort((a, b) =>
@@ -1428,6 +1527,9 @@ const ProjectIssueDashboard = () => {
     if (!markupPopup.issueKey) return null;
     return issues.find((issue) => issue.key === markupPopup.issueKey) || null;
   }, [issues, markupPopup.issueKey]);
+
+
+
   const markupPopupIssueIndex = useMemo(() => {
     if (!markupPopup.issueKey) return -1;
     return markupNavigableIssues.findIndex((issue) => issue.key === markupPopup.issueKey);
@@ -1447,6 +1549,35 @@ const ProjectIssueDashboard = () => {
     return Array.from(new Set(issues.map((issue) => getDefaultTechDetailsAvailable(issue.techDetailsAvailable)).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b)
     );
+  }, [issues]);
+  const e2TagFilterOptions = useMemo(() => {
+    const counts = {};
+    let noTagsCount = 0;
+
+    issues.forEach((issue) => {
+      const tags = parseTagValues(issue.e2Tags);
+      if (tags.length === 0) {
+        noTagsCount++;
+      } else {
+        tags.forEach((tag) => {
+          counts[tag] = (counts[tag] || 0) + 1;
+        });
+      }
+    });
+
+    const options = Object.entries(counts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        return a.label.localeCompare(b.label);
+      });
+
+    // Add "No Tags" option at the end if there are any issues with no tags
+    if (noTagsCount > 0) {
+      options.push({ label: "No Tags", count: noTagsCount });
+    }
+
+    return options;
   }, [issues]);
   const supportTeamMenuWidthCh = useMemo(() => {
     const longestOptionLength = e2DetailerOptions.reduce((maxLength, option) => {
@@ -1547,6 +1678,67 @@ const ProjectIssueDashboard = () => {
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
   }, [issues, selectedProjectName, selectedE2Detailer, selectedTechDetails, hasStatusFilter, selectedStatusSet, selectedDateRange, tagAliasByLowerTag]);
+
+  const e2TagCounts = useMemo(() => {
+    const normalizedProjectName = normalizeValue(selectedProjectName).toLowerCase();
+    const normalizedSelectedDetailer = normalizeValue(selectedE2Detailer).toLowerCase();
+    const normalizedSelectedTechDetails = normalizeValue(selectedTechDetails).toLowerCase();
+    const normalizedSelectedE2StatusChartTarget = normalizeValue(selectedE2StatusChartTarget).toLowerCase();
+    const dateRangeBounds = getDateRangeBounds(selectedDateRange);
+
+    const counts = {};
+    issues.forEach((issue) => {
+      if (selectedProjectName && normalizeValue(getProjectNameDisplay(issue)).toLowerCase() !== normalizedProjectName) {
+        return;
+      }
+      if (selectedE2Detailer && normalizeValue(issue.e2Detailer).toLowerCase() !== normalizedSelectedDetailer) {
+        return;
+      }
+      if (selectedTechDetails && normalizeValue(issue.techDetailsAvailable).toLowerCase() !== normalizedSelectedTechDetails) {
+        return;
+      }
+      if (hasStatusFilter && !selectedStatusSet.has(normalizeValue(issue.status).toLowerCase())) {
+        return;
+      }
+      if (
+        normalizedSelectedE2StatusChartTarget &&
+        normalizeValue(getDefaultE2StatusUpdate(issue.e2StatusUpdate)).toLowerCase() !==
+          normalizedSelectedE2StatusChartTarget
+      ) {
+        return;
+      }
+      if (dateRangeBounds) {
+        const d = parseStatusUpdateDate(issue.e2StatusDate);
+        if (!d || d < dateRangeBounds[0] || d > dateRangeBounds[1]) return;
+      }
+
+      const tags = parseTagValues(issue.e2Tags);
+      if (!tags.length) {
+        counts["No E2 Tag"] = (counts["No E2 Tag"] || 0) + 1;
+        return;
+      }
+
+      tags.forEach((tag) => {
+        counts[tag] = (counts[tag] || 0) + 1;
+      });
+    });
+
+    return Object.entries(counts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [issues, selectedProjectName, selectedE2Detailer, selectedTechDetails, hasStatusFilter, selectedStatusSet, selectedDateRange, selectedE2StatusChartTarget, tagAliasByLowerTag]);
+
+  useEffect(() => {
+    const normalizedTarget = normalizeValue(selectedE2StatusChartTarget).toLowerCase();
+    if (!normalizedTarget) return;
+
+    const targetStillExists = e2StatusUpdateCounts.some(
+      (item) => normalizeValue(item.label).toLowerCase() === normalizedTarget
+    );
+    if (!targetStillExists) {
+      setSelectedE2StatusChartTarget("");
+    }
+  }, [e2StatusUpdateCounts, selectedE2StatusChartTarget]);
 
   const e2StatusUpdateTimeframeLabel = useMemo(() => {
     const bounds = getDateRangeBounds(selectedDateRange);
@@ -2249,7 +2441,7 @@ const ProjectIssueDashboard = () => {
         updatedAt: new Date(),
       });
     } catch (error) {
-      console.error("Error updating Technical Details Available:", error);
+      console.error(`Error updating ${TECH_DETAILS_DISPLAY_LABEL}:`, error);
       setProjectSources((previous) => ({ ...previous, [issue.projectDocId]: previousSource }));
       setIssues((previous) =>
         previous.map((item) =>
@@ -2282,13 +2474,33 @@ const ProjectIssueDashboard = () => {
 
     setPendingTechDetailsIssueKey("");
 
-    const launchPopup = () => {
+    const launchPopup = async () => {
+      let e2Comments = "";
+      let e2Documents = [];
+
+      try {
+        if (issue?.projectDocId) {
+          const projectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
+          if (projectSnapshot.exists()) {
+            const projectData = projectSnapshot.data();
+            const internalCardMeta = projectData?.internalCardMeta || {};
+            const cardMeta = internalCardMeta[issue.id] || {};
+            e2Comments = normalizeValue(cardMeta.e2Comments) || "";
+            e2Documents = Array.isArray(cardMeta.e2Documents) ? cardMeta.e2Documents : [];
+          }
+        }
+      } catch (err) {
+        console.error("Error loading E2 metadata for popup:", err);
+      }
+
       setTechDetailsPopup({
         open: true,
         issueKey: issue.key,
         e2StatusUpdate: "",
         e2Detailer: "",
         e2DetailerSupportTeam: sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions),
+        e2Comments: e2Comments,
+        e2Documents: e2Documents,
       });
       setPopupSupportTeamMenuOpen(false);
     };
@@ -2464,6 +2676,8 @@ const ProjectIssueDashboard = () => {
         e2StatusUpdate: "",
         e2Detailer: "",
         e2DetailerSupportTeam: [],
+        e2Comments: "",
+        e2Documents: [],
       });
       setPopupSupportTeamMenuOpen(false);
       toast.success("Technical details workflow completed.");
@@ -2945,6 +3159,62 @@ const ProjectIssueDashboard = () => {
     setSavingMarkupTags(false);
   };
 
+  const saveMarkupTagsToIssue = async (tagsToSave) => {
+    const issue = issues.find((item) => item.key === markupPopup.issueKey);
+    if (!id || !issue?.projectDocId) {
+      return;
+    }
+
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) {
+      return;
+    }
+
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) {
+      return;
+    }
+
+    const previousRowData = targetRow?.rowData || {};
+    const tagsFieldName = findFieldByAliases(previousFields, previousRowData, E2_TAGS_FIELD_ALIASES) || "E2 Tags";
+    const nextValue = tagsToSave.join(", ");
+    const previousValue = normalizeValue(previousRowData[tagsFieldName]);
+
+    if (nextValue === previousValue) {
+      return;
+    }
+
+    const updatedRowData = { ...previousRowData, [tagsFieldName]: nextValue };
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    const updatedFields = previousFields.includes(tagsFieldName) ? previousFields : [...previousFields, tagsFieldName];
+
+    setSavingMarkupTags(true);
+
+    try {
+      await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+        fields: updatedFields,
+        rows: updatedRows,
+        updatedAt: new Date(),
+      });
+
+      const requiresTechnicalDetails = tagsToSave.some(
+        (tag) => normalizeValue(tag).toLowerCase() === "technical details"
+      );
+      if (requiresTechnicalDetails) {
+        openTechDetailsRequiredInformationPopup(issue);
+      }
+    } catch (error) {
+      console.error("Error auto-saving E2 Tags from markup popup:", error);
+      toast.error("Could not auto-save E2 Tags.");
+    } finally {
+      setSavingMarkupTags(false);
+    }
+  };
+
   const handleMarkupTagAdd = (valueOverride = "") => {
     const candidate = normalizeValue(valueOverride || markupTagInput);
     if (!candidate) return;
@@ -2952,14 +3222,22 @@ const ProjectIssueDashboard = () => {
     setMarkupTagValues((previous) => {
       const exists = previous.some((value) => value.toLowerCase() === candidate.toLowerCase());
       if (exists) return previous;
-      return [...previous, candidate];
+      const updated = [...previous, candidate];
+      // Auto-save to issue
+      saveMarkupTagsToIssue(updated);
+      return updated;
     });
     setMarkupTagInput("");
   };
 
   const handleMarkupTagRemove = (tagToRemove) => {
     const removeKey = normalizeValue(tagToRemove).toLowerCase();
-    setMarkupTagValues((previous) => previous.filter((value) => value.toLowerCase() !== removeKey));
+    setMarkupTagValues((previous) => {
+      const updated = previous.filter((value) => value.toLowerCase() !== removeKey);
+      // Auto-save to issue
+      saveMarkupTagsToIssue(updated);
+      return updated;
+    });
   };
 
   const handleMarkupNavigate = (step) => {
@@ -3078,7 +3356,7 @@ const ProjectIssueDashboard = () => {
       );
       if (requiresTechnicalDetails) {
         openTechDetailsRequiredInformationPopup(issue);
-        toast.info("E2 Tags saved. Technical Details Available - Required Information opened.");
+        toast.info(`E2 Tags saved. ${TECH_DETAILS_DISPLAY_LABEL} - Required Information opened.`);
         return;
       }
 
@@ -3106,6 +3384,153 @@ const ProjectIssueDashboard = () => {
     });
   };
 
+
+
+
+
+  const saveTechDetailsPopupE2Comments = async () => {
+    const issue = issues.find((item) => item.key === techDetailsPopup.issueKey);
+    if (!id || !issue?.projectDocId) {
+      toast.error("Could not save comments.");
+      return;
+    }
+
+    setTechDetailsPopupSavingComments(true);
+
+    try {
+      const projectDoc = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+      const snapshot = await getDoc(projectDoc);
+      const data = snapshot.data();
+      const internalCardMeta = data?.internalCardMeta || {};
+
+      internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
+      internalCardMeta[issue.id].e2Comments = normalizeValue(techDetailsPopup.e2Comments);
+
+      await updateDoc(projectDoc, { internalCardMeta });
+      toast.success("E2 Comments saved.");
+    } catch (err) {
+      console.error("Error saving E2 Comments:", err);
+      toast.error("Could not save E2 Comments.");
+    } finally {
+      setTechDetailsPopupSavingComments(false);
+    }
+  };
+
+  const handleTechDetailsPopupDocumentUpload = async (event) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const issue = issues.find((item) => item.key === techDetailsPopup.issueKey);
+    if (!id || !issue?.projectDocId) {
+      toast.error("Issue data not fully loaded.");
+      return;
+    }
+
+    const allowedCount = 3 - techDetailsPopup.e2Documents.length;
+    if (allowedCount <= 0) {
+      toast.warn("Maximum 3 documents allowed.");
+      return;
+    }
+
+    const filesToUpload = Array.from(files).slice(0, allowedCount);
+    if (filesToUpload.length < files.length) {
+      toast.warn(`Only ${allowedCount} document(s) can be added.`);
+    }
+
+    setTechDetailsPopupUploadingDocuments(true);
+
+    try {
+      const uploadedDocs = [];
+
+      for (const file of filesToUpload) {
+        const safeCardKey = issue.id.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const ext = file.name.split(".").pop();
+        const timestamp = Date.now();
+        const storagePath = `churches/${id}/bimProjects/${issue.projectDocId}/e2-documents/${safeCardKey}/${timestamp}.${ext}`;
+        const fileRef = storageRef(storage, storagePath);
+
+        await uploadBytes(fileRef, file);
+        const downloadURL = await getDownloadURL(fileRef);
+
+        uploadedDocs.push({
+          name: file.name,
+          url: downloadURL,
+          uploadedAt: new Date().toISOString(),
+          storagePath,
+        });
+      }
+
+      const projectDoc = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+      const snapshot = await getDoc(projectDoc);
+      const data = snapshot.data();
+      const internalCardMeta = data?.internalCardMeta || {};
+
+      internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
+      internalCardMeta[issue.id].e2Documents = [...(internalCardMeta[issue.id].e2Documents || []), ...uploadedDocs];
+
+      await updateDoc(projectDoc, { internalCardMeta });
+
+      setTechDetailsPopup((prev) => ({
+        ...prev,
+        e2Documents: [...prev.e2Documents, ...uploadedDocs],
+      }));
+      toast.success(`${uploadedDocs.length} document(s) uploaded.`);
+    } catch (err) {
+      console.error("Error uploading documents:", err);
+      toast.error(err?.message || "Could not upload document(s).");
+    } finally {
+      setTechDetailsPopupUploadingDocuments(false);
+      if (techDetailsPopupFileInputRef.current) {
+        techDetailsPopupFileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const deleteTechDetailsPopupDocument = async (index) => {
+    if (index < 0 || index >= techDetailsPopup.e2Documents.length) return;
+
+    const docToDelete = techDetailsPopup.e2Documents[index];
+    const confirmed = window.confirm(`Delete "${docToDelete.name}"?`);
+    if (!confirmed) return;
+
+    setTechDetailsPopupSavingComments(true);
+
+    try {
+      const issue = issues.find((item) => item.key === techDetailsPopup.issueKey);
+      if (!issue?.projectDocId) throw new Error("Issue not found");
+
+      if (docToDelete.storagePath) {
+        const fileRef = storageRef(storage, docToDelete.storagePath);
+        await deleteObject(fileRef).catch((err) => {
+          if (err.code !== "storage/object-not-found") throw err;
+        });
+      }
+
+      const projectDoc = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+      const snapshot = await getDoc(projectDoc);
+      const data = snapshot.data();
+      const internalCardMeta = data?.internalCardMeta || {};
+
+      internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
+      const updatedDocs = internalCardMeta[issue.id].e2Documents || [];
+      updatedDocs.splice(index, 1);
+      internalCardMeta[issue.id].e2Documents = updatedDocs;
+
+      await updateDoc(projectDoc, { internalCardMeta });
+
+      setTechDetailsPopup((prev) => ({
+        ...prev,
+        e2Documents: prev.e2Documents.filter((_, i) => i !== index),
+      }));
+      toast.success("Document deleted.");
+    } catch (err) {
+      console.error("Error deleting document:", err);
+      toast.error("Could not delete document.");
+    } finally {
+      setTechDetailsPopupSavingComments(false);
+    }
+  };
+
   return (
     <div style={commonStyles.fullWidthContainer}>
       <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
@@ -3131,7 +3556,8 @@ const ProjectIssueDashboard = () => {
                   hasStatusFilter && `Status: ${selectedStatuses.join(", ")}`,
                   selectedE2Detailer && `E2 Lead Detailer: ${selectedE2Detailer}`,
                   selectedE2StatusUpdate && `E2 Status Update: ${selectedE2StatusUpdate}`,
-                  selectedTechDetails && `Technical Details Available: ${selectedTechDetails}`,
+                  selectedTechDetails && `${TECH_DETAILS_DISPLAY_LABEL}: ${selectedTechDetails}`,
+                  hasE2TagFilter && `E2 Tags: ${selectedE2Tags.join(", ")}`,
                   globalSearch && `Search: ${globalSearch}`,
                 ]
                   .filter(Boolean)
@@ -3182,9 +3608,12 @@ const ProjectIssueDashboard = () => {
                 <button type="button" className="project-issue-add-btn" onClick={openAddIssuePopup}>
                   Add New Issue
                 </button>
-                <button type="button" className="project-issue-reporting-btn" onClick={openReceivedReporting}>
-                  📊 Actionable Reporting
-                </button>
+                <Link
+                  to={`/organization/${id}/agile-dashboard`}
+                  className="project-issue-add-btn"
+                >
+                  📊 Agile Development Dashboard
+                </Link>
               </div>
             </div>
           </div>
@@ -3268,50 +3697,105 @@ const ProjectIssueDashboard = () => {
             )}
 
             {chartTab === "e2status" && (
-              <div className="project-issue-summary-chart" aria-label="E2 Status Update summary chart">
-                <div className="project-issue-summary-chart-heading">
-                  <div className="project-issue-summary-chart-timeframe">{e2StatusUpdateTimeframeLabel}</div>
-                </div>
-                {e2StatusUpdateCounts.length === 0 ? (
-                  <div className="project-issue-summary-empty">No data</div>
-                ) : (
-                  (() => {
-                    const e2StatusTotalCount = e2StatusUpdateCounts.reduce((sum, item) => sum + Number(item.count || 0), 0);
-                    const hasE2StatusSelection = !!normalizeValue(selectedE2StatusUpdate);
-                    const selectedE2StatusLower = normalizeValue(selectedE2StatusUpdate).toLowerCase();
+              <div className="project-issue-e2status-grid" aria-label="E2 Status Update and E2 Tags summary charts">
+                <div className="project-issue-summary-chart project-issue-summary-chart--e2status-section" aria-label="E2 Status Update summary chart">
+                  <div className="project-issue-summary-chart-heading">
+                    <div className="project-issue-summary-chart-title">Count by E2 Status Update</div>
+                    <div className="project-issue-summary-chart-timeframe">{e2StatusUpdateTimeframeLabel}</div>
+                  </div>
+                  {e2StatusUpdateCounts.length === 0 ? (
+                    <div className="project-issue-summary-empty">No data</div>
+                  ) : (
+                    (() => {
+                      const e2StatusTotalCount = e2StatusUpdateCounts.reduce((sum, item) => sum + Number(item.count || 0), 0);
+                      const hasE2StatusSelection = !!normalizeValue(selectedE2StatusChartTarget);
+                      const selectedE2StatusLower = normalizeValue(selectedE2StatusChartTarget).toLowerCase();
 
-                    return e2StatusUpdateCounts.map(({ label, count }) => {
-                      const pct = e2StatusTotalCount ? Math.round((count / e2StatusTotalCount) * 100) : 0;
-                      const isSelected = normalizeValue(label).toLowerCase() === selectedE2StatusLower;
-                      const rowClassName = `project-issue-summary-row e2status-summary-row${hasE2StatusSelection && isSelected ? " is-highlighted" : ""}${hasE2StatusSelection && !isSelected ? " is-dimmed" : ""}`;
-                    const e2Format = e2StatusUpdateFormatByLowerValue[label.toLowerCase()] || {};
-                    const customBgColor = normalizeValue(e2Format.backgroundColor);
-                    const barStyle = {
-                      width: `${e2StatusTotalCount ? Math.max((count / e2StatusTotalCount) * 100, 2) : 0}%`,
-                    };
-                    if (customBgColor) {
-                      barStyle.background = customBgColor;
-                    }
-                    return (
-                      <div key={label} className={rowClassName}>
-                        <div className="project-issue-summary-meta">
-                          <span>{label}</span>
-                          <span className="project-issue-summary-count-pct">
-                            <strong>{count}</strong>
-                            <span className="project-issue-summary-pct">{pct}%</span>
-                          </span>
-                        </div>
-                        <div className="project-issue-summary-track">
-                          <div
-                            className="project-issue-summary-fill"
-                            style={barStyle}
-                          />
-                        </div>
-                      </div>
-                    );
-                    });
-                  })()
-                )}
+                      return e2StatusUpdateCounts.map(({ label, count }) => {
+                        const pct = e2StatusTotalCount ? Math.round((count / e2StatusTotalCount) * 100) : 0;
+                        const isSelected = normalizeValue(label).toLowerCase() === selectedE2StatusLower;
+                        const rowClassName = `project-issue-summary-row e2status-summary-row${hasE2StatusSelection && isSelected ? " is-highlighted" : ""}${hasE2StatusSelection && !isSelected ? " is-dimmed" : ""}`;
+                        const e2Format = e2StatusUpdateFormatByLowerValue[label.toLowerCase()] || {};
+                        const customBgColor = normalizeValue(e2Format.backgroundColor);
+                        const barStyle = {
+                          width: `${e2StatusTotalCount ? Math.max((count / e2StatusTotalCount) * 100, 2) : 0}%`,
+                        };
+                        if (customBgColor) {
+                          barStyle.background = customBgColor;
+                        }
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            className={`${rowClassName} project-issue-summary-track-link`}
+                            onClick={() => {
+                              setSelectedE2StatusChartTarget((previous) =>
+                                normalizeValue(previous).toLowerCase() === normalizeValue(label).toLowerCase() ? "" : label
+                              );
+                            }}
+                            aria-pressed={isSelected}
+                            title={`Show E2 tag counts for ${label}`}
+                          >
+                            <div className="project-issue-summary-meta">
+                              <span>{label}</span>
+                              <span className="project-issue-summary-count-pct">
+                                <strong>{count}</strong>
+                                <span className="project-issue-summary-pct">{pct}%</span>
+                              </span>
+                            </div>
+                            <div className="project-issue-summary-track">
+                              <div
+                                className="project-issue-summary-fill"
+                                style={barStyle}
+                              />
+                            </div>
+                          </button>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+
+                <div className="project-issue-summary-chart project-issue-summary-chart--e2status-section" aria-label="E2 Tags summary chart">
+                  <div className="project-issue-summary-chart-heading">
+                    <div className="project-issue-summary-chart-title">Count by E2 Tags</div>
+                    <div className="project-issue-summary-chart-timeframe">
+                      {normalizeValue(selectedE2StatusChartTarget)
+                        ? `Target: ${selectedE2StatusChartTarget} | ${e2StatusUpdateTimeframeLabel}`
+                        : e2StatusUpdateTimeframeLabel}
+                    </div>
+                  </div>
+                  {e2TagCounts.length === 0 ? (
+                    <div className="project-issue-summary-empty">No data</div>
+                  ) : (
+                    (() => {
+                      const e2TagTotalCount = e2TagCounts.reduce((sum, item) => sum + Number(item.count || 0), 0);
+                      return e2TagCounts.map(({ label, count }) => {
+                        const pct = e2TagTotalCount ? Math.round((count / e2TagTotalCount) * 100) : 0;
+                        const barStyle = {
+                          width: `${e2TagTotalCount ? Math.max((count / e2TagTotalCount) * 100, 2) : 0}%`,
+                        };
+                        return (
+                          <div key={label} className="project-issue-summary-row e2tags-summary-row">
+                            <div className="project-issue-summary-meta">
+                              <span>{label}</span>
+                              <span className="project-issue-summary-count-pct">
+                                <strong>{count}</strong>
+                                <span className="project-issue-summary-pct">{pct}%</span>
+                              </span>
+                            </div>
+                            <div className="project-issue-summary-track">
+                              <div
+                                className="project-issue-summary-fill is-e2tags"
+                                style={barStyle}
+                              />
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
               </div>
             )}
 
@@ -3519,7 +4003,7 @@ const ProjectIssueDashboard = () => {
             <details className="project-issue-filter-visibility" ref={manageFiltersRef}>
               <summary className="project-issue-filter-trigger">
                 <span className="project-issue-filter-accordion-label">
-                  Manage Filters ({visibleFilterCount}/8)
+                  Manage Filters ({visibleFilterCount}/9)
                 </span>
                 <span className="project-issue-filter-accordion-icon" aria-hidden="true">▾</span>
               </summary>
@@ -3577,7 +4061,16 @@ const ProjectIssueDashboard = () => {
                       checked={!!filterVisibility.techDetails}
                       onChange={() => toggleFilterVisibility("techDetails")}
                     />
-                    <span>Technical Details Available</span>
+                    <span>{TECH_DETAILS_DISPLAY_LABEL}</span>
+                  </label>
+                  <label className="project-issue-filter-option">
+                    <input
+                      type="checkbox"
+                      className="project-issue-filter-checkbox"
+                      checked={!!filterVisibility.e2Tags}
+                      onChange={() => toggleFilterVisibility("e2Tags")}
+                    />
+                    <span>E2 Tags</span>
                   </label>
                   <label className="project-issue-filter-option">
                     <input
@@ -3758,15 +4251,62 @@ const ProjectIssueDashboard = () => {
               className={`project-issue-filter-trigger ${selectedTechDetails ? "is-selected" : ""}`}
               value={selectedTechDetails}
               onChange={(event) => setSelectedTechDetails(event.target.value)}
-              aria-label="Filter Technical Details Available"
+              aria-label={`Filter ${TECH_DETAILS_DISPLAY_LABEL}`}
             >
-              <option value="">Filter Technical Details Available</option>
+              <option value="">{`Filter ${TECH_DETAILS_DISPLAY_LABEL}`}</option>
               {techDetailsOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
             </select>
+          </div>
+          )}
+
+          {filterVisibility.e2Tags && (
+          <div className="project-issue-e2tags-filter" aria-label="Filter E2 Tags">
+            <div className="project-issue-e2tags-filter-head">
+              <span className="project-issue-e2tags-filter-title">E2 Tags</span>
+              {hasE2TagFilter ? (
+                <button
+                  type="button"
+                  className="project-issue-e2tags-filter-clear"
+                  onClick={() => setSelectedE2Tags([])}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+            <div className="project-issue-e2tags-pills" role="group" aria-label="E2 tag options">
+              {e2TagFilterOptions.length === 0 ? (
+                <span className="project-issue-filter-empty">No E2 tags found</span>
+              ) : (
+                e2TagFilterOptions.map(({ label, count }) => {
+                  const normalizedLabel = normalizeValue(label).toLowerCase();
+                  const isActive = selectedE2TagSet.has(normalizedLabel);
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      className={`project-issue-e2tags-pill${isActive ? " is-active" : ""}`}
+                      onClick={() => {
+                        setSelectedE2Tags((previous) => {
+                          const exists = previous.some((value) => normalizeValue(value).toLowerCase() === normalizedLabel);
+                          return exists
+                            ? previous.filter((value) => normalizeValue(value).toLowerCase() !== normalizedLabel)
+                            : [...previous, label];
+                        });
+                      }}
+                      aria-pressed={isActive}
+                      title={`Filter by ${label}`}
+                    >
+                      <span className="project-issue-e2tags-pill-label">{label}</span>
+                      <span className="project-issue-e2tags-pill-count">{count}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
           )}
 
@@ -3801,40 +4341,56 @@ const ProjectIssueDashboard = () => {
           <table className="project-issue-table">
             <thead>
               <tr>
-                <th>Issue ID</th>
-                <th>Title</th>
-                <th>Project Name</th>
-                <th>Markup</th>
-                <th>E2 Tags</th>
-                <th style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}>Status</th>
-                <th>
-                  <span className="project-issue-th-with-info">
-                    <span>E2 Status Update</span>
-                    <button
-                      type="button"
-                      className="project-issue-th-info-btn"
-                      onClick={() => setShowE2StatusInfoPopup(true)}
-                      aria-label="Show E2 Status Update information"
-                      title="Status definitions"
-                    >
-                      <FaInfoCircle aria-hidden="true" className="project-issue-th-info-icon" />
-                    </button>
-                  </span>
-                </th>
-                <th>Priority</th>
-                <th>Owner</th>
-                <th>Due Date</th>
-                <th>Days Since Created</th>
-                <th>E2 Lead Detailer</th>
-                <th>E2 Detailer Support Team</th>
-                <th>Technical Details Available</th>
-                <th>Status Update<br />Date</th>
+                {visibleColumns.has("Issue ID") && (
+                  <th>
+                    <span className="project-issue-th-with-tools">
+                      <span>Issue ID</span>
+                      <button
+                        type="button"
+                        className="project-issue-th-tools-btn"
+                        onClick={() => setShowColumnVisibilityPopup(true)}
+                        aria-label="Manage column visibility"
+                        title="Show/hide columns"
+                      >
+                        <FaCog aria-hidden="true" className="project-issue-th-tools-icon" />
+                      </button>
+                    </span>
+                  </th>
+                )}
+                {visibleColumns.has("Title") && <th>Title</th>}
+                {visibleColumns.has("Project Name") && <th>Project Name</th>}
+                {visibleColumns.has("Markup") && <th>Markup</th>}
+                {visibleColumns.has("E2 Tags") && <th>E2 Tags</th>}
+                {visibleColumns.has("Status") && <th style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}>Status</th>}
+                {visibleColumns.has("E2 Status Update") && (
+                  <th>
+                    <span className="project-issue-th-with-info">
+                      <span>E2 Status Update</span>
+                      <button
+                        type="button"
+                        className="project-issue-th-info-btn"
+                        onClick={() => setShowE2StatusInfoPopup(true)}
+                        aria-label="Show E2 Status Update information"
+                        title="Status definitions"
+                      >
+                        <FaInfoCircle aria-hidden="true" className="project-issue-th-info-icon" />
+                      </button>
+                    </span>
+                  </th>
+                )}
+                {visibleColumns.has("Priority") && <th>Priority</th>}
+                {visibleColumns.has("Due Date") && <th>Due Date</th>}
+                {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
+                {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
+                {visibleColumns.has("E2 Detailer Support Team") && <th>E2 Detailer Support Team</th>}
+                {visibleColumns.has(TECH_DETAILS_DISPLAY_LABEL) && <th>{TECH_DETAILS_DISPLAY_LABEL}</th>}
+                {visibleColumns.has("Status Update Date") && <th>Status Update<br />Date</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={15} className="project-issue-empty">
+                  <td colSpan={visibleColumns.size} className="project-issue-empty">
                     Loading BIM issues...
                   </td>
                 </tr>
@@ -3853,191 +4409,203 @@ const ProjectIssueDashboard = () => {
 
                 return (
                 <tr key={rowKey}>
-                  <td data-label="Issue ID">
-                    <Link
-                      to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${encodeURIComponent(issue.id)}`}
-                      className="project-issue-id-link"
-                    >
-                      <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
-                    </Link>
-                  </td>
-                  <td data-label="Title">{issue.title}</td>
-                  <td data-label="Project Name">{projectNameDisplay}</td>
-                  <td data-label="Markup">
-                    {issue.markupLink ? (
-                      <button
-                        type="button"
-                        className="project-issue-markup-thumb-btn"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          openMarkupPopupForIssue(issue);
-                        }}
-                        title={issue.markup || "Open markup"}
+                  {visibleColumns.has("Issue ID") && (
+                    <td data-label="Issue ID">
+                      <Link
+                        to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${encodeURIComponent(issue.id)}`}
+                        className="project-issue-id-link"
                       >
-                        <img
-                          src={issue.markupLink}
-                          alt={issue.markup || "Markup preview"}
-                          className="project-issue-markup-thumb"
-                        />
-                      </button>
-                    ) : (
-                      issue.markup || "-"
-                    )}
-                  </td>
-                  <td data-label="E2 Tags">{normalizeValue(issue.e2Tags) || "-"}</td>
-                  <td
-                    data-label="Status"
-                    style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}
-                  >
-                    <span className={`issue-status issue-status-${statusClassName}`} style={statusStyle}>
-                      {statusDisplayText}
-                    </span>
-                  </td>
-                  <td data-label="E2 Status Update">
-                    {(() => {
-                      const selectedE2Value = getDefaultE2StatusUpdate(issue.e2StatusUpdate);
-                      const e2Format = e2StatusUpdateFormatByLowerValue[
-                        normalizeValue(selectedE2Value).toLowerCase()
-                      ] || {};
-                      const e2ShellStyle = {
-                        color: normalizeValue(e2Format.textColor) || undefined,
-                        backgroundColor: normalizeValue(e2Format.backgroundColor) || undefined,
-                      };
-                      return (
-                        <div className="project-issue-cell-select-shell" style={e2ShellStyle}>
-                          <select
-                            className="project-issue-cell-input project-issue-cell-input--bare"
-                            value={selectedE2Value}
-                            onChange={(event) => {
-                              const nextValue = getDefaultE2StatusUpdate(event.target.value);
-                              handleE2StatusUpdateChange(issue.key, nextValue);
-                              handleE2StatusUpdateSave({ ...issue, e2StatusUpdate: nextValue }, nextValue);
-                            }}
-                            disabled={!!savingIssueKeys[`e2status:${issue.key}`]}
-                          >
-                            {e2StatusUpdateOptions.map((opt) => {
-                              const optionFormat =
-                                e2StatusUpdateFormatByLowerValue[normalizeValue(opt).toLowerCase()] || {};
-                              const optionStyle = {
-                                color: normalizeValue(optionFormat.textColor) || undefined,
-                                backgroundColor: normalizeValue(optionFormat.backgroundColor) || undefined,
-                              };
-                              return (
-                                <option key={opt} value={opt} style={optionStyle}>
-                                  {opt}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </div>
-                      );
-                    })()}
-                  </td>
-                  <td data-label="Priority">{issue.priority}</td>
-                  <td data-label="Owner">{issue.owner}</td>
-                  <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>
-                  <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>
-                  <td data-label="E2 Lead Detailer">
-                    <select
-                      className="project-issue-cell-input"
-                      value={issue.e2Detailer}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        if (isDetailerInSupportTeam(nextValue, issue.e2DetailerSupportTeam)) {
-                          openDetailerConflictPopup(nextValue);
-                          return;
-                        }
-                        handleE2DetailerChange(issue.key, nextValue);
-                        handleE2DetailerSave({ ...issue, e2Detailer: nextValue }, nextValue);
-                      }}
-                      disabled={!!savingIssueKeys[issue.key]}
+                        <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
+                      </Link>
+                    </td>
+                  )}
+                  {visibleColumns.has("Title") && <td data-label="Title">{issue.title}</td>}
+                  {visibleColumns.has("Project Name") && <td data-label="Project Name">{projectNameDisplay}</td>}
+                  {visibleColumns.has("Markup") && (
+                    <td data-label="Markup">
+                      {issue.markupLink ? (
+                        <button
+                          type="button"
+                          className="project-issue-markup-thumb-btn"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            openMarkupPopupForIssue(issue);
+                          }}
+                          title={issue.markup || "Open markup"}
+                        >
+                          <img
+                            src={issue.markupLink}
+                            alt={issue.markup || "Markup preview"}
+                            className="project-issue-markup-thumb"
+                          />
+                        </button>
+                      ) : (
+                        issue.markup || "-"
+                      )}
+                    </td>
+                  )}
+                  {visibleColumns.has("E2 Tags") && <td data-label="E2 Tags">{normalizeValue(issue.e2Tags) || "-"}</td>}
+                  {visibleColumns.has("Status") && (
+                    <td
+                      data-label="Status"
+                      style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}
                     >
-                      <option value="">Select E2 Lead Detailer</option>
-                      {e2DetailerOptions.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td data-label="E2 Detailer Support Team">
-                    {(() => {
-                      const selectedValues = sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions);
-                      const selectedLabel = selectedValues.join(", ") || "Select support team";
-                      const isSaving = !!savingIssueKeys[`supportteam:${issue.key}`];
-                      const isOpen = openSupportTeamMenuKey === issue.key;
-
-                      return (
-                        <div className="project-issue-support-team-dropdown">
-                          <button
-                            type="button"
-                            className="project-issue-support-team-trigger"
-                            aria-label="Select E2 Detailer Support Team"
-                            onClick={() => setOpenSupportTeamMenuKey((previous) => (previous === issue.key ? "" : issue.key))}
-                            disabled={isSaving}
-                          >
-                            <span className="project-issue-support-team-text">{selectedLabel}</span>
-                          </button>
-                          {isOpen ? (
-                          <div
-                            className="project-issue-support-team-menu"
-                            style={{ width: `${supportTeamMenuWidthCh}ch` }}
-                          >
-                            <div className="project-issue-support-team-menu-options">
-                            {e2DetailerOptions.map((name) => {
-                              const isChecked = selectedValues.some(
-                                (item) => item.toLowerCase() === name.toLowerCase()
-                              );
-                              const isCurrentDetailer =
-                                normalizeValue(issue.e2Detailer).toLowerCase() === name.toLowerCase();
-                              return (
-                                <button
-                                  key={name}
-                                  type="button"
-                                  className={`project-issue-support-team-option${
-                                    isChecked ? " is-selected" : ""
-                                  }${
-                                    isCurrentDetailer ? " is-disabled" : ""
-                                  }`}
-                                  disabled={isSaving || isCurrentDetailer}
-                                  onClick={() => {
-                                    const currentValues = sanitizeSupportTeamValues(
-                                      issue.e2DetailerSupportTeam,
-                                      e2DetailerOptions
-                                    );
-                                    const nextValues = currentValues.some(
-                                      (item) => item.toLowerCase() === name.toLowerCase()
-                                    )
-                                      ? currentValues.filter((item) => item.toLowerCase() !== name.toLowerCase())
-                                      : [...currentValues, name];
-                                    handleE2DetailerSupportTeamChange(issue.key, nextValues);
-                                    handleE2DetailerSupportTeamSave(
-                                      { ...issue, e2DetailerSupportTeam: formatSupportTeamValue(nextValues) },
-                                      nextValues
-                                    );
-                                  }}
-                                >
-                                  <span>{name}</span>
-                                </button>
-                              );
-                            })}
-                            </div>
-                            <div className="project-issue-support-team-menu-footer">
-                              <button
-                                type="button"
-                                className="project-issue-support-team-done-btn"
-                                onClick={() => setOpenSupportTeamMenuKey("")}
-                              >
-                                {selectedValues.length > 0 ? `Done (${selectedValues.length} selected)` : "Done"}
-                              </button>
-                            </div>
+                      <span className={`issue-status issue-status-${statusClassName}`} style={statusStyle}>
+                        {statusDisplayText}
+                      </span>
+                    </td>
+                  )}
+                  {visibleColumns.has("E2 Status Update") && (
+                    <td data-label="E2 Status Update">
+                      {(() => {
+                        const selectedE2Value = getDefaultE2StatusUpdate(issue.e2StatusUpdate);
+                        const e2Format = e2StatusUpdateFormatByLowerValue[
+                          normalizeValue(selectedE2Value).toLowerCase()
+                        ] || {};
+                        const e2ShellStyle = {
+                          color: normalizeValue(e2Format.textColor) || undefined,
+                          backgroundColor: normalizeValue(e2Format.backgroundColor) || undefined,
+                        };
+                        return (
+                          <div className="project-issue-cell-select-shell" style={e2ShellStyle}>
+                            <select
+                              className="project-issue-cell-input project-issue-cell-input--bare"
+                              value={selectedE2Value}
+                              onChange={(event) => {
+                                const nextValue = getDefaultE2StatusUpdate(event.target.value);
+                                handleE2StatusUpdateChange(issue.key, nextValue);
+                                handleE2StatusUpdateSave({ ...issue, e2StatusUpdate: nextValue }, nextValue);
+                              }}
+                              disabled={!!savingIssueKeys[`e2status:${issue.key}`]}
+                            >
+                              {e2StatusUpdateOptions.map((opt) => {
+                                const optionFormat =
+                                  e2StatusUpdateFormatByLowerValue[normalizeValue(opt).toLowerCase()] || {};
+                                const optionStyle = {
+                                  color: normalizeValue(optionFormat.textColor) || undefined,
+                                  backgroundColor: normalizeValue(optionFormat.backgroundColor) || undefined,
+                                };
+                                return (
+                                  <option key={opt} value={opt} style={optionStyle}>
+                                    {opt}
+                                  </option>
+                                );
+                              })}
+                            </select>
                           </div>
-                          ) : null}
-                        </div>
-                      );
-                    })()}
-                  </td>
-                  <td data-label="Technical Details Available">
+                        );
+                      })()}
+                    </td>
+                  )}
+                  {visibleColumns.has("Priority") && <td data-label="Priority">{issue.priority}</td>}
+                  {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
+                  {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
+                  {visibleColumns.has("E2 Lead Detailer") && (
+                    <td data-label="E2 Lead Detailer">
+                      <select
+                        className="project-issue-cell-input"
+                        value={issue.e2Detailer}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          if (isDetailerInSupportTeam(nextValue, issue.e2DetailerSupportTeam)) {
+                            openDetailerConflictPopup(nextValue);
+                            return;
+                          }
+                          handleE2DetailerChange(issue.key, nextValue);
+                          handleE2DetailerSave({ ...issue, e2Detailer: nextValue }, nextValue);
+                        }}
+                        disabled={!!savingIssueKeys[issue.key]}
+                      >
+                        <option value="">Select E2 Lead Detailer</option>
+                        {e2DetailerOptions.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
+                  {visibleColumns.has("E2 Detailer Support Team") && (
+                    <td data-label="E2 Detailer Support Team">
+                      {(() => {
+                        const selectedValues = sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions);
+                        const selectedLabel = selectedValues.join(", ") || "Select support team";
+                        const isSaving = !!savingIssueKeys[`supportteam:${issue.key}`];
+                        const isOpen = openSupportTeamMenuKey === issue.key;
+
+                        return (
+                          <div className="project-issue-support-team-dropdown">
+                            <button
+                              type="button"
+                              className="project-issue-support-team-trigger"
+                              aria-label="Select E2 Detailer Support Team"
+                              onClick={() => setOpenSupportTeamMenuKey((previous) => (previous === issue.key ? "" : issue.key))}
+                              disabled={isSaving}
+                            >
+                              <span className="project-issue-support-team-text">{selectedLabel}</span>
+                            </button>
+                            {isOpen ? (
+                            <div
+                              className="project-issue-support-team-menu"
+                              style={{ width: `${supportTeamMenuWidthCh}ch` }}
+                            >
+                              <div className="project-issue-support-team-menu-options">
+                              {e2DetailerOptions.map((name) => {
+                                const isChecked = selectedValues.some(
+                                  (item) => item.toLowerCase() === name.toLowerCase()
+                                );
+                                const isCurrentDetailer =
+                                  normalizeValue(issue.e2Detailer).toLowerCase() === name.toLowerCase();
+                                return (
+                                  <button
+                                    key={name}
+                                    type="button"
+                                    className={`project-issue-support-team-option${
+                                      isChecked ? " is-selected" : ""
+                                    }${
+                                      isCurrentDetailer ? " is-disabled" : ""
+                                    }`}
+                                    disabled={isSaving || isCurrentDetailer}
+                                    onClick={() => {
+                                      const currentValues = sanitizeSupportTeamValues(
+                                        issue.e2DetailerSupportTeam,
+                                        e2DetailerOptions
+                                      );
+                                      const nextValues = currentValues.some(
+                                        (item) => item.toLowerCase() === name.toLowerCase()
+                                      )
+                                        ? currentValues.filter((item) => item.toLowerCase() !== name.toLowerCase())
+                                        : [...currentValues, name];
+                                      handleE2DetailerSupportTeamChange(issue.key, nextValues);
+                                      handleE2DetailerSupportTeamSave(
+                                        { ...issue, e2DetailerSupportTeam: formatSupportTeamValue(nextValues) },
+                                        nextValues
+                                      );
+                                    }}
+                                  >
+                                    <span>{name}</span>
+                                  </button>
+                                );
+                              })}
+                              </div>
+                              <div className="project-issue-support-team-menu-footer">
+                                <button
+                                  type="button"
+                                  className="project-issue-support-team-done-btn"
+                                  onClick={() => setOpenSupportTeamMenuKey("")}
+                                >
+                                  {selectedValues.length > 0 ? `Done (${selectedValues.length} selected)` : "Done"}
+                                </button>
+                              </div>
+                            </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                  )}
+                  {visibleColumns.has(TECH_DETAILS_DISPLAY_LABEL) && (
+                  <td data-label={TECH_DETAILS_DISPLAY_LABEL}>
                     <select
                       ref={(element) => {
                         techDetailsFieldRefs.current[issue.key] = element;
@@ -4053,6 +4621,8 @@ const ProjectIssueDashboard = () => {
                       <option value="Yes">Yes</option>
                     </select>
                   </td>
+                  )}
+                  {visibleColumns.has("Status Update Date") && (
                   <td data-label="Status Update Date">
                     <input
                       type="text"
@@ -4069,12 +4639,13 @@ const ProjectIssueDashboard = () => {
                       disabled={!!savingIssueKeys[`e2date:${issue.key}`]}
                     />
                   </td>
+                  )}
                 </tr>
               );
               })}
               {!loading && !visibleIssues.length ? (
                 <tr>
-                  <td colSpan={15} className="project-issue-empty">
+                  <td colSpan={visibleColumns.size} className="project-issue-empty">
                     No issues in this tab.
                   </td>
                 </tr>
@@ -4082,6 +4653,43 @@ const ProjectIssueDashboard = () => {
             </tbody>
           </table>
         </div>
+
+        {showColumnVisibilityPopup ? (
+          <div
+            className="project-issue-popup-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Column visibility settings"
+            onClick={() => setShowColumnVisibilityPopup(false)}
+          >
+            <div className="project-issue-column-visibility-popup" onClick={(event) => event.stopPropagation()}>
+              <div className="project-issue-column-visibility-header">
+                <strong>Show/Hide Columns</strong>
+                <button
+                  type="button"
+                  className="project-issue-popup-close"
+                  onClick={() => setShowColumnVisibilityPopup(false)}
+                  aria-label="Close column visibility popup"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="project-issue-column-visibility-body">
+                {AVAILABLE_COLUMNS.map((columnName) => (
+                  <label key={columnName} className="project-issue-column-visibility-label">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns.has(columnName)}
+                      onChange={() => toggleColumnVisibility(columnName)}
+                      className="project-issue-column-visibility-checkbox"
+                    />
+                    <span>{columnName}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {lightboxUrl ? (
@@ -4115,17 +4723,35 @@ const ProjectIssueDashboard = () => {
             className="project-issue-popup-window"
             style={{
               width: `${markupPopupSize.width}px`,
-              height: `${markupPopupSize.height + 220}px`,
+              height: "auto",
+              maxHeight: "94vh",
             }}
           >
             <div className="project-issue-popup-head">
               <div className="project-issue-popup-title-group">
                 <strong className="project-issue-popup-title">
-                  {`Issue ID: ${normalizeIssueIdDisplay(markupPopup.issueId || markupPopup.label) || "-"}`}
+                  Issue ID: <span className="project-issue-popup-title-value">{normalizeIssueIdDisplay(markupPopup.issueId || markupPopup.label) || "-"}</span>
                 </strong>
-                <span className="project-issue-popup-title-status">
-                  {`E2 Status Update: ${getDefaultE2StatusUpdate(currentMarkupPopupIssue?.e2StatusUpdate) || "-"}`}
-                </span>
+                <div className="project-issue-popup-meta-row">
+                  <span className="project-issue-popup-title-status">
+                    E2 Status Update: <span className="project-issue-popup-title-value">{getDefaultE2StatusUpdate(currentMarkupPopupIssue?.e2StatusUpdate) || "-"}</span>
+                  </span>
+                  <span className="project-issue-popup-title-status">
+                    Tags: <span className="project-issue-popup-title-value">{normalizeValue(currentMarkupPopupIssue?.tags) || "-"}</span>
+                  </span>
+                  <span className="project-issue-popup-title-status">
+                    Grid: <span className="project-issue-popup-title-value">{normalizeValue(currentMarkupPopupIssue?.grid) || "-"}</span>
+                  </span>
+                  <span className="project-issue-popup-title-status">
+                    Level: <span className="project-issue-popup-title-value">{normalizeValue(currentMarkupPopupIssue?.level) || "-"}</span>
+                  </span>
+                  <span className="project-issue-popup-title-status">
+                    Room: <span className="project-issue-popup-title-value">{normalizeValue(currentMarkupPopupIssue?.room) || "-"}</span>
+                  </span>
+                  <span className="project-issue-popup-title-status">
+                    Zone: <span className="project-issue-popup-title-value">{normalizeValue(currentMarkupPopupIssue?.zone) || "-"}</span>
+                  </span>
+                </div>
               </div>
               <div className="project-issue-popup-head-actions">
                 <span className="project-issue-popup-nav-index">
@@ -4159,6 +4785,7 @@ const ProjectIssueDashboard = () => {
               alt={markupPopup.label || "Markup"}
               className="project-issue-popup-image"
               onLoad={handleMarkupImageLoad}
+              style={{ height: `${markupPopupSize.height}px` }}
             />
             <div className="project-issue-popup-tags-row">
               <label className="project-issue-popup-tags-label" htmlFor="markup-e2-tags-input">E2 Tags</label>
@@ -4207,15 +4834,7 @@ const ProjectIssueDashboard = () => {
                     onClick={() => handleMarkupTagAdd()}
                     disabled={savingMarkupTags || !normalizeValue(markupTagInput)}
                   >
-                    Add
-                  </button>
-                  <button
-                    type="button"
-                    className="project-issue-tags-save-btn"
-                    onClick={handleMarkupTagsSave}
-                    disabled={savingMarkupTags || !markupPopup.issueKey}
-                  >
-                    {savingMarkupTags ? "..." : "Save"}
+                    {savingMarkupTags ? "..." : "Add"}
                   </button>
                 </div>
 
@@ -4592,10 +5211,10 @@ const ProjectIssueDashboard = () => {
       </datalist>
 
       {techDetailsPopup.open ? (
-        <div className="project-issue-popup-overlay" role="dialog" aria-modal="true" aria-label="Technical Details Required">
+        <div className="project-issue-popup-overlay" role="dialog" aria-modal="true" aria-label={`${TECH_DETAILS_DISPLAY_LABEL} Required`}>
           <div className="project-issue-tech-details-popup-window" onClick={(event) => event.stopPropagation()}>
             <div className="project-issue-popup-head">
-              <strong className="project-issue-popup-title">Technical Details Available - Required Information</strong>
+              <strong className="project-issue-popup-title">{`${TECH_DETAILS_DISPLAY_LABEL} - Required Information`}</strong>
             </div>
 
             <div className="project-issue-tech-details-popup-body">
@@ -4726,6 +5345,104 @@ const ProjectIssueDashboard = () => {
                     </div>
                   </div>
                 ) : null}
+              </div>
+
+              <div className="project-issue-tech-details-e2-section">
+                <div className="project-issue-tech-details-e2-box">
+                  <h3 className="project-issue-tech-details-e2-title">E2 Comments</h3>
+                  <textarea
+                    className="project-issue-tech-details-e2-textarea"
+                    value={techDetailsPopup.e2Comments}
+                    onChange={(e) =>
+                      setTechDetailsPopup((prev) => ({
+                        ...prev,
+                        e2Comments: e.target.value,
+                      }))
+                    }
+                    placeholder="Add notes, observations, or feedback for E2 team members..."
+                    rows={4}
+                    disabled={techDetailsPopupSavingComments || submittingTechDetailsPopup}
+                  />
+                  <div className="project-issue-tech-details-e2-actions">
+                    <button
+                      type="button"
+                      className="project-issue-tech-details-e2-save-btn"
+                      onClick={saveTechDetailsPopupE2Comments}
+                      disabled={techDetailsPopupSavingComments || submittingTechDetailsPopup}
+                    >
+                      {techDetailsPopupSavingComments ? "Saving..." : "Save Comments"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="project-issue-tech-details-e2-box">
+                  <h3 className="project-issue-tech-details-e2-title">
+                    E2 Documents
+                    <span className="project-issue-tech-details-e2-count">
+                      ({techDetailsPopup.e2Documents.length} / 3)
+                    </span>
+                  </h3>
+
+                  {techDetailsPopup.e2Documents.length < 3 && (
+                    <div className="project-issue-tech-details-upload-area">
+                      <input
+                        ref={techDetailsPopupFileInputRef}
+                        type="file"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
+                        multiple
+                        onChange={handleTechDetailsPopupDocumentUpload}
+                        disabled={techDetailsPopupUploadingDocuments || techDetailsPopup.e2Documents.length >= 3}
+                        style={{ display: "none" }}
+                      />
+                      <button
+                        type="button"
+                        className="project-issue-tech-details-upload-btn"
+                        onClick={() => techDetailsPopupFileInputRef.current?.click()}
+                        disabled={techDetailsPopupUploadingDocuments || techDetailsPopup.e2Documents.length >= 3}
+                      >
+                        {techDetailsPopupUploadingDocuments ? "Uploading..." : "📎 Add Document"}
+                      </button>
+                      <span className="project-issue-tech-details-upload-hint">
+                        {3 - techDetailsPopup.e2Documents.length} slot{3 - techDetailsPopup.e2Documents.length !== 1 ? "s" : ""} available
+                      </span>
+                    </div>
+                  )}
+
+                  {techDetailsPopup.e2Documents.length === 0 ? (
+                    <p className="project-issue-tech-details-no-docs">No documents attached yet.</p>
+                  ) : (
+                    <div className="project-issue-tech-details-doc-list">
+                      {techDetailsPopup.e2Documents.map((doc, index) => (
+                        <div key={index} className="project-issue-tech-details-doc-item">
+                          <div className="project-issue-tech-details-doc-info">
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="project-issue-tech-details-doc-name"
+                            >
+                              📄 {doc.name}
+                            </a>
+                            {doc.uploadedAt && (
+                              <span className="project-issue-tech-details-doc-date">
+                                {new Date(doc.uploadedAt).toLocaleDateString()} {new Date(doc.uploadedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="project-issue-tech-details-doc-delete"
+                            onClick={() => deleteTechDetailsPopupDocument(index)}
+                            disabled={techDetailsPopupSavingComments || submittingTechDetailsPopup}
+                            title="Delete this document"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="project-issue-tech-details-popup-actions">

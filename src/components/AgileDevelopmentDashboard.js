@@ -1,0 +1,413 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useParams, Link } from "react-router-dom";
+import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { toast } from "react-toastify";
+import { db } from "../firebase";
+import {
+  DEFAULT_E2_STATUS_UPDATE,
+  DEFAULT_E2_STATUS_UPDATE_OPTIONS,
+  E2_STATUS_UPDATE_OPTIONS_FIELD,
+  PROJECT_ISSUE_CONFIG_DOC_ID,
+} from "./projectIssueConstants";
+import "./AgileDevelopmentDashboard.css";
+
+const normalizeValue = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+};
+
+const getDefaultTechDetailsAvailable = (value) => normalizeValue(value) || "No";
+
+const normalizeFieldKey = (value) => normalizeValue(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+const dedupeValues = (values = []) => {
+  const seen = new Set();
+  return values
+    .map((item) => normalizeValue(item))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const toPhaseId = (value) => {
+  const normalized = normalizeValue(value).toLowerCase();
+  if (!normalized) return "phase-empty";
+  return `phase-${normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "empty"}`;
+};
+
+const getColumnsFromStatuses = (statusOptions = []) =>
+  statusOptions.map((status, index) => ({
+    id: toPhaseId(status),
+    name: status,
+    order: index,
+  }));
+
+const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
+  const normalizedAliases = aliases.map((alias) => normalizeFieldKey(alias));
+  const candidates = dedupeValues([...(Array.isArray(fields) ? fields : []), ...Object.keys(rowData || {})]);
+
+  for (const candidate of candidates) {
+    const key = normalizeFieldKey(candidate);
+    if (normalizedAliases.includes(key)) {
+      return candidate;
+    }
+  }
+
+  for (const aliasKey of normalizedAliases) {
+    const startsWith = candidates.find((candidate) => normalizeFieldKey(candidate).startsWith(aliasKey));
+    if (startsWith) return startsWith;
+
+    const includes = candidates.find((candidate) => normalizeFieldKey(candidate).includes(aliasKey));
+    if (includes) return includes;
+  }
+
+  return null;
+};
+
+const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
+const TITLE_ALIASES = ["title", "task title", "name"];
+const PROJECT_NAME_ALIASES = ["project name", "projectname"];
+const E2_STATUS_ALIASES = ["e2 status update", "e2statusupdate"];
+const TECH_DETAILS_ALIASES = ["technical details available", "technical details", "techdetailsavailable"];
+const LEAD_DETAILER_ALIASES = [
+  "e3 lead detailer",
+  "e3leaddetailer",
+  "e2 lead detailer",
+  "e2leaddetailer",
+  "e2 detailer",
+  "e2detailer",
+];
+
+const AgileDevelopmentDashboard = () => {
+  const { id } = useParams();
+  const [columns, setColumns] = useState(getColumnsFromStatuses(DEFAULT_E2_STATUS_UPDATE_OPTIONS));
+  const [issues, setIssues] = useState([]);
+  const [projectSources, setProjectSources] = useState({});
+  const [loadingConfig, setLoadingConfig] = useState(true);
+  const [loadingIssues, setLoadingIssues] = useState(true);
+  const [draggedIssueKey, setDraggedIssueKey] = useState("");
+  const [savingIssueKey, setSavingIssueKey] = useState("");
+  const [selectedProjectName, setSelectedProjectName] = useState("All");
+  const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
+  const [selectedTechDetails, setSelectedTechDetails] = useState("All");
+
+  useEffect(() => {
+    if (!id) return undefined;
+
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(
+      configRef,
+      (snapshot) => {
+        const data = snapshot.data() || {};
+        const configuredStatuses = Array.isArray(data[E2_STATUS_UPDATE_OPTIONS_FIELD])
+          ? data[E2_STATUS_UPDATE_OPTIONS_FIELD]
+          : [];
+        const normalizedStatuses = dedupeValues(configuredStatuses);
+        const finalStatuses = normalizedStatuses.some(
+          (status) => status.toLowerCase() === DEFAULT_E2_STATUS_UPDATE.toLowerCase()
+        )
+          ? normalizedStatuses
+          : [DEFAULT_E2_STATUS_UPDATE, ...(normalizedStatuses.length ? normalizedStatuses : DEFAULT_E2_STATUS_UPDATE_OPTIONS)];
+
+        setColumns(getColumnsFromStatuses(finalStatuses));
+        setLoadingConfig(false);
+      },
+      () => {
+        setColumns(getColumnsFromStatuses(DEFAULT_E2_STATUS_UPDATE_OPTIONS));
+        setLoadingConfig(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return undefined;
+
+    const projectsRef = collection(db, "churches", id, "bimProjects");
+    const unsubscribe = onSnapshot(
+      projectsRef,
+      (snapshot) => {
+        const nextProjectSources = {};
+        const nextIssues = [];
+
+        snapshot.forEach((projectDoc) => {
+          const projectData = projectDoc.data() || {};
+          const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+          const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+          const defaultProjectName = normalizeValue(projectData.name) || projectDoc.id;
+
+          nextProjectSources[projectDoc.id] = { fields, rows };
+
+          rows.forEach((row, rowIndex) => {
+            const rowData = row?.rowData || {};
+            const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
+            const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
+            const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
+            const statusField = findFieldByAliases(fields, rowData, E2_STATUS_ALIASES) || "E2 Status Update";
+            const techDetailsField = findFieldByAliases(fields, rowData, TECH_DETAILS_ALIASES);
+            const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
+
+            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
+            const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
+            const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "") || defaultProjectName;
+            const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
+            const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
+            const status = normalizeValue(statusField ? rowData[statusField] : "") || DEFAULT_E2_STATUS_UPDATE;
+
+            nextIssues.push({
+              key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
+              projectDocId: projectDoc.id,
+              rowIndex,
+              statusField,
+              issueId,
+              title,
+              projectName,
+              techDetailsAvailable,
+              e3LeadDetailer,
+              e2LeadDetailer: e3LeadDetailer,
+              status,
+            });
+          });
+        });
+
+        setProjectSources(nextProjectSources);
+        setIssues(nextIssues);
+        setLoadingIssues(false);
+      },
+      () => {
+        setProjectSources({});
+        setIssues([]);
+        setLoadingIssues(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [id]);
+
+  const loading = loadingConfig || loadingIssues;
+
+  const projectNameOptions = useMemo(
+    () => dedupeValues(issues.map((issue) => normalizeValue(issue.projectName))),
+    [issues]
+  );
+
+  const e2LeadDetailerOptions = useMemo(
+    () => dedupeValues(issues.map((issue) => normalizeValue(issue.e2LeadDetailer))),
+    [issues]
+  );
+
+  const techDetailsOptions = useMemo(
+    () => dedupeValues(issues.map((issue) => getDefaultTechDetailsAvailable(issue.techDetailsAvailable))).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    ),
+    [issues]
+  );
+
+  const visibleIssues = useMemo(() => {
+    return issues.filter((issue) => {
+      const projectMatched =
+        selectedProjectName === "All" || normalizeValue(issue.projectName) === selectedProjectName;
+      const detailerMatched =
+        selectedE2LeadDetailer === "All" || normalizeValue(issue.e2LeadDetailer) === selectedE2LeadDetailer;
+      const techDetailsMatched =
+        selectedTechDetails === "All" ||
+        getDefaultTechDetailsAvailable(issue.techDetailsAvailable) === selectedTechDetails;
+      return projectMatched && detailerMatched && techDetailsMatched;
+    });
+  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedTechDetails]);
+
+  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns]);
+
+  const handleDragStart = (issueKey) => {
+    setDraggedIssueKey(issueKey);
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+  };
+
+  const handleDrop = async (column) => {
+    if (!draggedIssueKey) return;
+
+    const issue = issues.find((item) => item.key === draggedIssueKey);
+    if (!issue) {
+      setDraggedIssueKey("");
+      return;
+    }
+
+    if (toPhaseId(issue.status) === column.id) {
+      setDraggedIssueKey("");
+      return;
+    }
+
+    const source = projectSources[issue.projectDocId];
+    if (!source) {
+      toast.error("Could not find source project for this issue.");
+      setDraggedIssueKey("");
+      return;
+    }
+
+    const rows = Array.isArray(source.rows) ? source.rows : [];
+    const targetRow = rows[issue.rowIndex];
+    if (!targetRow) {
+      toast.error("Could not find source row for this issue.");
+      setDraggedIssueKey("");
+      return;
+    }
+
+    const nextStatus = column.name;
+    const updatedRows = rows.map((row, index) => {
+      if (index !== issue.rowIndex) return row;
+      const rowData = row?.rowData || {};
+      return {
+        ...row,
+        rowData: {
+          ...rowData,
+          [issue.statusField || "E2 Status Update"]: nextStatus,
+        },
+      };
+    });
+
+    setSavingIssueKey(issue.key);
+
+    setProjectSources((previous) => ({
+      ...previous,
+      [issue.projectDocId]: {
+        ...previous[issue.projectDocId],
+        rows: updatedRows,
+      },
+    }));
+    setIssues((previous) =>
+      previous.map((item) => (item.key === issue.key ? { ...item, status: nextStatus } : item))
+    );
+
+    try {
+      const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+      await updateDoc(projectRef, { rows: updatedRows });
+      toast.success(`Moved to ${nextStatus}.`);
+    } catch (error) {
+      toast.error("Could not move the issue. Please try again.");
+      console.error("Error moving issue in Agile Dashboard:", error);
+    } finally {
+      setSavingIssueKey("");
+      setDraggedIssueKey("");
+    }
+  };
+
+  if (loading) {
+    return <div className="agile-dashboard-loading">Loading Agile Dashboard...</div>;
+  }
+
+  return (
+    <div className="agile-dashboard-wrapper">
+      <div className="agile-dashboard-header">
+        <div className="agile-dashboard-header-top">
+          <Link to={`/organization/${id}/project-issue-dashboard`} className="agile-dashboard-back-button">
+            ← Back to Live Issues Tracker
+          </Link>
+          <h1>Agile Development Dashboard</h1>
+        </div>
+        <div className="agile-dashboard-filters">
+          <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
+            <span>Project Name</span>
+            <select
+              id="agile-project-filter"
+              className="agile-dashboard-filter-select"
+              value={selectedProjectName}
+              onChange={(event) => setSelectedProjectName(event.target.value)}
+            >
+              <option value="All">All Projects</option>
+              {projectNameOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="agile-dashboard-filter-item" htmlFor="agile-detailer-filter">
+            <span>E2 Lead Detailer</span>
+            <select
+              id="agile-detailer-filter"
+              className="agile-dashboard-filter-select"
+              value={selectedE2LeadDetailer}
+              onChange={(event) => setSelectedE2LeadDetailer(event.target.value)}
+            >
+              <option value="All">All E2 Lead Detailers</option>
+              {e2LeadDetailerOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="agile-dashboard-filter-item" htmlFor="agile-tech-details-filter">
+            <span>T.D. Available</span>
+            <select
+              id="agile-tech-details-filter"
+              className="agile-dashboard-filter-select"
+              value={selectedTechDetails}
+              onChange={(event) => setSelectedTechDetails(event.target.value)}
+            >
+              <option value="All">All T.D. Available</option>
+              {techDetailsOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="agile-dashboard-board">
+        {sortedColumns.map((column) => {
+          const columnIssues = visibleIssues.filter((issue) => toPhaseId(issue.status) === column.id);
+
+          return (
+            <div key={column.id} className="agile-column">
+              <div className="agile-column-header">
+                <h2 className="agile-column-title">{column.name}</h2>
+              </div>
+
+              <div
+                className="agile-column-content"
+                onDragOver={handleDragOver}
+                onDrop={() => handleDrop(column)}
+              >
+                {columnIssues.map((issue) => (
+                  <div
+                    key={issue.key}
+                    className={`agile-card${savingIssueKey === issue.key ? " is-saving" : ""}`}
+                    draggable={savingIssueKey !== issue.key}
+                    onDragStart={() => handleDragStart(issue.key)}
+                  >
+                    <div className="agile-card-header">
+                      <div className="agile-card-primary-lines">
+                        <span className="agile-card-issue-id">{normalizeValue(issue.issueId) || "-"}</span>
+                        <span className="agile-card-title">{normalizeValue(issue.title) || "-"}</span>
+                        <span className="agile-card-detailer">{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="agile-column-footer">
+                <span className="agile-column-card-count">{columnIssues.length} cards</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+export default AgileDevelopmentDashboard;
