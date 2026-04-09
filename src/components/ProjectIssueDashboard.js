@@ -1,10 +1,12 @@
+const TECHNICAL_DIRECTION_FIELD = "Technical Direction";
+const TECHNICAL_DIRECTION_FIELD_ALIASES = ["technical direction", "technicaldirection"];
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
-import { FaInfoCircle, FaCog } from "react-icons/fa";
+import { FaInfoCircle, FaCog, FaEdit } from "react-icons/fa";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db, storage } from "../firebase";
@@ -354,6 +356,8 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const snapshotField = findFieldByAliases(fields, rowData, ["snapshot url", "snapshoturl", "snapshot", "picture", "photo", "image"]);
   const linkField = findFieldByAliases(fields, rowData, ["link", "url", "issue url", "card url", "task url", "issue link", "card link"]);
   const deadlineField = findFieldByAliases(fields, rowData, ["deadline", "due date", "due", "target date"]);
+  const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_FIELD_ALIASES);
+  const disableFlagField = findFieldByAliases(fields, rowData, ["disable flag", "disableflag"]);
   const idField = findFieldByAliases(fields, rowData, ["id", "task id", "card id", "row id"]);
 
   return {
@@ -366,6 +370,8 @@ const getCardPreview = (rowData = {}, fields = []) => {
     status: normalizeValue(statusField ? rowData?.[statusField] : ""),
     // priority: normalizeValue(priorityField ? rowData?.[priorityField] : ""),
     grid: normalizeValue(gridField ? rowData?.[gridField] : ""),
+    disableFlag: normalizeValue(disableFlagField ? rowData?.[disableFlagField] : "No"),
+    technicalDirection: normalizeValue(technicalDirectionField ? rowData?.[technicalDirectionField] : ""),
     level: normalizeValue(levelField ? rowData?.[levelField] : ""),
     room: normalizeValue(roomField ? rowData?.[roomField] : ""),
     zone: normalizeValue(zoneField ? rowData?.[zoneField] : ""),
@@ -720,7 +726,7 @@ const ProjectIssueDashboard = () => {
       }
     }
     // Default visible columns
-    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Due Date", "E2 Lead Detailer", TECH_DETAILS_DISPLAY_LABEL]);
+    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Technical Direction", "Due Date", "Disable Flag", TECH_DETAILS_DISPLAY_LABEL]);
   });
   const techDetailsFieldRefs = useRef({});
   const dailyIssuesInputRef = useRef(null);
@@ -806,8 +812,9 @@ const ProjectIssueDashboard = () => {
     "E2 Tags",
     "Status",
     "E2 Status Update",
-    // "Priority",
+    "Technical Direction",
     "Due Date",
+    "Disable Flag",
     "Days Since Created",
     "E2 Lead Detailer",
     "E2 Detailer Support Team",
@@ -1278,6 +1285,8 @@ const ProjectIssueDashboard = () => {
               markupLink: preview.markupLink,
               owner: normalizeValue(preview.assignee) || normalizeValue(internalMeta.internalAssignee) || "Unassigned",
               e2Detailer: preview.e2Detailer,
+              disableFlag: preview.disableFlag || "No",
+              technicalDirection: preview.technicalDirection || "",
               e2DetailerSupportTeam: preview.e2DetailerSupportTeam,
               e2StatusUpdate: preview.e2StatusUpdate,
               e2StatusDate: preview.e2StatusDate,
@@ -1475,6 +1484,8 @@ const ProjectIssueDashboard = () => {
         issue.markupLink,
         issue.owner,
         issue.e2Detailer,
+        issue.disableFlag,
+        issue.technicalDirection,
         issue.e2StatusUpdate,
         // issue.priority,
         issue.zone,
@@ -4368,11 +4379,14 @@ const ProjectIssueDashboard = () => {
                 )}
                 {/* Priority column removed */}
                 {visibleColumns.has("Due Date") && <th>Due Date</th>}
+                {visibleColumns.has("Disable Flag") && <th>Disable Flag</th>}
+                {visibleColumns.has("Technical Direction") && <th>Technical Direction</th>}
                 {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
                 {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
                 {visibleColumns.has("E2 Detailer Support Team") && <th>E2 Detailer Support Team</th>}
                 {visibleColumns.has(TECH_DETAILS_DISPLAY_LABEL) && <th>{TECH_DETAILS_DISPLAY_LABEL}</th>}
                 {visibleColumns.has("Status Update Date") && <th>Status Update<br />Date</th>}
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -4487,7 +4501,20 @@ const ProjectIssueDashboard = () => {
                   )}
                   {/* Priority column removed */}
                   {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
+                  {visibleColumns.has("Disable Flag") && <td data-label="Disable Flag">{issue.disableFlag}</td>}
+                  {visibleColumns.has("Technical Direction") && <td data-label="Technical Direction">{issue.technicalDirection}</td>}
                   {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
+                  <td>
+                    <button
+                      type="button"
+                      className="project-issue-td-edit-icon-btn"
+                      title="Add/Edit Technical Details"
+                      onClick={() => openTechDetailsRequiredInformationPopup(issue)}
+                      style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer' }}
+                    >
+                      <FaEdit style={{ fontSize: '1.1em', color: '#2563eb' }} />
+                    </button>
+                  </td>
                   {visibleColumns.has("E2 Lead Detailer") && (
                     <td data-label="E2 Lead Detailer">
                       <select
