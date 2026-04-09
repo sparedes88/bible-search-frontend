@@ -16,6 +16,7 @@ import PrivateRoute from "./components/PrivateRoute"; // Import PrivateRoute com
 import "bootstrap/dist/css/bootstrap.min.css";
 import { SafeToastContainer } from "./utils/toastUtils";
 import "react-toastify/dist/ReactToastify.css";
+// ...existing code...
 
 // Loading fallback component
 const LoadingFallback = () => (
@@ -154,6 +155,7 @@ const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssue
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
+const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 
 const App = () => {
   return (
@@ -341,7 +343,7 @@ const App = () => {
             }
           />
           <Route
-            path="/organization/:churchId/course/:categoryId/subcategory/:subcategoryId/settings"
+            path="/organization/:id/course/:categoryId/subcategory/:subcategoryId/settings"
             element={<SubcategorySettings />}
           />
           <Route
@@ -804,7 +806,17 @@ const App = () => {
             } 
           />
           <Route path="/freshbooks/callback" element={<FreshBooksCallback />} />
-            </Routes>
+          <Route
+            path="/organization/:id/agile-dashboard"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <AgileDevelopmentDashboard />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          </Routes>
           </Suspense>
         </Router>
       </ErrorBoundary>
