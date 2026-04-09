@@ -1,3 +1,45 @@
+// Handler for Send to Agile Dashboard button
+const handleSendToAgileDashboard = async (issue) => {
+  if (!issue?.key) return;
+  try {
+    // Set E2 Status Update to "In Progress", E2 Status Update Agile to "To Do List", and Disable Flag to "Yes"
+    const projectSource = projectSources[issue.projectDocId];
+    if (!projectSource) return;
+    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+    const targetRow = previousRows[issue.rowIndex];
+    if (!targetRow) return;
+    const previousRowData = targetRow?.rowData || {};
+    const e2StatusFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+    const e2StatusAgileFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update agile", "e2statusupdateagile"]) || "E2 Status Update Agile";
+    const disableFlagFieldName = findFieldByAliases(previousFields, previousRowData, ["disable flag", "disableflag"]) || "Disable Flag";
+    const updatedRowData = {
+      ...previousRowData,
+      [e2StatusFieldName]: "In Progress",
+      [e2StatusAgileFieldName]: "To Do List",
+      [disableFlagFieldName]: "Yes",
+    };
+    const updatedRows = previousRows.map((row, idx) =>
+      idx === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
+    let updatedFields = previousFields;
+    if (!updatedFields.includes(e2StatusFieldName)) updatedFields = [...updatedFields, e2StatusFieldName];
+    if (!updatedFields.includes(e2StatusAgileFieldName)) updatedFields = [...updatedFields, e2StatusAgileFieldName];
+    if (!updatedFields.includes(disableFlagFieldName)) updatedFields = [...updatedFields, disableFlagFieldName];
+    await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+      fields: updatedFields,
+      rows: updatedRows,
+      updatedAt: new Date(),
+    });
+    if (typeof fetchAndSyncAllIssues === "function") {
+      await fetchAndSyncAllIssues();
+    }
+    toast.success("Sent to Agile Dashboard and updated fields.");
+  } catch (err) {
+    console.error("Error sending to Agile Dashboard:", err);
+    toast.error("Failed to send to Agile Dashboard.");
+  }
+};
 const E2_TD_FIELD = "E2 TD";
 const E2_TD_FIELD_ALIASES = ["e2 td", "e2td", "e2 technical direction", "e2technicaldirection"];
 const E2_TD_OPTIONS = ["--", "Stop and Start", "Add to Queue", "Steer with current task"];
@@ -2483,12 +2525,26 @@ const ProjectIssueDashboard = () => {
     const launchPopup = async () => {
       let e2Comments = "";
       let e2Documents = [];
+      let e2TD = issue.e2TD || "--";
+      let e2Detailer = issue.e2Detailer || "";
+      let e2DetailerSupportTeam = sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions);
 
       try {
         if (issue?.projectDocId) {
           const projectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
           if (projectSnapshot.exists()) {
             const projectData = projectSnapshot.data();
+            const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+            const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+            const targetRow = rows[issue.rowIndex];
+            const rowData = targetRow?.rowData || {};
+            // Use field alias helpers to get the latest values from Firestore
+            const e2TDField = findFieldByAliases(fields, rowData, E2_TD_FIELD_ALIASES);
+            const e2DetailerField = findFieldByAliases(fields, rowData, ["e2 lead detailer", "e2leaddetailer", "e2 detailer", "e2detailer"]);
+            const e2DetailerSupportTeamField = findFieldByAliases(fields, rowData, ["e2 detailer support team", "e2 detailer support", "e2 support team", "support team"]);
+            e2TD = normalizeValue(e2TDField ? rowData[e2TDField] : e2TD);
+            e2Detailer = normalizeValue(e2DetailerField ? rowData[e2DetailerField] : e2Detailer);
+            e2DetailerSupportTeam = sanitizeSupportTeamValues(rowData[e2DetailerSupportTeamField], e2DetailerOptions);
             const internalCardMeta = projectData?.internalCardMeta || {};
             const cardMeta = internalCardMeta[issue.id] || {};
             e2Comments = normalizeValue(cardMeta.e2Comments) || "";
@@ -2502,12 +2558,11 @@ const ProjectIssueDashboard = () => {
       setTechDetailsPopup({
         open: true,
         issueKey: issue.key,
-        e2TD: issue.e2TD || "--",
-        e2StatusUpdate: "",
-        e2Detailer: "",
-        e2DetailerSupportTeam: sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions),
-        e2Comments: e2Comments,
-        e2Documents: e2Documents,
+        e2TD,
+        e2Detailer,
+        e2DetailerSupportTeam,
+        e2Comments,
+        e2Documents,
       });
       setPopupSupportTeamMenuOpen(false);
     };
@@ -2521,9 +2576,10 @@ const ProjectIssueDashboard = () => {
   };
 
   const handleTechDetailsPopupSubmit = async () => {
-      // E2 TD value
-      const selectedE2TD = techDetailsPopup.e2TD || "--";
-    const selectedStatus = normalizeValue(techDetailsPopup.e2StatusUpdate);
+
+
+    // E2 TD value
+    const selectedE2TD = techDetailsPopup.e2TD || "--";
     const selectedDetailer = normalizeValue(techDetailsPopup.e2Detailer);
     const selectedSupportTeamValues = sanitizeSupportTeamValues(
       techDetailsPopup.e2DetailerSupportTeam,
@@ -2532,11 +2588,6 @@ const ProjectIssueDashboard = () => {
 
     if (isDetailerInSupportTeam(selectedDetailer, selectedSupportTeamValues)) {
       openDetailerConflictPopup(selectedDetailer);
-      return;
-    }
-
-    if (!selectedStatus || !selectedDetailer) {
-      toast.error("Select both E2 Status Update and E2 Lead Detailer before submitting.");
       return;
     }
 
@@ -2583,17 +2634,13 @@ const ProjectIssueDashboard = () => {
       ) || E2_DETAILER_SUPPORT_TEAM_FIELD;
     const previousSupportTeamValue = formatSupportTeamValue(previousRowData[e2SupportTeamFieldName]);
     const previousStatusDateValue = normalizeValue(previousRowData[e2StatusDateFieldName]);
-    const resolvedStatusDate = resolveStatusDateForStatusTransition(
-      selectedStatus,
-      previousStatusValue,
-      previousStatusDateValue
-    );
+    // E2 Status Update is no longer required, so resolvedStatusDate can default to previousStatusDateValue
+    const resolvedStatusDate = previousStatusDateValue;
 
     const updatedRowData = {
       ...previousRowData,
       [e2TDFieldName]: selectedE2TD,
       [techDetailsFieldName]: "Yes",
-      [e2StatusFieldName]: selectedStatus,
       [e2DetailerFieldName]: selectedDetailer,
       [e2SupportTeamFieldName]: formatSupportTeamValue(selectedSupportTeamValues),
       [e2StatusDateFieldName]: resolvedStatusDate,
@@ -2622,7 +2669,7 @@ const ProjectIssueDashboard = () => {
             ? {
                 ...item,
                 techDetailsAvailable: "Yes",
-                e2StatusUpdate: selectedStatus,
+                e2TD: selectedE2TD,
                 e2Detailer: selectedDetailer,
                 e2DetailerSupportTeam: formatSupportTeamValue(selectedSupportTeamValues),
                 e2StatusDate: resolvedStatusDate,
@@ -2637,42 +2684,9 @@ const ProjectIssueDashboard = () => {
         updatedAt: new Date(),
       });
 
-      // Re-sync the row from Firestore after submit to avoid stale local state.
-      const refreshedProjectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
-      if (refreshedProjectSnapshot.exists()) {
-        const refreshedProjectData = refreshedProjectSnapshot.data() || {};
-        const refreshedFields = Array.isArray(refreshedProjectData.fields) ? refreshedProjectData.fields : [];
-        const refreshedRows = Array.isArray(refreshedProjectData.rows) ? refreshedProjectData.rows : [];
-        const refreshedRow = refreshedRows[issue.rowIndex];
-
-        setProjectSources((previous) => ({
-          ...previous,
-          [issue.projectDocId]: {
-            fields: refreshedFields,
-            rows: refreshedRows,
-            lastUploadAt: refreshedProjectData.lastUploadAt || refreshedProjectData.updatedAt || null,
-          },
-        }));
-
-        if (refreshedRow) {
-          const refreshedRowData = refreshedRow?.rowData || {};
-          const refreshedPreview = getCardPreview(refreshedRowData, refreshedFields);
-
-          setIssues((previous) =>
-            previous.map((item) =>
-              item.key === issue.key
-                ? {
-                    ...item,
-                    techDetailsAvailable: getDefaultTechDetailsAvailable(refreshedPreview.techDetailsAvailable),
-                    e2StatusUpdate: getDefaultE2StatusUpdate(refreshedPreview.e2StatusUpdate),
-                    e2Detailer: normalizeValue(refreshedPreview.e2Detailer),
-                    e2DetailerSupportTeam: formatSupportTeamValue(refreshedPreview.e2DetailerSupportTeam),
-                    e2StatusDate: getDefaultE2StatusDate(refreshedPreview.e2StatusDate),
-                  }
-                : item
-            )
-          );
-        }
+      // Force a full refresh of issues from Firestore after submit
+      if (typeof fetchAndSyncAllIssues === "function") {
+        await fetchAndSyncAllIssues();
       }
 
       setTechDetailsPopup({
@@ -5288,28 +5302,7 @@ const ProjectIssueDashboard = () => {
                                 <option key={opt} value={opt}>{opt}</option>
                               ))}
                             </select>
-              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-status">
-                E2 Status Update
-              </label>
-              <select
-                id="tech-details-e2-status"
-                className="project-issue-cell-input"
-                value={techDetailsPopup.e2StatusUpdate}
-                onChange={(event) =>
-                  setTechDetailsPopup((previous) => ({
-                    ...previous,
-                    e2StatusUpdate: event.target.value,
-                  }))
-                }
-                disabled={submittingTechDetailsPopup}
-              >
-                <option value="">Select...</option>
-                {techDetailsPopupE2StatusOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+
 
               <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-detailer">
                 E2 Lead Detailer
@@ -5520,11 +5513,7 @@ const ProjectIssueDashboard = () => {
                   type="button"
                   className="project-issue-upload-btn"
                   onClick={handleTechDetailsPopupSubmit}
-                  disabled={
-                    submittingTechDetailsPopup ||
-                    !normalizeValue(techDetailsPopup.e2StatusUpdate) ||
-                    !normalizeValue(techDetailsPopup.e2Detailer)
-                  }
+                  disabled={submittingTechDetailsPopup}
                 >
                   {submittingTechDetailsPopup ? "Submitting..." : "Submit"}
                 </button>
