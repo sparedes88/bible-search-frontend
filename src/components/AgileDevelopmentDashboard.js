@@ -71,7 +71,7 @@ const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
 const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
 const TITLE_ALIASES = ["title", "task title", "name"];
 const PROJECT_NAME_ALIASES = ["project name", "projectname"];
-const E2_STATUS_ALIASES = ["e2 status update", "e2statusupdate"];
+const E2_STATUS_AGILE_ALIASES = ["e2 status update agile", "e2statusupdateagile"];
 const TECH_DETAILS_ALIASES = ["technical details available", "technical details", "techdetailsavailable"];
 const LEAD_DETAILER_ALIASES = [
   "e3 lead detailer",
@@ -84,7 +84,8 @@ const LEAD_DETAILER_ALIASES = [
 
 const AgileDevelopmentDashboard = () => {
   const { id } = useParams();
-  const [columns, setColumns] = useState(getColumnsFromStatuses(DEFAULT_E2_STATUS_UPDATE_OPTIONS));
+  // Columns will be generated dynamically from unique E2 Status Update Agile values
+  const [columns, setColumns] = useState([]);
   const [issues, setIssues] = useState([]);
   const [projectSources, setProjectSources] = useState({});
   const [loadingConfig, setLoadingConfig] = useState(true);
@@ -94,36 +95,29 @@ const AgileDevelopmentDashboard = () => {
   const [selectedProjectName, setSelectedProjectName] = useState("All");
   const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
   const [selectedTechDetails, setSelectedTechDetails] = useState("All");
+  const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
 
+  // Dynamically generate columns from unique E2 Status Update Agile values in issues
   useEffect(() => {
-    if (!id) return undefined;
-
-    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
-    const unsubscribe = onSnapshot(
-      configRef,
-      (snapshot) => {
-        const data = snapshot.data() || {};
-        const configuredStatuses = Array.isArray(data[E2_STATUS_UPDATE_OPTIONS_FIELD])
-          ? data[E2_STATUS_UPDATE_OPTIONS_FIELD]
-          : [];
-        const normalizedStatuses = dedupeValues(configuredStatuses);
-        const finalStatuses = normalizedStatuses.some(
-          (status) => status.toLowerCase() === DEFAULT_E2_STATUS_UPDATE.toLowerCase()
-        )
-          ? normalizedStatuses
-          : [DEFAULT_E2_STATUS_UPDATE, ...(normalizedStatuses.length ? normalizedStatuses : DEFAULT_E2_STATUS_UPDATE_OPTIONS)];
-
-        setColumns(getColumnsFromStatuses(finalStatuses));
-        setLoadingConfig(false);
-      },
-      () => {
-        setColumns(getColumnsFromStatuses(DEFAULT_E2_STATUS_UPDATE_OPTIONS));
-        setLoadingConfig(false);
-      }
+    if (issues.length === 0) {
+      setColumns([]);
+      setLoadingConfig(false);
+      console.log("[AgileDashboard] No issues found.");
+      return;
+    }
+    const uniqueStatuses = dedupeValues(
+      issues.map((issue) => normalizeValue(issue.status)).filter(Boolean)
     );
-
-    return () => unsubscribe();
-  }, [id]);
+    console.log("[AgileDashboard] Unique statuses for columns:", uniqueStatuses);
+    if (uniqueStatuses.length === 0) {
+      setColumns(getColumnsFromStatuses(["To Do List"]));
+      setLoadingConfig(false);
+      console.log("[AgileDashboard] No statuses found, using fallback column: To Do List");
+    } else {
+      setColumns(getColumnsFromStatuses(uniqueStatuses));
+      setLoadingConfig(false);
+    }
+  }, [issues]);
 
   useEffect(() => {
     if (!id) return undefined;
@@ -148,7 +142,7 @@ const AgileDevelopmentDashboard = () => {
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
             const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
             const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
-            const statusField = findFieldByAliases(fields, rowData, E2_STATUS_ALIASES) || "E2 Status Update";
+            const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
             const techDetailsField = findFieldByAliases(fields, rowData, TECH_DETAILS_ALIASES);
             const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
 
@@ -157,13 +151,13 @@ const AgileDevelopmentDashboard = () => {
             const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "") || defaultProjectName;
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
             const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
-            const status = normalizeValue(statusField ? rowData[statusField] : "") || DEFAULT_E2_STATUS_UPDATE;
+            const status = normalizeValue(statusAgileField ? rowData[statusAgileField] : "") || "To Do List";
 
             nextIssues.push({
               key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
               projectDocId: projectDoc.id,
               rowIndex,
-              statusField,
+              statusField: statusAgileField,
               issueId,
               title,
               projectName,
@@ -217,9 +211,16 @@ const AgileDevelopmentDashboard = () => {
       const techDetailsMatched =
         selectedTechDetails === "All" ||
         getDefaultTechDetailsAvailable(issue.techDetailsAvailable) === selectedTechDetails;
-      return projectMatched && detailerMatched && techDetailsMatched;
+      const e2StatusAgileMatched =
+        selectedE2StatusAgile === "All" || normalizeValue(issue.status) === selectedE2StatusAgile;
+      return projectMatched && detailerMatched && techDetailsMatched && e2StatusAgileMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedTechDetails]);
+  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedTechDetails, selectedE2StatusAgile]);
+
+  const e2StatusAgileOptions = useMemo(
+    () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [issues]
+  );
 
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns]);
 
@@ -313,6 +314,22 @@ const AgileDevelopmentDashboard = () => {
           <h1>Agile Development Dashboard</h1>
         </div>
         <div className="agile-dashboard-filters">
+          <label className="agile-dashboard-filter-item" htmlFor="agile-e2-status-agile-filter">
+            <span>E2 Status Update Agile</span>
+            <select
+              id="agile-e2-status-agile-filter"
+              className="agile-dashboard-filter-select"
+              value={selectedE2StatusAgile}
+              onChange={(event) => setSelectedE2StatusAgile(event.target.value)}
+            >
+              <option value="All">All Statuses</option>
+              {e2StatusAgileOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
             <span>Project Name</span>
             <select
@@ -369,7 +386,7 @@ const AgileDevelopmentDashboard = () => {
       <div className="agile-dashboard-board">
         {sortedColumns.map((column) => {
           const columnIssues = visibleIssues.filter((issue) => toPhaseId(issue.status) === column.id);
-
+          console.log(`[AgileDashboard] Rendering column: ${column.name} (id: ${column.id}), issues:`, columnIssues);
           return (
             <div key={column.id} className="agile-column">
               <div className="agile-column-header">
@@ -381,22 +398,25 @@ const AgileDevelopmentDashboard = () => {
                 onDragOver={handleDragOver}
                 onDrop={() => handleDrop(column)}
               >
-                {columnIssues.map((issue) => (
-                  <div
-                    key={issue.key}
-                    className={`agile-card${savingIssueKey === issue.key ? " is-saving" : ""}`}
-                    draggable={savingIssueKey !== issue.key}
-                    onDragStart={() => handleDragStart(issue.key)}
-                  >
-                    <div className="agile-card-header">
-                      <div className="agile-card-primary-lines">
-                        <span className="agile-card-issue-id">{normalizeValue(issue.issueId) || "-"}</span>
-                        <span className="agile-card-title">{normalizeValue(issue.title) || "-"}</span>
-                        <span className="agile-card-detailer">{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                {columnIssues.map((issue) => {
+                  console.log(`[AgileDashboard] Card in column ${column.name}:`, issue);
+                  return (
+                    <div
+                      key={issue.key}
+                      className={`agile-card${savingIssueKey === issue.key ? " is-saving" : ""}`}
+                      draggable={savingIssueKey !== issue.key}
+                      onDragStart={() => handleDragStart(issue.key)}
+                    >
+                      <div className="agile-card-header">
+                        <div className="agile-card-primary-lines">
+                          <span className="agile-card-issue-id">{normalizeValue(issue.issueId) || "-"}</span>
+                          <span className="agile-card-title">{normalizeValue(issue.title) || "-"}</span>
+                          <span className="agile-card-detailer">{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="agile-column-footer">
