@@ -332,7 +332,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const markupField = findFieldByAliases(fields, rowData, ["markup", "mark up"]);
   const markupLinkField = findFieldByAliases(fields, rowData, ["link to markup", "markup link"]);
   const statusField = findFieldByAliases(fields, rowData, ["status", "state", "task status"]);
-  const priorityField = findFieldByAliases(fields, rowData, ["priority"]);
+  // const priorityField = findFieldByAliases(fields, rowData, ["priority"]);
   const gridField = findFieldByAliases(fields, rowData, ["grid", "grid coordinate", "gridlocation"]);
   const levelField = findFieldByAliases(fields, rowData, ["level", "floor", "story"]);
   const roomField = findFieldByAliases(fields, rowData, ["room", "room number", "space"]);
@@ -364,7 +364,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
     markup: normalizeValue(markupField ? rowData?.[markupField] : ""),
     markupLink: normalizeValue(markupLinkField ? rowData?.[markupLinkField] : ""),
     status: normalizeValue(statusField ? rowData?.[statusField] : ""),
-    priority: normalizeValue(priorityField ? rowData?.[priorityField] : ""),
+    // priority: normalizeValue(priorityField ? rowData?.[priorityField] : ""),
     grid: normalizeValue(gridField ? rowData?.[gridField] : ""),
     level: normalizeValue(levelField ? rowData?.[levelField] : ""),
     room: normalizeValue(roomField ? rowData?.[roomField] : ""),
@@ -720,7 +720,7 @@ const ProjectIssueDashboard = () => {
       }
     }
     // Default visible columns
-    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Priority", "Due Date", "E2 Lead Detailer", TECH_DETAILS_DISPLAY_LABEL]);
+    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Due Date", "E2 Lead Detailer", TECH_DETAILS_DISPLAY_LABEL]);
   });
   const techDetailsFieldRefs = useRef({});
   const dailyIssuesInputRef = useRef(null);
@@ -806,7 +806,7 @@ const ProjectIssueDashboard = () => {
     "E2 Tags",
     "Status",
     "E2 Status Update",
-    "Priority",
+    // "Priority",
     "Due Date",
     "Days Since Created",
     "E2 Lead Detailer",
@@ -1284,7 +1284,7 @@ const ProjectIssueDashboard = () => {
               techDetailsAvailable: getDefaultTechDetailsAvailable(preview.techDetailsAvailable),
               snapshotUrl: preview.snapshotUrl,
               link: preview.link,
-              priority: preview.priority || "-",
+              // priority: preview.priority || "-",
               grid: preview.grid || "-",
               level: preview.level || "-",
               room: preview.room || "-",
@@ -1476,7 +1476,7 @@ const ProjectIssueDashboard = () => {
         issue.owner,
         issue.e2Detailer,
         issue.e2StatusUpdate,
-        issue.priority,
+        // issue.priority,
         issue.zone,
         getProjectNameDisplay(issue),
         issue.zoneCategory,
@@ -4366,7 +4366,7 @@ const ProjectIssueDashboard = () => {
                     </span>
                   </th>
                 )}
-                {visibleColumns.has("Priority") && <th>Priority</th>}
+                {/* Priority column removed */}
                 {visibleColumns.has("Due Date") && <th>Due Date</th>}
                 {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
                 {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
@@ -4485,7 +4485,7 @@ const ProjectIssueDashboard = () => {
                       })()}
                     </td>
                   )}
-                  {visibleColumns.has("Priority") && <td data-label="Priority">{issue.priority}</td>}
+                  {/* Priority column removed */}
                   {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
                   {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
                   {visibleColumns.has("E2 Lead Detailer") && (
