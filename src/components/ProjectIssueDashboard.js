@@ -1,3 +1,6 @@
+const E2_TD_FIELD = "E2 TD";
+const E2_TD_FIELD_ALIASES = ["e2 td", "e2td", "e2 technical direction", "e2technicaldirection"];
+const E2_TD_OPTIONS = ["--", "Stop and Start", "Add to Queue", "Steer with current task"];
 const TECHNICAL_DIRECTION_FIELD = "Technical Direction";
 const TECHNICAL_DIRECTION_FIELD_ALIASES = ["technical direction", "technicaldirection"];
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -357,6 +360,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const linkField = findFieldByAliases(fields, rowData, ["link", "url", "issue url", "card url", "task url", "issue link", "card link"]);
   const deadlineField = findFieldByAliases(fields, rowData, ["deadline", "due date", "due", "target date"]);
   const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_FIELD_ALIASES);
+  const e2TDField = findFieldByAliases(fields, rowData, E2_TD_FIELD_ALIASES);
   const disableFlagField = findFieldByAliases(fields, rowData, ["disable flag", "disableflag"]);
   const idField = findFieldByAliases(fields, rowData, ["id", "task id", "card id", "row id"]);
 
@@ -372,6 +376,7 @@ const getCardPreview = (rowData = {}, fields = []) => {
     grid: normalizeValue(gridField ? rowData?.[gridField] : ""),
     disableFlag: normalizeValue(disableFlagField ? rowData?.[disableFlagField] : "No"),
     technicalDirection: normalizeValue(technicalDirectionField ? rowData?.[technicalDirectionField] : ""),
+    e2TD: normalizeValue(e2TDField ? rowData?.[e2TDField] : ""),
     level: normalizeValue(levelField ? rowData?.[levelField] : ""),
     room: normalizeValue(roomField ? rowData?.[roomField] : ""),
     zone: normalizeValue(zoneField ? rowData?.[zoneField] : ""),
@@ -813,6 +818,7 @@ const ProjectIssueDashboard = () => {
     "Status",
     "E2 Status Update",
     "Technical Direction",
+    "E2 TD",
     "Due Date",
     "Disable Flag",
     "Days Since Created",
@@ -4381,6 +4387,7 @@ const ProjectIssueDashboard = () => {
                 {visibleColumns.has("Due Date") && <th>Due Date</th>}
                 {visibleColumns.has("Disable Flag") && <th>Disable Flag</th>}
                 {visibleColumns.has("Technical Direction") && <th>Technical Direction</th>}
+                {visibleColumns.has("E2 TD") && <th>E2 TD</th>}
                 {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
                 {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
                 {visibleColumns.has("E2 Detailer Support Team") && <th>E2 Detailer Support Team</th>}
@@ -4503,6 +4510,29 @@ const ProjectIssueDashboard = () => {
                   {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
                   {visibleColumns.has("Disable Flag") && <td data-label="Disable Flag">{issue.disableFlag}</td>}
                   {visibleColumns.has("Technical Direction") && <td data-label="Technical Direction">{issue.technicalDirection}</td>}
+                  {visibleColumns.has("E2 TD") && (
+                    <td data-label="E2 TD">
+                      {e2InfoEditMode ? (
+                        <select
+                          className="project-issue-cell-input"
+                          value={issue.e2TD || "--"}
+                          onChange={event => {
+                            const nextValue = event.target.value;
+                            handleE2TDChange(issue.key, nextValue);
+                            handleE2TDSave({ ...issue, e2TD: nextValue }, nextValue);
+                          }}
+                          disabled={!!savingIssueKeys[`e2TD:${issue.key}`]}
+                        >
+                          {E2_TD_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        issue.e2TD || "--"
+                      )}
+                    </td>
+                  )}
+
                   {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
                   <td>
                     <button
