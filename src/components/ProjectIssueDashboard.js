@@ -1591,20 +1591,8 @@ const ProjectIssueDashboard = () => {
     () => Math.max(supportTeamMenuWidthCh + 10, 34),
     [supportTeamMenuWidthCh]
   );
-  const e2StatusUpdateOptions = useMemo(() => {
-    // Respect the managed order; append required popup options and issue values not in the managed list.
-    const managedLower = new Set(managedE2StatusUpdateOptions.map((v) => v.toLowerCase()));
-    const required = TECH_DETAILS_REQUIRED_E2_STATUS_PREFIXES.filter(
-      (value) => !managedLower.has(value.toLowerCase())
-    );
-    const requiredLower = new Set(required.map((v) => v.toLowerCase()));
-    const extra = issues
-      .map((issue) => normalizeValue(issue.e2StatusUpdate))
-      .filter((v) => v && !managedLower.has(v.toLowerCase()) && !requiredLower.has(v.toLowerCase()))
-      .filter((value, index, array) => array.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
-
-    return [...managedE2StatusUpdateOptions, ...required, ...extra];
-  }, [issues, managedE2StatusUpdateOptions]);
+  // Restrict E2 Status Update strictly to values from Manage E2 fields
+  const e2StatusUpdateOptions = useMemo(() => managedE2StatusUpdateOptions, [managedE2StatusUpdateOptions]);
 
   const techDetailsPopupE2StatusOptions = useMemo(() => {
     const matched = e2StatusUpdateOptions.filter((option) => {
