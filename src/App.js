@@ -156,6 +156,7 @@ const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDet
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
+const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
 
 const App = () => {
   return (
@@ -812,6 +813,16 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary>
                   <AgileDevelopmentDashboard />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/e2-agile-board"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <AgileBoardPage />
                 </ErrorBoundary>
               </PrivateRoute>
             }

@@ -3629,10 +3629,10 @@ const ProjectIssueDashboard = () => {
                   Add New Issue
                 </button>
                 <Link
-                  to={`/organization/${id}/agile-dashboard`}
+                  to={`/organization/${id}/e2-agile-board`}
                   className="project-issue-add-btn"
                 >
-                  📊 Agile Development Dashboard
+                  🗂️ E2 Agile Board
                 </Link>
               </div>
             </div>

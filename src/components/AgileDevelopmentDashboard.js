@@ -8,6 +8,8 @@ import {
   DEFAULT_E2_STATUS_UPDATE_OPTIONS,
   E2_STATUS_UPDATE_OPTIONS_FIELD,
   PROJECT_ISSUE_CONFIG_DOC_ID,
+  DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS,
+  E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD,
 } from "./projectIssueConstants";
 import "./AgileDevelopmentDashboard.css";
 
@@ -97,27 +99,25 @@ const AgileDevelopmentDashboard = () => {
   const [selectedTechDetails, setSelectedTechDetails] = useState("All");
   const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
 
-  // Dynamically generate columns from unique E2 Status Update Agile values in issues
+  // Always use E2 Status Update Agile options from Firestore for columns, in dropdown order
+  const [agileStatusOptions, setAgileStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
   useEffect(() => {
-    if (issues.length === 0) {
-      setColumns([]);
-      setLoadingConfig(false);
-      console.log("[AgileDashboard] No issues found.");
-      return;
-    }
-    const uniqueStatuses = dedupeValues(
-      issues.map((issue) => normalizeValue(issue.status)).filter(Boolean)
-    );
-    console.log("[AgileDashboard] Unique statuses for columns:", uniqueStatuses);
-    if (uniqueStatuses.length === 0) {
-      setColumns(getColumnsFromStatuses(["To Do List"]));
-      setLoadingConfig(false);
-      console.log("[AgileDashboard] No statuses found, using fallback column: To Do List");
-    } else {
-      setColumns(getColumnsFromStatuses(uniqueStatuses));
-      setLoadingConfig(false);
-    }
-  }, [issues]);
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD ? PROJECT_ISSUE_CONFIG_DOC_ID : "");
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const configuredAgileStatus = Array.isArray(data[E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD])
+        ? data[E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD]
+        : [];
+      setAgileStatusOptions(configuredAgileStatus.length ? configuredAgileStatus : DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
+    });
+    return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    setColumns(getColumnsFromStatuses(agileStatusOptions));
+    setLoadingConfig(false);
+  }, [agileStatusOptions]);
 
   useEffect(() => {
     if (!id) return undefined;
@@ -314,22 +314,7 @@ const AgileDevelopmentDashboard = () => {
           <h1>Agile Development Dashboard</h1>
         </div>
         <div className="agile-dashboard-filters">
-          <label className="agile-dashboard-filter-item" htmlFor="agile-e2-status-agile-filter">
-            <span>E2 Status Update Agile</span>
-            <select
-              id="agile-e2-status-agile-filter"
-              className="agile-dashboard-filter-select"
-              value={selectedE2StatusAgile}
-              onChange={(event) => setSelectedE2StatusAgile(event.target.value)}
-            >
-              <option value="All">All Statuses</option>
-              {e2StatusAgileOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/* Removed E2 Status Update Agile filter dropdown as requested */}
           <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
             <span>Project Name</span>
             <select
@@ -409,7 +394,13 @@ const AgileDevelopmentDashboard = () => {
                     >
                       <div className="agile-card-header">
                         <div className="agile-card-primary-lines">
-                          <span className="agile-card-issue-id">{normalizeValue(issue.issueId) || "-"}</span>
+                          <Link
+                            className="agile-card-issue-id"
+                            to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
+                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}
+                          >
+                            {normalizeValue(issue.issueId) || "-"}
+                          </Link>
                           <span className="agile-card-title">{normalizeValue(issue.title) || "-"}</span>
                           <span className="agile-card-detailer">{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
                         </div>

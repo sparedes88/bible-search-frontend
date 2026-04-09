@@ -1,3 +1,22 @@
+export const DEFAULT_E2_AGILE_STATUS_OPTIONS = [
+  "To Do List",
+  "In Progress",
+  "Review Internal",
+  "Review Customer",
+  "Done",
+  "Report",
+  "Showstopper"
+];
+
+export const E2_AGILE_STATUS_OPTIONS_FIELD = "e2AgileStatusOptions";
+export const DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS = [
+  "To Do List",
+  "In Progress",
+  "On Hold",
+  "Completed"
+];
+
+export const E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD = "e2StatusUpdateAgileOptions";
 export const DEFAULT_E2_DETAILER_OPTIONS = [
   "Juan",
   "Josias",
