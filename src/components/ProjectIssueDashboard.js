@@ -10,6 +10,7 @@ import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
 import { FaInfoCircle, FaCog, FaEdit } from "react-icons/fa";
+import { FaShareSquare } from "react-icons/fa";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db, storage } from "../firebase";
@@ -4543,6 +4544,15 @@ const ProjectIssueDashboard = () => {
                       style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer' }}
                     >
                       <FaEdit style={{ fontSize: '1.1em', color: '#2563eb' }} />
+                    </button>
+                    <button
+                      type="button"
+                      className="project-issue-td-send-agile-btn"
+                      title="Send to Agile Dashboard"
+                      style={{ background: 'none', border: 'none', padding: 0, marginLeft: 8, cursor: 'pointer' }}
+                      onClick={() => handleSendToAgileDashboard(issue)}
+                    >
+                      <FaShareSquare style={{ fontSize: '1.1em', color: '#10b981' }} />
                     </button>
                   </td>
                   {visibleColumns.has("E2 Lead Detailer") && (
