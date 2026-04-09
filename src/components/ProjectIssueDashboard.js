@@ -2501,6 +2501,7 @@ const ProjectIssueDashboard = () => {
       setTechDetailsPopup({
         open: true,
         issueKey: issue.key,
+        e2TD: issue.e2TD || "--",
         e2StatusUpdate: "",
         e2Detailer: "",
         e2DetailerSupportTeam: sanitizeSupportTeamValues(issue.e2DetailerSupportTeam, e2DetailerOptions),
@@ -2519,6 +2520,8 @@ const ProjectIssueDashboard = () => {
   };
 
   const handleTechDetailsPopupSubmit = async () => {
+      // E2 TD value
+      const selectedE2TD = techDetailsPopup.e2TD || "--";
     const selectedStatus = normalizeValue(techDetailsPopup.e2StatusUpdate);
     const selectedDetailer = normalizeValue(techDetailsPopup.e2Detailer);
     const selectedSupportTeamValues = sanitizeSupportTeamValues(
@@ -2559,6 +2562,8 @@ const ProjectIssueDashboard = () => {
     const previousRowData = targetRow?.rowData || {};
     const techDetailsFieldName =
       findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
+    const e2TDFieldName =
+      findFieldByAliases(previousFields, previousRowData, E2_TD_FIELD_ALIASES) || E2_TD_FIELD;
     const e2StatusFieldName =
       findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
     const e2DetailerFieldName =
@@ -2585,6 +2590,7 @@ const ProjectIssueDashboard = () => {
 
     const updatedRowData = {
       ...previousRowData,
+      [e2TDFieldName]: selectedE2TD,
       [techDetailsFieldName]: "Yes",
       [e2StatusFieldName]: selectedStatus,
       [e2DetailerFieldName]: selectedDetailer,
@@ -2594,19 +2600,12 @@ const ProjectIssueDashboard = () => {
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
     );
-    let updatedFields = previousFields.includes(techDetailsFieldName)
-      ? previousFields
-      : [...previousFields, techDetailsFieldName];
+    let updatedFields = previousFields.includes(e2TDFieldName) ? previousFields : [...previousFields, e2TDFieldName];
+    updatedFields = updatedFields.includes(techDetailsFieldName) ? updatedFields : [...updatedFields, techDetailsFieldName];
     updatedFields = updatedFields.includes(e2StatusFieldName) ? updatedFields : [...updatedFields, e2StatusFieldName];
-    updatedFields = updatedFields.includes(e2DetailerFieldName)
-      ? updatedFields
-      : [...updatedFields, e2DetailerFieldName];
-    updatedFields = updatedFields.includes(e2SupportTeamFieldName)
-      ? updatedFields
-      : [...updatedFields, e2SupportTeamFieldName];
-    updatedFields = updatedFields.includes(e2StatusDateFieldName)
-      ? updatedFields
-      : [...updatedFields, e2StatusDateFieldName];
+    updatedFields = updatedFields.includes(e2DetailerFieldName) ? updatedFields : [...updatedFields, e2DetailerFieldName];
+    updatedFields = updatedFields.includes(e2SupportTeamFieldName) ? updatedFields : [...updatedFields, e2SupportTeamFieldName];
+    updatedFields = updatedFields.includes(e2StatusDateFieldName) ? updatedFields : [...updatedFields, e2StatusDateFieldName];
     const previousSource = projectSource;
 
     setSubmittingTechDetailsPopup(true);
@@ -2678,6 +2677,7 @@ const ProjectIssueDashboard = () => {
       setTechDetailsPopup({
         open: false,
         issueKey: "",
+        e2TD: "--",
         e2StatusUpdate: "",
         e2Detailer: "",
         e2DetailerSupportTeam: [],
@@ -5263,6 +5263,21 @@ const ProjectIssueDashboard = () => {
             </div>
 
             <div className="project-issue-tech-details-popup-body">
+                            {/* E2 TD Dropdown - FIRST ITEM */}
+                            <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-td">
+                              E2 TD
+                            </label>
+                            <select
+                              id="tech-details-e2-td"
+                              className="project-issue-cell-input"
+                              value={techDetailsPopup.e2TD || "--"}
+                              onChange={e => setTechDetailsPopup(prev => ({ ...prev, e2TD: e.target.value }))}
+                              disabled={submittingTechDetailsPopup}
+                            >
+                              {E2_TD_OPTIONS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
               <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-status">
                 E2 Status Update
               </label>
