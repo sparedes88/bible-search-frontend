@@ -5473,6 +5473,15 @@ const ProjectIssueDashboard = () => {
                 >
                   {submittingTechDetailsPopup ? "Submitting..." : "Submit"}
                 </button>
+                <button
+                  type="button"
+                  className="project-issue-upload-btn"
+                  style={{ marginLeft: 12 }}
+                  onClick={() => setTechDetailsPopup((prev) => ({ ...prev, open: false }))}
+                  disabled={submittingTechDetailsPopup}
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>
