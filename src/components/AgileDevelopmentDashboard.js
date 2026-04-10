@@ -404,11 +404,10 @@ const AgileDevelopmentDashboard = () => {
                     >
                       <div className="agile-card-header">
                         <div className="agile-card-field-row">
-                          <span className="agile-card-label">Issue ID:</span>
                           <Link
                             className="agile-card-issue-id"
                             to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
-                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', marginLeft: 4 }}
+                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}
                           >
                             {normalizeValue(issue.issueId) || "-"}
                           </Link>
