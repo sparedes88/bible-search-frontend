@@ -5,6 +5,7 @@ const E2_TD_OPTIONS = ["--", "Stop and Start", "Add to Queue", "Steer with curre
 const TECHNICAL_DIRECTION_FIELD = "Technical Direction";
 const TECHNICAL_DIRECTION_FIELD_ALIASES = ["technical direction", "technicaldirection"];
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import UsersDropdown from "./UsersDropdown";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
@@ -5092,14 +5093,15 @@ const ProjectIssueDashboard = () => {
                 {newIssueFieldConfig.fields
                   .filter(field => {
                     const key = normalizeFieldKey(field);
-                    // Remove unwanted fields
+                    // Remove unwanted fields, including Due Date and its variants, but NOT Owner or Assignee
                     if (
-                      key === 'assignee' ||
                       key === 'technical direction' ||
                       key === 'e2 status update' ||
                       key === 'agile' ||
                       key === 'comment' ||
-                      key === 'due date'
+                      key === 'due date' ||
+                      key === 'deadline' ||
+                      key === 'target date'
                     ) {
                       return false;
                     }
@@ -5114,6 +5116,35 @@ const ProjectIssueDashboard = () => {
                   const isStatusDateField = field === newIssueFieldConfig.fieldNames.e2StatusDate;
                   const isTechDetailsField = field === newIssueFieldConfig.fieldNames.techDetails;
                   const isE2DetailerField = normalizeFieldKey(field) === normalizeFieldKey(E2_DETAILER_FIELD);
+                  const isOwnerField = field === newIssueFieldConfig.fieldNames.owner;
+                  const isAssigneeField = normalizeFieldKey(field) === 'assignee';
+                  const { id } = useParams();
+
+                  // Only render required fields: Issue ID, Title, Project Name, Owner, Assignee (if required)
+                  // Always render the Title field as a form box
+                  const requiredFieldKeys = [
+                    newIssueFieldConfig.fieldNames.issueId,
+                    newIssueFieldConfig.fieldNames.projectName,
+                    newIssueFieldConfig.fieldNames.owner,
+                    "Assignee"
+                  ];
+                  if (field === newIssueFieldConfig.fieldNames.title) {
+                    return (
+                      <label className="project-issue-add-field" key={field}>
+                        <span className="project-issue-add-label">
+                          {field}
+                          {isRequired ? <span className="project-issue-add-required">*</span> : null}
+                        </span>
+                        <input
+                          className="project-issue-add-input"
+                          value={value}
+                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
+                          placeholder={isRequired ? "Required" : "Title"}
+                        />
+                      </label>
+                    );
+                  }
+                  if (!requiredFieldKeys.includes(field)) return null;
 
                   return (
                     <label className="project-issue-add-field" key={field}>
@@ -5121,9 +5152,7 @@ const ProjectIssueDashboard = () => {
                         {field}
                         {isRequired ? <span className="project-issue-add-required">*</span> : null}
                       </span>
-                      {isStatusField ? (
-                        <input className="project-issue-add-input" value={DEFAULT_E2_STATUS_UPDATE} disabled />
-                      ) : isIssueIdField || isStatusDateField ? (
+                      {isIssueIdField || isStatusDateField ? (
                         <input className="project-issue-add-input" value={value} disabled />
                       ) : isProjectNameField ? (
                         <select
@@ -5138,37 +5167,21 @@ const ProjectIssueDashboard = () => {
                             </option>
                           ))}
                         </select>
-                      ) : isTechDetailsField ? (
-                        <select
-                          className="project-issue-add-input"
-                          value={value}
-                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
-                        >
-                          <option value="">Select value</option>
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
-                        </select>
-                      ) : isE2DetailerField ? (
-                        <select
-                          className="project-issue-add-input"
-                          value={value}
-                          onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
-                        >
-                          <option value="">Select detailer</option>
-                          {managedE2DetailerOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      ) : field === newIssueFieldConfig.fieldNames.e2StatusUpdate ? null : (
+                      ) : isOwnerField ? (
                         <input
                           className="project-issue-add-input"
                           value={value}
                           onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
-                          placeholder={isRequired ? "Required" : "Optional"}
+                          placeholder={isRequired ? "Required" : "Owner name or email"}
                         />
-                      )}
+                      ) : isAssigneeField ? (
+                        <UsersDropdown
+                          selectedUsers={value ? [{ value, label: value }] : []}
+                          onChange={selected => handleNewIssueFieldChange(field, selected ? selected.label : "")}
+                          isMulti={false}
+                          idIglesia={id}
+                        />
+                      ) : null}
                     </label>
                   );
                 })}
