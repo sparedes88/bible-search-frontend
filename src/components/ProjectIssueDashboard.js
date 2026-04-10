@@ -4433,7 +4433,7 @@ const ProjectIssueDashboard = () => {
                 const projectNameDisplay = getProjectNameDisplay(issue);
 
                 return (
-                <tr key={rowKey}>
+                <tr key={rowKey} style={normalizeValue(issue.disableFlag) === "Yes" ? { background: 'linear-gradient(90deg, #e0f2fe 60%, #e5e7eb 100%)', opacity: 0.6, pointerEvents: 'none' } : {}}>
                   {visibleColumns.has("Issue ID") && (
                     <td data-label="Issue ID">
                       <Link
