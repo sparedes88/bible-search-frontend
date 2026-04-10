@@ -74,7 +74,6 @@ const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
 const TITLE_ALIASES = ["title", "task title", "name"];
 const PROJECT_NAME_ALIASES = ["project name", "projectname"];
 const E2_STATUS_AGILE_ALIASES = ["e2 status update agile", "e2statusupdateagile"];
-const TECH_DETAILS_ALIASES = ["technical details available", "technical details", "techdetailsavailable"];
 const LEAD_DETAILER_ALIASES = [
   "e3 lead detailer",
   "e3leaddetailer",
@@ -82,6 +81,12 @@ const LEAD_DETAILER_ALIASES = [
   "e2leaddetailer",
   "e2 detailer",
   "e2detailer",
+];
+
+const TECH_DETAILS_ALIASES = [
+  "technical details available",
+  "technical details",
+  "techdetailsavailable",
 ];
 
 const AgileDevelopmentDashboard = () => {
@@ -96,8 +101,9 @@ const AgileDevelopmentDashboard = () => {
   const [savingIssueKey, setSavingIssueKey] = useState("");
   const [selectedProjectName, setSelectedProjectName] = useState("All");
   const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
-  const [selectedTechDetails, setSelectedTechDetails] = useState("All");
   const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
+  const [selectedDataStage, setSelectedDataStage] = useState("All");
+  const DATA_STAGE_OPTIONS = ["Testing", "Production"];
 
   // Always use E2 Status Update Agile options from Firestore for columns, in dropdown order
   const [agileStatusOptions, setAgileStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
@@ -145,13 +151,8 @@ const AgileDevelopmentDashboard = () => {
             const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
             const techDetailsField = findFieldByAliases(fields, rowData, TECH_DETAILS_ALIASES);
             const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
-            // Add Technical Direction extraction
-            const technicalDirectionField = findFieldByAliases(fields, rowData, [
-              "technical direction",
-              "tech direction",
-              "technicaldirection",
-              "techdirection"
-            ]) || "Technical Direction";
+            const dataStageField = findFieldByAliases(fields, rowData, ["data stage", "datastage"]);
+            const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || "Testing";
 
             const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
@@ -162,7 +163,8 @@ const AgileDevelopmentDashboard = () => {
             if (statusAgileField && rowData[statusAgileField] !== undefined && rowData[statusAgileField] !== null) {
               status = normalizeValue(rowData[statusAgileField]);
             }
-            const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
+            const technicalDirectionField = "Technical Direction";
+            const technicalDirection = normalizeValue(rowData[technicalDirectionField] || "");
 
             nextIssues.push({
               key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
@@ -172,6 +174,7 @@ const AgileDevelopmentDashboard = () => {
               issueId,
               title,
               projectName,
+              dataStage,
               techDetailsAvailable,
               e3LeadDetailer,
               e2LeadDetailer: e3LeadDetailer,
@@ -207,27 +210,19 @@ const AgileDevelopmentDashboard = () => {
     [issues]
   );
 
-  const techDetailsOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => getDefaultTechDetailsAvailable(issue.techDetailsAvailable))).sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" })
-    ),
-    [issues]
-  );
-
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
       const projectMatched =
         selectedProjectName === "All" || normalizeValue(issue.projectName) === selectedProjectName;
       const detailerMatched =
         selectedE2LeadDetailer === "All" || normalizeValue(issue.e2LeadDetailer) === selectedE2LeadDetailer;
-      const techDetailsMatched =
-        selectedTechDetails === "All" ||
-        getDefaultTechDetailsAvailable(issue.techDetailsAvailable) === selectedTechDetails;
       const e2StatusAgileMatched =
         selectedE2StatusAgile === "All" || normalizeValue(issue.status) === selectedE2StatusAgile;
-      return projectMatched && detailerMatched && techDetailsMatched && e2StatusAgileMatched;
+      const dataStageMatched =
+        selectedDataStage === "All" || normalizeValue(issue.dataStage) === selectedDataStage;
+      return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedTechDetails, selectedE2StatusAgile]);
+  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage]);
 
   const e2StatusAgileOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
@@ -361,19 +356,18 @@ const AgileDevelopmentDashboard = () => {
             </select>
           </label>
 
-          <label className="agile-dashboard-filter-item" htmlFor="agile-tech-details-filter">
-            <span>T.D. Available</span>
+          <label className="agile-dashboard-filter-item" htmlFor="agile-data-stage-filter">
+            <span>Data Stage</span>
             <select
-              id="agile-tech-details-filter"
+              id="agile-data-stage-filter"
               className="agile-dashboard-filter-select"
-              value={selectedTechDetails}
-              onChange={(event) => setSelectedTechDetails(event.target.value)}
+              value={selectedDataStage}
+              onChange={e => setSelectedDataStage(e.target.value)}
+              style={{ minWidth: 120 }}
             >
-              <option value="All">All T.D. Available</option>
-              {techDetailsOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
+              <option value="All">All</option>
+              {DATA_STAGE_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>
           </label>
@@ -420,12 +414,20 @@ const AgileDevelopmentDashboard = () => {
                           </Link>
                         </div>
                         <div className="agile-card-field-row">
+                          <span className="agile-card-label">Project Name:</span>
+                          <span className="agile-card-project-name" style={{ marginLeft: 4 }}>{normalizeValue(issue.projectName) || "-"}</span>
+                        </div>
+                        <div className="agile-card-field-row">
                           <span className="agile-card-label">Title:</span>
                           <span className="agile-card-title" style={{ marginLeft: 4 }}>{normalizeValue(issue.title) || "-"}</span>
                         </div>
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Lead Detailer:</span>
                           <span className="agile-card-detailer" style={{ marginLeft: 4 }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                        </div>
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label">Data Stage:</span>
+                          <span className="agile-card-data-stage" style={{ marginLeft: 4 }}>{normalizeValue(issue.dataStage) || "-"}</span>
                         </div>
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Technical Direction:</span>

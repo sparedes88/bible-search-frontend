@@ -54,6 +54,10 @@ const TECHNICAL_DIRECTION_ALIASES = [
   "techdirection"
 ];
 
+const DATA_STAGE_ALIASES = ["data stage", "datastage"];
+const DATA_STAGE_OPTIONS = ["Testing", "Production"];
+const DEFAULT_DATA_STAGE = "Testing";
+
 const AgileBoardPage = () => {
   const { id } = useParams();
   const [issues, setIssues] = useState([]);
@@ -99,6 +103,8 @@ const AgileBoardPage = () => {
           const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
           const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
           const disableFlag = normalizeValue(disableFlagField ? rowData[disableFlagField] : "No");
+          const dataStageField = findFieldByAliases(fields, rowData, DATA_STAGE_ALIASES) || "Data Stage";
+          const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || DEFAULT_DATA_STAGE;
           nextIssues.push({
             key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
             projectDocId: projectDoc.id,
@@ -111,6 +117,8 @@ const AgileBoardPage = () => {
             leadDetailer,
             technicalDirection,
             disableFlag,
+            dataStageField,
+            dataStage,
           });
         });
       });
@@ -133,12 +141,13 @@ const AgileBoardPage = () => {
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Detailer</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Technical Direction</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Disable Flag</th>
+              <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Data Stage</th>
             </tr>
           </thead>
           <tbody>
             {issues.length === 0 ? (
               <tr>
-                <td colSpan={3} style={{ textAlign: "center", padding: 16, color: "#888" }}>No issues found.</td>
+                <td colSpan={6} style={{ textAlign: "center", padding: 16, color: "#888" }}>No issues found.</td>
               </tr>
             ) : (
               issues.map((issue) => (
@@ -213,6 +222,41 @@ const AgileBoardPage = () => {
                       }}
                     >
                       {DISABLE_FLAG_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
+                    <select
+                      value={issue.dataStage || DEFAULT_DATA_STAGE}
+                      style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid #d1d5db", background: savingKey === issue.key ? "#f3f4f6" : undefined }}
+                      disabled={savingKey === issue.key}
+                      onChange={async (e) => {
+                        const newValue = e.target.value;
+                        setSavingKey(issue.key);
+                        try {
+                          const source = projectSources[issue.projectDocId];
+                          if (!source) return;
+                          const rows = Array.isArray(source.rows) ? source.rows : [];
+                          const targetRow = rows[issue.rowIndex];
+                          if (!targetRow) return;
+                          const updatedRows = rows.map((row, idx) => {
+                            if (idx !== issue.rowIndex) return row;
+                            return {
+                              ...row,
+                              rowData: {
+                                ...row.rowData,
+                                [issue.dataStageField]: newValue,
+                              },
+                            };
+                          });
+                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+                        } finally {
+                          setSavingKey("");
+                        }
+                      }}
+                    >
+                      {DATA_STAGE_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
