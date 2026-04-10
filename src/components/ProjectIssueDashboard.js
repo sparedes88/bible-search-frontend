@@ -741,6 +741,7 @@ const ProjectIssueDashboard = () => {
     e2StatusUpdate: "",
     e2Detailer: "",
     e2DetailerSupportTeam: [],
+    technicalDirection: "",
     e2Comments: "",
     e2Documents: [],
   });
@@ -2556,12 +2557,30 @@ const ProjectIssueDashboard = () => {
         console.error("Error loading E2 metadata for popup:", err);
       }
 
+      let technicalDirection = issue.technicalDirection || "";
+      try {
+        if (issue?.projectDocId) {
+          const projectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
+          if (projectSnapshot.exists()) {
+            const projectData = projectSnapshot.data();
+            const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+            const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+            const targetRow = rows[issue.rowIndex];
+            const rowData = targetRow?.rowData || {};
+            const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_FIELD_ALIASES);
+            technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : technicalDirection);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading Technical Direction for popup:", err);
+      }
       setTechDetailsPopup({
         open: true,
         issueKey: issue.key,
         e2TD,
         e2Detailer,
         e2DetailerSupportTeam,
+        technicalDirection,
         e2Comments,
         e2Documents,
       });
@@ -2638,6 +2657,9 @@ const ProjectIssueDashboard = () => {
     // E2 Status Update is no longer required, so resolvedStatusDate can default to previousStatusDateValue
     const resolvedStatusDate = previousStatusDateValue;
 
+    const technicalDirectionFieldName =
+      findFieldByAliases(previousFields, previousRowData, TECHNICAL_DIRECTION_FIELD_ALIASES) || TECHNICAL_DIRECTION_FIELD;
+    const selectedTechnicalDirection = techDetailsPopup.technicalDirection || "";
     const updatedRowData = {
       ...previousRowData,
       [e2TDFieldName]: selectedE2TD,
@@ -2645,6 +2667,7 @@ const ProjectIssueDashboard = () => {
       [e2DetailerFieldName]: selectedDetailer,
       [e2SupportTeamFieldName]: formatSupportTeamValue(selectedSupportTeamValues),
       [e2StatusDateFieldName]: resolvedStatusDate,
+      [technicalDirectionFieldName]: selectedTechnicalDirection,
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
@@ -2655,6 +2678,7 @@ const ProjectIssueDashboard = () => {
     updatedFields = updatedFields.includes(e2DetailerFieldName) ? updatedFields : [...updatedFields, e2DetailerFieldName];
     updatedFields = updatedFields.includes(e2SupportTeamFieldName) ? updatedFields : [...updatedFields, e2SupportTeamFieldName];
     updatedFields = updatedFields.includes(e2StatusDateFieldName) ? updatedFields : [...updatedFields, e2StatusDateFieldName];
+    updatedFields = updatedFields.includes(technicalDirectionFieldName) ? updatedFields : [...updatedFields, technicalDirectionFieldName];
     const previousSource = projectSource;
 
     setSubmittingTechDetailsPopup(true);
@@ -2697,6 +2721,7 @@ const ProjectIssueDashboard = () => {
         e2StatusUpdate: "",
         e2Detailer: "",
         e2DetailerSupportTeam: [],
+        technicalDirection: "",
         e2Comments: "",
         e2Documents: [],
       });
@@ -2718,6 +2743,7 @@ const ProjectIssueDashboard = () => {
                 e2Detailer: previousDetailerValue,
                 e2DetailerSupportTeam: previousSupportTeamValue,
                 e2StatusDate: previousStatusDateValue,
+                technicalDirection: previousRowData[technicalDirectionFieldName] || "",
               }
             : item
         )
@@ -5288,21 +5314,7 @@ const ProjectIssueDashboard = () => {
             </div>
 
             <div className="project-issue-tech-details-popup-body">
-                            {/* E2 TD Dropdown - FIRST ITEM */}
-                            <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-td">
-                              E2 TD
-                            </label>
-                            <select
-                              id="tech-details-e2-td"
-                              className="project-issue-cell-input"
-                              value={techDetailsPopup.e2TD || "--"}
-                              onChange={e => setTechDetailsPopup(prev => ({ ...prev, e2TD: e.target.value }))}
-                              disabled={submittingTechDetailsPopup}
-                            >
-                              {E2_TD_OPTIONS.map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
+
 
 
               <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-detailer">
@@ -5332,6 +5344,30 @@ const ProjectIssueDashboard = () => {
                     {name}
                   </option>
                 ))}
+              </select>
+
+              {/* Technical Direction Dropdown */}
+              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-technical-direction">
+                Technical Direction
+              </label>
+              <select
+                id="tech-details-technical-direction"
+                className="project-issue-cell-input"
+                value={techDetailsPopup.technicalDirection || ""}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setTechDetailsPopup((previous) => ({
+                    ...previous,
+                    technicalDirection: nextValue,
+                  }));
+                }}
+                disabled={submittingTechDetailsPopup}
+              >
+                <option value="">Select...</option>
+                <option value="Stop and Start">Stop and Start</option>
+                <option value="Add to Queue">Add to Queue</option>
+                <option value="Steer with current task">Steer with current task</option>
+                <option value="Other">Other</option>
               </select>
 
               <label className="project-issue-tech-details-popup-label">
