@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
@@ -45,7 +44,8 @@ const LEAD_DETAILER_ALIASES = [
   "e2 detailer",
   "e2detailer",
 ];
-
+const DISABLE_FLAG_ALIASES = ["disable flag", "disableflag"];
+const DISABLE_FLAG_OPTIONS = ["No", "Yes"];
 
 const TECHNICAL_DIRECTION_ALIASES = [
   "technical direction",
@@ -93,20 +93,24 @@ const AgileBoardPage = () => {
           const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
           const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
           const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
+          const disableFlagField = findFieldByAliases(fields, rowData, DISABLE_FLAG_ALIASES) || "Disable Flag";
           const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
           const statusAgile = normalizeValue(statusAgileField ? rowData[statusAgileField] : "");
           const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
           const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
+          const disableFlag = normalizeValue(disableFlagField ? rowData[disableFlagField] : "No");
           nextIssues.push({
             key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
             projectDocId: projectDoc.id,
             rowIndex,
             statusField: statusAgileField,
             technicalDirectionField,
+            disableFlagField,
             issueId,
             statusAgile,
             leadDetailer,
             technicalDirection,
+            disableFlag,
           });
         });
       });
@@ -128,6 +132,7 @@ const AgileBoardPage = () => {
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Status Update Agile</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Detailer</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Technical Direction</th>
+              <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Disable Flag</th>
             </tr>
           </thead>
           <tbody>
@@ -174,12 +179,12 @@ const AgileBoardPage = () => {
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
-                    {/* Send to Agile Dashboard button removed as requested */}
                   </td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{issue.leadDetailer}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{issue.technicalDirection}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
                     <select
-                      value={issue.technicalDirection || ""}
+                      value={issue.disableFlag || "No"}
                       style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid #d1d5db", background: savingKey === issue.key ? "#f3f4f6" : undefined }}
                       disabled={savingKey === issue.key}
                       onChange={async (e) => {
@@ -191,16 +196,13 @@ const AgileBoardPage = () => {
                           const rows = Array.isArray(source.rows) ? source.rows : [];
                           const targetRow = rows[issue.rowIndex];
                           if (!targetRow) return;
-                          const fields = source.fields || [];
-                          const rowData = targetRow.rowData || {};
-                          const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
                           const updatedRows = rows.map((row, idx) => {
                             if (idx !== issue.rowIndex) return row;
                             return {
                               ...row,
                               rowData: {
                                 ...row.rowData,
-                                [technicalDirectionField]: newValue,
+                                [issue.disableFlagField]: newValue,
                               },
                             };
                           });
@@ -210,8 +212,7 @@ const AgileBoardPage = () => {
                         }
                       }}
                     >
-                      <option value="">-- Select Technical Direction --</option>
-                      {technicalDirectionOptions.map((opt) => (
+                      {DISABLE_FLAG_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
