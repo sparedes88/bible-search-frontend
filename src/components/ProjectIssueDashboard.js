@@ -1,45 +1,4 @@
-// Handler for Send to Agile Dashboard button
-const handleSendToAgileDashboard = async (issue) => {
-  if (!issue?.key) return;
-  try {
-    // Set E2 Status Update to "In Progress", E2 Status Update Agile to "To Do List", and Disable Flag to "Yes"
-    const projectSource = projectSources[issue.projectDocId];
-    if (!projectSource) return;
-    const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
-    const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
-    const targetRow = previousRows[issue.rowIndex];
-    if (!targetRow) return;
-    const previousRowData = targetRow?.rowData || {};
-    const e2StatusFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
-    const e2StatusAgileFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update agile", "e2statusupdateagile"]) || "E2 Status Update Agile";
-    const disableFlagFieldName = findFieldByAliases(previousFields, previousRowData, ["disable flag", "disableflag"]) || "Disable Flag";
-    const updatedRowData = {
-      ...previousRowData,
-      [e2StatusFieldName]: "In Progress",
-      [e2StatusAgileFieldName]: "To Do List",
-      [disableFlagFieldName]: "Yes",
-    };
-    const updatedRows = previousRows.map((row, idx) =>
-      idx === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
-    );
-    let updatedFields = previousFields;
-    if (!updatedFields.includes(e2StatusFieldName)) updatedFields = [...updatedFields, e2StatusFieldName];
-    if (!updatedFields.includes(e2StatusAgileFieldName)) updatedFields = [...updatedFields, e2StatusAgileFieldName];
-    if (!updatedFields.includes(disableFlagFieldName)) updatedFields = [...updatedFields, disableFlagFieldName];
-    await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
-      fields: updatedFields,
-      rows: updatedRows,
-      updatedAt: new Date(),
-    });
-    if (typeof fetchAndSyncAllIssues === "function") {
-      await fetchAndSyncAllIssues();
-    }
-    toast.success("Sent to Agile Dashboard and updated fields.");
-  } catch (err) {
-    console.error("Error sending to Agile Dashboard:", err);
-    toast.error("Failed to send to Agile Dashboard.");
-  }
-};
+// Handler for Send to Agile Dashboard button is now inside the component
 const E2_TD_FIELD = "E2 TD";
 const E2_TD_FIELD_ALIASES = ["e2 td", "e2td", "e2 technical direction", "e2technicaldirection"];
 const E2_TD_OPTIONS = ["--", "Stop and Start", "Add to Queue", "Steer with current task"];
@@ -576,6 +535,48 @@ const buildNextTDIssueId = (issueIds = []) => {
 };
 
 const ProjectIssueDashboard = () => {
+    // Handler for Send to Agile Dashboard button (must be in scope for JSX)
+    async function handleSendToAgileDashboard(issue) {
+      if (!issue?.key) return;
+      try {
+        // Set E2 Status Update to "In Progress", E2 Status Update Agile to "To Do List", and Disable Flag to "Yes"
+        const projectSource = projectSources[issue.projectDocId];
+        if (!projectSource) return;
+        const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
+        const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
+        const targetRow = previousRows[issue.rowIndex];
+        if (!targetRow) return;
+        const previousRowData = targetRow?.rowData || {};
+        const e2StatusFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+        const e2StatusAgileFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update agile", "e2statusupdateagile"]) || "E2 Status Update Agile";
+        const disableFlagFieldName = findFieldByAliases(previousFields, previousRowData, ["disable flag", "disableflag"]) || "Disable Flag";
+        const updatedRowData = {
+          ...previousRowData,
+          [e2StatusFieldName]: "In Progress",
+          [e2StatusAgileFieldName]: "To Do List",
+          [disableFlagFieldName]: "Yes",
+        };
+        const updatedRows = previousRows.map((row, idx) =>
+          idx === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+        );
+        let updatedFields = previousFields;
+        if (!updatedFields.includes(e2StatusFieldName)) updatedFields = [...updatedFields, e2StatusFieldName];
+        if (!updatedFields.includes(e2StatusAgileFieldName)) updatedFields = [...updatedFields, e2StatusAgileFieldName];
+        if (!updatedFields.includes(disableFlagFieldName)) updatedFields = [...updatedFields, disableFlagFieldName];
+        await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), {
+          fields: updatedFields,
+          rows: updatedRows,
+          updatedAt: new Date(),
+        });
+        if (typeof fetchAndSyncAllIssues === "function") {
+          await fetchAndSyncAllIssues();
+        }
+        toast.success("Sent to Agile Dashboard and updated fields.");
+      } catch (err) {
+        console.error("Error sending to Agile Dashboard:", err);
+        toast.error("Failed to send to Agile Dashboard.");
+      }
+    }
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const filterVisibilityStorageKey = `project-issue-filter-visibility-${id || "default"}`;

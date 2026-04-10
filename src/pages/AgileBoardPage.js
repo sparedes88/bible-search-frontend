@@ -174,6 +174,7 @@ const AgileBoardPage = () => {
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
+                    {/* Send to Agile Dashboard button removed as requested */}
                   </td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{issue.leadDetailer}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
