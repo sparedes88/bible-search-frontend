@@ -5088,9 +5088,23 @@ const ProjectIssueDashboard = () => {
               </button>
             </div>
             <form className="project-issue-add-form" onSubmit={handleCreateNewIssue}>
-              <div className="project-issue-add-grid">
+              <div className="project-issue-add-grid" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {newIssueFieldConfig.fields
-                  .filter(field => !/^(created|status|priority|reporter|deadline|watchers|stamp abbreviation|stamp category|public|last updated|last in-progress|last solved|last closed|last comment|number of comments|camera|sheet|clash guid|clash name|clash test|clash group|discipline|category|level|source file|grid location|distance|element ids|selection|authoring selection|closed date|snapshot|tags|procore link|room|space|area|zone|stamp title|created from|camera position \(m\)|camera position \(ft\)|coordinates \(m\)|coordinates \(ft\)|type|status category|rfi status|linked rfi|comment reporter|comment date|date closed|procore rfi|clash distance \(feets\)|clash distance \(m\)|clash distance \(mm\)|source sheet|view in revizto|grid|navisworks grid x|navisworks grid y|link to markup|assignee company|assignee department|assignee location|view in web issue tracker|clashes|clashing models|issue type|alignment|coordinate on alignment|intelligence tags|e2 tags|disabled|e2 td|disable flag|markup|source)$/i.test(field.trim()))
+                  .filter(field => {
+                    const key = normalizeFieldKey(field);
+                    // Remove unwanted fields
+                    if (
+                      key === 'assignee' ||
+                      key === 'technical direction' ||
+                      key === 'e2 status update' ||
+                      key === 'agile' ||
+                      key === 'comment' ||
+                      key === 'due date'
+                    ) {
+                      return false;
+                    }
+                    return !/^(created|status|priority|reporter|deadline|watchers|stamp abbreviation|stamp category|public|last updated|last in-progress|last solved|last closed|last comment|number of comments|camera|sheet|clash guid|clash name|clash test|clash group|discipline|category|level|source file|grid location|distance|element ids|selection|authoring selection|closed date|snapshot|tags|procore link|room|space|area|zone|stamp title|created from|camera position \(m\)|camera position \(ft\)|coordinates \(m\)|coordinates \(ft\)|type|status category|rfi status|linked rfi|comment reporter|comment date|date closed|procore rfi|clash distance \(feets\)|clash distance \(m\)|clash distance \(mm\)|source sheet|view in revizto|grid|navisworks grid x|navisworks grid y|link to markup|assignee company|assignee department|assignee location|view in web issue tracker|clashes|clashing models|issue type|alignment|coordinate on alignment|intelligence tags|e2 tags|disabled|e2 td|disable flag|markup|source)$/i.test(field.trim());
+                  })
                   .map((field) => {
                   const value = newIssueFormData[field] ?? "";
                   const isRequired = newIssueRequiredFields.has(field);
