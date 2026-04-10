@@ -158,7 +158,10 @@ const AgileDevelopmentDashboard = () => {
             const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "") || defaultProjectName;
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
             const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
-            const status = normalizeValue(statusAgileField ? rowData[statusAgileField] : "") || "To Do List";
+            let status = "";
+            if (statusAgileField && rowData[statusAgileField] !== undefined && rowData[statusAgileField] !== null) {
+              status = normalizeValue(rowData[statusAgileField]);
+            }
             const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
 
             nextIssues.push({
@@ -379,7 +382,11 @@ const AgileDevelopmentDashboard = () => {
 
       <div className="agile-dashboard-board">
         {sortedColumns.map((column) => {
-          const columnIssues = visibleIssues.filter((issue) => toPhaseId(issue.status) === column.id);
+          let columnIssues = visibleIssues.filter((issue) => toPhaseId(issue.status) === column.id);
+          // For To Do List column, only show issues where status is exactly 'To Do List'
+          if (column.name === "To Do List") {
+            columnIssues = columnIssues.filter((issue) => normalizeValue(issue.status) === "To Do List");
+          }
           console.log(`[AgileDashboard] Rendering column: ${column.name} (id: ${column.id}), issues:`, columnIssues);
           return (
             <div key={column.id} className="agile-column">
