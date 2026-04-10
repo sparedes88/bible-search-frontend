@@ -145,6 +145,13 @@ const AgileDevelopmentDashboard = () => {
             const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
             const techDetailsField = findFieldByAliases(fields, rowData, TECH_DETAILS_ALIASES);
             const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
+            // Add Technical Direction extraction
+            const technicalDirectionField = findFieldByAliases(fields, rowData, [
+              "technical direction",
+              "tech direction",
+              "technicaldirection",
+              "techdirection"
+            ]) || "Technical Direction";
 
             const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
@@ -152,6 +159,7 @@ const AgileDevelopmentDashboard = () => {
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
             const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
             const status = normalizeValue(statusAgileField ? rowData[statusAgileField] : "") || "To Do List";
+            const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
 
             nextIssues.push({
               key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
@@ -165,6 +173,7 @@ const AgileDevelopmentDashboard = () => {
               e3LeadDetailer,
               e2LeadDetailer: e3LeadDetailer,
               status,
+              technicalDirection,
             });
           });
         });
@@ -393,16 +402,29 @@ const AgileDevelopmentDashboard = () => {
                       onDragStart={() => handleDragStart(issue.key)}
                     >
                       <div className="agile-card-header">
-                        <div className="agile-card-primary-lines">
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label">Issue ID:</span>
                           <Link
                             className="agile-card-issue-id"
                             to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
-                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}
+                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', marginLeft: 4 }}
                           >
                             {normalizeValue(issue.issueId) || "-"}
                           </Link>
-                          <span className="agile-card-title">{normalizeValue(issue.title) || "-"}</span>
-                          <span className="agile-card-detailer">{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                        </div>
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label">Title:</span>
+                          <span className="agile-card-title" style={{ marginLeft: 4 }}>{normalizeValue(issue.title) || "-"}</span>
+                        </div>
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label">Lead Detailer:</span>
+                          <span className="agile-card-detailer" style={{ marginLeft: 4 }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                        </div>
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label">Technical Direction:</span>
+                          <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color: '#7c3aed', fontSize: '0.95em' }}>
+                            {issue.technicalDirection || "-"}
+                          </span>
                         </div>
                       </div>
                     </div>

@@ -5,6 +5,13 @@ import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS, E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "../components/projectIssueConstants";
 
+// Technical Direction dropdown options (customized per user request)
+const DEFAULT_TECHNICAL_DIRECTION_OPTIONS = [
+  "Stop and Start",
+  "Steer with current task",
+  "Add to Queue"
+];
+
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
@@ -40,13 +47,22 @@ const LEAD_DETAILER_ALIASES = [
 ];
 
 
+const TECHNICAL_DIRECTION_ALIASES = [
+  "technical direction",
+  "tech direction",
+  "technicaldirection",
+  "techdirection"
+];
+
 const AgileBoardPage = () => {
   const { id } = useParams();
   const [issues, setIssues] = useState([]);
   const [projectSources, setProjectSources] = useState({});
   const [savingKey, setSavingKey] = useState("");
   const [agileStatusOptions, setAgileStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
+  const [technicalDirectionOptions, setTechnicalDirectionOptions] = useState(DEFAULT_TECHNICAL_DIRECTION_OPTIONS);
   // Load E2 Status Update Agile dropdown options from Firestore settings
+    // Extract Technical Direction field from each issue
   useEffect(() => {
     if (!id) return;
     const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
@@ -76,17 +92,21 @@ const AgileBoardPage = () => {
           const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
           const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
           const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
+          const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
           const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
           const statusAgile = normalizeValue(statusAgileField ? rowData[statusAgileField] : "");
           const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
+          const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
           nextIssues.push({
             key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
             projectDocId: projectDoc.id,
             rowIndex,
             statusField: statusAgileField,
+            technicalDirectionField,
             issueId,
             statusAgile,
             leadDetailer,
+            technicalDirection,
           });
         });
       });
@@ -107,6 +127,7 @@ const AgileBoardPage = () => {
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>ID</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Status Update Agile</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Detailer</th>
+              <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Technical Direction</th>
             </tr>
           </thead>
           <tbody>
@@ -155,6 +176,45 @@ const AgileBoardPage = () => {
                     </select>
                   </td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{issue.leadDetailer}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
+                    <select
+                      value={issue.technicalDirection || ""}
+                      style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid #d1d5db", background: savingKey === issue.key ? "#f3f4f6" : undefined }}
+                      disabled={savingKey === issue.key}
+                      onChange={async (e) => {
+                        const newValue = e.target.value;
+                        setSavingKey(issue.key);
+                        try {
+                          const source = projectSources[issue.projectDocId];
+                          if (!source) return;
+                          const rows = Array.isArray(source.rows) ? source.rows : [];
+                          const targetRow = rows[issue.rowIndex];
+                          if (!targetRow) return;
+                          const fields = source.fields || [];
+                          const rowData = targetRow.rowData || {};
+                          const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
+                          const updatedRows = rows.map((row, idx) => {
+                            if (idx !== issue.rowIndex) return row;
+                            return {
+                              ...row,
+                              rowData: {
+                                ...row.rowData,
+                                [technicalDirectionField]: newValue,
+                              },
+                            };
+                          });
+                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+                        } finally {
+                          setSavingKey("");
+                        }
+                      }}
+                    >
+                      <option value="">-- Select Technical Direction --</option>
+                      {technicalDirectionOptions.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </td>
                 </tr>
               ))
             )}
