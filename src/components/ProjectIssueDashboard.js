@@ -2668,6 +2668,7 @@ const ProjectIssueDashboard = () => {
       [e2SupportTeamFieldName]: formatSupportTeamValue(selectedSupportTeamValues),
       [e2StatusDateFieldName]: resolvedStatusDate,
       [technicalDirectionFieldName]: selectedTechnicalDirection,
+      [e2StatusFieldName]: "To Do List",
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
