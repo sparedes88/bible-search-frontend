@@ -424,7 +424,7 @@ const calculateDaysSinceCreated = (createdAtString) => {
       const num1 = parseInt(dateMatch[1], 10);
       const num2 = parseInt(dateMatch[2], 10);
       const yearMatch = parseInt(dateMatch[3], 10);
-      const hourMatch = parseInt(dateMatch[4], 10);
+      // Removed stray disableFlag lines causing syntax error
       const minMatch = parseInt(dateMatch[5], 10);
       const secMatch = dateMatch[6] ? parseInt(dateMatch[6], 10) : 0;
       const ampm = dateMatch[7] ? dateMatch[7].toUpperCase() : null;
