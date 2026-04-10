@@ -5318,36 +5318,8 @@ const ProjectIssueDashboard = () => {
 
 
 
-              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-detailer">
-                E2 Lead Detailer
-              </label>
-              <select
-                id="tech-details-e2-detailer"
-                className="project-issue-cell-input"
-                value={techDetailsPopup.e2Detailer}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  if (isDetailerInSupportTeam(nextValue, techDetailsPopup.e2DetailerSupportTeam)) {
-                    openDetailerConflictPopup(nextValue);
-                    return;
-                  }
 
-                  setTechDetailsPopup((previous) => ({
-                    ...previous,
-                    e2Detailer: nextValue,
-                  }));
-                }}
-                disabled={submittingTechDetailsPopup}
-              >
-                <option value="">Select...</option>
-                {e2DetailerOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-
-              {/* Technical Direction Dropdown */}
+              {/* Technical Direction Dropdown - now first */}
               <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-technical-direction">
                 Technical Direction
               </label>
@@ -5369,6 +5341,34 @@ const ProjectIssueDashboard = () => {
                 <option value="Add to Queue">Add to Queue</option>
                 <option value="Steer with current task">Steer with current task</option>
                 <option value="Other">Other</option>
+              </select>
+
+              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-e2-detailer">
+                E2 Lead Detailer
+              </label>
+              <select
+                id="tech-details-e2-detailer"
+                className="project-issue-cell-input"
+                value={techDetailsPopup.e2Detailer}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (isDetailerInSupportTeam(nextValue, techDetailsPopup.e2DetailerSupportTeam)) {
+                    openDetailerConflictPopup(nextValue);
+                    return;
+                  }
+                  setTechDetailsPopup((previous) => ({
+                    ...previous,
+                    e2Detailer: nextValue,
+                  }));
+                }}
+                disabled={submittingTechDetailsPopup}
+              >
+                <option value="">Select...</option>
+                {e2DetailerOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
               </select>
 
               <label className="project-issue-tech-details-popup-label">
