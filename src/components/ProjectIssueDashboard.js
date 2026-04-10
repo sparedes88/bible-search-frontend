@@ -894,7 +894,9 @@ const ProjectIssueDashboard = () => {
 
   const newIssueFieldConfig = useMemo(() => {
     const sourceFields = Array.isArray(dailyIssuesProjectSource?.fields)
-      ? dailyIssuesProjectSource.fields.map((field) => normalizeValue(field)).filter(Boolean)
+                  ? dailyIssuesProjectSource.fields
+                    .map((field) => normalizeValue(field))
+                    .filter(Boolean)
       : [];
     const issueIdField = findFieldByAliases(sourceFields, {}, ISSUE_ID_FIELD_ALIASES) || "Issue ID";
     const titleField = findFieldByAliases(sourceFields, {}, TITLE_FIELD_ALIASES) || "Title";
@@ -5087,7 +5089,9 @@ const ProjectIssueDashboard = () => {
             </div>
             <form className="project-issue-add-form" onSubmit={handleCreateNewIssue}>
               <div className="project-issue-add-grid">
-                {newIssueFieldConfig.fields.map((field) => {
+                {newIssueFieldConfig.fields
+                  .filter(field => !/^(created|status|priority|reporter|deadline|watchers|stamp abbreviation|stamp category|public|last updated|last in-progress|last solved|last closed|last comment|number of comments|camera|sheet|clash guid|clash name|clash test|clash group|discipline|category|level|source file|grid location|distance|element ids|selection|authoring selection|closed date|snapshot|tags|procore link|room|space|area|zone|stamp title|created from|camera position \(m\)|camera position \(ft\)|coordinates \(m\)|coordinates \(ft\)|type|status category|rfi status|linked rfi|comment reporter|comment date|date closed|procore rfi|clash distance \(feets\)|clash distance \(m\)|clash distance \(mm\)|source sheet|view in revizto|grid|navisworks grid x|navisworks grid y|link to markup|assignee company|assignee department|assignee location|view in web issue tracker|clashes|clashing models|issue type|alignment|coordinate on alignment|intelligence tags|e2 tags|disabled|e2 td|disable flag)$/i.test(field.trim()))
+                  .map((field) => {
                   const value = newIssueFormData[field] ?? "";
                   const isRequired = newIssueRequiredFields.has(field);
                   const isIssueIdField = field === newIssueFieldConfig.fieldNames.issueId;
