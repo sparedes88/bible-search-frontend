@@ -1,3 +1,4 @@
+                {/* E2 Agile Board link moved below, after id is defined */}
 // Handler for Send to Agile Dashboard button is now inside the component
 const E2_TD_FIELD = "E2 TD";
 const E2_TD_FIELD_ALIASES = ["e2 td", "e2td", "e2 technical direction", "e2technicaldirection"];
@@ -5,6 +6,31 @@ const E2_TD_OPTIONS = ["--", "Stop and Start", "Add to Queue", "Steer with curre
 const TECHNICAL_DIRECTION_FIELD = "Technical Direction";
 const TECHNICAL_DIRECTION_FIELD_ALIASES = ["technical direction", "technicaldirection"];
 import React, { useEffect, useMemo, useRef, useState } from "react";
+
+
+// ...existing code...
+
+
+// --- Project Name Values from Firestore (source of truth) ---
+const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
+
+// Place this logic inside your main component function, not at the top level
+// Example:
+// function ProjectIssueDashboard(props) {
+//   const { id } = useParams();
+//   const [projectNameValues, setProjectNameValues] = useState([]);
+//   useEffect(() => {
+//     if (!id) return;
+//     const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+//     const unsubscribe = onSnapshot(configRef, (snapshot) => {
+//       const data = snapshot.data() || {};
+//       const values = Array.isArray(data[PROJECT_NAME_VALUES_FIELD]) ? data[PROJECT_NAME_VALUES_FIELD] : [];
+//       setProjectNameValues(values);
+//     });
+//     return () => unsubscribe();
+//   }, [id]);
+//   ...existing code...
+// }
 import UsersDropdown from "./UsersDropdown";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as XLSX from "xlsx";
@@ -45,7 +71,6 @@ const E2_STATUS_UPDATE_FIELD = "E2 Status Update";
 
 const E2_STATUS_DATE_FIELD = "E2 Status Date";
 const E2_STATUS_DATE_FIELD_ALIASES = [
-  "e2 status date",
   "e2statusdate",
   "status update date",
   "statusupdatedate",
@@ -545,7 +570,31 @@ const buildNextTDIssueId = (issueIds = []) => {
 };
 
 const ProjectIssueDashboard = () => {
+    const { id } = useParams();
+    // ...existing code...
+
+    // Place the E2 Agile Board link after id is defined
+    const AgileBoardLink = (
+      <Link
+        to={`/organization/${id}/e2-agile-board`}
+        className="project-issue-add-btn"
+      >
+        🗂️ E2 Agile Board
+      </Link>
+    );
     // Handler for Send to Agile Dashboard button (must be in scope for JSX)
+    // --- Project Name Values from Firestore (source of truth) ---
+    const [projectNameValues, setProjectNameValues] = useState([]);
+    useEffect(() => {
+      if (!id) return;
+      const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+      const unsubscribe = onSnapshot(configRef, (snapshot) => {
+        const data = snapshot.data() || {};
+        const values = Array.isArray(data[PROJECT_NAME_VALUES_FIELD]) ? data[PROJECT_NAME_VALUES_FIELD] : [];
+        setProjectNameValues(values);
+      });
+      return () => unsubscribe();
+    }, [id]);
     async function handleSendToAgileDashboard(issue) {
       if (!issue?.key) return;
       try {
@@ -587,7 +636,6 @@ const ProjectIssueDashboard = () => {
         toast.error("Failed to send to Agile Dashboard.");
       }
     }
-  const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const filterVisibilityStorageKey = `project-issue-filter-visibility-${id || "default"}`;
 
@@ -1584,11 +1632,10 @@ const ProjectIssueDashboard = () => {
     });
   }, [globalSearch, hasE2TagFilter, hasStatusFilter, issues, selectedE2Detailer, selectedE2StatusUpdate, selectedIssueId, selectedProjectName, selectedStatusSet, selectedE2TagSet, selectedTechDetails, selectedDateRange, tagAliasByLowerTag]);
 
+  // Use Firestore-managed projectNameValues as the source of truth for dropdowns
   const projectNameOptions = useMemo(() => {
-    return Array.from(new Set(issues.map((issue) => getProjectNameDisplay(issue)).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b)
-    );
-  }, [issues, tagAliasByLowerTag]);
+    return Array.isArray(projectNameValues) ? [...projectNameValues] : [];
+  }, [projectNameValues]);
   const issueIdOptions = useMemo(() => {
     return Array.from(new Set(issues.map((issue) => normalizeIssueIdDisplay(issue.id)).filter(Boolean))).sort((a, b) =>
       a.localeCompare(b)
@@ -2606,6 +2653,24 @@ const ProjectIssueDashboard = () => {
       } catch (err) {
         console.error("Error loading Technical Direction for popup:", err);
       }
+      // Data Stage: try to get from rowData, fallback to 'Testing'
+      let dataStage = "Testing";
+      try {
+        if (issue?.projectDocId) {
+          const projectSnapshot = await getDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId));
+          if (projectSnapshot.exists()) {
+            const projectData = projectSnapshot.data();
+            const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+            const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
+            const targetRow = rows[issue.rowIndex];
+            const rowData = targetRow?.rowData || {};
+            const dataStageField = findFieldByAliases(fields, rowData, ["data stage", "datastage"]);
+            dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "Testing") || "Testing";
+          }
+        }
+      } catch (err) {
+        console.error("Error loading Data Stage for popup:", err);
+      }
       setTechDetailsPopup({
         open: true,
         issueKey: issue.key,
@@ -2615,6 +2680,7 @@ const ProjectIssueDashboard = () => {
         technicalDirection,
         e2Comments,
         e2Documents,
+        dataStage,
       });
       setPopupSupportTeamMenuOpen(false);
     };
@@ -2757,6 +2823,7 @@ const ProjectIssueDashboard = () => {
         technicalDirection: "",
         e2Comments: "",
         e2Documents: [],
+        dataStage: "Testing",
       });
       setPopupSupportTeamMenuOpen(false);
       toast.success("Technical details workflow completed.");
@@ -3688,12 +3755,7 @@ const ProjectIssueDashboard = () => {
                 <button type="button" className="project-issue-add-btn" onClick={openAddIssuePopup}>
                   Add New Issue
                 </button>
-                <Link
-                  to={`/organization/${id}/e2-agile-board`}
-                  className="project-issue-add-btn"
-                >
-                  🗂️ E2 Agile Board
-                </Link>
+                {AgileBoardLink}
               </div>
             </div>
           </div>
@@ -5375,6 +5437,27 @@ const ProjectIssueDashboard = () => {
             </div>
 
             <div className="project-issue-tech-details-popup-body">
+              {/* Data Stage Dropdown - first field */}
+              <label className="project-issue-tech-details-popup-label" htmlFor="tech-details-data-stage">
+                Data Stage
+              </label>
+              <select
+                id="tech-details-data-stage"
+                className="project-issue-cell-input"
+                value={techDetailsPopup.dataStage || "Testing"}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setTechDetailsPopup((previous) => ({
+                    ...previous,
+                    dataStage: nextValue,
+                  }));
+                }}
+                disabled={submittingTechDetailsPopup}
+                style={{ marginBottom: 12 }}
+              >
+                <option value="Testing">Testing</option>
+                <option value="Production">Production</option>
+              </select>
 
 
 

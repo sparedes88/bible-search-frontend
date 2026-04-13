@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { TAG_ALIASES_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "./projectIssueConstants";
-// Helper to normalize values
+import AgileUpdateModal from "./AgileUpdateModal";
+
+// Ensure normalizeValue is defined before all usages
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
 };
-
 // Helper to get Project Name display value (matches ProjectIssueDashboard.js)
 const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
   const normalizedTag = normalizeValue(issue?.tags).toLowerCase();
@@ -26,16 +27,10 @@ import {
   DEFAULT_E2_STATUS_UPDATE,
   DEFAULT_E2_STATUS_UPDATE_OPTIONS,
   E2_STATUS_UPDATE_OPTIONS_FIELD,
-  PROJECT_ISSUE_CONFIG_DOC_ID,
   DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS,
   E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD,
 } from "./projectIssueConstants";
 import "./AgileDevelopmentDashboard.css";
-
-const normalizeValue = (value) => {
-  if (value === null || value === undefined) return "";
-  return String(value).trim();
-};
 
 const getDefaultTechDetailsAvailable = (value) => normalizeValue(value) || "No";
 
@@ -351,6 +346,25 @@ const AgileDevelopmentDashboard = () => {
     }
   };
 
+  const [updateModal, setUpdateModal] = useState({ open: false, issue: null });
+  const [newUpdate, setNewUpdate] = useState("");
+  const [latestUpdate, setLatestUpdate] = useState("");
+  const [updateLoading, setUpdateLoading] = useState(false);
+
+  // Fetch latest update for a given issue
+  const fetchLatestUpdate = (issue) => {
+    const source = projectSources[issue.projectDocId];
+    if (!source) return "";
+    const row = source.rows[issue.rowIndex];
+    if (!row) return "";
+    const updates = row.rowData.updates;
+    if (Array.isArray(updates) && updates.length > 0) {
+      const last = updates[updates.length - 1];
+      return last.text || last.comment || JSON.stringify(last);
+    }
+    return row.rowData.update || "";
+  };
+
   if (loading) {
     return <div className="agile-dashboard-loading">Loading Agile Dashboard...</div>;
   }
@@ -363,6 +377,23 @@ const AgileDevelopmentDashboard = () => {
             ← Back to Live Issues Tracker
           </Link>
           <h1>Agile Development Dashboard</h1>
+        </div>
+        <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Link
+            to={`/organization/${id}/project-name-manager`}
+            style={{
+              display: 'inline-block',
+              background: '#f59e0b',
+              color: '#fff',
+              padding: '10px 18px',
+              borderRadius: 6,
+              fontWeight: 600,
+              textDecoration: 'none',
+              width: 'fit-content',
+            }}
+          >
+            Manage Project Name Values
+          </Link>
         </div>
         <div className="agile-dashboard-filters">
           {/* Removed E2 Status Update Agile filter dropdown as requested */}
@@ -479,6 +510,18 @@ const AgileDevelopmentDashboard = () => {
                           </span>
                         </div>
                       </div>
+                      <div className="agile-card-actions" style={{ marginTop: 8, textAlign: 'right' }}>
+                        <a
+                          href="#"
+                          style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+                          onClick={e => {
+                            e.preventDefault();
+                            setUpdateModal({ open: true, issue });
+                            setNewUpdate("");
+                            setLatestUpdate(fetchLatestUpdate(issue));
+                          }}
+                        >Add Update</a>
+                      </div>
                     </div>
                   );
                 })}
@@ -491,6 +534,42 @@ const AgileDevelopmentDashboard = () => {
           );
         })}
       </div>
+      <AgileUpdateModal
+        isOpen={updateModal.open}
+        onClose={() => setUpdateModal({ open: false, issue: null })}
+        latestUpdate={latestUpdate}
+        newUpdate={newUpdate}
+        onChange={setNewUpdate}
+        loading={updateLoading}
+        onSave={async () => {
+          if (!updateModal.issue || !newUpdate.trim()) return;
+          setUpdateLoading(true);
+          try {
+            const { issue } = updateModal;
+            const source = projectSources[issue.projectDocId];
+            if (!source) return;
+            const rows = Array.isArray(source.rows) ? source.rows : [];
+            const targetRow = rows[issue.rowIndex];
+            if (!targetRow) return;
+            const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
+            const newEntry = { date: new Date().toISOString(), text: newUpdate.trim() };
+            const updatedRow = {
+              ...targetRow,
+              rowData: {
+                ...targetRow.rowData,
+                updates: [...prevUpdates, newEntry],
+              },
+            };
+            const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+            await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+            setLatestUpdate(newEntry.text);
+            setNewUpdate("");
+            setUpdateModal({ open: false, issue: null });
+          } finally {
+            setUpdateLoading(false);
+          }
+        }}
+      />
     </div>
   );
 };

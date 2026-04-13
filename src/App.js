@@ -1,3 +1,12 @@
+import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
+          <Route
+            path="/organization/:id/project-name-manager"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ProjectNameManagerPage />
+              </PrivateRoute>
+            }
+          />
 import React, { Suspense } from "react";
 import {
   BrowserRouter as Router,
@@ -165,6 +174,14 @@ const App = () => {
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Suspense fallback={<LoadingFallback />}>
             <Routes>
+              <Route
+                path="/organization/:id/project-name-manager"
+                element={
+                  <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                    <ProjectNameManagerPage />
+                  </PrivateRoute>
+                }
+              />
           <Route path="/" element={<ErrorBoundary><Search /></ErrorBoundary>} />{" "}
           {/* Set Search as the main page */}
           <Route path="/organization/:id" element={<ErrorBoundary><ChurchApp /></ErrorBoundary>} />

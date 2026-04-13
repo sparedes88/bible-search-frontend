@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AgileUpdateModal from "../components/AgileUpdateModal";
 import { useParams } from "react-router-dom";
 import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -58,13 +59,53 @@ const DATA_STAGE_ALIASES = ["data stage", "datastage"];
 const DATA_STAGE_OPTIONS = ["Testing", "Production"];
 const DEFAULT_DATA_STAGE = "Testing";
 
+const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
+
 const AgileBoardPage = () => {
   const { id } = useParams();
   const [issues, setIssues] = useState([]);
   const [projectSources, setProjectSources] = useState({});
   const [savingKey, setSavingKey] = useState("");
+  const [updateModal, setUpdateModal] = useState({ open: false, issue: null });
+  const [newUpdate, setNewUpdate] = useState("");
+  const [latestUpdate, setLatestUpdate] = useState("");
+  const [updateLoading, setUpdateLoading] = useState(false);
+    // Fetch latest update for a given issue
+    const fetchLatestUpdate = (issue) => {
+      // Assume updates are stored in rowData.updates as an array of {date, text} objects, or as a string field 'update' (fallback)
+      const source = projectSources[issue.projectDocId];
+      if (!source) return "";
+      const row = source.rows[issue.rowIndex];
+      if (!row) return "";
+      const updates = row.rowData.updates;
+      if (Array.isArray(updates) && updates.length > 0) {
+        const last = updates[updates.length - 1];
+        return last.text || last.comment || JSON.stringify(last);
+      }
+      // Fallback: single update string
+      return row.rowData.update || "";
+    };
   const [agileStatusOptions, setAgileStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
   const [technicalDirectionOptions, setTechnicalDirectionOptions] = useState(DEFAULT_TECHNICAL_DIRECTION_OPTIONS);
+  const [firestoreProjectNameValues, setFirestoreProjectNameValues] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const values = Array.isArray(data[PROJECT_NAME_VALUES_FIELD]) ? data[PROJECT_NAME_VALUES_FIELD] : [];
+      setFirestoreProjectNameValues(values);
+    });
+    return () => unsubscribe();
+  }, [id]);
+
+  // Merge Firestore projectNameValues and unique Project Name values from issues
+  const mergedProjectNameOptions = (() => {
+    const issueProjectNames = Array.from(new Set(issues.map((issue) => normalizeValue(issue.projectName)).filter(Boolean)));
+    const all = [...firestoreProjectNameValues, ...issueProjectNames];
+    // Deduplicate and sort
+    return Array.from(new Set(all)).sort((a, b) => a.localeCompare(b));
+  })();
   // Load E2 Status Update Agile dropdown options from Firestore settings
     // Extract Technical Direction field from each issue
   useEffect(() => {
@@ -98,6 +139,8 @@ const AgileBoardPage = () => {
           const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
           const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
           const disableFlagField = findFieldByAliases(fields, rowData, DISABLE_FLAG_ALIASES) || "Disable Flag";
+          const projectNameField = findFieldByAliases(fields, rowData, ["project name", "project", "projectname"]);
+          const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
           const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
           const statusAgile = normalizeValue(statusAgileField ? rowData[statusAgileField] : "");
           const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
@@ -112,6 +155,7 @@ const AgileBoardPage = () => {
             statusField: statusAgileField,
             technicalDirectionField,
             disableFlagField,
+            projectNameField,
             issueId,
             statusAgile,
             leadDetailer,
@@ -119,6 +163,7 @@ const AgileBoardPage = () => {
             disableFlag,
             dataStageField,
             dataStage,
+            projectName,
           });
         });
       });
@@ -137,6 +182,7 @@ const AgileBoardPage = () => {
           <thead>
             <tr style={{ background: "#f3f4f6" }}>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>ID</th>
+              <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Project Name</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Status Update Agile</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>E2 Detailer</th>
               <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Technical Direction</th>
@@ -153,6 +199,43 @@ const AgileBoardPage = () => {
               issues.map((issue) => (
                 <tr key={issue.key}>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{issue.issueId}</td>
+
+                  <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
+                    <select
+                      value={issue.projectName || ''}
+                      style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid #d1d5db", background: savingKey === issue.key ? "#f3f4f6" : undefined }}
+                      disabled={savingKey === issue.key}
+                      onChange={async (e) => {
+                        const newValue = e.target.value;
+                        setSavingKey(issue.key);
+                        try {
+                          const source = projectSources[issue.projectDocId];
+                          if (!source) return;
+                          const rows = Array.isArray(source.rows) ? source.rows : [];
+                          const targetRow = rows[issue.rowIndex];
+                          if (!targetRow) return;
+                          const updatedRows = rows.map((row, idx) => {
+                            if (idx !== issue.rowIndex) return row;
+                            return {
+                              ...row,
+                              rowData: {
+                                ...row.rowData,
+                                [issue.projectNameField || "Project Name"]: newValue,
+                              },
+                            };
+                          });
+                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+                        } finally {
+                          setSavingKey("");
+                        }
+                      }}
+                    >
+                      <option value="">-- Select Project Name --</option>
+                      {mergedProjectNameOptions.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>
                     <select
                       value={issue.statusAgile || ""}
@@ -267,6 +350,43 @@ const AgileBoardPage = () => {
           </tbody>
         </table>
       </div>
+    <AgileUpdateModal
+      isOpen={updateModal.open}
+      onClose={() => setUpdateModal({ open: false, issue: null })}
+      latestUpdate={latestUpdate}
+      newUpdate={newUpdate}
+      onChange={setNewUpdate}
+      loading={updateLoading}
+      onSave={async () => {
+        if (!updateModal.issue || !newUpdate.trim()) return;
+        setUpdateLoading(true);
+        try {
+          const { issue } = updateModal;
+          const source = projectSources[issue.projectDocId];
+          if (!source) return;
+          const rows = Array.isArray(source.rows) ? source.rows : [];
+          const targetRow = rows[issue.rowIndex];
+          if (!targetRow) return;
+          // Append to updates array in rowData
+          const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
+          const newEntry = { date: new Date().toISOString(), text: newUpdate.trim() };
+          const updatedRow = {
+            ...targetRow,
+            rowData: {
+              ...targetRow.rowData,
+              updates: [...prevUpdates, newEntry],
+            },
+          };
+          const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+          setLatestUpdate(newEntry.text);
+          setNewUpdate("");
+          setUpdateModal({ open: false, issue: null });
+        } finally {
+          setUpdateLoading(false);
+        }
+      }}
+    />
     </div>
   );
 };
