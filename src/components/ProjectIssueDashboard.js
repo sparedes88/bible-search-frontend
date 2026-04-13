@@ -332,7 +332,9 @@ const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   return null;
 };
 
-const getCardPreview = (rowData = {}, fields = []) => {
+
+// Patch: Use Tag Alias for Project Name display if available
+const getCardPreview = (rowData = {}, fields = [], managedTagAliases = {}) => {
   const titleField = findFieldByAliases(fields, rowData, ["title", "task title", "name"]);
   const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_FIELD_ALIASES);
   const tagsField = findFieldByAliases(fields, rowData, TAG_FIELD_ALIASES);
@@ -367,9 +369,16 @@ const getCardPreview = (rowData = {}, fields = []) => {
   const disableFlagField = findFieldByAliases(fields, rowData, ["disable flag", "disableflag"]);
   const idField = findFieldByAliases(fields, rowData, ["id", "task id", "card id", "row id"]);
 
+  // Determine Project Name for display: prefer Tag Alias if available
+  let displayProjectName = normalizeValue(projectNameField ? rowData?.[projectNameField] : "");
+  const tagValue = tagsField ? normalizeValue(rowData?.[tagsField]) : "";
+  if (tagValue && managedTagAliases && managedTagAliases[tagValue.toLowerCase()]) {
+    displayProjectName = normalizeValue(managedTagAliases[tagValue.toLowerCase()]);
+  }
+
   return {
     title: normalizeValue(titleField ? rowData?.[titleField] : ""),
-    projectName: normalizeValue(projectNameField ? rowData?.[projectNameField] : ""),
+    projectName: displayProjectName,
     tags: normalizeValue(tagsField ? rowData?.[tagsField] : ""),
     e2Tags: normalizeValue(e2TagsField ? rowData?.[e2TagsField] : ""),
     markup: normalizeValue(markupField ? rowData?.[markupField] : ""),
@@ -941,6 +950,17 @@ const ProjectIssueDashboard = () => {
     };
   }, [dailyIssuesProjectSource]);
 
+
+  // Helper to get Tag Alias value for a given tag
+  const getTagAliasForNewIssue = (formData) => {
+    // Try to find a tag field in the form data
+    const tagField = findFieldByAliases(newIssueFieldConfig.fields, formData, TAG_FIELD_ALIASES);
+    const tagValue = tagField ? normalizeValue(formData?.[tagField]) : "";
+    if (!tagValue) return "";
+    const alias = managedTagAliases[tagValue.toLowerCase()];
+    return alias ? normalizeValue(alias) : "";
+  };
+
   const buildNewIssueFormData = () => {
     const generatedIssueId = buildNextTDIssueId(issues.map((issue) => issue.id));
     const nextFormData = newIssueFieldConfig.fields.reduce((accumulator, field) => {
@@ -949,7 +969,8 @@ const ProjectIssueDashboard = () => {
     }, {});
 
     nextFormData[newIssueFieldConfig.fieldNames.issueId] = generatedIssueId;
-    nextFormData[newIssueFieldConfig.fieldNames.projectName] = normalizeValue(selectedProjectName);
+    // Project Name will be set in handleCreateNewIssue based on Tag Alias or manual entry
+    nextFormData[newIssueFieldConfig.fieldNames.projectName] = "";
     nextFormData[newIssueFieldConfig.fieldNames.e2StatusUpdate] = DEFAULT_E2_STATUS_UPDATE;
     nextFormData[newIssueFieldConfig.fieldNames.e2StatusDate] = getTodayMMDDYY();
     nextFormData[newIssueFieldConfig.fieldNames.techDetails] = "No";
@@ -988,8 +1009,16 @@ const ProjectIssueDashboard = () => {
 
     const { issueId, title, projectName, owner, e2StatusUpdate, e2StatusDate, techDetails } = newIssueFieldConfig.fieldNames;
     const titleValue = normalizeValue(newIssueFormData[title]);
-    const projectNameValue = normalizeValue(newIssueFormData[projectName]);
     const ownerValue = normalizeValue(newIssueFormData[owner]);
+
+    // Determine Project Name: use Tag Alias if available, else use manual entry
+    let projectNameValue = "";
+    const tagAliasValue = getTagAliasForNewIssue(newIssueFormData);
+    if (tagAliasValue) {
+      projectNameValue = tagAliasValue;
+    } else {
+      projectNameValue = normalizeValue(newIssueFormData[projectName]);
+    }
 
     if (!titleValue || !projectNameValue || !ownerValue) {
       toast.error("Title, Project Name, and Owner are required.");
@@ -5118,7 +5147,7 @@ const ProjectIssueDashboard = () => {
                   const isE2DetailerField = normalizeFieldKey(field) === normalizeFieldKey(E2_DETAILER_FIELD);
                   const isOwnerField = field === newIssueFieldConfig.fieldNames.owner;
                   const isAssigneeField = normalizeFieldKey(field) === 'assignee';
-                  const { id } = useParams();
+
 
                   // Only render required fields: Issue ID, Title, Project Name, Owner, Assignee (if required)
                   // Always render the Title field as a form box
