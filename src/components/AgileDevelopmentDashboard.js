@@ -205,6 +205,12 @@ const AgileDevelopmentDashboard = () => {
     [issues]
   );
 
+    // DEBUG: Log the exact Project Name filter options to the browser console
+    if (!loading) {
+      // Only log once per load
+      console.log('[AgileBoard] Project Name filter options:', projectNameOptions);
+    }
+
   const e2LeadDetailerOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.e2LeadDetailer))),
     [issues]
