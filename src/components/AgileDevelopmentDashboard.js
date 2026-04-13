@@ -156,7 +156,8 @@ const AgileDevelopmentDashboard = () => {
 
             const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
-            const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "") || defaultProjectName;
+            // ENFORCE: Only use actual Project Name field from the issue record, never fallback to projectData.name
+            const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
             const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
             let status = "";
