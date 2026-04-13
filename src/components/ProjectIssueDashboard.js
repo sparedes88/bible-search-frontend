@@ -2758,6 +2758,11 @@ const ProjectIssueDashboard = () => {
     const technicalDirectionFieldName =
       findFieldByAliases(previousFields, previousRowData, TECHNICAL_DIRECTION_FIELD_ALIASES) || TECHNICAL_DIRECTION_FIELD;
     const selectedTechnicalDirection = techDetailsPopup.technicalDirection || "";
+    // --- Data Stage field logic ---
+    const dataStageFieldName =
+      findFieldByAliases(previousFields, previousRowData, ["data stage", "datastage"]) || "Data Stage";
+    const selectedDataStage = techDetailsPopup.dataStage || "Testing";
+
     const updatedRowData = {
       ...previousRowData,
       [e2TDFieldName]: selectedE2TD,
@@ -2767,10 +2772,9 @@ const ProjectIssueDashboard = () => {
       [e2StatusDateFieldName]: resolvedStatusDate,
       [technicalDirectionFieldName]: selectedTechnicalDirection,
       [e2StatusFieldName]: "To Do List",
+      [dataStageFieldName]: selectedDataStage,
     };
-    const updatedRows = previousRows.map((row, index) =>
-      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
-    );
+    // Ensure Data Stage field is tracked in fields
     let updatedFields = previousFields.includes(e2TDFieldName) ? previousFields : [...previousFields, e2TDFieldName];
     updatedFields = updatedFields.includes(techDetailsFieldName) ? updatedFields : [...updatedFields, techDetailsFieldName];
     updatedFields = updatedFields.includes(e2StatusFieldName) ? updatedFields : [...updatedFields, e2StatusFieldName];
@@ -2778,6 +2782,10 @@ const ProjectIssueDashboard = () => {
     updatedFields = updatedFields.includes(e2SupportTeamFieldName) ? updatedFields : [...updatedFields, e2SupportTeamFieldName];
     updatedFields = updatedFields.includes(e2StatusDateFieldName) ? updatedFields : [...updatedFields, e2StatusDateFieldName];
     updatedFields = updatedFields.includes(technicalDirectionFieldName) ? updatedFields : [...updatedFields, technicalDirectionFieldName];
+    updatedFields = updatedFields.includes(dataStageFieldName) ? updatedFields : [...updatedFields, dataStageFieldName];
+    const updatedRows = previousRows.map((row, index) =>
+      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+    );
     const previousSource = projectSource;
 
     setSubmittingTechDetailsPopup(true);
