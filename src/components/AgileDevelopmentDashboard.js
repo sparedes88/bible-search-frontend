@@ -1,4 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { TAG_ALIASES_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "./projectIssueConstants";
+// Helper to normalize values
+const normalizeValue = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+};
+
+// Helper to get Project Name display value (matches ProjectIssueDashboard.js)
+const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
+  const normalizedTag = normalizeValue(issue?.tags).toLowerCase();
+  const normalizedZone = normalizeValue(issue?.zone).toLowerCase();
+  return (
+    (normalizedTag && tagAliasByLowerTag[normalizedTag]) ||
+    (normalizedZone && tagAliasByLowerTag[normalizedZone]) ||
+    normalizeValue(issue?.projectName) ||
+    normalizeValue(issue?.project) ||
+    "-"
+  );
+};
 import { useParams, Link } from "react-router-dom";
 import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { toast } from "react-toastify";
@@ -103,7 +122,24 @@ const AgileDevelopmentDashboard = () => {
   const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
   const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
   const [selectedDataStage, setSelectedDataStage] = useState("All");
+  const [tagAliasByLowerTag, setTagAliasByLowerTag] = useState({});
   const DATA_STAGE_OPTIONS = ["Testing", "Production"];
+  // Load tag aliases from Firestore (same as ProjectIssueDashboard)
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const tagAliases = data[TAG_ALIASES_FIELD] || {};
+      // Normalize keys to lower case
+      const normalized = {};
+      Object.entries(tagAliases).forEach(([k, v]) => {
+        if (k && v) normalized[k.toLowerCase()] = v;
+      });
+      setTagAliasByLowerTag(normalized);
+    });
+    return () => unsubscribe();
+  }, [id]);
 
   // Always use E2 Status Update Agile options from Firestore for columns, in dropdown order
   const [agileStatusOptions, setAgileStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS);
@@ -201,9 +237,10 @@ const AgileDevelopmentDashboard = () => {
 
   const loading = loadingConfig || loadingIssues;
 
+  // Use getProjectNameDisplay with tagAliasByLowerTag for filter options
   const projectNameOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => normalizeValue(issue.projectName))),
-    [issues]
+    () => dedupeValues(issues.map((issue) => getProjectNameDisplay(issue, tagAliasByLowerTag))).sort((a, b) => a.localeCompare(b)),
+    [issues, tagAliasByLowerTag]
   );
 
     // DEBUG: Log the exact Project Name filter options to the browser console
