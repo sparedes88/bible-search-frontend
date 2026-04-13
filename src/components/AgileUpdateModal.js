@@ -1,7 +1,16 @@
 import React, { useState } from "react";
 
-export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading }) {
+export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading, percentCompleted, onPercentChange }) {
   if (!isOpen) return null;
+  // latestUpdate is now an object: { text, percentCompleted, date }
+  let latestPercent = null, latestDate = null, latestText = "";
+  if (latestUpdate && typeof latestUpdate === "object") {
+    latestPercent = latestUpdate.percentCompleted;
+    latestDate = latestUpdate.date;
+    latestText = latestUpdate.text;
+  } else {
+    latestText = latestUpdate;
+  }
   return (
     <div className="agile-update-overlay">
       <div className="agile-update-modal">
@@ -11,7 +20,19 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
         </div>
         <div className="agile-update-modal-body">
           <div className="agile-update-label">Latest Update:</div>
-          <div className="agile-update-latest">{latestUpdate || <em>No updates yet.</em>}</div>
+          <div className="agile-update-latest">
+            {latestText || <em>No updates yet.</em>}
+            {latestPercent !== null && latestPercent !== undefined && (
+              <div style={{ marginTop: 4, color: '#2563eb', fontWeight: 500 }}>
+                Percent Completed: {latestPercent}%
+                {latestDate && (
+                  <span style={{ color: '#666', marginLeft: 8, fontWeight: 400, fontSize: '0.95em' }}>
+                    ({new Date(latestDate).toLocaleString()})
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
           <textarea
             className="agile-update-input"
             value={newUpdate}
@@ -20,6 +41,21 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
             rows={4}
             style={{ width: "100%", marginTop: 12 }}
           />
+          <div style={{ marginTop: 16 }}>
+            <label className="agile-update-label" htmlFor="percent-completed-input">Percent Completed:</label>
+            <input
+              id="percent-completed-input"
+              type="number"
+              min={0}
+              max={100}
+              value={percentCompleted}
+              onChange={e => onPercentChange(Math.max(0, Math.min(100, Number(e.target.value))))}
+              style={{ width: 80, marginLeft: 8 }}
+              step={1}
+              disabled={loading}
+            />
+            <span style={{ marginLeft: 4 }}>%</span>
+          </div>
         </div>
         <div className="agile-update-modal-actions">
           <button className="agile-update-save-btn" onClick={onSave} disabled={loading || !newUpdate.trim()}>

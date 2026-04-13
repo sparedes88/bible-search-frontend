@@ -311,11 +311,19 @@ const AgileDevelopmentDashboard = () => {
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = row?.rowData || {};
+      // Prepare new update for status change
+      const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
+      const statusChangeUpdate = {
+        text: `Status changed to ${nextStatus}`,
+        percentCompleted: 0,
+        date: new Date().toISOString(),
+      };
       return {
         ...row,
         rowData: {
           ...rowData,
           [issue.statusField || "E2 Status Update"]: nextStatus,
+          updates: [...prevUpdates, statusChangeUpdate],
         },
       };
     });
@@ -348,21 +356,26 @@ const AgileDevelopmentDashboard = () => {
 
   const [updateModal, setUpdateModal] = useState({ open: false, issue: null });
   const [newUpdate, setNewUpdate] = useState("");
+  const [percentCompleted, setPercentCompleted] = useState("");
   const [latestUpdate, setLatestUpdate] = useState("");
   const [updateLoading, setUpdateLoading] = useState(false);
 
-  // Fetch latest update for a given issue
+  // Fetch latest update and percent completed for a given issue
   const fetchLatestUpdate = (issue) => {
     const source = projectSources[issue.projectDocId];
-    if (!source) return "";
+    if (!source) return { text: "", percentCompleted: null, date: null };
     const row = source.rows[issue.rowIndex];
-    if (!row) return "";
+    if (!row) return { text: "", percentCompleted: null, date: null };
     const updates = row.rowData.updates;
     if (Array.isArray(updates) && updates.length > 0) {
       const last = updates[updates.length - 1];
-      return last.text || last.comment || JSON.stringify(last);
+      return {
+        text: last.text || last.comment || JSON.stringify(last),
+        percentCompleted: typeof last.percentCompleted === "number" ? last.percentCompleted : null,
+        date: last.date || null
+      };
     }
-    return row.rowData.update || "";
+    return { text: row.rowData.update || "", percentCompleted: null, date: null };
   };
 
   if (loading) {
@@ -469,7 +482,18 @@ const AgileDevelopmentDashboard = () => {
                 onDrop={() => handleDrop(column)}
               >
                 {columnIssues.map((issue) => {
-                  console.log(`[AgileDashboard] Card in column ${column.name}:`, issue);
+                  // Find latest percentCompleted from updates
+                  let percentCompleted = null;
+                  const source = projectSources[issue.projectDocId];
+                  if (source) {
+                    const row = source.rows[issue.rowIndex];
+                    if (row && Array.isArray(row.rowData.updates) && row.rowData.updates.length > 0) {
+                      const last = row.rowData.updates[row.rowData.updates.length - 1];
+                      if (typeof last.percentCompleted === 'number') {
+                        percentCompleted = last.percentCompleted;
+                      }
+                    }
+                  }
                   return (
                     <div
                       key={issue.key}
@@ -478,7 +502,7 @@ const AgileDevelopmentDashboard = () => {
                       onDragStart={() => handleDragStart(issue.key)}
                     >
                       <div className="agile-card-header">
-                        <div className="agile-card-field-row">
+                        <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Link
                             className="agile-card-issue-id"
                             to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
@@ -486,6 +510,18 @@ const AgileDevelopmentDashboard = () => {
                           >
                             {normalizeValue(issue.issueId) || "-"}
                           </Link>
+                          <a
+                            href="#"
+                            style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginLeft: 8 }}
+                            onClick={e => {
+                              e.preventDefault();
+                              setUpdateModal({ open: true, issue });
+                              setNewUpdate("");
+                              const latest = fetchLatestUpdate(issue);
+                              setPercentCompleted("");
+                              setLatestUpdate(latest);
+                            }}
+                          >Add Update</a>
                         </div>
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Project Name:</span>
@@ -510,18 +546,45 @@ const AgileDevelopmentDashboard = () => {
                           </span>
                         </div>
                       </div>
-                      <div className="agile-card-actions" style={{ marginTop: 8, textAlign: 'right' }}>
-                        <a
-                          href="#"
-                          style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
-                          onClick={e => {
-                            e.preventDefault();
-                            setUpdateModal({ open: true, issue });
-                            setNewUpdate("");
-                            setLatestUpdate(fetchLatestUpdate(issue));
-                          }}
-                        >Add Update</a>
+
+                      {/* Percent Completed Bar */}
+                      <div style={{ margin: '12px 0 0 0', padding: 0 }}>
+                        <div style={{
+                          width: '100%',
+                          height: '18px',
+                          background: '#e5e7eb',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          position: 'relative',
+                          boxShadow: '0 1px 2px #0001',
+                        }}>
+                          <div style={{
+                            width: percentCompleted !== null ? `${Math.max(0, Math.min(percentCompleted, 100))}%` : '0%',
+                            height: '100%',
+                            background: 'linear-gradient(90deg, #22c55e 60%, #16a34a 100%)',
+                            transition: 'width 0.5s cubic-bezier(.4,2,.6,1)',
+                          }} />
+                          <span style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            width: '100%',
+                            height: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 600,
+                            color: percentCompleted !== null && percentCompleted > 50 ? '#fff' : '#166534',
+                            fontSize: '0.92em',
+                            letterSpacing: '0.01em',
+                            textShadow: percentCompleted !== null && percentCompleted > 50 ? '0 1px 2px #0006' : 'none',
+                          }}>
+                            {percentCompleted !== null ? `${percentCompleted}% Completed` : '0% Completed'}
+                          </span>
+                        </div>
                       </div>
+
+                      {/* Removed Add Update link from bottom, now at top right */}
                     </div>
                   );
                 })}
@@ -540,6 +603,8 @@ const AgileDevelopmentDashboard = () => {
         latestUpdate={latestUpdate}
         newUpdate={newUpdate}
         onChange={setNewUpdate}
+        percentCompleted={percentCompleted}
+        onPercentChange={setPercentCompleted}
         loading={updateLoading}
         onSave={async () => {
           if (!updateModal.issue || !newUpdate.trim()) return;
@@ -552,7 +617,11 @@ const AgileDevelopmentDashboard = () => {
             const targetRow = rows[issue.rowIndex];
             if (!targetRow) return;
             const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
-            const newEntry = { date: new Date().toISOString(), text: newUpdate.trim() };
+            const newEntry = {
+              date: new Date().toISOString(),
+              text: newUpdate.trim(),
+              percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
+            };
             const updatedRow = {
               ...targetRow,
               rowData: {
@@ -562,8 +631,9 @@ const AgileDevelopmentDashboard = () => {
             };
             const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
             await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
-            setLatestUpdate(newEntry.text);
+            setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });
             setNewUpdate("");
+            setPercentCompleted("");
             setUpdateModal({ open: false, issue: null });
           } finally {
             setUpdateLoading(false);

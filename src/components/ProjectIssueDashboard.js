@@ -4891,6 +4891,41 @@ const ProjectIssueDashboard = () => {
         ) : null}
       </div>
 
+      {/* --- Update History Section: Rendered at the bottom of the details page --- */}
+      {(() => {
+        let updateHistorySection = null;
+        if (selectedIssueId) {
+          const selectedIssue = issues.find(issue => normalizeValue(issue.id) === normalizeValue(selectedIssueId));
+          const updates = selectedIssue?.rowData?.updates;
+          if (Array.isArray(updates) && updates.length > 0) {
+            updateHistorySection = (
+              <div className="project-issue-update-history" style={{ margin: '32px 0 0 0', padding: '24px', background: '#f8fafc', borderRadius: 8, boxShadow: '0 1px 4px #0001' }}>
+                <h2 style={{ fontSize: 20, marginBottom: 12, color: '#2563eb' }}>Update History</h2>
+                <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white' }}>
+                  <thead>
+                    <tr style={{ background: '#e0e7ef' }}>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600 }}>Update Text</th>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600 }}>Percent Completed</th>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600 }}>Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {updates.map((u, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{u.text || u.comment || <em>No text</em>}</td>
+                        <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{typeof u.percentCompleted === 'number' ? `${u.percentCompleted}%` : '-'}</td>
+                        <td style={{ padding: '8px 12px', verticalAlign: 'top', color: '#666' }}>{u.date ? (new Date(u.date).toLocaleString()) : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+        }
+        return updateHistorySection;
+      })()}
+
       {lightboxUrl ? (
         <div
           className="project-issue-lightbox-overlay"
