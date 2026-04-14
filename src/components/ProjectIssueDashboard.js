@@ -1437,7 +1437,7 @@ const ProjectIssueDashboard = () => {
               projectDocId: projectDoc.id,
               rowIndex,
               createdAt: createdAtValue,
-              e2Comments: normalizeValue(internalMeta.e2Comments),
+              e2Comments: normalizeValue(rowData.e2Comments),
               e2Documents: Array.isArray(internalMeta.e2Documents) ? internalMeta.e2Documents : [],
             });
           });
@@ -2617,7 +2617,11 @@ const ProjectIssueDashboard = () => {
             const projectData = projectSnapshot.data();
             const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
             const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-            const targetRow = rows[issue.rowIndex];
+            // Find the row whose rowData.id, rowData['Issue ID'], or rowData['ID'] matches issue.id
+            const targetRow = rows.find(row => {
+              const rd = row.rowData || {};
+              return rd['id'] === issue.id || rd['Issue ID'] === issue.id || rd['ID'] === issue.id;
+            });
             const rowData = targetRow?.rowData || {};
             // Use field alias helpers to get the latest values from Firestore
             const e2TDField = findFieldByAliases(fields, rowData, E2_TD_FIELD_ALIASES);
@@ -2626,10 +2630,15 @@ const ProjectIssueDashboard = () => {
             e2TD = normalizeValue(e2TDField ? rowData[e2TDField] : e2TD);
             e2Detailer = normalizeValue(e2DetailerField ? rowData[e2DetailerField] : e2Detailer);
             e2DetailerSupportTeam = sanitizeSupportTeamValues(rowData[e2DetailerSupportTeamField], e2DetailerOptions);
-            const internalCardMeta = projectData?.internalCardMeta || {};
-            const cardMeta = internalCardMeta[issue.id] || {};
-            e2Comments = normalizeValue(cardMeta.e2Comments) || "";
-            e2Documents = Array.isArray(cardMeta.e2Documents) ? cardMeta.e2Documents : [];
+            // --- MAIN: Read e2Comments and e2Documents directly from rowData (e.g., for id:SRF-1535) ---
+            e2Comments = normalizeValue(rowData.e2Comments) || "";
+            e2Documents = Array.isArray(rowData.e2Documents) ? rowData.e2Documents : [];
+            // Optionally, fallback to internalCardMeta if not present in rowData
+            if (!e2Comments) {
+              const internalCardMeta = projectData?.internalCardMeta || {};
+              const cardMeta = internalCardMeta[issue.id] || {};
+              e2Comments = normalizeValue(cardMeta.e2Comments) || "";
+            }
           }
         }
       } catch (err) {
@@ -2723,12 +2732,16 @@ const ProjectIssueDashboard = () => {
 
     const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
     const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
-    const targetRow = previousRows[issue.rowIndex];
-    if (!targetRow) {
+    // Find the row whose rowData.id, rowData['Issue ID'], or rowData['ID'] matches issue.id
+    const rowIndex = previousRows.findIndex(row => {
+      const rd = row.rowData || {};
+      return rd['id'] === issue.id || rd['Issue ID'] === issue.id || rd['ID'] === issue.id;
+    });
+    if (rowIndex === -1) {
       toast.error("Issue row was not found. Please refresh and try again.");
       return;
     }
-
+    const targetRow = previousRows[rowIndex];
     const previousRowData = targetRow?.rowData || {};
     const techDetailsFieldName =
       findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
@@ -2784,7 +2797,7 @@ const ProjectIssueDashboard = () => {
     updatedFields = updatedFields.includes(technicalDirectionFieldName) ? updatedFields : [...updatedFields, technicalDirectionFieldName];
     updatedFields = updatedFields.includes(dataStageFieldName) ? updatedFields : [...updatedFields, dataStageFieldName];
     const updatedRows = previousRows.map((row, index) =>
-      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+      index === rowIndex ? { ...row, rowData: updatedRowData } : row
     );
     const previousSource = projectSource;
 
@@ -3557,11 +3570,24 @@ const ProjectIssueDashboard = () => {
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
       const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
+      // Update internalCardMeta
       internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
       internalCardMeta[issue.id].e2Comments = normalizeValue(techDetailsPopup.e2Comments);
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      // Update e2Comments in the correct row's rowData (by id, e.g., SRF-1535)
+      const rowIndex = rows.findIndex(row => {
+        const rowData = row?.rowData || {};
+        return rowData['ID'] === issue.id || rowData['Issue ID'] === issue.id || rowData['id'] === issue.id;
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Comments: normalizeValue(techDetailsPopup.e2Comments) };
+        rows[rowIndex] = row;
+      }
+
+      await updateDoc(projectDoc, { internalCardMeta, rows });
       toast.success("E2 Comments saved.");
     } catch (err) {
       console.error("Error saving E2 Comments:", err);
@@ -3618,12 +3644,20 @@ const ProjectIssueDashboard = () => {
       const projectDoc = doc(db, "churches", id, "bimProjects", issue.projectDocId);
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
-      internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
-      internalCardMeta[issue.id].e2Documents = [...(internalCardMeta[issue.id].e2Documents || []), ...uploadedDocs];
+      // Update e2Documents in the correct row's rowData (by id)
+      const rowIndex = rows.findIndex(row => {
+        const rd = row?.rowData || {};
+        return rd['ID'] === issue.id || rd['Issue ID'] === issue.id || rd['id'] === issue.id;
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Documents: [...(row.rowData.e2Documents || []), ...uploadedDocs] };
+        rows[rowIndex] = row;
+      }
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(projectDoc, { rows });
 
       setTechDetailsPopup((prev) => ({
         ...prev,

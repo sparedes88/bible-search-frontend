@@ -38,7 +38,7 @@ const normalizeValue = (value) => {
 
 const normalizeFieldKey = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
+export const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   const candidates = Array.from(new Set([...fields, ...Object.keys(rowData)]));
   for (const alias of aliases) {
     const key = normalizeFieldKey(alias);
@@ -189,9 +189,10 @@ const ProjectIssueDetail = () => {
       const computedCardKey = normalizeCardKey(decodedIssueId, matched?.rowNumber);
       setCardKey(computedCardKey);
 
-      // Load E2 metadata
+      // Always load E2 Comments from rowData (main Firestore location)
+      setE2Comments(normalizeValue(matched?.rowData?.e2Comments) || "");
+      // Documents can still fallback to meta
       const meta = internalCardMeta[computedCardKey] || {};
-      setE2Comments(normalizeValue(meta.e2Comments) || "");
       setE2Documents(Array.isArray(meta.e2Documents) ? meta.e2Documents : []);
 
       // Load log entries from meta or initialize
@@ -335,19 +336,29 @@ const ProjectIssueDetail = () => {
   // ── E2 metadata handlers ──────────────────────────────────────────────────────
 
   const saveE2Comments = async () => {
-    if (!id || !projectDocId || !cardKey) return;
+    if (!id || !projectDocId) return;
     setSavingE2Metadata(true);
 
     try {
       const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      internalCardMeta[cardKey].e2Comments = normalizeValue(e2Comments);
+      // Update e2Comments in the correct row's rowData (by id)
+      const idAliases = ["id", "issue id", "task id", "card id", "row id"];
+      const rowIndex = rows.findIndex(row => {
+        const rd = row?.rowData || {};
+        const fieldName = findFieldByAliases(fields, rd, idAliases);
+        return fieldName && normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase();
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Comments: normalizeValue(e2Comments) };
+        rows[rowIndex] = row;
+      }
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(projectDoc, { rows });
       toast.success("E2 Comments saved.");
     } catch (err) {
       console.error("Error saving E2 Comments:", err);

@@ -1,6 +1,14 @@
+  // Technical Direction dropdown options
+  const technicalDirectionOptions = [
+    "Stop and Start",
+    "Steer with current task",
+    "Add to Queue"
+  ];
 import React, { useEffect, useMemo, useState } from "react";
+import { findFieldByAliases } from "./ProjectIssueDetail";
 import { TAG_ALIASES_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "./projectIssueConstants";
 import AgileUpdateModal from "./AgileUpdateModal";
+import QuickEditModal from "./QuickEditModal";
 
 // Ensure normalizeValue is defined before all usages
 const normalizeValue = (value) => {
@@ -62,27 +70,6 @@ const getColumnsFromStatuses = (statusOptions = []) =>
     order: index,
   }));
 
-const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
-  const normalizedAliases = aliases.map((alias) => normalizeFieldKey(alias));
-  const candidates = dedupeValues([...(Array.isArray(fields) ? fields : []), ...Object.keys(rowData || {})]);
-
-  for (const candidate of candidates) {
-    const key = normalizeFieldKey(candidate);
-    if (normalizedAliases.includes(key)) {
-      return candidate;
-    }
-  }
-
-  for (const aliasKey of normalizedAliases) {
-    const startsWith = candidates.find((candidate) => normalizeFieldKey(candidate).startsWith(aliasKey));
-    if (startsWith) return startsWith;
-
-    const includes = candidates.find((candidate) => normalizeFieldKey(candidate).includes(aliasKey));
-    if (includes) return includes;
-  }
-
-  return null;
-};
 
 const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
 const TITLE_ALIASES = ["title", "task title", "name"];
@@ -104,6 +91,7 @@ const TECH_DETAILS_ALIASES = [
 ];
 
 const AgileDevelopmentDashboard = () => {
+  const [quickEditModal, setQuickEditModal] = useState({ open: false, issue: null });
   const { id } = useParams();
   // Columns will be generated dynamically from unique E2 Status Update Agile values
   const [columns, setColumns] = useState([]);
@@ -212,6 +200,7 @@ const AgileDevelopmentDashboard = () => {
               e2LeadDetailer: e3LeadDetailer,
               status,
               technicalDirection,
+              rowData, // <-- Add rowData so Quick Edit popup can access all fields
             });
           });
         });
@@ -248,6 +237,38 @@ const AgileDevelopmentDashboard = () => {
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.e2LeadDetailer))),
     [issues]
   );
+
+  const supportTeamOptions = useMemo(() => {
+    // Use the same aliases as ProjectIssueDetail
+    const SUPPORT_TEAM_ALIASES = [
+      "e2 detailer support team",
+      "e2 detailer support",
+      "e2 support team",
+      "support team"
+    ];
+    const all = issues.flatMap(issue => {
+      // Find the correct field key for this issue
+      const source = projectSources[issue.projectDocId];
+      const fields = Array.isArray(source?.fields) ? source.fields : [];
+      const rowData = issue?.rowData || {};
+      const key = findFieldByAliases(fields, rowData, SUPPORT_TEAM_ALIASES);
+      const val = key ? rowData[key] : issue.e2DetailerSupportTeam;
+      console.log('[SupportTeamOptions Debug]', {
+        issueId: rowData['ID'] || rowData['Issue ID'] || rowData['id'],
+        key,
+        val,
+        rowDataKeys: Object.keys(rowData),
+        rowData
+      });
+      if (Array.isArray(val)) return val;
+      if (typeof val === "string" && val.includes(",")) return val.split(",").map(s => s.trim()).filter(Boolean);
+      if (typeof val === "string" && val) return [val];
+      return [];
+    });
+    const uniqueOptions = dedupeValues(all);
+    console.log('[SupportTeamOptions Available]', uniqueOptions);
+    return uniqueOptions;
+  }, [issues, projectSources]);
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
@@ -529,18 +550,28 @@ const AgileDevelopmentDashboard = () => {
                           >
                             {normalizeValue(issue.issueId) || "-"}
                           </Link>
-                          <a
-                            href="#"
-                            style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginLeft: 8 }}
-                            onClick={e => {
-                              e.preventDefault();
-                              setUpdateModal({ open: true, issue });
-                              setNewUpdate("");
-                              const latest = fetchLatestUpdate(issue);
-                              setPercentCompleted("");
-                              setLatestUpdate(latest);
-                            }}
-                          >Add Update</a>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <a
+                              href="#"
+                              style={{ color: '#059669', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginRight: 12 }}
+                              onClick={e => {
+                                e.preventDefault();
+                                setQuickEditModal({ open: true, issue });
+                              }}
+                            >Quick Edit</a>
+                            <a
+                              href="#"
+                              style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+                              onClick={e => {
+                                e.preventDefault();
+                                setUpdateModal({ open: true, issue });
+                                setNewUpdate("");
+                                const latest = fetchLatestUpdate(issue);
+                                setPercentCompleted("");
+                                setLatestUpdate(latest);
+                              }}
+                            >Add Update</a>
+                          </div>
                         </div>
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Project Name:</span>
@@ -678,6 +709,58 @@ const AgileDevelopmentDashboard = () => {
             setUpdateLoading(false);
           }
         }}
+      />
+
+      <QuickEditModal
+        isOpen={quickEditModal.open}
+        onClose={() => setQuickEditModal({ open: false, issue: null })}
+        issue={quickEditModal.issue}
+        issueId={quickEditModal.issue?.issueId || quickEditModal.issue?.id || quickEditModal.issue?.ID || quickEditModal.issue?.['Issue ID'] || quickEditModal.issue?.rowData?.id || quickEditModal.issue?.rowData?.ID || quickEditModal.issue?.rowData?.['Issue ID'] || ""}
+        onSubmit={async (formData) => {
+          if (!quickEditModal.issue) return;
+          const { issue } = quickEditModal;
+          const source = projectSources[issue.projectDocId];
+          if (!source) return;
+          const rows = Array.isArray(source.rows) ? source.rows : [];
+          const targetRow = rows[issue.rowIndex];
+          if (!targetRow) return;
+
+          // Find correct field keys for each editable field
+          const fields = Array.isArray(source.fields) ? source.fields : [];
+          const rowData = { ...targetRow.rowData };
+          // Helper to update by alias
+          const setFieldByAliases = (aliases, value) => {
+            const key = findFieldByAliases(fields, rowData, aliases);
+            if (key) rowData[key] = value;
+          };
+          setFieldByAliases(PROJECT_NAME_ALIASES, formData.projectName);
+          setFieldByAliases(TITLE_ALIASES, formData.title);
+          setFieldByAliases(LEAD_DETAILER_ALIASES, formData.e3LeadDetailer);
+          setFieldByAliases(["e2 detailer support team", "e2detailersupportteam"], formData.e2DetailerSupportTeam);
+          setFieldByAliases(["e2 comments", "e2comments"], formData.e2Comments);
+          setFieldByAliases(["e2 documents", "e2documents"], formData.e2Documents);
+          setFieldByAliases(["data stage", "datastage"], formData.dataStage);
+          rowData["Technical Direction"] = formData.technicalDirection;
+
+          const updatedRow = {
+            ...targetRow,
+            rowData,
+          };
+          const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+          try {
+            const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+            await updateDoc(projectRef, { rows: updatedRows });
+            toast.success("Issue updated successfully.");
+          } catch (err) {
+            toast.error("Failed to update issue.");
+          }
+          setQuickEditModal({ open: false, issue: null });
+        }}
+        projectNameOptions={projectNameOptions}
+        technicalDirectionOptions={technicalDirectionOptions}
+        leadDetailerOptions={e2LeadDetailerOptions}
+        supportTeamOptions={supportTeamOptions}
+        dataStageOptions={DATA_STAGE_OPTIONS}
       />
     </div>
   );
