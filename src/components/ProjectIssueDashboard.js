@@ -4891,14 +4891,59 @@ const ProjectIssueDashboard = () => {
         ) : null}
       </div>
 
-      {/* --- Update History Section: Rendered at the bottom of the details page --- */}
+
+      {/* --- Update History Section: Rendered after E2 Comments and E2 Documents on the details page --- */}
       {(() => {
+        // Find the selected issue
         let updateHistorySection = null;
         if (selectedIssueId) {
           const selectedIssue = issues.find(issue => normalizeValue(issue.id) === normalizeValue(selectedIssueId));
-          const updates = selectedIssue?.rowData?.updates;
-          if (Array.isArray(updates) && updates.length > 0) {
+          // Render E2 Comments
+          const e2Comments = selectedIssue?.e2Comments;
+          // Render E2 Documents
+          const e2Documents = selectedIssue?.e2Documents;
+
+          // --- E2 Comments ---
+          if (e2Comments) {
             updateHistorySection = (
+              <div style={{ margin: '32px 0 0 0', padding: '16px', background: '#f1f5f9', borderRadius: 8 }}>
+                <h2 style={{ fontSize: 18, marginBottom: 8, color: '#334155' }}>E2 Comments</h2>
+                <div style={{ whiteSpace: 'pre-line', color: '#22223b' }}>{e2Comments}</div>
+              </div>
+            );
+          }
+
+          // --- E2 Documents ---
+          let e2DocumentsSection = null;
+          if (Array.isArray(e2Documents) && e2Documents.length > 0) {
+            e2DocumentsSection = (
+              <div style={{ margin: '24px 0 0 0', padding: '16px', background: '#f8fafc', borderRadius: 8 }}>
+                <h2 style={{ fontSize: 18, marginBottom: 8, color: '#334155' }}>E2 Documents</h2>
+                <ul style={{ paddingLeft: 20 }}>
+                  {e2Documents.map((doc, idx) => (
+                    <li key={idx} style={{ marginBottom: 6 }}>
+                      <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>{doc.name || `Document ${idx + 1}`}</a>
+                      {doc.uploadedAt && (
+                        <span style={{ marginLeft: 8, color: '#64748b', fontSize: 12 }}>({new Date(doc.uploadedAt).toLocaleString()})</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+
+          // --- Update History ---
+          const updates = selectedIssue?.rowData?.updates;
+          let updateHistoryTable = null;
+          if (Array.isArray(updates) && updates.length > 0) {
+            // Sort updates latest first
+            const sortedUpdates = [...updates].sort((a, b) => {
+              const da = a.date ? new Date(a.date).getTime() : 0;
+              const db = b.date ? new Date(b.date).getTime() : 0;
+              return db - da;
+            });
+            updateHistoryTable = (
               <div className="project-issue-update-history" style={{ margin: '32px 0 0 0', padding: '24px', background: '#f8fafc', borderRadius: 8, boxShadow: '0 1px 4px #0001' }}>
                 <h2 style={{ fontSize: 20, marginBottom: 12, color: '#2563eb' }}>Update History</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white' }}>
@@ -4910,7 +4955,7 @@ const ProjectIssueDashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {updates.map((u, idx) => (
+                    {sortedUpdates.map((u, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb' }}>
                         <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{u.text || u.comment || <em>No text</em>}</td>
                         <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{typeof u.percentCompleted === 'number' ? `${u.percentCompleted}%` : '-'}</td>
@@ -4922,8 +4967,17 @@ const ProjectIssueDashboard = () => {
               </div>
             );
           }
+
+          // Compose all sections in order: E2 Comments, E2 Documents, Update History
+          return (
+            <>
+              {updateHistorySection}
+              {e2DocumentsSection}
+              {updateHistoryTable}
+            </>
+          );
         }
-        return updateHistorySection;
+        return null;
       })()}
 
       {lightboxUrl ? (

@@ -148,6 +148,13 @@ const AgileBoardPage = () => {
           const disableFlag = normalizeValue(disableFlagField ? rowData[disableFlagField] : "No");
           const dataStageField = findFieldByAliases(fields, rowData, DATA_STAGE_ALIASES) || "Data Stage";
           const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || DEFAULT_DATA_STAGE;
+
+          // Debug: Log updates array for SRF-3632
+          if (issueId === "SRF-3632") {
+            // eslint-disable-next-line no-console
+            console.log("[DEBUG] Issue SRF-3632 updates:", rowData.updates);
+          }
+
           nextIssues.push({
             key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
             projectDocId: projectDoc.id,
