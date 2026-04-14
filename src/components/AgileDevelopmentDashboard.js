@@ -343,7 +343,26 @@ const AgileDevelopmentDashboard = () => {
 
     try {
       const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-      await updateDoc(projectRef, { rows: updatedRows });
+      // --- Also update the log structure in internalCardMeta for ProjectIssueDetail ---
+      // Compute cardKey as in ProjectIssueDetail (shared logic)
+      const normalizeCardKey = (id, rowNumber) => {
+        const norm = String(id || "").trim().toUpperCase();
+        return norm ? `id:${norm}` : `row:${issue.rowIndex}`;
+      };
+      const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
+      const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectRef);
+      const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
+      const internalCardMeta = projectDocData.internalCardMeta || {};
+      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+      const logEntry = {
+        update: `Status changed to ${nextStatus}`,
+        percent: 0,
+        timestamp: new Date().toISOString(),
+      };
+      const nextLog = [logEntry, ...prevLog];
+      internalCardMeta[cardKey].logEntries = nextLog;
+      await updateDoc(projectRef, { rows: updatedRows, internalCardMeta });
       toast.success(`Moved to ${nextStatus}.`);
     } catch (error) {
       toast.error("Could not move the issue. Please try again.");
