@@ -617,8 +617,9 @@ const AgileDevelopmentDashboard = () => {
             const targetRow = rows[issue.rowIndex];
             if (!targetRow) return;
             const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
+            const now = new Date().toISOString();
             const newEntry = {
-              date: new Date().toISOString(),
+              date: now,
               text: newUpdate.trim(),
               percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
             };
@@ -630,7 +631,26 @@ const AgileDevelopmentDashboard = () => {
               },
             };
             const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
-            await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+            // --- Update log structure in internalCardMeta for ProjectIssueDetail ---
+            const normalizeCardKey = (id, rowNumber) => {
+              const norm = String(id || "").trim().toUpperCase();
+              return norm ? `id:${norm}` : `row:${rowNumber}`;
+            };
+            const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
+            const projectDocRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+            const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectDocRef);
+            const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
+            const internalCardMeta = projectDocData.internalCardMeta || {};
+            internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+            const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+            const logEntry = {
+              update: newUpdate.trim(),
+              percent: Number(percentCompleted) || 0,
+              timestamp: now,
+            };
+            const nextLog = [logEntry, ...prevLog];
+            internalCardMeta[cardKey].logEntries = nextLog;
+            await updateDoc(projectDocRef, { rows: updatedRows, internalCardMeta });
             setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });
             setNewUpdate("");
             setPercentCompleted("");

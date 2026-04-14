@@ -68,6 +68,7 @@ const AgileBoardPage = () => {
   const [savingKey, setSavingKey] = useState("");
   const [updateModal, setUpdateModal] = useState({ open: false, issue: null });
   const [newUpdate, setNewUpdate] = useState("");
+  const [percentCompleted, setPercentCompleted] = useState(0);
   const [latestUpdate, setLatestUpdate] = useState("");
   const [updateLoading, setUpdateLoading] = useState(false);
     // Fetch latest update for a given issue
@@ -359,12 +360,19 @@ const AgileBoardPage = () => {
       </div>
     <AgileUpdateModal
       isOpen={updateModal.open}
-      onClose={() => setUpdateModal({ open: false, issue: null })}
+      onClose={() => {
+        setUpdateModal({ open: false, issue: null });
+        setNewUpdate("");
+        setPercentCompleted(0);
+      }}
       latestUpdate={latestUpdate}
       newUpdate={newUpdate}
       onChange={setNewUpdate}
+      percentCompleted={percentCompleted}
+      onPercentChange={setPercentCompleted}
       loading={updateLoading}
-      onSave={async () => {
+      onSave={async (pc) => {
+        console.log("[AgileBoardPage] onSave called", { issue: updateModal.issue, newUpdate, percentCompleted: pc });
         if (!updateModal.issue || !newUpdate.trim()) return;
         setUpdateLoading(true);
         try {
@@ -376,7 +384,8 @@ const AgileBoardPage = () => {
           if (!targetRow) return;
           // Append to updates array in rowData
           const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
-          const newEntry = { date: new Date().toISOString(), text: newUpdate.trim() };
+          const now = new Date().toISOString();
+          const newEntry = { date: now, text: newUpdate.trim(), percentCompleted: pc };
           const updatedRow = {
             ...targetRow,
             rowData: {
@@ -386,8 +395,37 @@ const AgileBoardPage = () => {
           };
           const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
           await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+
+          // --- Also update the log structure in internalCardMeta for ProjectIssueDetail ---
+          // Compute cardKey as in ProjectIssueDetail (shared logic)
+          const normalizeCardKey = (id, rowNumber) => {
+            const norm = String(id || "").trim().toUpperCase();
+            return norm ? `id:${norm}` : `row:${rowNumber}`;
+          };
+          const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
+          const projectDocRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+          const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectDocRef);
+          const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
+          const internalCardMeta = projectDocData.internalCardMeta || {};
+          internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+          const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+          const logEntry = {
+            update: newUpdate.trim(),
+            percent: Number(pc) || 0,
+            timestamp: now,
+          };
+          const nextLog = [logEntry, ...prevLog];
+          internalCardMeta[cardKey].logEntries = nextLog;
+          console.log("[AgileBoardPage] Writing log entry", { cardKey, logEntry, nextLog });
+          try {
+            await updateDoc(projectDocRef, { internalCardMeta });
+          } catch (err) {
+            console.error("[AgileBoardPage] Error updating log in Firestore", err);
+          }
+
           setLatestUpdate(newEntry.text);
           setNewUpdate("");
+          setPercentCompleted(0);
           setUpdateModal({ open: false, issue: null });
         } finally {
           setUpdateLoading(false);
