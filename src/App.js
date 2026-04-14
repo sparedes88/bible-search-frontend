@@ -91,6 +91,7 @@ const AdminConnect = React.lazy(() => import("./components/AdminConnect"));
 const AddVisitor = React.lazy(() => import("./components/AddVisitor"));
 const SubcategorySettings = React.lazy(() => import("./components/SubcategorySettings"));
 const MiOrganizacion = React.lazy(() => import("./components/MiOrganizacion"));
+const EvangelismOutreach = React.lazy(() => import("./components/EvangelismOutreach"));
 const AllEvents = React.lazy(() => import("./components/AllEvents"));
 const ChurchApp = React.lazy(() => import("./components/ChurchApp"));
 const EventDetails = React.lazy(() => import("./components/EventDetails"));
@@ -111,6 +112,7 @@ const DonorsPage = React.lazy(() => import("./components/DonorsPage"));
 const RoomsPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.RoomsPage })));
 const InventoryPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.InventoryPage })));
 const FinancesPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.FinancesPage })));
+const PersonGivingLookupPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.PersonGivingLookupPage })));
 const TeamsPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.TeamsPage })));
 const MaintenancePage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.MaintenancePage })));
 const ChurchRooms = React.lazy(() => import("./pages/church/Rooms"));
@@ -369,6 +371,10 @@ const App = () => {
             element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>}
           />
           <Route
+            path="/organization/:id/evangelism-outreach"
+            element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>}
+          />
+          <Route
             path="/organization/:id/role-manager"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
@@ -459,6 +465,10 @@ const App = () => {
           <Route path="/organization/:id/inventory" element={<InventoryPage />} />
           <Route path="/organization/:id/inventory/:itemId" element={<InventoryItemDetail />} />
           <Route path="/organization/:id/finances" element={<FinancesPage />} />
+          <Route path="/organization/:id/finances/new" element={<FinancesPage />} />
+          <Route path="/organization/:id/finances/edit/:entryId" element={<FinancesPage />} />
+          <Route path="/organization/:id/finances/view/:entryId" element={<FinancesPage />} />
+          <Route path="/organization/:id/finances/person-lookup" element={<PersonGivingLookupPage />} />
           <Route path="/organization/:id/teams" element={<TeamsPage />} />
           <Route path="/organization/:id/teams/create" element={<CreateTeamPage />} />
           <Route path="/organization/:id/maintenance" element={<MaintenancePage />} />
@@ -808,6 +818,7 @@ const App = () => {
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
           <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
           <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
           <Route path="/church/:id/form/:formId" element={

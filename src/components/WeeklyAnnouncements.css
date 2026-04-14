@@ -1,0 +1,213 @@
+.weekly-page {
+  --wc-bg-start: #fff7ed;
+  --wc-bg-end: #ecfeff;
+  --wc-card: #ffffff;
+  --wc-border: #e2e8f0;
+  --wc-text: #1f2937;
+  --wc-muted: #64748b;
+  --wc-accent: #0f766e;
+  --wc-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  font-family: "Nunito Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 8% 4%, rgba(14, 116, 144, 0.1), transparent 34%),
+    radial-gradient(circle at 92% 0%, rgba(217, 119, 6, 0.12), transparent 28%),
+    linear-gradient(180deg, var(--wc-bg-start) 0%, var(--wc-bg-end) 100%);
+  border-radius: 18px;
+  padding-bottom: 14px;
+}
+
+.weekly-hero {
+  background: linear-gradient(120deg, #0f766e, #0ea5e9);
+  color: #ffffff;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: var(--wc-shadow);
+  margin-bottom: 12px;
+}
+
+.weekly-org-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  box-shadow: var(--wc-shadow);
+}
+
+.weekly-org-logo-wrap {
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.weekly-org-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.weekly-org-text {
+  min-width: 0;
+}
+
+.weekly-org-label {
+  color: var(--wc-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.weekly-org-name {
+  color: var(--wc-text);
+  font-size: clamp(1rem, 0.95rem + 0.4vw, 1.2rem);
+  font-weight: 800;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.weekly-hero h1 {
+  color: #ffffff !important;
+  margin: 0 !important;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  font-size: clamp(1.35rem, 1.2rem + 1vw, 1.9rem);
+}
+
+.weekly-save-button {
+  border-radius: 999px !important;
+  min-height: 44px;
+  padding-inline: 16px !important;
+  box-shadow: 0 8px 20px rgba(2, 132, 199, 0.3);
+}
+
+.weekly-controls,
+.weekly-video-card,
+.weekly-day-card,
+.weekly-share-bar {
+  border-color: var(--wc-border) !important;
+  box-shadow: var(--wc-shadow);
+}
+
+.weekly-video-card,
+.weekly-day-card,
+.weekly-share-bar {
+  background: var(--wc-card) !important;
+}
+
+.weekly-day-card {
+  border-radius: 14px !important;
+}
+
+.weekly-day-header h3 {
+  color: var(--wc-text);
+  font-size: clamp(1.02rem, 0.95rem + 0.5vw, 1.2rem);
+  font-weight: 800;
+}
+
+.weekly-add-announcement-button {
+  min-height: 42px;
+  border-radius: 999px !important;
+}
+
+.weekly-announcement-card {
+  border-radius: 12px !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+  border-color: #dbeafe !important;
+}
+
+.weekly-share-bar {
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  z-index: 9;
+  backdrop-filter: blur(6px);
+}
+
+.weekly-share-button {
+  min-height: 46px;
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.2px;
+}
+
+.weekly-share-whatsapp {
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.25);
+}
+
+.weekly-share-sms {
+  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.25);
+}
+
+@media (max-width: 768px) {
+  .weekly-page {
+    border-radius: 0;
+    padding: 10px 8px 18px;
+  }
+
+  .weekly-hero {
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+
+  .weekly-org-brand {
+    padding: 10px 12px;
+    border-radius: 12px;
+    gap: 10px;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .weekly-org-logo-wrap {
+    width: 88px;
+    height: 88px;
+    border-radius: 18px;
+    margin: 0 auto;
+  }
+
+  .weekly-org-text {
+    width: 100%;
+    text-align: center;
+  }
+
+  .weekly-controls {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .weekly-controls button,
+  .weekly-video-card label[for="weekly-video-upload"],
+  .weekly-video-card button {
+    width: 100%;
+    max-width: none !important;
+    text-align: center;
+    min-height: 44px;
+  }
+
+  .weekly-days-grid {
+    gap: 12px !important;
+  }
+
+  .weekly-day-card {
+    padding: 10px !important;
+  }
+
+  .weekly-share-bar {
+    justify-content: stretch !important;
+    gap: 8px !important;
+    border-radius: 14px !important;
+  }
+
+  .weekly-share-button {
+    width: 100%;
+  }
+}

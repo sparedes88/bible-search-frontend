@@ -164,9 +164,49 @@ div[style*="height: 150px"] {
 
 @media (max-width: 768px) {
   .church-header-container {
-    width: 100vw !important;
-    max-width: 100vw !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 }
 
+/* ChurchHeader-specific banner sizing: shorter height without image crop */
+.church-header-banner {
+  height: var(--church-banner-height, 440px) !important;
+  min-height: var(--church-banner-height, 440px) !important;
+  background-color: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.church-header-banner .church-banner-image {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin-top: 0;
+  object-fit: contain !important;
+  object-position: center !important;
+}
+
+/* ChurchHeader logo responsiveness */
+.church-header-logo-wrap {
+  margin-top: clamp(-90px, -8vw, -48px) !important;
+}
+
+.church-header-logo-shell {
+  padding: clamp(8px, 2.5vw, 12px) !important;
+}
+
+.church-header-logo-image {
+  width: clamp(100px, 26vw, 180px) !important;
+  height: clamp(100px, 26vw, 180px) !important;
+}
+
+@media (max-width: 480px) {
+  .church-header-logo-wrap {
+    margin-top: -42px !important;
+    margin-bottom: 12px !important;
+  }
+}
 

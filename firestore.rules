@@ -328,6 +328,11 @@ service cloud.firestore {
         allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
 >>>>>>> a9f287621fea87e41e80addac008388e602a9522
       }
+
+      // Evangelism Outreach contacts: public page where anyone can view and add contacts.
+      match /evangelismOutreachContacts/{contactId} {
+        allow read, write, create, update, delete: if true;
+      }
     }
 
     // ✅ Visitors Collection (Top-level)

@@ -44,8 +44,6 @@ const ContactSection = ({ icon, label, value, link }) => {
   return (
     <div
       style={{
-        display: "flex",
-        alignItems: "center",
         gap: "10px",
       }}
     >
@@ -57,9 +55,6 @@ const ContactSection = ({ icon, label, value, link }) => {
         }}
       >
         <div>{icon}</div>
-        <p style={{ marginTop: 0, marginBottom: 0 }}>{label} :</p>
-      </div>
-      <p style={{ marginTop: 0, marginBottom: 0 }}>{content}</p>
     </div>
   );
 };
@@ -130,6 +125,21 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/teams`
         },
         {
+<<<<<<< Updated upstream
+=======
+          title: "Discipleship",
+          description: "See who is discipling who and assign new disciples",
+          icon: "🧭",
+          path: `/organization/${id}/discipleship`
+        },
+        {
+          title: "Evangelism Outreach",
+          description: "Add outreach contacts and search people you have met",
+          icon: "📣",
+          path: `/organization/${id}/evangelism-outreach`
+        },
+        {
+>>>>>>> Stashed changes
           title: "Song Manager",
           description: "Create and edit songs for presentations",
           icon: "🎵",
@@ -494,6 +504,11 @@ const MiOrganizacion = () => {
     })).filter(section => section.cards.length > 0); // Remove empty sections
   };
 
+  // Determine route prefix based on current URL (with safety check)
+  const routePrefix = (typeof window !== 'undefined' && window.location?.pathname?.includes('/church/')) 
+    ? '/church' 
+    : '/organization';
+
   if (error) {
     return (
       <div style={{
@@ -547,11 +562,6 @@ const MiOrganizacion = () => {
       </div>
     );
   }
-
-  // Determine route prefix based on current URL (with safety check)
-  const routePrefix = (typeof window !== 'undefined' && window.location?.pathname?.includes('/church/')) 
-    ? '/church' 
-    : '/organization';
 
   return (
     <div className="" style={commonStyles.fullWidthContainer}>

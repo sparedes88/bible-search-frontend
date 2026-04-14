@@ -49,6 +49,12 @@ const dedupeValues = (values = []) => {
     });
 };
 
+const resolveRowData = (row) => {
+  if (!row || typeof row !== "object") return {};
+  if (row.rowData && typeof row.rowData === "object") return row.rowData;
+  return row;
+};
+
 const toPhaseId = (value) => {
   const normalized = normalizeValue(value).toLowerCase();
   if (!normalized) return "phase-empty";
@@ -175,7 +181,7 @@ const AgileDevelopmentDashboard = () => {
           nextProjectSources[projectDoc.id] = { fields, rows };
 
           rows.forEach((row, rowIndex) => {
-            const rowData = row?.rowData || {};
+            const rowData = resolveRowData(row);
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
             const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
             const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
@@ -310,7 +316,8 @@ const AgileDevelopmentDashboard = () => {
     const nextStatus = column.name;
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
-      const rowData = row?.rowData || {};
+      const rowData = resolveRowData(row);
+      const hasNestedRowData = Boolean(row?.rowData && typeof row.rowData === "object");
       // Prepare new update for status change
       const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
       const statusChangeUpdate = {
@@ -318,13 +325,21 @@ const AgileDevelopmentDashboard = () => {
         percentCompleted: 0,
         date: new Date().toISOString(),
       };
+      if (hasNestedRowData) {
+        return {
+          ...row,
+          rowData: {
+            ...rowData,
+            [issue.statusField || "E2 Status Update"]: nextStatus,
+            updates: [...prevUpdates, statusChangeUpdate],
+          },
+        };
+      }
+
       return {
         ...row,
-        rowData: {
-          ...rowData,
-          [issue.statusField || "E2 Status Update"]: nextStatus,
-          updates: [...prevUpdates, statusChangeUpdate],
-        },
+        [issue.statusField || "E2 Status Update"]: nextStatus,
+        updates: [...prevUpdates, statusChangeUpdate],
       };
     });
 
@@ -366,7 +381,8 @@ const AgileDevelopmentDashboard = () => {
     if (!source) return { text: "", percentCompleted: null, date: null };
     const row = source.rows[issue.rowIndex];
     if (!row) return { text: "", percentCompleted: null, date: null };
-    const updates = row.rowData.updates;
+    const rowData = resolveRowData(row);
+    const updates = rowData.updates;
     if (Array.isArray(updates) && updates.length > 0) {
       const last = updates[updates.length - 1];
       return {
@@ -375,7 +391,7 @@ const AgileDevelopmentDashboard = () => {
         date: last.date || null
       };
     }
-    return { text: row.rowData.update || "", percentCompleted: null, date: null };
+    return { text: rowData.update || "", percentCompleted: null, date: null };
   };
 
   if (loading) {
@@ -487,8 +503,9 @@ const AgileDevelopmentDashboard = () => {
                   const source = projectSources[issue.projectDocId];
                   if (source) {
                     const row = source.rows[issue.rowIndex];
-                    if (row && Array.isArray(row.rowData.updates) && row.rowData.updates.length > 0) {
-                      const last = row.rowData.updates[row.rowData.updates.length - 1];
+                    const rowData = resolveRowData(row);
+                    if (row && Array.isArray(rowData.updates) && rowData.updates.length > 0) {
+                      const last = rowData.updates[rowData.updates.length - 1];
                       if (typeof last.percentCompleted === 'number') {
                         percentCompleted = last.percentCompleted;
                       }
@@ -616,19 +633,26 @@ const AgileDevelopmentDashboard = () => {
             const rows = Array.isArray(source.rows) ? source.rows : [];
             const targetRow = rows[issue.rowIndex];
             if (!targetRow) return;
-            const prevUpdates = Array.isArray(targetRow.rowData.updates) ? targetRow.rowData.updates : [];
+            const targetRowData = resolveRowData(targetRow);
+            const hasNestedRowData = Boolean(targetRow?.rowData && typeof targetRow.rowData === "object");
+            const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
             const newEntry = {
               date: new Date().toISOString(),
               text: newUpdate.trim(),
               percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
             };
-            const updatedRow = {
-              ...targetRow,
-              rowData: {
-                ...targetRow.rowData,
-                updates: [...prevUpdates, newEntry],
-              },
-            };
+            const updatedRow = hasNestedRowData
+              ? {
+                  ...targetRow,
+                  rowData: {
+                    ...targetRowData,
+                    updates: [...prevUpdates, newEntry],
+                  },
+                }
+              : {
+                  ...targetRow,
+                  updates: [...prevUpdates, newEntry],
+                };
             const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
             await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
             setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });

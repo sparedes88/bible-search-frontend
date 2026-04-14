@@ -10,6 +10,87 @@ import {
 import { getDownloadURL, ref } from "firebase/storage";
 import { db, storage } from "../firebase";
 
+const getChurchDisplayName = (churchData = {}) => (
+  churchData.nombre
+  || churchData.name
+  || churchData.churchName
+  || churchData.organizationName
+  || churchData.orgName
+  || ""
+);
+
+const getChurchAssetCandidate = (churchData = {}, field) => {
+  if (field === "logo") {
+    return churchData.logo
+      || churchData.Logo
+      || churchData.logoUrl
+      || churchData.logoURL
+      || churchData.churchLogo
+      || null;
+  }
+
+  if (field === "banner") {
+    return churchData.banner
+      || churchData.Banner
+      || churchData.bannerUrl
+      || churchData.bannerURL
+      || churchData.churchBanner
+      || null;
+  }
+
+  return null;
+};
+
+const buildFirebaseStorageMediaUrl = (assetPath) => {
+  const normalizedPath = String(assetPath || "").trim().replace(/^\//, "");
+  if (!normalizedPath) return null;
+  return `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodeURIComponent(normalizedPath)}?alt=media`;
+};
+
+const resolveChurchAssetUrl = async (assetValue) => {
+  if (!assetValue) return null;
+
+  const rawValue = String(assetValue).trim();
+  if (!rawValue) return null;
+
+  if (
+    rawValue.startsWith("http://")
+    || rawValue.startsWith("https://")
+    || rawValue.startsWith("data:")
+    || rawValue.startsWith("blob:")
+    || rawValue.startsWith("/img/")
+  ) {
+    return rawValue;
+  }
+
+  if (!storage) {
+    return rawValue.startsWith("/") ? buildFirebaseStorageMediaUrl(rawValue) : rawValue;
+  }
+
+  if (rawValue.startsWith("gs://")) {
+    try {
+      return await getDownloadURL(ref(storage, rawValue));
+    } catch (error) {
+      console.warn("Failed to resolve church asset from gs path:", error.message);
+    }
+  }
+
+  const storagePath = rawValue.startsWith("/") ? rawValue.slice(1) : rawValue;
+  if (storagePath) {
+    try {
+      return await getDownloadURL(ref(storage, storagePath));
+    } catch (error) {
+      console.warn("Failed to resolve church asset from storage path:", error.message);
+    }
+  }
+
+  if (rawValue.startsWith("/")) {
+    return buildFirebaseStorageMediaUrl(rawValue);
+  }
+
+  return rawValue;
+};
+
 export const getChurchData = async (id) => {
   try {
     // Fetch church data from Firestore
@@ -23,35 +104,17 @@ export const getChurchData = async (id) => {
     }
 
     // Fetch downloadable URLs for logo and banner
-    let logoURL = null;
-    let bannerURL = null;
-
-    if (storage) {
-      const [resolvedLogoUrl, resolvedBannerUrl] = await Promise.all([
-        churchData.logo
-          ? getDownloadURL(ref(storage, churchData.logo)).catch((logoError) => {
-              console.warn("Failed to get logo URL:", logoError.message);
-              return null;
-            })
-          : Promise.resolve(null),
-        churchData.banner
-          ? getDownloadURL(ref(storage, churchData.banner)).catch((bannerError) => {
-              console.warn("Failed to get banner URL:", bannerError.message);
-              return null;
-            })
-          : Promise.resolve(null),
-      ]);
-
-      logoURL = resolvedLogoUrl;
-      bannerURL = resolvedBannerUrl;
-    } else {
-      console.warn("Storage not available, using fallback images for church data");
-    }
+    const [logoURL, bannerURL] = await Promise.all([
+      resolveChurchAssetUrl(getChurchAssetCandidate(churchData, "logo")),
+      resolveChurchAssetUrl(getChurchAssetCandidate(churchData, "banner")),
+    ]);
 
     // Return modified church data with logo and banner URLs
     return {
       ...churchData,
       id: churchSnap.id,
+      name: getChurchDisplayName(churchData),
+      churchName: getChurchDisplayName(churchData),
       logo: logoURL,
       banner: bannerURL,
     };
