@@ -585,6 +585,12 @@ const AgileDevelopmentDashboard = () => {
                       <div className="agile-card-header">
                         <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            {normalizeValue(issue.dataStage) === 'Testing' && (
+                              <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
+                            {normalizeValue(issue.dataStage) === 'Production' && (
+                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
                             {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
                               <>
                                 <img src="/img/star.svg" alt="star" style={{ width: 16, height: 16, marginRight: 4 }} />
