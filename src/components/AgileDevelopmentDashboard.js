@@ -629,25 +629,29 @@ const AgileDevelopmentDashboard = () => {
                           </div>
                         </div>
                         <div className="agile-card-field-row">
-                          <span className="agile-card-label">Project Name:</span>
-                          <span className="agile-card-project-name" style={{ marginLeft: 4 }}>{normalizeValue(issue.projectName) || "-"}</span>
+                          <span className="agile-card-project-title-combined" style={{ marginLeft: 4 }}>
+                            <span style={{ fontWeight: 'bold' }}>{normalizeValue(issue.projectName) || "-"}</span>: {normalizeValue(issue.title) || "-"}
+                          </span>
                         </div>
                         <div className="agile-card-field-row">
-                          <span className="agile-card-label">Title:</span>
-                          <span className="agile-card-title" style={{ marginLeft: 4 }}>{normalizeValue(issue.title) || "-"}</span>
+                          <span className="agile-card-label" style={{ fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Assignee:</span>
+                          <span className="agile-card-detailer" style={{ marginLeft: 4, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
                         </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Lead Detailer:</span>
-                          <span className="agile-card-detailer" style={{ marginLeft: 4 }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
-                        </div>
-                        <div className="agile-card-field-row">
-                        </div>
+                        {/* Removed empty row below Assignee */}
                         {/* Data Stage row removed as per request; T/P icon remains in card header */}
                         <div className="agile-card-field-row">
-                          <span className="agile-card-label">Technical Direction:</span>
-                          <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color: '#7c3aed', fontSize: '0.95em' }}>
-                            {issue.technicalDirection || "-"}
-                          </span>
+                          {(() => {
+                            const value = issue.technicalDirection || "-";
+                            let color = '#7c3aed'; // default purple
+                            if (value === 'Stop and Start') color = '#ef4444'; // red
+                            else if (value === 'Steer with current task') color = '#2563eb'; // blue
+                            else if (value === 'Add to Queue') color = '#374151'; // dark gray
+                            return (
+                              <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color, fontSize: '0.95em' }}>
+                                {value}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
 
