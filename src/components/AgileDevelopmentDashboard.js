@@ -5,6 +5,8 @@
     "Add to Queue"
   ];
 import React, { useEffect, useMemo, useState } from "react";
+// --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
+const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
 import { findFieldByAliases } from "./ProjectIssueDetail";
 import { TAG_ALIASES_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "./projectIssueConstants";
 import AgileUpdateModal from "./AgileUpdateModal";
@@ -91,8 +93,20 @@ const TECH_DETAILS_ALIASES = [
 ];
 
 const AgileDevelopmentDashboard = () => {
-  const [quickEditModal, setQuickEditModal] = useState({ open: false, issue: null });
   const { id } = useParams();
+  // Project Name values managed in Project Name Manager
+  const [projectNameValues, setProjectNameValues] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const values = Array.isArray(data[PROJECT_NAME_VALUES_FIELD]) ? data[PROJECT_NAME_VALUES_FIELD] : [];
+      setProjectNameValues(values);
+    });
+    return () => unsubscribe();
+  }, [id]);
+  const [quickEditModal, setQuickEditModal] = useState({ open: false, issue: null });
   // Columns will be generated dynamically from unique E2 Status Update Agile values
   const [columns, setColumns] = useState([]);
   const [issues, setIssues] = useState([]);
@@ -222,9 +236,13 @@ const AgileDevelopmentDashboard = () => {
   const loading = loadingConfig || loadingIssues;
 
   // Use getProjectNameDisplay with tagAliasByLowerTag for filter options
+  // Use authoritative values from Project Name Manager if available, else fallback to deduped values from issues
   const projectNameOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => getProjectNameDisplay(issue, tagAliasByLowerTag))).sort((a, b) => a.localeCompare(b)),
-    [issues, tagAliasByLowerTag]
+    () =>
+      projectNameValues.length > 0
+        ? projectNameValues.slice().sort((a, b) => a.localeCompare(b))
+        : dedupeValues(issues.map((issue) => getProjectNameDisplay(issue, tagAliasByLowerTag))).sort((a, b) => a.localeCompare(b)),
+    [projectNameValues, issues, tagAliasByLowerTag]
   );
 
     // DEBUG: Log the exact Project Name filter options to the browser console
@@ -233,10 +251,20 @@ const AgileDevelopmentDashboard = () => {
       console.log('[AgileBoard] Project Name filter options:', projectNameOptions);
     }
 
-  const e2LeadDetailerOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => normalizeValue(issue.e2LeadDetailer))),
-    [issues]
-  );
+  // E2 Lead Detailer options from Firestore (source of truth, as in ProjectIssueDashboard)
+  const [e2LeadDetailerOptions, setE2LeadDetailerOptions] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const values = Array.isArray(data["e2DetailerOptions"]) ? data["e2DetailerOptions"] : [];
+      setE2LeadDetailerOptions(values.length ? values : [
+        "Juan", "Josias", "Krismara", "Eliana", "Guely", "Christian", "Ben", "Salomon"
+      ]);
+    });
+    return () => unsubscribe();
+  }, [id]);
 
   const supportTeamOptions = useMemo(() => {
     // Use the same aliases as ProjectIssueDetail
@@ -329,21 +357,22 @@ const AgileDevelopmentDashboard = () => {
     }
 
     const nextStatus = column.name;
+    const rowData = targetRow?.rowData || {};
+    const statusField = issue.statusField || "E2 Status Update";
+    const prevStatus = rowData[statusField] || "-";
+    const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
+    const statusChangeUpdate = {
+      text: `Status changed from '${prevStatus}' to '${nextStatus}'`,
+      percentCompleted: 0,
+      date: new Date().toISOString(),
+    };
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
-      const rowData = row?.rowData || {};
-      // Prepare new update for status change
-      const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
-      const statusChangeUpdate = {
-        text: `Status changed to ${nextStatus}`,
-        percentCompleted: 0,
-        date: new Date().toISOString(),
-      };
       return {
         ...row,
         rowData: {
           ...rowData,
-          [issue.statusField || "E2 Status Update"]: nextStatus,
+          [statusField]: nextStatus,
           updates: [...prevUpdates, statusChangeUpdate],
         },
       };
@@ -377,7 +406,7 @@ const AgileDevelopmentDashboard = () => {
       internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
       const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
       const logEntry = {
-        update: `Status changed to ${nextStatus}`,
+        update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
         percent: 0,
         timestamp: new Date().toISOString(),
       };

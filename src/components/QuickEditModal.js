@@ -175,15 +175,7 @@ export default function QuickEditModal({ isOpen, onClose, issue, issueId, onSubm
               )}
             </div>
           </label>
-          <label>E2 Comments:
-            <textarea value={form.e2Comments} onChange={e => handleChange('e2Comments', e.target.value)} />
-          </label>
-          <label>E2 Documents:
-            <input type="file" multiple onChange={handleFileChange} />
-            <ul>
-              {documents.map((doc, idx) => <li key={idx}>{doc.name || doc}</li>)}
-            </ul>
-          </label>
+          {/* E2 Comments and E2 Documents fields removed as requested */}
           <label>Data Stage:
             <select value={form.dataStage} onChange={e => handleChange('dataStage', e.target.value)}>
               <option value="">Select...</option>

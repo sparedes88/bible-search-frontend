@@ -2908,15 +2908,20 @@ const ProjectIssueDashboard = () => {
     if (!targetRow) return;
 
     const previousRowData = targetRow?.rowData || {};
-    const fieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+    // Find the main status field
+    const statusFieldName = findFieldByAliases(previousFields, previousRowData, ["status", "state", "task status"]);
+    const prevStatus = statusFieldName ? normalizeValue(previousRowData[statusFieldName]) : "";
+    const nextStatus = statusFieldName ? normalizeValue(issue.status) : "";
+
+    // E2 Status Update field
+    const fieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
     const nextValue = getDefaultE2StatusUpdate(valueOverride ?? issue.e2StatusUpdate);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
-    if (nextValue === previousValue) return;
+    // Only proceed if either E2 Status Update or main status is changing
+    if (nextValue === previousValue && nextStatus === prevStatus) return;
 
-    const dateFieldName =
-      findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
+    const dateFieldName = findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
     const previousDateValue = normalizeValue(previousRowData[dateFieldName]);
     const resolvedStatusDate = resolveStatusDateForStatusTransition(
       nextValue,
@@ -2924,10 +2929,30 @@ const ProjectIssueDashboard = () => {
       previousDateValue
     );
 
+    // Prepare update log entry for main status change
+    let updates = Array.isArray(previousRowData.updates) ? [...previousRowData.updates] : [];
+    if (nextStatus && prevStatus !== nextStatus) {
+      const prevDisplay = prevStatus ? prevStatus : "-";
+      updates.push({
+        text: `Status changed from '${prevDisplay}' to '${nextStatus}'`,
+        date: new Date().toISOString(),
+      });
+    } else if (nextValue && previousValue !== nextValue) {
+      // Fallback: log E2 Status Update change if main status didn't change
+      const prevDisplay = previousValue ? previousValue : "-";
+      updates.push({
+        text: `E2 Status Update changed from '${prevDisplay}' to '${nextValue}'`,
+        date: new Date().toISOString(),
+      });
+    }
+
+    // Always update the main status field in Firestore if it changed
     const updatedRowData = {
       ...previousRowData,
       [fieldName]: nextValue,
       [dateFieldName]: resolvedStatusDate,
+      ...(statusFieldName && nextStatus !== prevStatus ? { [statusFieldName]: nextStatus } : {}),
+      updates,
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
