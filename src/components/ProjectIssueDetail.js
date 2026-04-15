@@ -484,12 +484,20 @@ const ProjectIssueDetail = () => {
 
       <div className="pid-detail-wrap">
         {/* Back navigation */}
-        <div className="pid-detail-nav">
+
+        <div className="pid-detail-nav" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Link
             to={`/organization/${id}/project-issue-dashboard`}
             className="pid-detail-back-link"
           >
-            ← Back to Dashboard
+            ← Go to Live Issues Tracker
+          </Link>
+          <Link
+            to={`/organization/${id}/e2-agile-board`}
+            className="pid-detail-back-link"
+            style={{ marginLeft: 8 }}
+          >
+            E2 Agile Board
           </Link>
           {projectName && (
             <span className="pid-detail-project-label">{projectName}</span>

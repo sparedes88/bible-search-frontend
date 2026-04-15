@@ -1,3 +1,4 @@
+import AgileDevelopmentDashboard from "../components/AgileDevelopmentDashboard";
 import { useEffect, useState } from "react";
 import AgileUpdateModal from "../components/AgileUpdateModal";
 import { useParams } from "react-router-dom";
@@ -437,4 +438,3 @@ const AgileBoardPage = () => {
 };
 
 export default AgileBoardPage;
-import AgileDevelopmentDashboard from "../components/AgileDevelopmentDashboard";
