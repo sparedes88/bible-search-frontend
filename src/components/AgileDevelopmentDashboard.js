@@ -642,10 +642,7 @@ const AgileDevelopmentDashboard = () => {
                         </div>
                         <div className="agile-card-field-row">
                         </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Data Stage:</span>
-                          <span className="agile-card-data-stage" style={{ marginLeft: 4 }}>{normalizeValue(issue.dataStage) || "-"}</span>
-                        </div>
+                        {/* Data Stage row removed as per request; T/P icon remains in card header */}
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Technical Direction:</span>
                           <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color: '#7c3aed', fontSize: '0.95em' }}>
