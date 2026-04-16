@@ -407,13 +407,14 @@
   border-radius: 3px;
 }
 
+
 .agile-column-content::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
 .agile-card {
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: #f3f4f6;
+  border: 1.5px solid #64748b;
   border-radius: 8px;
   padding: 1rem;
   cursor: move;
