@@ -36,11 +36,17 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
           <textarea
             className="agile-update-input"
             value={newUpdate}
-            onChange={e => onChange(e.target.value)}
+            onChange={e => {
+              if (e.target.value.length <= 500) onChange(e.target.value);
+            }}
             placeholder="Enter new update..."
             rows={4}
+            maxLength={500}
             style={{ width: "100%", marginTop: 12 }}
           />
+          <div style={{ textAlign: 'right', fontSize: '0.95em', color: newUpdate.length >= 500 ? '#dc2626' : '#666' }}>
+            {newUpdate.length}/500 characters
+          </div>
           <div style={{ marginTop: 16 }}>
             <label className="agile-update-label" htmlFor="percent-completed-input">Percent Completed:</label>
             <input
@@ -58,7 +64,7 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
           </div>
         </div>
         <div className="agile-update-modal-actions">
-          <button className="agile-update-save-btn" onClick={onSave} disabled={loading || !newUpdate.trim()}>
+          <button className="agile-update-save-btn" onClick={() => onSave(percentCompleted)} disabled={loading || !newUpdate.trim()}>
             {loading ? "Saving..." : "Save"}
           </button>
           <button className="agile-update-cancel-btn" onClick={onClose} disabled={loading}>Close</button>

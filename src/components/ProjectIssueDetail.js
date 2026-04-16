@@ -1,6 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+// Log entry structure: { update: string, percent: number, timestamp: string }
+// Helper to format timestamp
+const formatTimestamp = (ts) => {
+  if (!ts) return "-";
+  const date = new Date(ts);
+  if (isNaN(date.getTime())) return ts;
+  return date.toLocaleString();
+};
+// Default log structure if not present
+const getInitialLog = () => [
+  {
+    update: "Issue created.",
+    percent: 0,
+    timestamp: new Date().toISOString(),
+  },
+];
 import { Link, useParams } from "react-router-dom";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes, deleteObject } from "firebase/storage";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
@@ -22,7 +38,7 @@ const normalizeValue = (value) => {
 
 const normalizeFieldKey = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
+export const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   const candidates = Array.from(new Set([...fields, ...Object.keys(rowData)]));
   for (const alias of aliases) {
     const key = normalizeFieldKey(alias);
@@ -95,6 +111,11 @@ const DEFAULT_SELECTED_FIELD_KEYS = new Set(
 // ── component ──────────────────────────────────────────────────────────────────
 
 const ProjectIssueDetail = () => {
+    // Log state
+    const [logEntries, setLogEntries] = useState(getInitialLog());
+    const [newLogUpdate, setNewLogUpdate] = useState("");
+    const [newLogPercent, setNewLogPercent] = useState("");
+    const [logLoading, setLogLoading] = useState(false);
   const { id, projectDocId, issueId } = useParams();
   const decodedIssueId = decodeURIComponent(issueId || "");
 
@@ -125,57 +146,99 @@ const ProjectIssueDetail = () => {
     setLoading(true);
     setError(null);
 
-    getDoc(doc(db, "churches", id, "bimProjects", projectDocId))
-      .then((snapshot) => {
-        if (!snapshot.exists()) {
-          setError("Project not found.");
-          return;
-        }
-        const data = snapshot.data();
-        const docFields = Array.isArray(data.fields) ? data.fields : [];
-        const rows = Array.isArray(data.rows) ? data.rows : [];
-        const internalCardMeta = data.internalCardMeta || {};
+    const unsub = onSnapshot(doc(db, "churches", id, "bimProjects", projectDocId), (snapshot) => {
+      if (!snapshot.exists()) {
+        setError("Project not found.");
+        setLoading(false);
+        return;
+      }
+      const data = snapshot.data();
+      const docFields = Array.isArray(data.fields) ? data.fields : [];
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const internalCardMeta = data.internalCardMeta || {};
 
-        setProjectName(normalizeValue(data.name));
+      setProjectName(normalizeValue(data.name));
 
-        const idAliases = ["id", "issue id", "task id", "card id", "row id"];
+      const idAliases = ["id", "issue id", "task id", "card id", "row id"];
 
-        const matched =
-          rows.find((row) => {
-            const rd = row?.rowData || {};
-            const fieldName = findFieldByAliases(docFields, rd, idAliases);
-            return (
-              fieldName &&
-              normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase()
-            );
-          }) ||
-          rows.find((row) => String(row?.rowNumber) === decodedIssueId);
+      const matched =
+        rows.find((row) => {
+          const rd = row?.rowData || {};
+          const fieldName = findFieldByAliases(docFields, rd, idAliases);
+          return (
+            fieldName &&
+            normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase()
+          );
+        }) ||
+        rows.find((row) => String(row?.rowNumber) === decodedIssueId);
 
-        if (!matched) {
-          setError(`Issue "${decodedIssueId}" was not found in this project.`);
-          return;
-        }
+      if (!matched) {
+        setError(`Issue "${decodedIssueId}" was not found in this project.`);
+        setLoading(false);
+        return;
+      }
 
-        setFields(docFields);
-        setRowData(matched?.rowData || {});
+      setFields(docFields);
+      setRowData(matched?.rowData || {});
 
-        // Determine cardKey (same logic as dashboard)
-        const preview = { id: decodedIssueId };
-        const normalizedId = normalizeValue(preview?.id);
-        const computedCardKey = normalizedId ? `id:${normalizedId}` : `row:${matched?.rowNumber || "unknown"}`;
-        setCardKey(computedCardKey);
+      // Determine cardKey (shared logic)
+      const normalizeCardKey = (id, rowNumber) => {
+        const norm = String(id || "").trim().toUpperCase();
+        return norm ? `id:${norm}` : `row:${rowNumber || "unknown"}`;
+      };
+      const computedCardKey = normalizeCardKey(decodedIssueId, matched?.rowNumber);
+      setCardKey(computedCardKey);
 
-        // Load E2 metadata
-        const meta = internalCardMeta[computedCardKey] || {};
-        setE2Comments(normalizeValue(meta.e2Comments) || "");
-        setE2Documents(Array.isArray(meta.e2Documents) ? meta.e2Documents : []);
-      })
-      .catch((err) => {
-        console.error("ProjectIssueDetail fetch error:", err);
-        setError("Could not load issue data. Please try again.");
-      })
-      .finally(() => setLoading(false));
+      // Always load E2 Comments from rowData (main Firestore location)
+      setE2Comments(normalizeValue(matched?.rowData?.e2Comments) || "");
+      // Documents can still fallback to meta
+      const meta = internalCardMeta[computedCardKey] || {};
+      setE2Documents(Array.isArray(meta.e2Documents) ? meta.e2Documents : []);
+
+      // Load log entries from meta or initialize
+      if (Array.isArray(meta.logEntries) && meta.logEntries.length > 0) {
+        setLogEntries(meta.logEntries);
+      } else {
+        setLogEntries(getInitialLog());
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error("ProjectIssueDetail fetch error:", err);
+      setError("Could not load issue data. Please try again.");
+      setLoading(false);
+    });
+    return () => unsub();
   }, [id, projectDocId, decodedIssueId]);
+  // Add new log entry
+  const handleAddLogEntry = async () => {
+    if (!newLogUpdate.trim() || !cardKey || !id || !projectDocId) return;
+    setLogLoading(true);
+    const entry = {
+      update: newLogUpdate.trim(),
+      percent: Number(newLogPercent) || 0,
+      timestamp: new Date().toISOString(),
+    };
+    try {
+      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
+      const snapshot = await getDoc(projectDoc);
+      const data = snapshot.data();
+      const internalCardMeta = data?.internalCardMeta || {};
+      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries)
+        ? internalCardMeta[cardKey].logEntries
+        : [];
+      const nextLog = [entry, ...prevLog];
+      internalCardMeta[cardKey].logEntries = nextLog;
+      await updateDoc(projectDoc, { internalCardMeta });
+      setLogEntries(nextLog);
+      setNewLogUpdate("");
+      setNewLogPercent("");
+    } catch (err) {
+      toast.error("Could not add log entry.");
+    } finally {
+      setLogLoading(false);
+    }
+  };
 
   // ── derived data ─────────────────────────────────────────────────────────────
 
@@ -273,19 +336,29 @@ const ProjectIssueDetail = () => {
   // ── E2 metadata handlers ──────────────────────────────────────────────────────
 
   const saveE2Comments = async () => {
-    if (!id || !projectDocId || !cardKey) return;
+    if (!id || !projectDocId) return;
     setSavingE2Metadata(true);
 
     try {
       const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      internalCardMeta[cardKey].e2Comments = normalizeValue(e2Comments);
+      // Update e2Comments in the correct row's rowData (by id)
+      const idAliases = ["id", "issue id", "task id", "card id", "row id"];
+      const rowIndex = rows.findIndex(row => {
+        const rd = row?.rowData || {};
+        const fieldName = findFieldByAliases(fields, rd, idAliases);
+        return fieldName && normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase();
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Comments: normalizeValue(e2Comments) };
+        rows[rowIndex] = row;
+      }
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(projectDoc, { rows });
       toast.success("E2 Comments saved.");
     } catch (err) {
       console.error("Error saving E2 Comments:", err);
@@ -664,10 +737,64 @@ const ProjectIssueDetail = () => {
                 )}
               </div>
             </div>
-          </>
-        )}
-      </div>
+          {/* Log Section */}
+          <div className="pid-detail-log-section" style={{ marginTop: 40 }}>
+            <h3 style={{ fontWeight: 600, marginBottom: 12 }}>Issue Log</h3>
+            <div style={{ marginBottom: 16 }}>
+              <input
+                type="text"
+                placeholder="Update description"
+                value={newLogUpdate}
+                onChange={e => setNewLogUpdate(e.target.value)}
+                style={{ width: 240, marginRight: 8 }}
+                disabled={logLoading}
+              />
+              <input
+                type="number"
+                placeholder="% Completed"
+                value={newLogPercent}
+                onChange={e => setNewLogPercent(e.target.value)}
+                style={{ width: 120, marginRight: 8 }}
+                min={0}
+                max={100}
+                disabled={logLoading}
+              />
+              <button
+                type="button"
+                onClick={handleAddLogEntry}
+                disabled={logLoading || !newLogUpdate.trim()}
+                style={{ padding: "6px 16px" }}
+              >
+                {logLoading ? "Adding…" : "Add Log Entry"}
+              </button>
+            </div>
+            <table className="pid-detail-log-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#f3f4f6" }}>
+                  <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Update</th>
+                  <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>% Completed</th>
+                  <th style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logEntries.length === 0 ? (
+                  <tr><td colSpan={3} style={{ textAlign: "center", padding: 16 }}>No log entries yet.</td></tr>
+                ) : (
+                  logEntries.map((entry, idx) => (
+                    <tr key={idx}>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{formatTimestamp(entry.timestamp)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
+  </div>
   );
 };
 

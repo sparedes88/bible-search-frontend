@@ -1,0 +1,92 @@
+.quick-edit-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0,0,0,0.35);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.quick-edit-modal {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 32px #0002;
+  padding: 32px 28px 24px 28px;
+  min-width: 380px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+.quick-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.quick-edit-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.quick-edit-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #64748b;
+  cursor: pointer;
+  margin-left: 12px;
+}
+.quick-edit-form label {
+  display: block;
+  margin-bottom: 12px;
+  color: #334155;
+  font-weight: 500;
+}
+.quick-edit-form input[type="text"],
+.quick-edit-form select,
+.quick-edit-form textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  margin-top: 4px;
+  font-size: 1rem;
+  background: #f8fafc;
+  color: #1e293b;
+}
+.quick-edit-form textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+.quick-edit-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+.quick-edit-actions button {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.quick-edit-actions button[type="submit"] {
+  background: #2563eb;
+  color: #fff;
+}
+.quick-edit-actions button[type="button"] {
+  background: #e5e7eb;
+  color: #334155;
+}
+.quick-edit-form ul {
+  margin: 6px 0 0 0;
+  padding: 0 0 0 18px;
+  font-size: 0.97em;
+  color: #64748b;
+}

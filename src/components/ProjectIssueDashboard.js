@@ -1437,7 +1437,7 @@ const ProjectIssueDashboard = () => {
               projectDocId: projectDoc.id,
               rowIndex,
               createdAt: createdAtValue,
-              e2Comments: normalizeValue(internalMeta.e2Comments),
+              e2Comments: normalizeValue(rowData.e2Comments),
               e2Documents: Array.isArray(internalMeta.e2Documents) ? internalMeta.e2Documents : [],
             });
           });
@@ -2617,7 +2617,11 @@ const ProjectIssueDashboard = () => {
             const projectData = projectSnapshot.data();
             const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
             const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-            const targetRow = rows[issue.rowIndex];
+            // Find the row whose rowData.id, rowData['Issue ID'], or rowData['ID'] matches issue.id
+            const targetRow = rows.find(row => {
+              const rd = row.rowData || {};
+              return rd['id'] === issue.id || rd['Issue ID'] === issue.id || rd['ID'] === issue.id;
+            });
             const rowData = targetRow?.rowData || {};
             // Use field alias helpers to get the latest values from Firestore
             const e2TDField = findFieldByAliases(fields, rowData, E2_TD_FIELD_ALIASES);
@@ -2626,10 +2630,15 @@ const ProjectIssueDashboard = () => {
             e2TD = normalizeValue(e2TDField ? rowData[e2TDField] : e2TD);
             e2Detailer = normalizeValue(e2DetailerField ? rowData[e2DetailerField] : e2Detailer);
             e2DetailerSupportTeam = sanitizeSupportTeamValues(rowData[e2DetailerSupportTeamField], e2DetailerOptions);
-            const internalCardMeta = projectData?.internalCardMeta || {};
-            const cardMeta = internalCardMeta[issue.id] || {};
-            e2Comments = normalizeValue(cardMeta.e2Comments) || "";
-            e2Documents = Array.isArray(cardMeta.e2Documents) ? cardMeta.e2Documents : [];
+            // --- MAIN: Read e2Comments and e2Documents directly from rowData (e.g., for id:SRF-1535) ---
+            e2Comments = normalizeValue(rowData.e2Comments) || "";
+            e2Documents = Array.isArray(rowData.e2Documents) ? rowData.e2Documents : [];
+            // Optionally, fallback to internalCardMeta if not present in rowData
+            if (!e2Comments) {
+              const internalCardMeta = projectData?.internalCardMeta || {};
+              const cardMeta = internalCardMeta[issue.id] || {};
+              e2Comments = normalizeValue(cardMeta.e2Comments) || "";
+            }
           }
         }
       } catch (err) {
@@ -2723,12 +2732,16 @@ const ProjectIssueDashboard = () => {
 
     const previousRows = Array.isArray(projectSource.rows) ? projectSource.rows : [];
     const previousFields = Array.isArray(projectSource.fields) ? projectSource.fields : [];
-    const targetRow = previousRows[issue.rowIndex];
-    if (!targetRow) {
+    // Find the row whose rowData.id, rowData['Issue ID'], or rowData['ID'] matches issue.id
+    const rowIndex = previousRows.findIndex(row => {
+      const rd = row.rowData || {};
+      return rd['id'] === issue.id || rd['Issue ID'] === issue.id || rd['ID'] === issue.id;
+    });
+    if (rowIndex === -1) {
       toast.error("Issue row was not found. Please refresh and try again.");
       return;
     }
-
+    const targetRow = previousRows[rowIndex];
     const previousRowData = targetRow?.rowData || {};
     const techDetailsFieldName =
       findFieldByAliases(previousFields, previousRowData, ["technical details available", "technical details", "techdetailsavailable"]) || TECH_DETAILS_FIELD;
@@ -2784,7 +2797,7 @@ const ProjectIssueDashboard = () => {
     updatedFields = updatedFields.includes(technicalDirectionFieldName) ? updatedFields : [...updatedFields, technicalDirectionFieldName];
     updatedFields = updatedFields.includes(dataStageFieldName) ? updatedFields : [...updatedFields, dataStageFieldName];
     const updatedRows = previousRows.map((row, index) =>
-      index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
+      index === rowIndex ? { ...row, rowData: updatedRowData } : row
     );
     const previousSource = projectSource;
 
@@ -2895,15 +2908,20 @@ const ProjectIssueDashboard = () => {
     if (!targetRow) return;
 
     const previousRowData = targetRow?.rowData || {};
-    const fieldName =
-      findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+    // Find the main status field
+    const statusFieldName = findFieldByAliases(previousFields, previousRowData, ["status", "state", "task status"]);
+    const prevStatus = statusFieldName ? normalizeValue(previousRowData[statusFieldName]) : "";
+    const nextStatus = statusFieldName ? normalizeValue(issue.status) : "";
+
+    // E2 Status Update field
+    const fieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
     const nextValue = getDefaultE2StatusUpdate(valueOverride ?? issue.e2StatusUpdate);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
-    if (nextValue === previousValue) return;
+    // Only proceed if either E2 Status Update or main status is changing
+    if (nextValue === previousValue && nextStatus === prevStatus) return;
 
-    const dateFieldName =
-      findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
+    const dateFieldName = findFieldByAliases(previousFields, previousRowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
     const previousDateValue = normalizeValue(previousRowData[dateFieldName]);
     const resolvedStatusDate = resolveStatusDateForStatusTransition(
       nextValue,
@@ -2911,10 +2929,30 @@ const ProjectIssueDashboard = () => {
       previousDateValue
     );
 
+    // Prepare update log entry for main status change
+    let updates = Array.isArray(previousRowData.updates) ? [...previousRowData.updates] : [];
+    if (nextStatus && prevStatus !== nextStatus) {
+      const prevDisplay = prevStatus ? prevStatus : "-";
+      updates.push({
+        text: `Status changed from '${prevDisplay}' to '${nextStatus}'`,
+        date: new Date().toISOString(),
+      });
+    } else if (nextValue && previousValue !== nextValue) {
+      // Fallback: log E2 Status Update change if main status didn't change
+      const prevDisplay = previousValue ? previousValue : "-";
+      updates.push({
+        text: `E2 Status Update changed from '${prevDisplay}' to '${nextValue}'`,
+        date: new Date().toISOString(),
+      });
+    }
+
+    // Always update the main status field in Firestore if it changed
     const updatedRowData = {
       ...previousRowData,
       [fieldName]: nextValue,
       [dateFieldName]: resolvedStatusDate,
+      ...(statusFieldName && nextStatus !== prevStatus ? { [statusFieldName]: nextStatus } : {}),
+      updates,
     };
     const updatedRows = previousRows.map((row, index) =>
       index === issue.rowIndex ? { ...row, rowData: updatedRowData } : row
@@ -3557,11 +3595,24 @@ const ProjectIssueDashboard = () => {
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
       const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
+      // Update internalCardMeta
       internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
       internalCardMeta[issue.id].e2Comments = normalizeValue(techDetailsPopup.e2Comments);
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      // Update e2Comments in the correct row's rowData (by id, e.g., SRF-1535)
+      const rowIndex = rows.findIndex(row => {
+        const rowData = row?.rowData || {};
+        return rowData['ID'] === issue.id || rowData['Issue ID'] === issue.id || rowData['id'] === issue.id;
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Comments: normalizeValue(techDetailsPopup.e2Comments) };
+        rows[rowIndex] = row;
+      }
+
+      await updateDoc(projectDoc, { internalCardMeta, rows });
       toast.success("E2 Comments saved.");
     } catch (err) {
       console.error("Error saving E2 Comments:", err);
@@ -3618,12 +3669,20 @@ const ProjectIssueDashboard = () => {
       const projectDoc = doc(db, "churches", id, "bimProjects", issue.projectDocId);
       const snapshot = await getDoc(projectDoc);
       const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
 
-      internalCardMeta[issue.id] = internalCardMeta[issue.id] || {};
-      internalCardMeta[issue.id].e2Documents = [...(internalCardMeta[issue.id].e2Documents || []), ...uploadedDocs];
+      // Update e2Documents in the correct row's rowData (by id)
+      const rowIndex = rows.findIndex(row => {
+        const rd = row?.rowData || {};
+        return rd['ID'] === issue.id || rd['Issue ID'] === issue.id || rd['id'] === issue.id;
+      });
+      if (rowIndex !== -1) {
+        const row = { ...rows[rowIndex] };
+        row.rowData = { ...row.rowData, e2Documents: [...(row.rowData.e2Documents || []), ...uploadedDocs] };
+        rows[rowIndex] = row;
+      }
 
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(projectDoc, { rows });
 
       setTechDetailsPopup((prev) => ({
         ...prev,
@@ -4891,14 +4950,59 @@ const ProjectIssueDashboard = () => {
         ) : null}
       </div>
 
-      {/* --- Update History Section: Rendered at the bottom of the details page --- */}
+
+      {/* --- Update History Section: Rendered after E2 Comments and E2 Documents on the details page --- */}
       {(() => {
+        // Find the selected issue
         let updateHistorySection = null;
         if (selectedIssueId) {
           const selectedIssue = issues.find(issue => normalizeValue(issue.id) === normalizeValue(selectedIssueId));
-          const updates = selectedIssue?.rowData?.updates;
-          if (Array.isArray(updates) && updates.length > 0) {
+          // Render E2 Comments
+          const e2Comments = selectedIssue?.e2Comments;
+          // Render E2 Documents
+          const e2Documents = selectedIssue?.e2Documents;
+
+          // --- E2 Comments ---
+          if (e2Comments) {
             updateHistorySection = (
+              <div style={{ margin: '32px 0 0 0', padding: '16px', background: '#f1f5f9', borderRadius: 8 }}>
+                <h2 style={{ fontSize: 18, marginBottom: 8, color: '#334155' }}>E2 Comments</h2>
+                <div style={{ whiteSpace: 'pre-line', color: '#22223b' }}>{e2Comments}</div>
+              </div>
+            );
+          }
+
+          // --- E2 Documents ---
+          let e2DocumentsSection = null;
+          if (Array.isArray(e2Documents) && e2Documents.length > 0) {
+            e2DocumentsSection = (
+              <div style={{ margin: '24px 0 0 0', padding: '16px', background: '#f8fafc', borderRadius: 8 }}>
+                <h2 style={{ fontSize: 18, marginBottom: 8, color: '#334155' }}>E2 Documents</h2>
+                <ul style={{ paddingLeft: 20 }}>
+                  {e2Documents.map((doc, idx) => (
+                    <li key={idx} style={{ marginBottom: 6 }}>
+                      <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>{doc.name || `Document ${idx + 1}`}</a>
+                      {doc.uploadedAt && (
+                        <span style={{ marginLeft: 8, color: '#64748b', fontSize: 12 }}>({new Date(doc.uploadedAt).toLocaleString()})</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+
+          // --- Update History ---
+          const updates = selectedIssue?.rowData?.updates;
+          let updateHistoryTable = null;
+          if (Array.isArray(updates) && updates.length > 0) {
+            // Sort updates latest first
+            const sortedUpdates = [...updates].sort((a, b) => {
+              const da = a.date ? new Date(a.date).getTime() : 0;
+              const db = b.date ? new Date(b.date).getTime() : 0;
+              return db - da;
+            });
+            updateHistoryTable = (
               <div className="project-issue-update-history" style={{ margin: '32px 0 0 0', padding: '24px', background: '#f8fafc', borderRadius: 8, boxShadow: '0 1px 4px #0001' }}>
                 <h2 style={{ fontSize: 20, marginBottom: 12, color: '#2563eb' }}>Update History</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white' }}>
@@ -4910,7 +5014,7 @@ const ProjectIssueDashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {updates.map((u, idx) => (
+                    {sortedUpdates.map((u, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb' }}>
                         <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{u.text || u.comment || <em>No text</em>}</td>
                         <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>{typeof u.percentCompleted === 'number' ? `${u.percentCompleted}%` : '-'}</td>
@@ -4922,8 +5026,17 @@ const ProjectIssueDashboard = () => {
               </div>
             );
           }
+
+          // Compose all sections in order: E2 Comments, E2 Documents, Update History
+          return (
+            <>
+              {updateHistorySection}
+              {e2DocumentsSection}
+              {updateHistoryTable}
+            </>
+          );
         }
-        return updateHistorySection;
+        return null;
       })()}
 
       {lightboxUrl ? (

@@ -1,6 +1,16 @@
+  // Technical Direction dropdown options
+  const technicalDirectionOptions = [
+    "Stop and Start",
+    "Steer with current task",
+    "Add to Queue"
+  ];
 import React, { useEffect, useMemo, useState } from "react";
+// --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
+const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
+import { findFieldByAliases } from "./ProjectIssueDetail";
 import { TAG_ALIASES_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "./projectIssueConstants";
 import AgileUpdateModal from "./AgileUpdateModal";
+import QuickEditModal from "./QuickEditModal";
 
 // Ensure normalizeValue is defined before all usages
 const normalizeValue = (value) => {
@@ -68,27 +78,6 @@ const getColumnsFromStatuses = (statusOptions = []) =>
     order: index,
   }));
 
-const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
-  const normalizedAliases = aliases.map((alias) => normalizeFieldKey(alias));
-  const candidates = dedupeValues([...(Array.isArray(fields) ? fields : []), ...Object.keys(rowData || {})]);
-
-  for (const candidate of candidates) {
-    const key = normalizeFieldKey(candidate);
-    if (normalizedAliases.includes(key)) {
-      return candidate;
-    }
-  }
-
-  for (const aliasKey of normalizedAliases) {
-    const startsWith = candidates.find((candidate) => normalizeFieldKey(candidate).startsWith(aliasKey));
-    if (startsWith) return startsWith;
-
-    const includes = candidates.find((candidate) => normalizeFieldKey(candidate).includes(aliasKey));
-    if (includes) return includes;
-  }
-
-  return null;
-};
 
 const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
 const TITLE_ALIASES = ["title", "task title", "name"];
@@ -111,6 +100,19 @@ const TECH_DETAILS_ALIASES = [
 
 const AgileDevelopmentDashboard = () => {
   const { id } = useParams();
+  // Project Name values managed in Project Name Manager
+  const [projectNameValues, setProjectNameValues] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const values = Array.isArray(data[PROJECT_NAME_VALUES_FIELD]) ? data[PROJECT_NAME_VALUES_FIELD] : [];
+      setProjectNameValues(values);
+    });
+    return () => unsubscribe();
+  }, [id]);
+  const [quickEditModal, setQuickEditModal] = useState({ open: false, issue: null });
   // Columns will be generated dynamically from unique E2 Status Update Agile values
   const [columns, setColumns] = useState([]);
   const [issues, setIssues] = useState([]);
@@ -218,6 +220,7 @@ const AgileDevelopmentDashboard = () => {
               e2LeadDetailer: e3LeadDetailer,
               status,
               technicalDirection,
+              rowData, // <-- Add rowData so Quick Edit popup can access all fields
             });
           });
         });
@@ -239,9 +242,13 @@ const AgileDevelopmentDashboard = () => {
   const loading = loadingConfig || loadingIssues;
 
   // Use getProjectNameDisplay with tagAliasByLowerTag for filter options
+  // Use authoritative values from Project Name Manager if available, else fallback to deduped values from issues
   const projectNameOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => getProjectNameDisplay(issue, tagAliasByLowerTag))).sort((a, b) => a.localeCompare(b)),
-    [issues, tagAliasByLowerTag]
+    () =>
+      projectNameValues.length > 0
+        ? projectNameValues.slice().sort((a, b) => a.localeCompare(b))
+        : dedupeValues(issues.map((issue) => getProjectNameDisplay(issue, tagAliasByLowerTag))).sort((a, b) => a.localeCompare(b)),
+    [projectNameValues, issues, tagAliasByLowerTag]
   );
 
     // DEBUG: Log the exact Project Name filter options to the browser console
@@ -250,10 +257,52 @@ const AgileDevelopmentDashboard = () => {
       console.log('[AgileBoard] Project Name filter options:', projectNameOptions);
     }
 
-  const e2LeadDetailerOptions = useMemo(
-    () => dedupeValues(issues.map((issue) => normalizeValue(issue.e2LeadDetailer))),
-    [issues]
-  );
+  // E2 Lead Detailer options from Firestore (source of truth, as in ProjectIssueDashboard)
+  const [e2LeadDetailerOptions, setE2LeadDetailerOptions] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    const configRef = doc(db, "churches", id, "settings", PROJECT_ISSUE_CONFIG_DOC_ID);
+    const unsubscribe = onSnapshot(configRef, (snapshot) => {
+      const data = snapshot.data() || {};
+      const values = Array.isArray(data["e2DetailerOptions"]) ? data["e2DetailerOptions"] : [];
+      setE2LeadDetailerOptions(values.length ? values : [
+        "Juan", "Josias", "Krismara", "Eliana", "Guely", "Christian", "Ben", "Salomon"
+      ]);
+    });
+    return () => unsubscribe();
+  }, [id]);
+
+  const supportTeamOptions = useMemo(() => {
+    // Use the same aliases as ProjectIssueDetail
+    const SUPPORT_TEAM_ALIASES = [
+      "e2 detailer support team",
+      "e2 detailer support",
+      "e2 support team",
+      "support team"
+    ];
+    const all = issues.flatMap(issue => {
+      // Find the correct field key for this issue
+      const source = projectSources[issue.projectDocId];
+      const fields = Array.isArray(source?.fields) ? source.fields : [];
+      const rowData = issue?.rowData || {};
+      const key = findFieldByAliases(fields, rowData, SUPPORT_TEAM_ALIASES);
+      const val = key ? rowData[key] : issue.e2DetailerSupportTeam;
+      console.log('[SupportTeamOptions Debug]', {
+        issueId: rowData['ID'] || rowData['Issue ID'] || rowData['id'],
+        key,
+        val,
+        rowDataKeys: Object.keys(rowData),
+        rowData
+      });
+      if (Array.isArray(val)) return val;
+      if (typeof val === "string" && val.includes(",")) return val.split(",").map(s => s.trim()).filter(Boolean);
+      if (typeof val === "string" && val) return [val];
+      return [];
+    });
+    const uniqueOptions = dedupeValues(all);
+    console.log('[SupportTeamOptions Available]', uniqueOptions);
+    return uniqueOptions;
+  }, [issues, projectSources]);
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
@@ -314,14 +363,16 @@ const AgileDevelopmentDashboard = () => {
     }
 
     const nextStatus = column.name;
+    const targetRowData = resolveRowData(targetRow);
+    const statusField = issue.statusField || "E2 Status Update";
+    const prevStatus = targetRowData[statusField] || "-";
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
       const hasNestedRowData = Boolean(row?.rowData && typeof row.rowData === "object");
-      // Prepare new update for status change
       const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
       const statusChangeUpdate = {
-        text: `Status changed to ${nextStatus}`,
+        text: `Status changed from '${prevStatus}' to '${nextStatus}'`,
         percentCompleted: 0,
         date: new Date().toISOString(),
       };
@@ -330,7 +381,7 @@ const AgileDevelopmentDashboard = () => {
           ...row,
           rowData: {
             ...rowData,
-            [issue.statusField || "E2 Status Update"]: nextStatus,
+            [statusField]: nextStatus,
             updates: [...prevUpdates, statusChangeUpdate],
           },
         };
@@ -338,7 +389,7 @@ const AgileDevelopmentDashboard = () => {
 
       return {
         ...row,
-        [issue.statusField || "E2 Status Update"]: nextStatus,
+        [statusField]: nextStatus,
         updates: [...prevUpdates, statusChangeUpdate],
       };
     });
@@ -358,7 +409,26 @@ const AgileDevelopmentDashboard = () => {
 
     try {
       const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-      await updateDoc(projectRef, { rows: updatedRows });
+      // --- Also update the log structure in internalCardMeta for ProjectIssueDetail ---
+      // Compute cardKey as in ProjectIssueDetail (shared logic)
+      const normalizeCardKey = (id, rowNumber) => {
+        const norm = String(id || "").trim().toUpperCase();
+        return norm ? `id:${norm}` : `row:${issue.rowIndex}`;
+      };
+      const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
+      const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectRef);
+      const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
+      const internalCardMeta = projectDocData.internalCardMeta || {};
+      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+      const logEntry = {
+        update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
+        percent: 0,
+        timestamp: new Date().toISOString(),
+      };
+      const nextLog = [logEntry, ...prevLog];
+      internalCardMeta[cardKey].logEntries = nextLog;
+      await updateDoc(projectRef, { rows: updatedRows, internalCardMeta });
       toast.success(`Moved to ${nextStatus}.`);
     } catch (error) {
       toast.error("Could not move the issue. Please try again.");
@@ -527,18 +597,28 @@ const AgileDevelopmentDashboard = () => {
                           >
                             {normalizeValue(issue.issueId) || "-"}
                           </Link>
-                          <a
-                            href="#"
-                            style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginLeft: 8 }}
-                            onClick={e => {
-                              e.preventDefault();
-                              setUpdateModal({ open: true, issue });
-                              setNewUpdate("");
-                              const latest = fetchLatestUpdate(issue);
-                              setPercentCompleted("");
-                              setLatestUpdate(latest);
-                            }}
-                          >Add Update</a>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <a
+                              href="#"
+                              style={{ color: '#059669', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginRight: 12 }}
+                              onClick={e => {
+                                e.preventDefault();
+                                setQuickEditModal({ open: true, issue });
+                              }}
+                            >Quick Edit</a>
+                            <a
+                              href="#"
+                              style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+                              onClick={e => {
+                                e.preventDefault();
+                                setUpdateModal({ open: true, issue });
+                                setNewUpdate("");
+                                const latest = fetchLatestUpdate(issue);
+                                setPercentCompleted("");
+                                setLatestUpdate(latest);
+                              }}
+                            >Add Update</a>
+                          </div>
                         </div>
                         <div className="agile-card-field-row">
                           <span className="agile-card-label">Project Name:</span>
@@ -636,8 +716,9 @@ const AgileDevelopmentDashboard = () => {
             const targetRowData = resolveRowData(targetRow);
             const hasNestedRowData = Boolean(targetRow?.rowData && typeof targetRow.rowData === "object");
             const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
+            const now = new Date().toISOString();
             const newEntry = {
-              date: new Date().toISOString(),
+              date: now,
               text: newUpdate.trim(),
               percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
             };
@@ -654,7 +735,26 @@ const AgileDevelopmentDashboard = () => {
                   updates: [...prevUpdates, newEntry],
                 };
             const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
-            await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
+            // --- Update log structure in internalCardMeta for ProjectIssueDetail ---
+            const normalizeCardKey = (id, rowNumber) => {
+              const norm = String(id || "").trim().toUpperCase();
+              return norm ? `id:${norm}` : `row:${rowNumber}`;
+            };
+            const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
+            const projectDocRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+            const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectDocRef);
+            const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
+            const internalCardMeta = projectDocData.internalCardMeta || {};
+            internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
+            const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+            const logEntry = {
+              update: newUpdate.trim(),
+              percent: Number(percentCompleted) || 0,
+              timestamp: now,
+            };
+            const nextLog = [logEntry, ...prevLog];
+            internalCardMeta[cardKey].logEntries = nextLog;
+            await updateDoc(projectDocRef, { rows: updatedRows, internalCardMeta });
             setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });
             setNewUpdate("");
             setPercentCompleted("");
@@ -663,6 +763,58 @@ const AgileDevelopmentDashboard = () => {
             setUpdateLoading(false);
           }
         }}
+      />
+
+      <QuickEditModal
+        isOpen={quickEditModal.open}
+        onClose={() => setQuickEditModal({ open: false, issue: null })}
+        issue={quickEditModal.issue}
+        issueId={quickEditModal.issue?.issueId || quickEditModal.issue?.id || quickEditModal.issue?.ID || quickEditModal.issue?.['Issue ID'] || quickEditModal.issue?.rowData?.id || quickEditModal.issue?.rowData?.ID || quickEditModal.issue?.rowData?.['Issue ID'] || ""}
+        onSubmit={async (formData) => {
+          if (!quickEditModal.issue) return;
+          const { issue } = quickEditModal;
+          const source = projectSources[issue.projectDocId];
+          if (!source) return;
+          const rows = Array.isArray(source.rows) ? source.rows : [];
+          const targetRow = rows[issue.rowIndex];
+          if (!targetRow) return;
+
+          // Find correct field keys for each editable field
+          const fields = Array.isArray(source.fields) ? source.fields : [];
+          const rowData = { ...targetRow.rowData };
+          // Helper to update by alias
+          const setFieldByAliases = (aliases, value) => {
+            const key = findFieldByAliases(fields, rowData, aliases);
+            if (key) rowData[key] = value;
+          };
+          setFieldByAliases(PROJECT_NAME_ALIASES, formData.projectName);
+          setFieldByAliases(TITLE_ALIASES, formData.title);
+          setFieldByAliases(LEAD_DETAILER_ALIASES, formData.e3LeadDetailer);
+          setFieldByAliases(["e2 detailer support team", "e2detailersupportteam"], formData.e2DetailerSupportTeam);
+          setFieldByAliases(["e2 comments", "e2comments"], formData.e2Comments);
+          setFieldByAliases(["e2 documents", "e2documents"], formData.e2Documents);
+          setFieldByAliases(["data stage", "datastage"], formData.dataStage);
+          rowData["Technical Direction"] = formData.technicalDirection;
+
+          const updatedRow = {
+            ...targetRow,
+            rowData,
+          };
+          const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+          try {
+            const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
+            await updateDoc(projectRef, { rows: updatedRows });
+            toast.success("Issue updated successfully.");
+          } catch (err) {
+            toast.error("Failed to update issue.");
+          }
+          setQuickEditModal({ open: false, issue: null });
+        }}
+        projectNameOptions={projectNameOptions}
+        technicalDirectionOptions={technicalDirectionOptions}
+        leadDetailerOptions={e2LeadDetailerOptions}
+        supportTeamOptions={supportTeamOptions}
+        dataStageOptions={DATA_STAGE_OPTIONS}
       />
     </div>
   );
