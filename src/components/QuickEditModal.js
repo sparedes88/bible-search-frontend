@@ -1,3 +1,4 @@
+import { USE_NEW_ISSUE_STRUCTURE } from "../config";
 import "./QuickEditModal.css";
 import React, { useState, useEffect } from "react";
 import { findFieldByAliases } from "./ProjectIssueDetail";

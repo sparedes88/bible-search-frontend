@@ -1,3 +1,4 @@
+  import { USE_NEW_ISSUE_STRUCTURE } from "../config";
   // Technical Direction dropdown options
   const technicalDirectionOptions = [
     "Stop and Start",

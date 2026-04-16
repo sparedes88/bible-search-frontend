@@ -1,3 +1,4 @@
+import { USE_NEW_ISSUE_STRUCTURE } from "../config";
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';

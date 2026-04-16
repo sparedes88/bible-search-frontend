@@ -1,3 +1,4 @@
+import { USE_NEW_ISSUE_STRUCTURE } from "../config";
 import React, { useState } from "react";
 
 export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading, percentCompleted, onPercentChange }) {

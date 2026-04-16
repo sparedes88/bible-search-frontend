@@ -1,3 +1,4 @@
+import { USE_NEW_ISSUE_STRUCTURE } from "../config";
 import AgileDevelopmentDashboard from "../components/AgileDevelopmentDashboard";
 import { useEffect, useState } from "react";
 import AgileUpdateModal from "../components/AgileUpdateModal";
