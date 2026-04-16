@@ -166,22 +166,22 @@ const AgileDevelopmentDashboard = () => {
 
   useEffect(() => {
     if (!id) return undefined;
-
     const projectsRef = collection(db, "churches", id, "bimProjects");
     const unsubscribe = onSnapshot(
       projectsRef,
-      (snapshot) => {
+      async (snapshot) => {
         const nextProjectSources = {};
-        const nextIssues = [];
+        let nextIssues = [];
 
-        snapshot.forEach((projectDoc) => {
+        // For each project
+        for (const projectDoc of snapshot.docs) {
           const projectData = projectDoc.data() || {};
           const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
           const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
           const defaultProjectName = normalizeValue(projectData.name) || projectDoc.id;
 
+          // Always use parent document's rows array, even for stanford-ff-rad
           nextProjectSources[projectDoc.id] = { fields, rows };
-
           rows.forEach((row, rowIndex) => {
             const rowData = resolveRowData(row);
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
@@ -195,7 +195,6 @@ const AgileDevelopmentDashboard = () => {
 
             const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
-            // ENFORCE: Only use actual Project Name field from the issue record, never fallback to projectData.name
             const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
             const e3LeadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
@@ -220,10 +219,11 @@ const AgileDevelopmentDashboard = () => {
               e2LeadDetailer: e3LeadDetailer,
               status,
               technicalDirection,
+              developmentCycleCounter: typeof rowData.Development_Cycle_Counter === 'number' ? rowData.Development_Cycle_Counter : 0,
               rowData, // <-- Add rowData so Quick Edit popup can access all fields
             });
           });
-        });
+        }
 
         setProjectSources(nextProjectSources);
         setIssues(nextIssues);
@@ -376,6 +376,15 @@ const AgileDevelopmentDashboard = () => {
         percentCompleted: 0,
         date: new Date().toISOString(),
       };
+
+      let nextDevCycle =
+        typeof rowData.Development_Cycle_Counter === "number" ? rowData.Development_Cycle_Counter : 0;
+      if (nextStatus === "Completed" && prevStatus !== "Completed") {
+        nextDevCycle += 1;
+      } else if (prevStatus === "Completed" && nextStatus !== "Completed" && nextDevCycle === 1) {
+        nextDevCycle = 1;
+      }
+
       if (hasNestedRowData) {
         return {
           ...row,
@@ -383,6 +392,7 @@ const AgileDevelopmentDashboard = () => {
             ...rowData,
             [statusField]: nextStatus,
             updates: [...prevUpdates, statusChangeUpdate],
+            Development_Cycle_Counter: nextDevCycle,
           },
         };
       }
@@ -391,6 +401,7 @@ const AgileDevelopmentDashboard = () => {
         ...row,
         [statusField]: nextStatus,
         updates: [...prevUpdates, statusChangeUpdate],
+        Development_Cycle_Counter: nextDevCycle,
       };
     });
 
@@ -590,13 +601,27 @@ const AgileDevelopmentDashboard = () => {
                     >
                       <div className="agile-card-header">
                         <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Link
-                            className="agile-card-issue-id"
-                            to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
-                            style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}
-                          >
-                            {normalizeValue(issue.issueId) || "-"}
-                          </Link>
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            {normalizeValue(issue.dataStage) === 'Testing' && (
+                              <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
+                            {normalizeValue(issue.dataStage) === 'Production' && (
+                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
+                            {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
+                              <>
+                                <img src="/img/star.svg" alt="star" style={{ width: 16, height: 16, marginRight: 4 }} />
+                                <span style={{ color: '#2563eb', fontWeight: 600, fontSize: '13px', marginRight: 8 }}>{issue.developmentCycleCounter}</span>
+                              </>
+                            )}
+                            <Link
+                              className="agile-card-issue-id"
+                              to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${issue.issueId}`}
+                              style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}
+                            >
+                              {normalizeValue(issue.issueId) || "-"}
+                            </Link>
+                          </span>
                           <div style={{ display: 'flex', alignItems: 'center' }}>
                             <a
                               href="#"
@@ -621,26 +646,29 @@ const AgileDevelopmentDashboard = () => {
                           </div>
                         </div>
                         <div className="agile-card-field-row">
-                          <span className="agile-card-label">Project Name:</span>
-                          <span className="agile-card-project-name" style={{ marginLeft: 4 }}>{normalizeValue(issue.projectName) || "-"}</span>
-                        </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Title:</span>
-                          <span className="agile-card-title" style={{ marginLeft: 4 }}>{normalizeValue(issue.title) || "-"}</span>
-                        </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Lead Detailer:</span>
-                          <span className="agile-card-detailer" style={{ marginLeft: 4 }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
-                        </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Data Stage:</span>
-                          <span className="agile-card-data-stage" style={{ marginLeft: 4 }}>{normalizeValue(issue.dataStage) || "-"}</span>
-                        </div>
-                        <div className="agile-card-field-row">
-                          <span className="agile-card-label">Technical Direction:</span>
-                          <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color: '#7c3aed', fontSize: '0.95em' }}>
-                            {issue.technicalDirection || "-"}
+                          <span className="agile-card-project-title-combined" style={{ marginLeft: 4 }}>
+                            <span style={{ fontWeight: 'bold' }}>{normalizeValue(issue.projectName) || "-"}</span>: {normalizeValue(issue.title) || "-"}
                           </span>
+                        </div>
+                        <div className="agile-card-field-row">
+                          <span className="agile-card-label" style={{ fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Assignee:</span>
+                          <span className="agile-card-detailer" style={{ marginLeft: 4, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                        </div>
+                        {/* Removed empty row below Assignee */}
+                        {/* Data Stage row removed as per request; T/P icon remains in card header */}
+                        <div className="agile-card-field-row">
+                          {(() => {
+                            const value = issue.technicalDirection || "-";
+                            let color = '#7c3aed'; // default purple
+                            if (value === 'Stop and Start') color = '#ef4444'; // red
+                            else if (value === 'Steer with current task') color = '#2563eb'; // blue
+                            else if (value === 'Add to Queue') color = '#374151'; // dark gray
+                            return (
+                              <span className="agile-card-technical-direction" style={{ marginLeft: 4, fontWeight: 500, color, fontSize: '0.95em' }}>
+                                {value}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
 
