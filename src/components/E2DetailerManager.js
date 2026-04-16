@@ -490,11 +490,19 @@ const E2DetailerManager = () => {
       <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
 
       <div className="e2-detailer-page">
+
         <div className="e2-detailer-header">
           <h1 className="e2-detailer-title">Manage E2 fields</h1>
           <p className="e2-detailer-subtitle">
             Add, edit, and remove values for E2 Lead Detailer and E2 Status Update fields.
           </p>
+          <Link
+            to={`/organization/${id}/project-issue-dashboard/manage-assignees`}
+            className="e2-detailer-btn e2-detailer-btn-secondary"
+            style={{ marginTop: 12, marginBottom: 0, display: 'inline-block' }}
+          >
+            Manage Assignees
+          </Link>
         </div>
 
         <div className="e2-detailer-sections">

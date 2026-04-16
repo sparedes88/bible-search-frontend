@@ -569,8 +569,11 @@ const buildNextTDIssueId = (issueIds = []) => {
   return `TD-${String(nextSequence).padStart(width, "0")}`;
 };
 
-const ProjectIssueDashboard = () => {
+const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
     const { id } = useParams();
+    useEffect(() => {
+      console.log('ProjectIssueDashboard received assigneeOptions:', assigneeOptions);
+    }, [assigneeOptions]);
     // ...existing code...
 
     // Place the E2 Agile Board link after id is defined
@@ -1103,27 +1106,10 @@ const ProjectIssueDashboard = () => {
       rowData[e2StatusDate] = getTodayMMDDYY();
       rowData[techDetails] = normalizeValue(rowData[techDetails]) || "No";
 
-      const nextRows = [
-        ...existingRows.map((row) => ({
-          ...row,
-          rowData: { ...(row?.rowData || {}) },
-        })),
-        {
-          rowNumber: existingRows.length + 1,
-          rowData,
-        },
-      ];
-
+      // Write new issue as a document in the issues subcollection
       await setDoc(
-        doc(db, "churches", id, "bimProjects", DAILY_ISSUES_TARGET_PROJECT_ID),
-        {
-          name: DAILY_ISSUES_TARGET_PROJECT_NAME,
-          fields: nextFields,
-          rows: nextRows,
-          rowCount: nextRows.length,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
+        doc(db, "churches", id, "bimProjects", DAILY_ISSUES_TARGET_PROJECT_ID, "issues", nextIssueId),
+        rowData
       );
 
       setShowAddIssuePopup(false);
@@ -3810,6 +3796,13 @@ const ProjectIssueDashboard = () => {
                         Manage E2 fields
                       </Link>
                       <Link
+                        to={`/organization/${id}/project-issue-dashboard/manage-assignees`}
+                        className="project-issue-actions-item"
+                        onClick={closeActionsMenu}
+                      >
+                        Manage Assignees
+                      </Link>
+                      <Link
                         to={`/organization/${id}/project-issue-dashboard/tag-aliases`}
                         className="project-issue-actions-item"
                         onClick={closeActionsMenu}
@@ -5393,6 +5386,20 @@ const ProjectIssueDashboard = () => {
                   }
                   if (!requiredFieldKeys.includes(field)) return null;
 
+                  const normalizedFieldKey = normalizeFieldKey(field);
+                  const isAssigneeFieldFixed = normalizedFieldKey === 'assignee';
+                  console.log('Rendering field:', field, {
+                    normalizedFieldKey,
+                    isAssigneeField,
+                    isAssigneeFieldFixed,
+                    isIssueIdField,
+                    isProjectNameField,
+                    isStatusField,
+                    isStatusDateField,
+                    isTechDetailsField,
+                    isE2DetailerField,
+                    isOwnerField
+                  });
                   return (
                     <label className="project-issue-add-field" key={field}>
                       <span className="project-issue-add-label">
@@ -5414,19 +5421,32 @@ const ProjectIssueDashboard = () => {
                             </option>
                           ))}
                         </select>
+                      ) : isAssigneeFieldFixed ? (
+                        <>
+                          <select
+                            className="project-issue-add-input"
+                            value={value}
+                            onChange={e => handleNewIssueFieldChange(field, e.target.value)}
+                          >
+                            <option value="">Select assignee</option>
+                            {assigneeOptions && assigneeOptions.length > 0 ? (
+                              assigneeOptions.map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))
+                            ) : (
+                              <option value="" disabled>No assignee options found</option>
+                            )}
+                          </select>
+                          <div style={{ fontSize: '0.8em', color: '#888', marginTop: 2 }}>
+                            Debug: assigneeOptions = {JSON.stringify(assigneeOptions)}
+                          </div>
+                        </>
                       ) : isOwnerField ? (
                         <input
                           className="project-issue-add-input"
                           value={value}
                           onChange={(event) => handleNewIssueFieldChange(field, event.target.value)}
                           placeholder={isRequired ? "Required" : "Owner name or email"}
-                        />
-                      ) : isAssigneeField ? (
-                        <UsersDropdown
-                          selectedUsers={value ? [{ value, label: value }] : []}
-                          onChange={selected => handleNewIssueFieldChange(field, selected ? selected.label : "")}
-                          isMulti={false}
-                          idIglesia={id}
                         />
                       ) : null}
                     </label>

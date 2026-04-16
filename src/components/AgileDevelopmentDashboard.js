@@ -1,4 +1,4 @@
-  import { USE_NEW_ISSUE_STRUCTURE } from "../config";
+  // Removed feature flag: always use new Firestore subcollection for issues
   // Technical Direction dropdown options
   const technicalDirectionOptions = [
     "Stop and Start",
@@ -31,7 +31,7 @@ const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
   );
 };
 import { useParams, Link } from "react-router-dom";
-import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { collection, doc, onSnapshot, updateDoc, getDocs } from "firebase/firestore";
 import { toast } from "react-toastify";
 import { db } from "../firebase";
 import {
@@ -167,24 +167,22 @@ const AgileDevelopmentDashboard = () => {
 
   useEffect(() => {
     if (!id) return undefined;
+    let unsubscribe = () => {};
+    // Always use new structure: fetch issues from subcollection for each project
     const projectsRef = collection(db, "churches", id, "bimProjects");
-    const unsubscribe = onSnapshot(
+    unsubscribe = onSnapshot(
       projectsRef,
       async (snapshot) => {
         const nextProjectSources = {};
         let nextIssues = [];
-
-        // For each project
         for (const projectDoc of snapshot.docs) {
           const projectData = projectDoc.data() || {};
           const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
-          const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-          const defaultProjectName = normalizeValue(projectData.name) || projectDoc.id;
-
-          // Always use parent document's rows array, even for stanford-ff-rad
-          nextProjectSources[projectDoc.id] = { fields, rows };
-          rows.forEach((row, rowIndex) => {
-            const rowData = resolveRowData(row);
+          // Fetch issues subcollection for this project
+          const issuesRef = collection(db, "churches", id, "bimProjects", projectDoc.id, "issues");
+          const issuesSnap = await getDocs(issuesRef);
+          const issues = issuesSnap.docs.map((issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
             const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
             const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
@@ -193,8 +191,7 @@ const AgileDevelopmentDashboard = () => {
             const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
             const dataStageField = findFieldByAliases(fields, rowData, ["data stage", "datastage"]);
             const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || "Testing";
-
-            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
+            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
             const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
@@ -205,9 +202,8 @@ const AgileDevelopmentDashboard = () => {
             }
             const technicalDirectionField = "Technical Direction";
             const technicalDirection = normalizeValue(rowData[technicalDirectionField] || "");
-
-            nextIssues.push({
-              key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
+            return {
+              key: `${projectDoc.id}-${issueDoc.id}`,
               projectDocId: projectDoc.id,
               rowIndex,
               statusField: statusAgileField,
@@ -221,11 +217,12 @@ const AgileDevelopmentDashboard = () => {
               status,
               technicalDirection,
               developmentCycleCounter: typeof rowData.Development_Cycle_Counter === 'number' ? rowData.Development_Cycle_Counter : 0,
-              rowData, // <-- Add rowData so Quick Edit popup can access all fields
-            });
+              rowData,
+            };
           });
+          nextProjectSources[projectDoc.id] = { fields, rows: issues };
+          nextIssues = nextIssues.concat(issues);
         }
-
         setProjectSources(nextProjectSources);
         setIssues(nextIssues);
         setLoadingIssues(false);
@@ -236,7 +233,6 @@ const AgileDevelopmentDashboard = () => {
         setLoadingIssues(false);
       }
     );
-
     return () => unsubscribe();
   }, [id]);
 
@@ -420,27 +416,12 @@ const AgileDevelopmentDashboard = () => {
     );
 
     try {
-      const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-      // --- Also update the log structure in internalCardMeta for ProjectIssueDetail ---
-      // Compute cardKey as in ProjectIssueDetail (shared logic)
-      const normalizeCardKey = (id, rowNumber) => {
-        const norm = String(id || "").trim().toUpperCase();
-        return norm ? `id:${norm}` : `row:${issue.rowIndex}`;
-      };
-      const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
-      const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectRef);
-      const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
-      const internalCardMeta = projectDocData.internalCardMeta || {};
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
-      const logEntry = {
-        update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
-        percent: 0,
-        timestamp: new Date().toISOString(),
-      };
-      const nextLog = [logEntry, ...prevLog];
-      internalCardMeta[cardKey].logEntries = nextLog;
-      await updateDoc(projectRef, { rows: updatedRows, internalCardMeta });
+      // Always update the issue document in the subcollection
+      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      await updateDoc(issueRef, {
+        ...updatedRows[issue.rowIndex].rowData,
+        status: nextStatus,
+      });
       toast.success(`Moved to ${nextStatus}.`);
     } catch (error) {
       toast.error("Could not move the issue. Please try again.");
@@ -825,14 +806,10 @@ const AgileDevelopmentDashboard = () => {
           setFieldByAliases(["data stage", "datastage"], formData.dataStage);
           rowData["Technical Direction"] = formData.technicalDirection;
 
-          const updatedRow = {
-            ...targetRow,
-            rowData,
-          };
-          const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+          // Always update the issue document in the subcollection
+          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
           try {
-            const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-            await updateDoc(projectRef, { rows: updatedRows });
+            await updateDoc(issueRef, rowData);
             toast.success("Issue updated successfully.");
           } catch (err) {
             toast.error("Failed to update issue.");
