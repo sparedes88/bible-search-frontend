@@ -6,6 +6,7 @@
     "Add to Queue"
   ];
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 // --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
 const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
 import { findFieldByAliases } from "./ProjectIssueDetail";
@@ -100,6 +101,9 @@ const TECH_DETAILS_ALIASES = [
 ];
 
 const AgileDevelopmentDashboard = () => {
+    // Popup state for support team icon (must be before return)
+    // showSupportTeamPopup: { key, rect } | null
+    const [showSupportTeamPopup, setShowSupportTeamPopup] = useState(null);
   const { id } = useParams();
   // Project Name values managed in Project Name Manager
   const [projectNameValues, setProjectNameValues] = useState([]);
@@ -658,11 +662,75 @@ const AgileDevelopmentDashboard = () => {
                             <span style={{ fontWeight: 'bold' }}>{normalizeValue(issue.projectName) || "-"}</span>: {normalizeValue(issue.title) || "-"}
                           </span>
                         </div>
-                        <div className="agile-card-field-row">
+                        <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span className="agile-card-label" style={{ fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Assignee:</span>
                           <span className="agile-card-detailer" style={{ marginLeft: 4, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                          <span
+                            style={{ position: 'relative', display: 'inline-block' }}
+                            onMouseEnter={e => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setShowSupportTeamPopup({ key: issue.key, rect });
+                            }}
+                            onMouseLeave={() => setShowSupportTeamPopup(null)}
+                          >
+                            <img
+                              src="/img/person.svg"
+                              alt="Show E2 Detailer Support Team"
+                              title="Show E2 Detailer Support Team"
+                              style={{ width: 18, height: 18, marginLeft: 6, cursor: 'pointer', verticalAlign: 'middle' }}
+                            />
+                            {showSupportTeamPopup && showSupportTeamPopup.key === issue.key && typeof window !== 'undefined' && createPortal(
+                              <div
+                                style={{
+                                  position: 'fixed',
+                                  left: (showSupportTeamPopup.rect?.right || 0) + 8,
+                                  top: showSupportTeamPopup.rect?.top || 0,
+                                  zIndex: 9999,
+                                  background: '#fff',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: 6,
+                                  boxShadow: '0 2px 8px #0002',
+                                  padding: '6px 10px',
+                                  minWidth: 150,
+                                  fontSize: '0.92em',
+                                  color: '#222',
+                                }}
+                              >
+                                <div style={{ fontWeight: 600, marginBottom: 6, color: '#6366f1' }}>E2 Detailer Support Team</div>
+                                {Array.isArray(issue.rowData?.["E2 Detailer Support Team"]) && issue.rowData["E2 Detailer Support Team"].length > 0 ? (
+                                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                                    {issue.rowData["E2 Detailer Support Team"].map((name, idx) => (
+                                      <li key={idx} style={{ padding: '2px 0' }}>{name}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={{ color: '#888' }}>(No support team listed)</div>
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                          </span>
                         </div>
-                        {/* Removed empty row below Assignee */}
+                        {/* Deadline row below Assignee */}
+                        <div className="agile-card-field-row" style={{ fontSize: '0.97em', color: '#334155', marginTop: 2 }}>
+                          {(() => {
+                            const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
+                            let days = null;
+                            if (dueDateStr) {
+                              const today = new Date();
+                              const dueDate = new Date(dueDateStr);
+                              // Zero out time for accurate day diff
+                              today.setHours(0,0,0,0);
+                              dueDate.setHours(0,0,0,0);
+                              days = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+                            }
+                            return (
+                              <span>
+                                <span style={{ fontWeight: 600 }}>Deadline:</span> {days !== null ? `${days} day${Math.abs(days) === 1 ? '' : 's'}` : '—'}
+                              </span>
+                            );
+                          })()}
+                        </div>
                         {/* Data Stage row removed as per request; T/P icon remains in card header */}
                         <div className="agile-card-field-row">
                           {(() => {
