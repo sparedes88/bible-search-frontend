@@ -28,6 +28,7 @@ export default function QuickEditModal({ isOpen, onClose, issue, issueId, onSubm
       : typeof supportTeamRaw === "string" && supportTeamRaw
       ? [supportTeamRaw]
       : [],
+    e2DueDate: issue?.rowData?.e2DueDate || issue?.e2DueDate || "",
     e2Comments: e2CommentsValue,
     dataStage: issue?.dataStage || "",
   });
@@ -51,6 +52,7 @@ export default function QuickEditModal({ isOpen, onClose, issue, issueId, onSubm
         : typeof supportTeamRaw === "string" && supportTeamRaw
         ? [supportTeamRaw]
         : [],
+      e2DueDate: rowData.e2DueDate || issue?.e2DueDate || "",
       e2Comments: e2CommentsValue,
       dataStage: issue?.dataStage || "",
     });
@@ -75,7 +77,7 @@ export default function QuickEditModal({ isOpen, onClose, issue, issueId, onSubm
       : form.e2DetailerSupportTeam
       ? [form.e2DetailerSupportTeam]
       : [];
-    onSubmit({ ...form, e2DetailerSupportTeam, e2Documents: documents });
+    onSubmit({ ...form, e2DetailerSupportTeam, e2DueDate: form.e2DueDate, e2Documents: documents });
   };
 
   return (
@@ -174,6 +176,14 @@ export default function QuickEditModal({ isOpen, onClose, issue, issueId, onSubm
                 </div>
               )}
             </div>
+          </label>
+          {/* E2 Due Date field */}
+          <label>E2 Due Date:
+            <input
+              type="date"
+              value={form.e2DueDate}
+              onChange={e => handleChange('e2DueDate', e.target.value)}
+            />
           </label>
           {/* E2 Comments and E2 Documents fields removed as requested */}
           <label>Data Stage:

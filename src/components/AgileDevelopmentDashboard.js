@@ -277,37 +277,10 @@ const AgileDevelopmentDashboard = () => {
     return () => unsubscribe();
   }, [id]);
 
+  // E2 Detailer Support Team options from Firestore config (e2DetailerOptions)
   const supportTeamOptions = useMemo(() => {
-    // Use the same aliases as ProjectIssueDetail
-    const SUPPORT_TEAM_ALIASES = [
-      "e2 detailer support team",
-      "e2 detailer support",
-      "e2 support team",
-      "support team"
-    ];
-    const all = issues.flatMap(issue => {
-      // Find the correct field key for this issue
-      const source = projectSources[issue.projectDocId];
-      const fields = Array.isArray(source?.fields) ? source.fields : [];
-      const rowData = issue?.rowData || {};
-      const key = findFieldByAliases(fields, rowData, SUPPORT_TEAM_ALIASES);
-      const val = key ? rowData[key] : issue.e2DetailerSupportTeam;
-      console.log('[SupportTeamOptions Debug]', {
-        issueId: rowData['ID'] || rowData['Issue ID'] || rowData['id'],
-        key,
-        val,
-        rowDataKeys: Object.keys(rowData),
-        rowData
-      });
-      if (Array.isArray(val)) return val;
-      if (typeof val === "string" && val.includes(",")) return val.split(",").map(s => s.trim()).filter(Boolean);
-      if (typeof val === "string" && val) return [val];
-      return [];
-    });
-    const uniqueOptions = dedupeValues(all);
-    console.log('[SupportTeamOptions Available]', uniqueOptions);
-    return uniqueOptions;
-  }, [issues, projectSources]);
+    return e2LeadDetailerOptions;
+  }, [e2LeadDetailerOptions]);
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
@@ -648,9 +621,22 @@ const AgileDevelopmentDashboard = () => {
                             <a
                               href="#"
                               style={{ color: '#059669', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginRight: 12 }}
-                              onClick={e => {
+                              onClick={async e => {
                                 e.preventDefault();
-                                setQuickEditModal({ open: true, issue });
+                                // Fetch latest issue data from Firestore
+                                try {
+                                  const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                                  const snap = await getDocs(collection(db, "churches", id, "bimProjects", issue.projectDocId, "issues"));
+                                  let latestDoc = null;
+                                  snap.forEach(docSnap => {
+                                    if (docSnap.id === issue.issueId) latestDoc = docSnap;
+                                  });
+                                  let latestData = latestDoc ? latestDoc.data() : null;
+                                  // fallback to old if not found
+                                  setQuickEditModal({ open: true, issue: latestData ? { ...issue, rowData: latestData } : issue });
+                                } catch (err) {
+                                  setQuickEditModal({ open: true, issue });
+                                }
                               }}
                             >Quick Edit</a>
                             <a
@@ -863,6 +849,8 @@ const AgileDevelopmentDashboard = () => {
           setFieldByAliases(["e2 documents", "e2documents"], formData.e2Documents);
           setFieldByAliases(["data stage", "datastage"], formData.dataStage);
           rowData["Technical Direction"] = formData.technicalDirection;
+          // Always set E2 Due Date directly
+          rowData["e2DueDate"] = formData.e2DueDate;
 
           // Always update the issue document in the subcollection
           const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
