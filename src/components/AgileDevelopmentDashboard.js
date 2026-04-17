@@ -712,7 +712,7 @@ const AgileDevelopmentDashboard = () => {
                           </span>
                         </div>
                         {/* Deadline row below Assignee */}
-                        <div className="agile-card-field-row" style={{ fontSize: '0.97em', color: '#334155', marginTop: 2 }}>
+                        <div className="agile-card-field-row" style={{ fontSize: '1.08em', color: '#334155', marginTop: 2 }}>
                           {(() => {
                             const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
                             let days = null;
