@@ -942,7 +942,6 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
     "Status",
     "E2 Status Update",
     "Technical Direction",
-    "E2 TD",
     "Due Date",
     "Disable Flag",
     "Days Since Created",
@@ -1377,89 +1376,52 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
   }, [id]);
 
   useEffect(() => {
-    if (!id) return undefined;
-
+    // Hardcoded for church 2155 and project stanford-ff-rad
     setLoading(true);
-    const projectsRef = collection(db, "churches", id, "bimProjects");
-
+    const issuesRef = collection(db, "churches", "2155", "bimProjects", "stanford-ff-rad", "issues");
     const unsubscribe = onSnapshot(
-      projectsRef,
+      issuesRef,
       (snapshot) => {
         const nextIssues = [];
-        const nextProjectSources = {};
-
-        snapshot.forEach((projectDoc) => {
-          const projectData = projectDoc.data() || {};
-          const projectName = normalizeValue(projectData.name) || projectDoc.id;
-          const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
-          const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-          const internalCardMeta = projectData.internalCardMeta || {};
-
-          nextProjectSources[projectDoc.id] = {
-            fields,
-            rows,
-            lastUploadAt: projectData.lastUploadAt || projectData.updatedAt || null,
-          };
-
-          rows.forEach((row, rowIndex) => {
-            const rowData = row?.rowData || {};
-            const preview = getCardPreview(rowData, fields);
-            const cardKey = getCardMetaKey(row, preview);
-            const internalMeta = internalCardMeta?.[cardKey] || {};
-            const createdAtField = findFieldByAliases(fields, rowData, ["created", "created date", "creation date", "createdAt", "date created"]);
-            const createdAtValue = createdAtField ? normalizeValue(rowData[createdAtField]) : "";
-
-            nextIssues.push({
-              key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
-              id: preview.id || String(row?.rowNumber || rowIndex + 1),
-              cardMetaKey: cardKey,
-              title: preview.title || "Untitled issue",
-              tags: preview.tags || "-",
-              e2Tags: preview.e2Tags || "",
-              markup: preview.markup,
-              markupLink: preview.markupLink,
-              owner: normalizeValue(preview.assignee) || normalizeValue(internalMeta.internalAssignee) || "Unassigned",
-              e2Detailer: preview.e2Detailer,
-              disableFlag: preview.disableFlag || "No",
-              technicalDirection: preview.technicalDirection || "",
-              e2DetailerSupportTeam: preview.e2DetailerSupportTeam,
-              e2StatusUpdate: preview.e2StatusUpdate,
-              e2StatusDate: preview.e2StatusDate,
-              techDetailsAvailable: getDefaultTechDetailsAvailable(preview.techDetailsAvailable),
-              snapshotUrl: preview.snapshotUrl,
-              link: preview.link,
-              // priority: preview.priority || "-",
-              grid: preview.grid || "-",
-              level: preview.level || "-",
-              room: preview.room || "-",
-              zone: preview.zone || "-",
-              zoneCategory: getZoneCategory(preview.zone || ""),
-              status: preview.status || "Open",
-              dueDate: preview.deadline || "-",
-              project: projectName,
-              projectName: preview.projectName || projectName,
-              projectDocId: projectDoc.id,
-              rowIndex,
-              createdAt: createdAtValue,
-              e2Comments: normalizeValue(rowData.e2Comments),
-              e2Documents: Array.isArray(internalMeta.e2Documents) ? internalMeta.e2Documents : [],
-            });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Map Firestore fields to grid fields
+          nextIssues.push({
+            key: data.ID || doc.id,
+            id: data.ID || doc.id,
+            title: data.Title || "",
+            projectName: data["Project Name"] || "",
+            status: data.Status || data.status || "",
+            e2StatusUpdate: data["E2 Status Update"] || "",
+            e2StatusDate: data["E2 Status Date"] || "",
+            technicalDirection: data["Technical Direction"] || "",
+            dueDate: data.e2DueDate || data.Deadline || "",
+            disableFlag: data["Disable Flag"] || "No",
+            e2Detailer: data["E2 Detailer"] || "",
+            e2DetailerSupportTeam: Array.isArray(data["E2 Detailer Support Team"]) ? data["E2 Detailer Support Team"] : [],
+            markup: data.Markup || "",
+            markupLink: data["Link to markup"] || "",
+            tags: data.Tags || "",
+            e2Tags: data["E2 Tags"] || "",
+            e2Comments: data.e2Comments || "",
+            e2Documents: Array.isArray(data.e2Documents) ? data.e2Documents : [],
+            room: data.Room || "",
+            level: data.Level || "",
+            grid: data.Grid || "",
+            zone: data.Zone || "",
+            createdAt: data.Created || "",
           });
         });
-
-        setProjectSources(nextProjectSources);
         setIssues(nextIssues);
         setLoading(false);
       },
       () => {
-        setProjectSources({});
         setIssues([]);
         setLoading(false);
       }
     );
-
     return () => unsubscribe();
-  }, [id]);
+  }, []);
 
   useEffect(() => {
     const lastUploadValue = projectSources?.[DAILY_ISSUES_TARGET_PROJECT_ID]?.lastUploadAt;
@@ -4602,7 +4564,6 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
                 {visibleColumns.has("Due Date") && <th>Due Date</th>}
                 {visibleColumns.has("Disable Flag") && <th>Disable Flag</th>}
                 {visibleColumns.has("Technical Direction") && <th>Technical Direction</th>}
-                {visibleColumns.has("E2 TD") && <th>E2 TD</th>}
                 {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
                 {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
                 {visibleColumns.has("E2 Detailer Support Team") && <th>E2 Detailer Support Team</th>}
@@ -4725,40 +4686,10 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
                   {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
                   {visibleColumns.has("Disable Flag") && <td data-label="Disable Flag">{issue.disableFlag}</td>}
                   {visibleColumns.has("Technical Direction") && <td data-label="Technical Direction">{issue.technicalDirection}</td>}
-                  {visibleColumns.has("E2 TD") && (
-                    <td data-label="E2 TD">
-                      {e2InfoEditMode ? (
-                        <select
-                          className="project-issue-cell-input"
-                          value={issue.e2TD || "--"}
-                          onChange={event => {
-                            const nextValue = event.target.value;
-                            handleE2TDChange(issue.key, nextValue);
-                            handleE2TDSave({ ...issue, e2TD: nextValue }, nextValue);
-                          }}
-                          disabled={!!savingIssueKeys[`e2TD:${issue.key}`]}
-                        >
-                          {E2_TD_OPTIONS.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        issue.e2TD || "--"
-                      )}
-                    </td>
-                  )}
 
                   {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
                   <td>
-                    <button
-                      type="button"
-                      className="project-issue-td-edit-icon-btn"
-                      title="Add/Edit Technical Details"
-                      onClick={() => openTechDetailsRequiredInformationPopup(issue)}
-                      style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer' }}
-                    >
-                      <FaEdit style={{ fontSize: '1.1em', color: '#2563eb' }} />
-                    </button>
+                    {/* Removed edit icon button for T.D. Available - Required Information popup */}
                     <button
                       type="button"
                       className="project-issue-td-send-agile-btn"
