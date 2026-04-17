@@ -571,9 +571,27 @@ const buildNextTDIssueId = (issueIds = []) => {
 
 const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
     const { id } = useParams();
+    // --- Assignee Options State and Firestore Fetch ---
+    const [assigneeOptionsState, setAssigneeOptionsState] = useState([]);
     useEffect(() => {
-      console.log('ProjectIssueDashboard received assigneeOptions:', assigneeOptions);
-    }, [assigneeOptions]);
+      // Fetch assignee options from Firestore
+      // Path: /churches/2155/bimProjects/stanford-ff-rad/data-option-values/live-issue-tracker, field: assignee
+      const fetchAssignees = async () => {
+        try {
+          const docRef = doc(db, "churches", "2155", "bimProjects", "stanford-ff-rad", "data-option-values", "live-issue-tracker");
+          const snapshot = await getDoc(docRef);
+          const data = snapshot.exists() ? snapshot.data() : {};
+          const options = Array.isArray(data.assignee) ? data.assignee : [];
+          setAssigneeOptionsState(options);
+        } catch (err) {
+          setAssigneeOptionsState([]);
+          console.error("Error fetching assignee options from Firestore:", err);
+        }
+      };
+      fetchAssignees();
+    }, []);
+
+    // ...existing code...
     // ...existing code...
 
     // Place the E2 Agile Board link after id is defined
@@ -5429,16 +5447,18 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
                             onChange={e => handleNewIssueFieldChange(field, e.target.value)}
                           >
                             <option value="">Select assignee</option>
-                            {assigneeOptions && assigneeOptions.length > 0 ? (
-                              assigneeOptions.map((opt) => (
-                                <option key={opt} value={opt}>{opt}</option>
+                            {assigneeOptionsState && assigneeOptionsState.length > 0 ? (
+                              assigneeOptionsState.map((opt) => (
+                                <option key={typeof opt === 'string' ? opt : opt.id || opt.name || JSON.stringify(opt)} value={typeof opt === 'string' ? opt : opt.name || opt.id || ''}>
+                                  {typeof opt === 'string' ? opt : opt.name || opt.id || ''}
+                                </option>
                               ))
                             ) : (
                               <option value="" disabled>No assignee options found</option>
                             )}
                           </select>
                           <div style={{ fontSize: '0.8em', color: '#888', marginTop: 2 }}>
-                            Debug: assigneeOptions = {JSON.stringify(assigneeOptions)}
+                            Debug: assigneeOptions = {JSON.stringify(assigneeOptionsState)}
                           </div>
                         </>
                       ) : isOwnerField ? (

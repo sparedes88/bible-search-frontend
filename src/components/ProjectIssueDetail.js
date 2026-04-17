@@ -146,7 +146,8 @@ const ProjectIssueDetail = () => {
     setLoading(true);
     setError(null);
 
-    const unsub = onSnapshot(doc(db, "churches", id, "bimProjects", projectDocId), (snapshot) => {
+    // Listen to project doc for fields, rows, meta, etc.
+    const unsubProject = onSnapshot(doc(db, "churches", id, "bimProjects", projectDocId), (snapshot) => {
       if (!snapshot.exists()) {
         setError("Project not found.");
         setLoading(false);
@@ -173,7 +174,7 @@ const ProjectIssueDetail = () => {
         rows.find((row) => String(row?.rowNumber) === decodedIssueId);
 
       if (!matched) {
-        setError(`Issue "${decodedIssueId}" was not found in this project.`);
+        setError(`Issue \"${decodedIssueId}\" was not found in this project.`);
         setLoading(false);
         return;
       }
@@ -194,24 +195,40 @@ const ProjectIssueDetail = () => {
       // Documents can still fallback to meta
       const meta = internalCardMeta[computedCardKey] || {};
       setE2Documents(Array.isArray(meta.e2Documents) ? meta.e2Documents : []);
-
-      // Load log entries from meta or initialize
-      if (Array.isArray(meta.logEntries) && meta.logEntries.length > 0) {
-        setLogEntries(meta.logEntries);
-      } else {
-        setLogEntries(getInitialLog());
-      }
-      setLoading(false);
     }, (err) => {
       console.error("ProjectIssueDetail fetch error:", err);
       setError("Could not load issue data. Please try again.");
       setLoading(false);
     });
-    return () => unsub();
+
+    // Listen to the Issue document for LogEntries
+    const issueRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+    const unsubIssue = onSnapshot(issueRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (Array.isArray(data.LogEntries) && data.LogEntries.length > 0) {
+          setLogEntries(data.LogEntries);
+        } else {
+          setLogEntries(getInitialLog());
+        }
+      } else {
+        setLogEntries(getInitialLog());
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error("Issue log fetch error:", err);
+      setLogEntries(getInitialLog());
+      setLoading(false);
+    });
+
+    return () => {
+      unsubProject();
+      unsubIssue();
+    };
   }, [id, projectDocId, decodedIssueId]);
   // Add new log entry
   const handleAddLogEntry = async () => {
-    if (!newLogUpdate.trim() || !cardKey || !id || !projectDocId) return;
+    if (!newLogUpdate.trim() || !id || !projectDocId || !decodedIssueId) return;
     setLogLoading(true);
     const entry = {
       update: newLogUpdate.trim(),
@@ -219,17 +236,12 @@ const ProjectIssueDetail = () => {
       timestamp: new Date().toISOString(),
     };
     try {
-      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
-      const snapshot = await getDoc(projectDoc);
-      const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries)
-        ? internalCardMeta[cardKey].logEntries
-        : [];
+      const issueRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+      const snapshot = await getDoc(issueRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevLog = Array.isArray(data.LogEntries) ? data.LogEntries : [];
       const nextLog = [entry, ...prevLog];
-      internalCardMeta[cardKey].logEntries = nextLog;
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(issueRef, { LogEntries: nextLog });
       setLogEntries(nextLog);
       setNewLogUpdate("");
       setNewLogPercent("");

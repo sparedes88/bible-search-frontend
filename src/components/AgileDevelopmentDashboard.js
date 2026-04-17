@@ -718,6 +718,7 @@ const AgileDevelopmentDashboard = () => {
           setUpdateLoading(true);
           try {
             const { issue } = updateModal;
+<<<<<<< HEAD
             const source = projectSources[issue.projectDocId];
             if (!source) return;
             const rows = Array.isArray(source.rows) ? source.rows : [];
@@ -757,15 +758,22 @@ const AgileDevelopmentDashboard = () => {
             const internalCardMeta = projectDocData.internalCardMeta || {};
             internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
             const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
+=======
+            const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+            // Fetch current log entries
+            const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
+            const issueData = issueSnap.exists() ? issueSnap.data() : {};
+            const prevLog = Array.isArray(issueData.LogEntries) ? issueData.LogEntries : [];
+            const now = new Date().toISOString();
+>>>>>>> b32322b (Display and update Issue Log from LogEntries array in Issue document (not internalCardMeta))
             const logEntry = {
               update: newUpdate.trim(),
               percent: Number(percentCompleted) || 0,
               timestamp: now,
             };
             const nextLog = [logEntry, ...prevLog];
-            internalCardMeta[cardKey].logEntries = nextLog;
-            await updateDoc(projectDocRef, { rows: updatedRows, internalCardMeta });
-            setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });
+            await updateDoc(issueRef, { LogEntries: nextLog });
+            setLatestUpdate({ text: logEntry.update, percentCompleted: logEntry.percent, date: logEntry.timestamp });
             setNewUpdate("");
             setPercentCompleted("");
             setUpdateModal({ open: false, issue: null });
@@ -810,6 +818,26 @@ const AgileDevelopmentDashboard = () => {
           const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
           try {
             await updateDoc(issueRef, rowData);
+            // Optimistically update local state for instant UI feedback
+            setProjectSources((prevSources) => {
+              const prev = prevSources[issue.projectDocId];
+              if (!prev) return prevSources;
+              const updatedRows = prev.rows.map((row, idx) =>
+                idx === issue.rowIndex ? { ...row, rowData: { ...rowData } } : row
+              );
+              return {
+                ...prevSources,
+                [issue.projectDocId]: {
+                  ...prev,
+                  rows: updatedRows,
+                },
+              };
+            });
+            setIssues((prevIssues) =>
+              prevIssues.map((item) =>
+                item.key === issue.key ? { ...item, ...formData, rowData: { ...rowData } } : item
+              )
+            );
             toast.success("Issue updated successfully.");
           } catch (err) {
             toast.error("Failed to update issue.");
