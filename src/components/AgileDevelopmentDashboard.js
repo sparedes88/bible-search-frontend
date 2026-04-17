@@ -181,8 +181,15 @@ const AgileDevelopmentDashboard = () => {
           // Fetch issues subcollection for this project
           const issuesRef = collection(db, "churches", id, "bimProjects", projectDoc.id, "issues");
           const issuesSnap = await getDocs(issuesRef);
-          const issues = issuesSnap.docs.map((issueDoc, rowIndex) => {
+          // Fetch LogEntries for each issue
+          const issues = await Promise.all(issuesSnap.docs.map(async (issueDoc, rowIndex) => {
             const rowData = issueDoc.data() || {};
+            let logEntries = [];
+            try {
+              if (Array.isArray(rowData.LogEntries)) {
+                logEntries = rowData.LogEntries;
+              }
+            } catch {}
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
             const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
             const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
@@ -218,8 +225,9 @@ const AgileDevelopmentDashboard = () => {
               technicalDirection,
               developmentCycleCounter: typeof rowData.Development_Cycle_Counter === 'number' ? rowData.Development_Cycle_Counter : 0,
               rowData,
+              LogEntries: logEntries,
             };
-          });
+          }));
           nextProjectSources[projectDoc.id] = { fields, rows: issues };
           nextIssues = nextIssues.concat(issues);
         }
@@ -438,6 +446,7 @@ const AgileDevelopmentDashboard = () => {
   const [latestUpdate, setLatestUpdate] = useState("");
   const [updateLoading, setUpdateLoading] = useState(false);
 
+<<<<<<< HEAD
   // Fetch latest update and percent completed for a given issue
   const fetchLatestUpdate = (issue) => {
     const source = projectSources[issue.projectDocId];
@@ -455,6 +464,30 @@ const AgileDevelopmentDashboard = () => {
       };
     }
     return { text: rowData.update || "", percentCompleted: null, date: null };
+=======
+  // Fetch latest update and percent completed for a given issue from Firestore LogEntries
+  const fetchLatestUpdate = async (issue) => {
+    if (!issue || !issue.projectDocId || !issue.issueId || !id) return { text: "", percentCompleted: null, date: null };
+    try {
+      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
+      if (issueSnap.exists()) {
+        const data = issueSnap.data();
+        const logEntries = Array.isArray(data.LogEntries) ? data.LogEntries : [];
+        if (logEntries.length > 0) {
+          const latest = logEntries[0];
+          return {
+            text: latest.update || "",
+            percentCompleted: typeof latest.percent === "number" ? latest.percent : null,
+            date: latest.timestamp || null
+          };
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return { text: "", percentCompleted: null, date: null };
+>>>>>>> 1bccc9b (Fix E2 Documents: always display from issue doc, allow up to 10 uploads, and correct upload logic/UI)
   };
 
   if (loading) {
@@ -561,8 +594,9 @@ const AgileDevelopmentDashboard = () => {
                 onDrop={() => handleDrop(column)}
               >
                 {columnIssues.map((issue) => {
-                  // Find latest percentCompleted from updates
+                  // Find latest percent from LogEntries in Firestore
                   let percentCompleted = null;
+<<<<<<< HEAD
                   const source = projectSources[issue.projectDocId];
                   if (source) {
                     const row = source.rows[issue.rowIndex];
@@ -572,6 +606,12 @@ const AgileDevelopmentDashboard = () => {
                       if (typeof last.percentCompleted === 'number') {
                         percentCompleted = last.percentCompleted;
                       }
+=======
+                  if (Array.isArray(issue.LogEntries) && issue.LogEntries.length > 0) {
+                    const latestLog = issue.LogEntries[0];
+                    if (typeof latestLog.percent === 'number') {
+                      percentCompleted = latestLog.percent;
+>>>>>>> 1bccc9b (Fix E2 Documents: always display from issue doc, allow up to 10 uploads, and correct upload logic/UI)
                     }
                   }
                   return (
@@ -620,9 +660,9 @@ const AgileDevelopmentDashboard = () => {
                                 e.preventDefault();
                                 setUpdateModal({ open: true, issue });
                                 setNewUpdate("");
-                                const latest = fetchLatestUpdate(issue);
                                 setPercentCompleted("");
-                                setLatestUpdate(latest);
+                                // Fetch latest update from Firestore
+                                fetchLatestUpdate(issue).then(setLatestUpdate);
                               }}
                             >Add Update</a>
                           </div>
@@ -773,6 +813,16 @@ const AgileDevelopmentDashboard = () => {
             };
             const nextLog = [logEntry, ...prevLog];
             await updateDoc(issueRef, { LogEntries: nextLog });
+            // Optimistically update local issues state for instant UI feedback
+            setIssues((prevIssues) => prevIssues.map((i) => {
+              if (
+                i.issueId === issue.issueId &&
+                i.projectDocId === issue.projectDocId
+              ) {
+                return { ...i, LogEntries: nextLog };
+              }
+              return i;
+            }));
             setLatestUpdate({ text: logEntry.update, percentCompleted: logEntry.percent, date: logEntry.timestamp });
             setNewUpdate("");
             setPercentCompleted("");
