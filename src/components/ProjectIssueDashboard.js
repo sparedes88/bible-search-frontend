@@ -4596,12 +4596,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
                 <tr key={rowKey} style={normalizeValue(issue.disableFlag) === "Yes" ? { background: 'linear-gradient(90deg, #e0f2fe 60%, #e5e7eb 100%)', opacity: 0.6, pointerEvents: 'none' } : {}}>
                   {visibleColumns.has("Issue ID") && (
                     <td data-label="Issue ID">
-                      <Link
-                        to={`/organization/${id}/project-issue-dashboard/issue/${issue.projectDocId}/${encodeURIComponent(issue.id)}`}
-                        className="project-issue-id-link"
-                      >
-                        <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
-                      </Link>
+                      <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
                     </td>
                   )}
                   {visibleColumns.has("Title") && <td data-label="Title">{issue.title}</td>}

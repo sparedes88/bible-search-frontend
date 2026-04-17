@@ -263,12 +263,12 @@ const ProjectIssueDetail = () => {
   };
 
   const visibleFields = useMemo(
-    () => orderedFields.filter((f) => !hiddenFields[f]),
+    () => (orderedFields || []).filter((f) => !hiddenFields[f]),
     [orderedFields, hiddenFields]
   );
 
   useEffect(() => {
-    if (!projectDocId || !orderedFields.length) return;
+    if (!projectDocId || !(orderedFields && orderedFields.length)) return;
     let hasStoredPreferences = false;
     try {
       hasStoredPreferences = localStorage.getItem(`${STORAGE_PREFIX}${projectDocId}`) !== null;
@@ -541,7 +541,7 @@ const ProjectIssueDetail = () => {
                   <div className="pid-detail-fields-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                     <span className="pid-detail-fields-title">Fields</span>
                     <span className="pid-detail-fields-count">
-                      ({visibleFields.length} / {orderedFields.length})
+                      ({(visibleFields?.length || 0)} / {(orderedFields?.length || 0)})
                     </span>
                   </div>
                   <div style={{ margin: '10px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -569,7 +569,7 @@ const ProjectIssueDetail = () => {
                     </button>
                   </div>
                   <div className="pid-detail-field-checkboxes">
-                    {orderedFields.map((fieldName) => (
+                    {(orderedFields || []).map((fieldName) => (
                       <label key={fieldName} className="pid-detail-field-chk">
                         <input
                           type="checkbox"
@@ -585,7 +585,7 @@ const ProjectIssueDetail = () => {
 
               {/* Detail table */}
               <div className="pid-detail-main-content">
-                {visibleFields.length === 0 ? (
+                {(visibleFields?.length || 0) === 0 ? (
                   <p className="pid-detail-no-fields">
                     All fields are hidden. Use the Fields panel on the left to show fields.
                   </p>
@@ -593,7 +593,7 @@ const ProjectIssueDetail = () => {
                   <div className="pid-detail-table-wrap">
                     <table className="pid-detail-table">
                       <tbody>
-                        {visibleFields.map((fieldName) => {
+                        {(visibleFields || []).map((fieldName) => {
                           const raw = normalizeValue(rowData[fieldName]);
                           const isEmpty = !raw;
                           const isImageField =
@@ -662,8 +662,8 @@ const ProjectIssueDetail = () => {
                   rows={4}
                   disabled={savingE2Metadata}
                 />
-                <div style={{ textAlign: 'right', fontSize: '0.95em', color: e2Comments.split(/\s+/).length > 1000 ? '#dc2626' : '#666' }}>
-                  {e2Comments.trim() ? e2Comments.split(/\s+/).length : 0}/1000 words
+                <div style={{ textAlign: 'right', fontSize: '0.95em', color: (e2Comments?.split(/\s+/)?.length || 0) > 1000 ? '#dc2626' : '#666' }}>
+                  {e2Comments?.trim() ? (e2Comments?.split(/\s+/)?.length || 0) : 0}/1000 words
                 </div>
                 <div className="pid-detail-e2-actions">
                   <button
@@ -682,12 +682,12 @@ const ProjectIssueDetail = () => {
                 <h3 className="pid-detail-e2-title">
                   E2 Documents
                   <span className="pid-detail-e2-count">
-                    ({e2Documents.length} / 10)
+                    ({(Array.isArray(e2Documents) ? e2Documents.length : 0)} / 10)
                   </span>
                 </h3>
 
                 {/* Upload Area */}
-                {e2Documents.length < 10 && (
+                {(Array.isArray(e2Documents) ? e2Documents.length : 0) < 10 && (
                   <div className="pid-detail-upload-area">
                     <input
                       ref={fileInputRef}
@@ -695,29 +695,29 @@ const ProjectIssueDetail = () => {
                       accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
                       multiple
                       onChange={handleDocumentUpload}
-                      disabled={uploadingDocuments || e2Documents.length >= 10}
+                      disabled={uploadingDocuments || (Array.isArray(e2Documents) ? e2Documents.length : 0) >= 10}
                       style={{ display: "none" }}
                     />
                     <button
                       type="button"
                       className="pid-detail-upload-btn"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadingDocuments || e2Documents.length >= 10}
+                      disabled={uploadingDocuments || (Array.isArray(e2Documents) ? e2Documents.length : 0) >= 10}
                     >
                       {uploadingDocuments ? "Uploading…" : "📎 Add Document"}
                     </button>
                     <span className="pid-detail-upload-hint">
-                      {10 - e2Documents.length} slot{10 - e2Documents.length !== 1 ? "s" : ""} available
+                      {10 - (Array.isArray(e2Documents) ? e2Documents.length : 0)} slot{10 - (Array.isArray(e2Documents) ? e2Documents.length : 0) !== 1 ? "s" : ""} available
                     </span>
                   </div>
                 )}
 
                 {/* Document List */}
-                {e2Documents.length === 0 ? (
+                {(Array.isArray(e2Documents) ? e2Documents.length : 0) === 0 ? (
                   <p className="pid-detail-no-docs">No documents attached yet.</p>
                 ) : (
                   <div className="pid-detail-doc-list">
-                    {e2Documents.map((doc, index) => (
+                    {(Array.isArray(e2Documents) ? e2Documents : []).map((doc, index) => (
                       <div key={index} className="pid-detail-doc-item">
                         <div className="pid-detail-doc-info">
                           <a
@@ -789,10 +789,10 @@ const ProjectIssueDetail = () => {
                 </tr>
               </thead>
               <tbody>
-                {logEntries.length === 0 ? (
+                {(logEntries?.length || 0) === 0 ? (
                   <tr><td colSpan={3} style={{ textAlign: "center", padding: 16 }}>No log entries yet.</td></tr>
                 ) : (
-                  logEntries.map((entry, idx) => (
+                  (logEntries || []).map((entry, idx) => (
                     <tr key={idx}>
                       <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
                       <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
