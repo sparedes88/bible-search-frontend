@@ -476,7 +476,10 @@ const AgileDevelopmentDashboard = () => {
       <div className="agile-dashboard-header">
         <div className="agile-dashboard-header-top">
           <Link to={`/organization/${id}/project-issue-dashboard`} className="agile-dashboard-back-button">
-            ← Back to Live Issues Tracker
+            ← Back to Project Issue Dashboard
+          </Link>
+          <Link to="/live-issue-tracker" style={{ marginLeft: 16, fontWeight: "bold", color: "#0ea5e9", textDecoration: "none" }}>
+            🚦 Go to Live Issue Tracker
           </Link>
           <h1>Agile Development Dashboard</h1>
         </div>

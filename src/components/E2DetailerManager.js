@@ -496,13 +496,22 @@ const E2DetailerManager = () => {
           <p className="e2-detailer-subtitle">
             Add, edit, and remove values for E2 Lead Detailer and E2 Status Update fields.
           </p>
-          <Link
-            to={`/organization/${id}/project-issue-dashboard/manage-assignees`}
-            className="e2-detailer-btn e2-detailer-btn-secondary"
-            style={{ marginTop: 12, marginBottom: 0, display: 'inline-block' }}
-          >
-            Manage Assignees
-          </Link>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+            <Link
+              to={`/organization/${id}/project-issue-dashboard/manage-technical-direction-values`}
+              className="e2-detailer-btn e2-detailer-btn-secondary"
+              style={{ display: 'inline-block' }}
+            >
+              Manage Technical Direction Values
+            </Link>
+            <Link
+              to={`/organization/${id}/project-issue-dashboard/manage-assignees`}
+              className="e2-detailer-btn e2-detailer-btn-secondary"
+              style={{ display: 'inline-block' }}
+            >
+              Manage Assignees
+            </Link>
+          </div>
         </div>
 
         <div className="e2-detailer-sections">

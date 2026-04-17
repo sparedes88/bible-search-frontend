@@ -1,3 +1,5 @@
+import LiveIssueTracker from "./components/live-issue-tracker";
+          <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
 import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
 import ManageAssigneesPage from "./pages/ManageAssigneesPage";
 import React, { Suspense, useEffect, useState } from "react";
@@ -163,6 +165,8 @@ const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManage
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
+
+const ManageTechnicalDirectionValues = React.lazy(() => import("./pages/ManageTechnicalDirectionValues"));
 
 const App = () => {
   // Global assignee options state
@@ -864,6 +868,16 @@ const App = () => {
             }
           />
           <Route
+            path="/organization/:id/project-issue-dashboard/manage-technical-direction-values"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <React.Suspense fallback={<div>Loading…</div>}>
+                  <ManageTechnicalDirectionValues />
+                </React.Suspense>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/project-issue-dashboard/manage-assignees"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
@@ -871,6 +885,7 @@ const App = () => {
               </PrivateRoute>
             }
           />
+            <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
           </Routes>
           </Suspense>
         </Router>
