@@ -14,7 +14,9 @@
 // ...imports and main component below...
 
 import React, { useState, useRef, useEffect } from "react";
-import { getFirestore, collection, onSnapshot } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "../firebase";
 import { Link } from "react-router-dom";
 
 // Simple grid/table for displaying issues
@@ -212,7 +214,6 @@ export default function LiveIssueTracker() {
     setSaveError("");
     try {
       const db = getFirestore();
-      const storage = getStorage();
       const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + popupIssue.id);
       // Upload new documents if any
       let uploadedDocs = editFields.documents || [];
