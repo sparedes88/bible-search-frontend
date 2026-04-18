@@ -14,7 +14,7 @@
 // ...imports and main component below...
 
 import React, { useState, useRef, useEffect } from "react";
-import { getFirestore, collection, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../firebase";
 import { Link } from "react-router-dom";
@@ -220,10 +220,19 @@ export default function LiveIssueTracker() {
       if (editFields.uploadingFiles && editFields.uploadingFiles.length > 0) {
         uploadedDocs = [...uploadedDocs];
         for (let file of editFields.uploadingFiles) {
-          const fileRef = storageRef(storage, `e2Documents/${popupIssue.id}/${file.name}`);
+          const safeIssueId = (popupIssue.id || "").replace(/[^a-zA-Z0-9-_]/g, "_");
+          const ext = file.name.split(".").pop();
+          const timestamp = Date.now();
+          const storagePath = `churches/2155/bimProjects/stanford-ff-rad/e2-documents/${safeIssueId}/${timestamp}.${ext}`;
+          const fileRef = storageRef(storage, storagePath);
           await uploadBytes(fileRef, file);
           const url = await getDownloadURL(fileRef);
-          uploadedDocs.push({ name: file.name, url });
+          uploadedDocs.push({
+            name: file.name,
+            url,
+            uploadedAt: new Date().toISOString(),
+            storagePath,
+          });
         }
       }
       await updateDoc(issueDocRef, {
@@ -574,31 +583,45 @@ export default function LiveIssueTracker() {
               <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{editFields.comments.length}/1000 words</div>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontWeight: 500 }}>Documents:</label>
-              <input
-                type="file"
-                multiple
-                ref={fileInputRef}
-                disabled={saving || (editFields.documents.length + (editFields.uploadingFiles?.length || 0) >= 10)}
-                onChange={e => {
-                  const files = Array.from(e.target.files || []);
-                  if (files.length + (editFields.documents.length || 0) > 10) {
-                    setEditFields(f => ({ ...f, uploadError: "You can upload up to 10 files only." }));
-                  } else {
-                    setEditFields(f => ({ ...f, uploadingFiles: files, uploadError: "" }));
-                  }
-                }}
-                style={{ marginTop: 8 }}
-              />
-              {editFields.uploadError && <div style={{ color: "red", fontSize: 13 }}>{editFields.uploadError}</div>}
-              <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}>
-                {(editFields.documents || []).map((doc, idx) => (
-                  <li key={idx}><a href={doc.url} target="_blank" rel="noopener noreferrer">{doc.name}</a></li>
-                ))}
-                {editFields.uploadingFiles && editFields.uploadingFiles.map((file, idx) => (
-                  <li key={"new-"+idx}>{file.name} (to be uploaded)</li>
-                ))}
-              </ul>
+              <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Documents:</label>
+              <div className="pid-detail-upload-area" style={{ margin: 0, padding: '0.75rem 1rem' }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
+                  multiple
+                  onChange={e => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length + (editFields.documents.length || 0) > 10) {
+                      setEditFields(f => ({ ...f, uploadError: "You can upload up to 10 files only." }));
+                    } else {
+                      setEditFields(f => ({ ...f, uploadingFiles: files, uploadError: "" }));
+                    }
+                  }}
+                  disabled={saving || (editFields.documents.length + (editFields.uploadingFiles?.length || 0) >= 10)}
+                  style={{ display: "none" }}
+                />
+                <button
+                  type="button"
+                  className="pid-detail-upload-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={saving || (editFields.documents.length + (editFields.uploadingFiles?.length || 0) >= 10)}
+                >
+                  {saving ? "Uploading…" : "📎 Add Document"}
+                </button>
+                <span className="pid-detail-upload-hint">
+                  {10 - (editFields.documents.length + (editFields.uploadingFiles?.length || 0))} slot{10 - (editFields.documents.length + (editFields.uploadingFiles?.length || 0)) !== 1 ? "s" : ""} available
+                </span>
+                {editFields.uploadError && <div style={{ color: "#dc2626", fontSize: 13, marginTop: 4 }}>{editFields.uploadError}</div>}
+                <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, width: '100%' }}>
+                  {(editFields.documents || []).map((doc, idx) => (
+                    <li key={idx}><a href={doc.url} target="_blank" rel="noopener noreferrer">{doc.name}</a></li>
+                  ))}
+                  {editFields.uploadingFiles && editFields.uploadingFiles.map((file, idx) => (
+                    <li key={"new-"+idx}>{file.name} (to be uploaded)</li>
+                  ))}
+                </ul>
+              </div>
             </div>
             {saveError && <div style={{ color: "red", marginBottom: 8 }}>{saveError}</div>}
             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
