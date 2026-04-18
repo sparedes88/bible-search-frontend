@@ -475,30 +475,30 @@ const AgileDevelopmentDashboard = () => {
     <div className="agile-dashboard-wrapper">
       <div className="agile-dashboard-header">
         <div className="agile-dashboard-header-top">
-          <Link to={`/organization/${id}/project-issue-dashboard`} className="agile-dashboard-back-button">
-            ← Back to Project Issue Dashboard
-          </Link>
-          <Link to="/live-issue-tracker" style={{ marginLeft: 16, fontWeight: "bold", color: "#0ea5e9", textDecoration: "none" }}>
-            🚦 Go to Live Issue Tracker
-          </Link>
-          <h1>Agile Development Dashboard</h1>
-        </div>
-        <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Removed Back to Project Issue Dashboard link as requested */}
           <Link
-            to={`/organization/${id}/project-name-manager`}
+            to="/live-issue-tracker"
             style={{
-              display: 'inline-block',
-              background: '#f59e0b',
+              marginLeft: 16,
+              background: '#0ea5e9',
               color: '#fff',
               padding: '10px 18px',
               borderRadius: 6,
               fontWeight: 600,
               textDecoration: 'none',
-              width: 'fit-content',
+              display: 'inline-block',
+              border: 'none',
+              cursor: 'pointer',
             }}
           >
-            Manage Project Name Values
+            🚦 Go to Live Issue Tracker
           </Link>
+        </div>
+        <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ textAlign: 'center', width: '100%' }}>
+            <h1 style={{ margin: 0 }}>Agile Development Dashboard</h1>
+          </div>
+          {/* Removed Manage Project Name Values button as requested */}
         </div>
         <div className="agile-dashboard-filters">
           {/* Removed E2 Status Update Agile filter dropdown as requested */}
