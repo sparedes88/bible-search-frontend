@@ -14,7 +14,7 @@
 // ...imports and main component below...
 
 import React, { useState, useRef, useEffect } from "react";
-import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../firebase";
 import { Link } from "react-router-dom";
