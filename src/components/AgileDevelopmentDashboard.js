@@ -104,6 +104,8 @@ const AgileDevelopmentDashboard = () => {
     // Popup state for support team icon (must be before return)
     // showSupportTeamPopup: { key, rect } | null
     const [showSupportTeamPopup, setShowSupportTeamPopup] = useState(null);
+    // Search box state
+    const [searchTerm, setSearchTerm] = useState("");
   const { id } = useParams();
   // Project Name values managed in Project Name Manager
   const [projectNameValues, setProjectNameValues] = useState([]);
@@ -296,9 +298,14 @@ const AgileDevelopmentDashboard = () => {
         selectedE2StatusAgile === "All" || normalizeValue(issue.status) === selectedE2StatusAgile;
       const dataStageMatched =
         selectedDataStage === "All" || normalizeValue(issue.dataStage) === selectedDataStage;
-      return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched;
+      // Search filter: match Issue ID or Title (case-insensitive, partial)
+      const search = searchTerm.trim().toLowerCase();
+      const idMatch = normalizeValue(issue.issueId).toLowerCase().includes(search);
+      const titleMatch = normalizeValue(issue.title).toLowerCase().includes(search);
+      const searchMatched = !search || idMatch || titleMatch;
+      return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched && searchMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage]);
+  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
 
   const e2StatusAgileOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
@@ -501,7 +508,20 @@ const AgileDevelopmentDashboard = () => {
           {/* Removed Manage Project Name Values button as requested */}
         </div>
         <div className="agile-dashboard-filters">
-          {/* Removed E2 Status Update Agile filter dropdown as requested */}
+          {/* Search box for Issue ID and Title */}
+          <label className="agile-dashboard-filter-item" htmlFor="agile-search-box" style={{ minWidth: 220 }}>
+            <span>Search Issue ID or Title</span>
+            <input
+              id="agile-search-box"
+              className="agile-dashboard-filter-select"
+              type="text"
+              placeholder="Search by ID or Title..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              style={{ minWidth: 180 }}
+            />
+          </label>
+
           <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
             <span>Project Name</span>
             <select
