@@ -792,13 +792,19 @@ const ProjectIssueDetail = () => {
                 {(logEntries?.length || 0) === 0 ? (
                   <tr><td colSpan={3} style={{ textAlign: "center", padding: 16 }}>No log entries yet.</td></tr>
                 ) : (
-                  (logEntries || []).map((entry, idx) => (
-                    <tr key={idx}>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{formatTimestamp(entry.timestamp)}</td>
-                    </tr>
-                  ))
+                  [...(logEntries || [])]
+                    .sort((a, b) => {
+                      const ta = new Date(a.timestamp || a.date || 0).getTime();
+                      const tb = new Date(b.timestamp || b.date || 0).getTime();
+                      return tb - ta;
+                    })
+                    .map((entry, idx) => (
+                      <tr key={idx}>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{formatTimestamp(entry.timestamp || entry.date)}</td>
+                      </tr>
+                    ))
                 )}
               </tbody>
             </table>

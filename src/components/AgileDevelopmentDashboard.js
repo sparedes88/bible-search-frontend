@@ -354,7 +354,29 @@ const AgileDevelopmentDashboard = () => {
     const nextStatus = column.name;
     const targetRowData = resolveRowData(targetRow);
     const statusField = issue.statusField || "E2 Status Update";
+<<<<<<< HEAD
     const prevStatus = targetRowData[statusField] || "-";
+=======
+    const prevStatus = rowData[statusField] || "-";
+    const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
+    const prevLogEntries = Array.isArray(rowData.LogEntries) ? rowData.LogEntries : [];
+    const now = new Date().toISOString();
+    const statusChangeUpdate = {
+      text: `Moved card from column '${prevStatus}' to column '${nextStatus}'`,
+      percentCompleted: 0,
+      date: now,
+    };
+    const statusChangeLog = {
+      type: "status-change",
+      update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
+      from: prevStatus,
+      to: nextStatus,
+      user: (window.currentUser && window.currentUser.displayName) || "System",
+      timestamp: now,
+    };
+
+    // Increment Development_Cycle_Counter if status changes to 'Completed' from any other status
+>>>>>>> 09f74eb (Fix: Issue Log now shows latest update on top (descending order))
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
@@ -388,9 +410,19 @@ const AgileDevelopmentDashboard = () => {
 
       return {
         ...row,
+<<<<<<< HEAD
         [statusField]: nextStatus,
         updates: [...prevUpdates, statusChangeUpdate],
         Development_Cycle_Counter: nextDevCycle,
+=======
+        rowData: {
+          ...rowData,
+          [statusField]: nextStatus,
+          updates: [...prevUpdates, statusChangeUpdate],
+          LogEntries: [...prevLogEntries, statusChangeLog],
+          Development_Cycle_Counter: nextDevCycle,
+        },
+>>>>>>> 09f74eb (Fix: Issue Log now shows latest update on top (descending order))
       };
     });
 
@@ -426,6 +458,7 @@ const AgileDevelopmentDashboard = () => {
       await updateDoc(issueRef, {
         ...updatedRows[issue.rowIndex].rowData,
         status: nextStatus,
+        LogEntries: [...prevLogEntries, statusChangeLog],
       });
       toast.success(`Moved to ${nextStatus}.`);
     } catch (error) {
