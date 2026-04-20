@@ -232,7 +232,7 @@ const MiOrganizacion = () => {
           title: "Project Issue Dashboard",
           description: "Track and review project issues by status and owner",
           icon: "🧩",
-          path: `/organization/${id}/project-issue-dashboard`
+          path: `/organization/${id}/e2-agile-board`
         },
         {
           title: "Time Tracker",

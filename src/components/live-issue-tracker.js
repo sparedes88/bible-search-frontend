@@ -255,6 +255,22 @@ export default function LiveIssueTracker() {
   return (
     <div style={{ padding: 24 }}>
       <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 24 }}>
+        <Link
+          to="/organization/2155/e2-agile-board"
+          style={{
+            fontWeight: "bold",
+            color: "#fff",
+            background: "#f59e42",
+            border: "none",
+            borderRadius: 4,
+            padding: "8px 18px",
+            fontSize: 15,
+            textDecoration: "none",
+            marginRight: 8
+          }}
+        >
+          🏃 Agile Dashboard
+        </Link>
         <Link to="/organization/2155/project-issue-dashboard" style={{ fontWeight: "bold", color: "#0ea5e9" }}>
           📋 Go to Project Issue Dashboard
         </Link>
@@ -264,6 +280,22 @@ export default function LiveIssueTracker() {
         >
           ➕ Add a New Issue/Task
         </button>
+        <Link
+          to="/organization/2155/project-issue-dashboard/e2-detailers"
+          style={{
+            background: "#f59e42",
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            padding: "8px 18px",
+            fontWeight: 600,
+            fontSize: 15,
+            cursor: "pointer",
+            textDecoration: "none"
+          }}
+        >
+          🛠️ Manage E2 Fields
+        </Link>
       </div>
             {/* Add Issue Popup */}
             {showAddPopup && (
