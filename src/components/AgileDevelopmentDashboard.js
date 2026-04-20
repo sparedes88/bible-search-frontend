@@ -403,8 +403,21 @@ const AgileDevelopmentDashboard = () => {
         rows: updatedRows,
       },
     }));
+    // Also update developmentCycleCounter for real-time UI update
     setIssues((previous) =>
-      previous.map((item) => (item.key === issue.key ? { ...item, status: nextStatus } : item))
+      previous.map((item) => {
+        if (item.key === issue.key) {
+          // Find the updated row for this issue
+          const updatedRow = updatedRows[issue.rowIndex];
+          const devCycle = updatedRow?.rowData?.Development_Cycle_Counter;
+          return {
+            ...item,
+            status: nextStatus,
+            developmentCycleCounter: typeof devCycle === 'number' ? devCycle : item.developmentCycleCounter,
+          };
+        }
+        return item;
+      })
     );
 
     try {
