@@ -45,6 +45,8 @@ const getIssueTagValues = (issue) => {
   return normalized.split(",").map((tag) => tag.trim()).filter(Boolean);
 };
 
+const isTechnicalDetailsTag = (tagValue) => String(tagValue || "").trim().toLowerCase() === "provide technical details";
+
 const getIssueIdFromRow = (rowData) => {
   const keys = Object.keys(rowData || {});
   for (const alias of ISSUE_ID_ALIASES) {
@@ -104,7 +106,7 @@ export default function LiveIssueTracker() {
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
   const [markupViewerIndex, setMarkupViewerIndex] = useState(-1);
-  const [quickTagValue, setQuickTagValue] = useState("");
+  const [quickTagValues, setQuickTagValues] = useState([]);
   const [quickTagCustomValue, setQuickTagCustomValue] = useState("");
   const [quickTagSaving, setQuickTagSaving] = useState(false);
   const [quickTagError, setQuickTagError] = useState("");
@@ -400,28 +402,51 @@ export default function LiveIssueTracker() {
 
   useEffect(() => {
     if (!markupViewerIssue) return;
-    const currentTag = markupViewerIssue["E2 Tags"] || markupViewerIssue.e2Tags || "";
-    setQuickTagValue(currentTag);
+    const currentTags = getIssueTagValues(markupViewerIssue);
+    setQuickTagValues(currentTags);
     setQuickTagCustomValue("");
     setQuickTagError("");
   }, [markupViewerIssue]);
 
+  const toggleQuickTagValue = (tag) => {
+    const isSelected = quickTagValues.includes(tag);
+    const nextValues = isSelected
+      ? quickTagValues.filter((value) => value !== tag)
+      : [...quickTagValues, tag];
+
+    setQuickTagValues(nextValues);
+    void handleQuickTagSave(nextValues);
+
+    if (!isSelected && isTechnicalDetailsTag(tag) && markupViewerIssue) {
+      const issueForTechDetails = markupViewerIssue;
+      handleOpenPopup(issueForTechDetails);
+    }
+  };
+
   const handleQuickTagAddCustom = () => {
     const normalized = String(quickTagCustomValue || "").trim();
     if (!normalized) return;
-    setQuickTagValue(normalized);
+    const wasSelected = quickTagValues.includes(normalized);
+    const nextValues = wasSelected ? quickTagValues : [...quickTagValues, normalized];
+    setQuickTagValues(nextValues);
+    void handleQuickTagSave(nextValues);
     setE2TagOptions((prev) => {
       const exists = prev.some((value) => String(value).trim().toLowerCase() === normalized.toLowerCase());
       return exists ? prev : [...prev, normalized];
     });
     setQuickTagCustomValue("");
+
+    if (!wasSelected && isTechnicalDetailsTag(normalized) && markupViewerIssue) {
+      const issueForTechDetails = markupViewerIssue;
+      handleOpenPopup(issueForTechDetails);
+    }
   };
 
-  const handleQuickTagSave = async () => {
+  const handleQuickTagSave = async (tagsToSave = quickTagValues) => {
     if (!markupViewerIssue || !markupViewerIssue.id) return;
     setQuickTagSaving(true);
     setQuickTagError("");
-    const normalizedValue = String(quickTagValue || "").trim();
+    const normalizedValue = tagsToSave.join(", ");
     try {
       const db = getFirestore();
       const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + markupViewerIssue.id);
@@ -1041,13 +1066,9 @@ export default function LiveIssueTracker() {
             <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 16px", background: "#ffffff" }}>
               <div style={{ fontWeight: 600, marginBottom: 8, color: "#0f172a" }}>E2 Tags</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <input
-                  type="text"
-                  value={quickTagValue}
-                  onChange={(e) => setQuickTagValue(e.target.value)}
-                  placeholder="Select or type tag"
-                  style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1" }}
-                />
+                <div style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1", minHeight: 38, color: "#0f172a", background: "#fff" }}>
+                  {quickTagValues.length > 0 ? quickTagValues.join(", ") : "No tags selected"}
+                </div>
                 <button
                   type="button"
                   onClick={handleQuickTagSave}
@@ -1062,13 +1083,13 @@ export default function LiveIssueTracker() {
                   <button
                     key={`quick-tag-${tag}`}
                     type="button"
-                    onClick={() => setQuickTagValue(tag)}
+                    onClick={() => toggleQuickTagValue(tag)}
                     style={{
                       padding: "5px 10px",
                       borderRadius: 999,
                       border: "1px solid #cbd5e1",
-                      background: quickTagValue === tag ? "#0ea5e9" : "#fff",
-                      color: quickTagValue === tag ? "#fff" : "#0f172a",
+                      background: quickTagValues.includes(tag) ? "#0ea5e9" : "#fff",
+                      color: quickTagValues.includes(tag) ? "#fff" : "#0f172a",
                       cursor: "pointer",
                       fontSize: 13,
                       fontWeight: 600,
@@ -1103,7 +1124,7 @@ export default function LiveIssueTracker() {
       {/* Popup for Technical Direction */}
       {showPopup && popupIssue && (
         <div style={{
-          position: "fixed", left: 0, top: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.3)", zIndex: 1000,
+          position: "fixed", left: 0, top: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.3)", zIndex: 1300,
           display: "flex", alignItems: "center", justifyContent: "center"
         }}>
           <div style={{ background: "#fff", padding: 32, borderRadius: 8, minWidth: 400, boxShadow: "0 2px 16px #0002", maxWidth: 520 }}>
