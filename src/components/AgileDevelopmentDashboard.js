@@ -353,13 +353,9 @@ const AgileDevelopmentDashboard = () => {
 
     const nextStatus = column.name;
     const targetRowData = resolveRowData(targetRow);
-    const statusField = issue.statusField || "E2 Status Update";
-<<<<<<< HEAD
     const prevStatus = targetRowData[statusField] || "-";
-=======
-    const prevStatus = rowData[statusField] || "-";
-    const prevUpdates = Array.isArray(rowData.updates) ? rowData.updates : [];
-    const prevLogEntries = Array.isArray(rowData.LogEntries) ? rowData.LogEntries : [];
+    const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
+    const prevLogEntries = Array.isArray(targetRowData.LogEntries) ? targetRowData.LogEntries : [];
     const now = new Date().toISOString();
     const statusChangeUpdate = {
       text: `Moved card from column '${prevStatus}' to column '${nextStatus}'`,
@@ -376,7 +372,6 @@ const AgileDevelopmentDashboard = () => {
     };
 
     // Increment Development_Cycle_Counter if status changes to 'Completed' from any other status
->>>>>>> 09f74eb (Fix: Issue Log now shows latest update on top (descending order))
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
@@ -410,11 +405,6 @@ const AgileDevelopmentDashboard = () => {
 
       return {
         ...row,
-<<<<<<< HEAD
-        [statusField]: nextStatus,
-        updates: [...prevUpdates, statusChangeUpdate],
-        Development_Cycle_Counter: nextDevCycle,
-=======
         rowData: {
           ...rowData,
           [statusField]: nextStatus,
@@ -422,7 +412,6 @@ const AgileDevelopmentDashboard = () => {
           LogEntries: [...prevLogEntries, statusChangeLog],
           Development_Cycle_Counter: nextDevCycle,
         },
->>>>>>> 09f74eb (Fix: Issue Log now shows latest update on top (descending order))
       };
     });
 
@@ -476,25 +465,6 @@ const AgileDevelopmentDashboard = () => {
   const [latestUpdate, setLatestUpdate] = useState("");
   const [updateLoading, setUpdateLoading] = useState(false);
 
-<<<<<<< HEAD
-  // Fetch latest update and percent completed for a given issue
-  const fetchLatestUpdate = (issue) => {
-    const source = projectSources[issue.projectDocId];
-    if (!source) return { text: "", percentCompleted: null, date: null };
-    const row = source.rows[issue.rowIndex];
-    if (!row) return { text: "", percentCompleted: null, date: null };
-    const rowData = resolveRowData(row);
-    const updates = rowData.updates;
-    if (Array.isArray(updates) && updates.length > 0) {
-      const last = updates[updates.length - 1];
-      return {
-        text: last.text || last.comment || JSON.stringify(last),
-        percentCompleted: typeof last.percentCompleted === "number" ? last.percentCompleted : null,
-        date: last.date || null
-      };
-    }
-    return { text: rowData.update || "", percentCompleted: null, date: null };
-=======
   // Fetch latest update and percent completed for a given issue from Firestore LogEntries
   const fetchLatestUpdate = async (issue) => {
     if (!issue || !issue.projectDocId || !issue.issueId || !id) return { text: "", percentCompleted: null, date: null };
@@ -517,7 +487,6 @@ const AgileDevelopmentDashboard = () => {
       // ignore
     }
     return { text: "", percentCompleted: null, date: null };
->>>>>>> 1bccc9b (Fix E2 Documents: always display from issue doc, allow up to 10 uploads, and correct upload logic/UI)
   };
 
   if (loading) {
@@ -642,22 +611,10 @@ const AgileDevelopmentDashboard = () => {
                 {columnIssues.map((issue) => {
                   // Find latest percent from LogEntries in Firestore
                   let percentCompleted = null;
-<<<<<<< HEAD
-                  const source = projectSources[issue.projectDocId];
-                  if (source) {
-                    const row = source.rows[issue.rowIndex];
-                    const rowData = resolveRowData(row);
-                    if (row && Array.isArray(rowData.updates) && rowData.updates.length > 0) {
-                      const last = rowData.updates[rowData.updates.length - 1];
-                      if (typeof last.percentCompleted === 'number') {
-                        percentCompleted = last.percentCompleted;
-                      }
-=======
                   if (Array.isArray(issue.LogEntries) && issue.LogEntries.length > 0) {
                     const latestLog = issue.LogEntries[0];
                     if (typeof latestLog.percent === 'number') {
                       percentCompleted = latestLog.percent;
->>>>>>> 1bccc9b (Fix E2 Documents: always display from issue doc, allow up to 10 uploads, and correct upload logic/UI)
                     }
                   }
                   return (
@@ -672,9 +629,6 @@ const AgileDevelopmentDashboard = () => {
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                             {normalizeValue(issue.dataStage) === 'Testing' && (
                               <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
-                            )}
-                            {normalizeValue(issue.dataStage) === 'Production' && (
-                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
                             )}
                             {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
                               <>
@@ -881,54 +835,12 @@ const AgileDevelopmentDashboard = () => {
           setUpdateLoading(true);
           try {
             const { issue } = updateModal;
-<<<<<<< HEAD
-            const source = projectSources[issue.projectDocId];
-            if (!source) return;
-            const rows = Array.isArray(source.rows) ? source.rows : [];
-            const targetRow = rows[issue.rowIndex];
-            if (!targetRow) return;
-            const targetRowData = resolveRowData(targetRow);
-            const hasNestedRowData = Boolean(targetRow?.rowData && typeof targetRow.rowData === "object");
-            const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
-            const now = new Date().toISOString();
-            const newEntry = {
-              date: now,
-              text: newUpdate.trim(),
-              percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
-            };
-            const updatedRow = hasNestedRowData
-              ? {
-                  ...targetRow,
-                  rowData: {
-                    ...targetRowData,
-                    updates: [...prevUpdates, newEntry],
-                  },
-                }
-              : {
-                  ...targetRow,
-                  updates: [...prevUpdates, newEntry],
-                };
-            const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
-            // --- Update log structure in internalCardMeta for ProjectIssueDetail ---
-            const normalizeCardKey = (id, rowNumber) => {
-              const norm = String(id || "").trim().toUpperCase();
-              return norm ? `id:${norm}` : `row:${rowNumber}`;
-            };
-            const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
-            const projectDocRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-            const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectDocRef);
-            const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
-            const internalCardMeta = projectDocData.internalCardMeta || {};
-            internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-            const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
-=======
             const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
             // Fetch current log entries
             const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
             const issueData = issueSnap.exists() ? issueSnap.data() : {};
             const prevLog = Array.isArray(issueData.LogEntries) ? issueData.LogEntries : [];
             const now = new Date().toISOString();
->>>>>>> b32322b (Display and update Issue Log from LogEntries array in Issue document (not internalCardMeta))
             const logEntry = {
               update: newUpdate.trim(),
               percent: Number(percentCompleted) || 0,
