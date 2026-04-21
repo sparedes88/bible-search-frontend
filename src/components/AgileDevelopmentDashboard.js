@@ -67,6 +67,68 @@ const resolveRowData = (row) => {
   return row;
 };
 
+// --- Deadline timezone helpers (America/New_York) ---
+const _nyFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hourCycle: "h23",
+});
+const _getNyParts = (date) => {
+  const p = {};
+  _nyFmt.formatToParts(date).forEach(({ type, value }) => { if (type !== "literal") p[type] = Number(value); });
+  return p;
+};
+const _nyLocalToUtcMs = (year, month, day, hour, min = 0, sec = 0) => {
+  let utcMs = Date.UTC(year, month - 1, day, hour, min, sec);
+  for (let i = 0; i < 3; i++) {
+    const a = _getNyParts(new Date(utcMs));
+    const delta = Date.UTC(year, month - 1, day, hour, min, sec) - Date.UTC(a.year, a.month - 1, a.day, a.hour, a.minute, a.second);
+    if (delta === 0) break;
+    utcMs += delta;
+  }
+  return utcMs;
+};
+const _shiftDay = (year, month, day, delta) => {
+  const d = new Date(Date.UTC(year, month - 1, day + delta));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+};
+// Returns the current moment as UTC ms (reference for deadline countdown).
+const getDeadlineRefMs = () => Date.now();
+// Returns the due date pinned to 4 PM EST on that calendar day as UTC ms.
+const getDueDateMs = (dueDateStr) => {
+  // Try to extract date parts directly from the string to avoid JS's
+  // UTC-midnight parsing of ISO dates (e.g. "2026-04-21") which shifts
+  // the day backward by one in negative-UTC-offset timezones like EDT.
+  const isoMatch = String(dueDateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return _nyLocalToUtcMs(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]), 16);
+  }
+  const mdyMatch = String(dueDateStr).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (mdyMatch) {
+    return _nyLocalToUtcMs(Number(mdyMatch[3]), Number(mdyMatch[1]), Number(mdyMatch[2]), 16);
+  }
+  // Fallback: parse normally and use NY calendar day
+  const raw = new Date(dueDateStr);
+  if (Number.isNaN(raw.getTime())) return null;
+  const { year, month, day } = _getNyParts(raw);
+  return _nyLocalToUtcMs(year, month, day, 16);
+};
+// Calculates the deadline label and color for a given due date.
+// Returns { label, color, diffMs, daysDiff } or null if date is invalid.
+const calculateDeadlineValue = (dueDateStr) => {
+  if (!dueDateStr) return null;
+  const dueDateMs = getDueDateMs(dueDateStr);
+  if (dueDateMs === null) return null;
+  const refMs = getDeadlineRefMs();
+  const diffMs = dueDateMs - refMs;
+  const absDiffMs = Math.abs(diffMs);
+  const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
+  const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+  return { diffMs, daysDiff, hoursDiff, absDiffMs };
+};
+// --- End deadline helpers ---
+
 const toPhaseId = (value) => {
   const normalized = normalizeValue(value).toLowerCase();
   if (!normalized) return "phase-empty";
@@ -373,6 +435,8 @@ const AgileDevelopmentDashboard = () => {
     };
 
     // Increment Development_Cycle_Counter if status changes to 'Completed' from any other status
+    const isMovingToCompletion = nextStatus === "Completed" || nextStatus === "Report Completion to Client";
+    
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
@@ -392,27 +456,49 @@ const AgileDevelopmentDashboard = () => {
         nextDevCycle = 1;
       }
 
+      // Calculate and freeze deadline if moving to completion columns
+      let permanentDeadlineLabel = null;
+      let permanentDeadlineColor = null;
+      if (isMovingToCompletion && !rowData.permanentDeadlineLabel) {
+        const calc = calculateDeadlineValue(rowData.e2DueDate);
+        if (calc) {
+          const { diffMs, daysDiff, hoursDiff } = calc;
+          if (diffMs > 0 && daysDiff > 1) {
+            permanentDeadlineLabel = "Delivered ahead of schedule";
+            permanentDeadlineColor = "#22c55e";
+          } else if (diffMs > 0) {
+            permanentDeadlineLabel = "Met";
+            permanentDeadlineColor = "#22c55e";
+          } else {
+            permanentDeadlineLabel = "Missed the Deadline";
+            permanentDeadlineColor = "#dc2626";
+          }
+        }
+      }
+
+      const nextRowData = {
+        ...rowData,
+        [statusField]: nextStatus,
+        updates: [...prevUpdates, statusChangeUpdate],
+        Development_Cycle_Counter: nextDevCycle,
+      };
+      
+      // Add permanent deadline if calculated
+      if (permanentDeadlineLabel) {
+        nextRowData.permanentDeadlineLabel = permanentDeadlineLabel;
+        nextRowData.permanentDeadlineColor = permanentDeadlineColor;
+      }
+
       if (hasNestedRowData) {
         return {
           ...row,
-          rowData: {
-            ...rowData,
-            [statusField]: nextStatus,
-            updates: [...prevUpdates, statusChangeUpdate],
-            Development_Cycle_Counter: nextDevCycle,
-          },
+          rowData: nextRowData,
         };
       }
 
       return {
         ...row,
-        rowData: {
-          ...rowData,
-          [statusField]: nextStatus,
-          updates: [...prevUpdates, statusChangeUpdate],
-          LogEntries: [...prevLogEntries, statusChangeLog],
-          Development_Cycle_Counter: nextDevCycle,
-        },
+        rowData: { ...nextRowData, LogEntries: [...prevLogEntries, statusChangeLog] },
       };
     });
 
@@ -431,10 +517,13 @@ const AgileDevelopmentDashboard = () => {
         if (item.key === issue.key) {
           // Find the updated row for this issue
           const updatedRow = updatedRows[issue.rowIndex];
-          const devCycle = updatedRow?.rowData?.Development_Cycle_Counter;
+          const updatedRowData = updatedRow?.rowData || {};
+          const devCycle = updatedRowData.Development_Cycle_Counter;
           return {
             ...item,
             status: nextStatus,
+            e2StatusUpdateAgile: nextStatus,
+            rowData: { ...item.rowData, ...updatedRowData },
             developmentCycleCounter: typeof devCycle === 'number' ? devCycle : item.developmentCycleCounter,
           };
         }
@@ -503,23 +592,28 @@ const AgileDevelopmentDashboard = () => {
             to="/live-issue-tracker"
             style={{
               marginLeft: 16,
-              background: '#0ea5e9',
-              color: '#fff',
-              padding: '10px 18px',
-              borderRadius: 6,
-              fontWeight: 600,
+              background: 'rgba(236, 239, 244, 0.88)',
+              color: '#111827',
+              padding: '10px 16px',
+              borderRadius: 8,
+              fontWeight: 500,
+              letterSpacing: '0.2px',
               textDecoration: 'none',
               display: 'inline-block',
-              border: 'none',
+              border: '1px solid #a8a8a8',
+              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
               cursor: 'pointer',
             }}
           >
-            🚦 Go to Live Issue Tracker
+            Open Live Issue Tracker
           </Link>
         </div>
         <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ textAlign: 'center', width: '100%' }}>
             <h1 style={{ margin: 0 }}>Agile Development Dashboard</h1>
+            <p style={{ margin: '6px 0 0 0', color: '#64748b', fontSize: 14 }}>
+              © E2 Tech Support, LLC
+            </p>
           </div>
           {/* Removed Manage Project Name Values button as requested */}
         </div>
@@ -628,8 +722,11 @@ const AgileDevelopmentDashboard = () => {
                       <div className="agile-card-header">
                         <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                            {normalizeValue(issue.dataStage) === 'Testing' && (
+                            {normalizeValue(issue.dataStage).toLowerCase() === 'testing' && (
                               <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
+                            {normalizeValue(issue.dataStage).toLowerCase() === 'production' && (
+                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
                             )}
                             {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
                               <>
@@ -739,18 +836,65 @@ const AgileDevelopmentDashboard = () => {
                         <div className="agile-card-field-row" style={{ fontSize: '1.08em', color: '#334155', marginTop: 2 }}>
                           {(() => {
                             const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
-                            let days = null;
-                            if (dueDateStr) {
-                              const today = new Date();
-                              const dueDate = new Date(dueDateStr);
-                              // Zero out time for accurate day diff
-                              today.setHours(0,0,0,0);
-                              dueDate.setHours(0,0,0,0);
-                              days = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+                            const e2StatusAgile = issue.rowData?.["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
+                            const isCompleted = e2StatusAgile === "Completed" || e2StatusAgile === "Report Completion to Client";
+                            
+                            // Check if deadline is already frozen (permanent)
+                            const permanentLabel = issue.rowData?.permanentDeadlineLabel;
+                            const permanentColor = issue.rowData?.permanentDeadlineColor;
+                            if (permanentLabel) {
+                              return (
+                                <span>
+                                  <span style={{ fontWeight: 600, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Deadline:</span>{' '}
+                                  <span style={{ color: permanentColor, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{permanentLabel}</span>
+                                </span>
+                              );
                             }
+                            
+                            let deadlineLabel = null;
+                            let deadlineColor = 'inherit';
+                            let diffMs = 0;
+                            let daysDiff = 0;
+                            
+                            if (dueDateStr) {
+                              const dueDateMs = getDueDateMs(dueDateStr);
+                              if (dueDateMs !== null) {
+                                const refMs = getDeadlineRefMs();
+                                diffMs = dueDateMs - refMs;
+                                const absDiffMs = Math.abs(diffMs);
+                                const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
+                                daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+                                
+                                // If card is in Completed or Report Completion to Client status, show conditional text
+                                if (isCompleted) {
+                                  if (diffMs > 0 && daysDiff > 1) {
+                                    deadlineLabel = "Delivered ahead of schedule";
+                                    deadlineColor = "#22c55e"; // green
+                                  } else if (diffMs > 0) {
+                                    deadlineLabel = "Met";
+                                    deadlineColor = "#22c55e"; // green
+                                  } else {
+                                    deadlineLabel = "Missed the Deadline";
+                                    deadlineColor = "#dc2626"; // red
+                                  }
+                                } else {
+                                  // Normal countdown display
+                                  if (absDiffMs < (1000 * 60 * 60 * 24)) {
+                                    const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
+                                    deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
+                                  } else {
+                                    const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
+                                    deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
+                                  }
+                                  deadlineColor = diffMs < 0 ? '#dc2626' : 'inherit';
+                                }
+                              }
+                            }
+                            
                             return (
                               <span>
-                                <span style={{ fontWeight: 600 }}>Deadline:</span> {days !== null ? `${days} day${Math.abs(days) === 1 ? '' : 's'}` : '—'}
+                                <span style={{ fontWeight: 600, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Deadline:</span>{' '}
+                                <span style={{ color: deadlineColor, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{deadlineLabel ?? '—'}</span>
                               </span>
                             );
                           })()}

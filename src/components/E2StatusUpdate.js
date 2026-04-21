@@ -75,7 +75,7 @@ const withDefaultStatusOption = (values = []) => {
   return hasDefault ? normalized : [DEFAULT_E2_STATUS_UPDATE, ...normalized];
 };
 
-const E2DetailerManager = () => {
+const E2StatusUpdate = () => {
   const { id } = useParams();
   const [options, setOptions] = useState(DEFAULT_E2_DETAILER_OPTIONS);
   const [statusOptions, setStatusOptions] = useState(DEFAULT_E2_STATUS_UPDATE_OPTIONS);
@@ -483,38 +483,17 @@ const E2DetailerManager = () => {
   return (
     <div style={commonStyles.fullWidthContainer}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
-        <Link to="/live-issue-tracker" style={commonStyles.backButtonLink}>
-          ← Back to Live Issue Tracker
-        </Link>
-        <Link
-          to={`/organization/${id}/project-issue-dashboard/manage-technical-direction-values`}
-          className="e2-detailer-btn e2-detailer-btn-secondary"
-          style={{ display: 'inline-block' }}
-        >
-          Manage Technical Direction Values
-        </Link>
-        <Link
-          to={`/organization/${id}/project-name-manager`}
-          className="e2-detailer-btn e2-detailer-btn-secondary"
-          style={{ display: 'inline-block' }}
-        >
-          Manage Project Names
-        </Link>
-        <Link
-          to={`/organization/${id}/project-issue-dashboard/e2-status_update`}
-          className="e2-detailer-btn e2-detailer-btn-secondary"
-          style={{ display: 'inline-block' }}
-        >
-          Manage E2 Status Update
+        <Link to={`/organization/${id}/project-issue-dashboard/e2-detailers`} style={commonStyles.backButtonLink}>
+          ← Back to Manage E2 Field Values
         </Link>
       </div>
 
       <div className="e2-detailer-page">
 
         <div className="e2-detailer-header">
-          <h1 className="e2-detailer-title">Manage E2 fields</h1>
+          <h1 className="e2-detailer-title">Manage E2 Status Update Values</h1>
           <p className="e2-detailer-subtitle">
-            Add, edit, and remove values for E2 Lead Detailer and E2 Status Update fields.
+            Add, edit, and remove values for E2 Status Update fields.
           </p>
         </div>
 
@@ -525,14 +504,14 @@ const E2DetailerManager = () => {
           <div className="e2-detailer-list-wrap">
             <div className="e2-detailer-list-head">
               <div className="e2-detailer-list-meta">
-                <strong>E2 Lead Detailer Values</strong>
-                <span>{loading ? "Loading..." : `${options.length} value(s)`}</span>
+                <strong>E2 Status Update Values</strong>
+                <span>{loading ? "Loading..." : `${statusOptions.length} value(s)`}</span>
               </div>
               <button
                 type="button"
                 className="e2-detailer-btn"
-                onClick={() => handleSortAlphabetically("detailer")}
-                disabled={saving || loading || options.length < 2}
+                onClick={() => handleSortAlphabetically("status")}
+                disabled={saving || loading || statusOptions.length < 2}
               >
                 Sort A-Z
               </button>
@@ -542,27 +521,27 @@ const E2DetailerManager = () => {
               <input
                 type="text"
                 className="e2-detailer-input"
-                placeholder="Type a new E2 Lead Detailer value"
-                value={newValue}
-                onChange={(event) => setNewValue(event.target.value)}
+                placeholder="Type a new E2 Status Update value"
+                value={newStatusValue}
+                onChange={(event) => setNewStatusValue(event.target.value)}
                 disabled={saving}
               />
               <button
                 type="button"
                 className="e2-detailer-btn e2-detailer-btn-primary"
-                onClick={handleAdd}
+                onClick={handleStatusAdd}
                 disabled={saving}
               >
                 Add Value
               </button>
             </div>
 
-            {!loading && !options.length ? <div className="e2-detailer-empty">No values found.</div> : null}
+            {!loading && !statusOptions.length ? <div className="e2-detailer-empty">No values found.</div> : null}
 
             <ul className="e2-detailer-list">
-              {options.map((value, index) => (
+              {statusOptions.map((value, index) => (
                 <li key={`${value}-${index}`} className="e2-detailer-item">
-                  {editingType === "detailer" && editingIndex === index ? (
+                  {editingType === "status" && editingIndex === index ? (
                     <input
                       type="text"
                       className="e2-detailer-input"
@@ -575,7 +554,7 @@ const E2DetailerManager = () => {
                   )}
 
                   <div className="e2-detailer-actions">
-                    {editingType === "detailer" && editingIndex === index ? (
+                    {editingType === "status" && editingIndex === index ? (
                       <>
                         <button
                           type="button"
@@ -594,7 +573,7 @@ const E2DetailerManager = () => {
                         <button
                           type="button"
                           className="e2-detailer-btn"
-                          onClick={() => handleMoveOption("detailer", index, "up")}
+                          onClick={() => handleMoveOption("status", index, "up")}
                           disabled={saving || index === 0}
                         >
                           Up
@@ -602,15 +581,15 @@ const E2DetailerManager = () => {
                         <button
                           type="button"
                           className="e2-detailer-btn"
-                          onClick={() => handleMoveOption("detailer", index, "down")}
-                          disabled={saving || index === options.length - 1}
+                          onClick={() => handleMoveOption("status", index, "down")}
+                          disabled={saving || index === statusOptions.length - 1}
                         >
                           Down
                         </button>
                         <button
                           type="button"
                           className="e2-detailer-btn"
-                          onClick={() => startEdit("detailer", index)}
+                          onClick={() => startEdit("status", index)}
                           disabled={saving}
                         >
                           Edit
@@ -618,7 +597,7 @@ const E2DetailerManager = () => {
                         <button
                           type="button"
                           className="e2-detailer-btn e2-detailer-btn-danger"
-                          onClick={() => handleDelete("detailer", index)}
+                          onClick={() => handleDelete("status", index)}
                           disabled={saving}
                         >
                           Delete
@@ -638,4 +617,4 @@ const E2DetailerManager = () => {
   );
 };
 
-export default E2DetailerManager;
+export default E2StatusUpdate;

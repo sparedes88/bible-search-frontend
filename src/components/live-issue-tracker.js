@@ -21,6 +21,7 @@ import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 
 const ISSUE_ID_ALIASES = ["id", "issue id", "task id", "card id", "row id"];
+const NO_TAGS_FILTER_VALUE = "__NO_TAGS__";
 
 const normalizeHeaderKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
@@ -32,6 +33,19 @@ const normalizeCellValue = (value) => {
   if (value instanceof Date) return value.toISOString();
   return String(value).trim();
 };
+
+const getIssueTagValues = (issue) => {
+  const raw = issue?.["E2 Tags"] ?? issue?.e2Tags ?? "";
+  if (Array.isArray(raw)) {
+    return raw.map((tag) => String(tag || "").trim()).filter(Boolean);
+  }
+  const normalized = String(raw || "").trim();
+  if (!normalized) return [];
+  if (!normalized.includes(",")) return [normalized];
+  return normalized.split(",").map((tag) => tag.trim()).filter(Boolean);
+};
+
+const isTechnicalDetailsTag = (tagValue) => String(tagValue || "").trim().toLowerCase() === "provide technical details";
 
 const getIssueIdFromRow = (rowData) => {
   const keys = Object.keys(rowData || {});
@@ -49,6 +63,7 @@ export default function LiveIssueTracker() {
   // State for edit popup extra fields (must be inside component)
   const [editFields, setEditFields] = useState({
     leadDetailer: "",
+    e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
     comments: "",
@@ -62,6 +77,8 @@ export default function LiveIssueTracker() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedProject, setSelectedProject] = useState("");
+  const [selectedE2Tags, setSelectedE2Tags] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
   const [showPopup, setShowPopup] = useState(false);
   const [popupIssue, setPopupIssue] = useState(null);
   const [tdValue, setTdValue] = useState("");
@@ -75,6 +92,7 @@ export default function LiveIssueTracker() {
     projectName: "",
     requester: "",
     leadDetailer: "",
+    e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
     sendToAgile: "No"
@@ -83,9 +101,15 @@ export default function LiveIssueTracker() {
   const [addFormLoading, setAddFormLoading] = useState(false);
   const [projectNameOptions, setProjectNameOptions] = useState([]);
   const [e2DetailerOptions, setE2DetailerOptions] = useState([]);
+  const [e2TagOptions, setE2TagOptions] = useState([]);
   const [excelUploading, setExcelUploading] = useState(false);
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
+  const [markupViewerIndex, setMarkupViewerIndex] = useState(-1);
+  const [quickTagValues, setQuickTagValues] = useState([]);
+  const [quickTagCustomValue, setQuickTagCustomValue] = useState("");
+  const [quickTagSaving, setQuickTagSaving] = useState(false);
+  const [quickTagError, setQuickTagError] = useState("");
 
   // Generate next ID (TD-xxxx)
   const generateNextId = () => {
@@ -115,6 +139,7 @@ export default function LiveIssueTracker() {
       "Project Name": addForm.projectName,
       Assignee: addForm.requester,
       "E2 Detailer": addForm.leadDetailer,
+      "E2 Tags": addForm.e2Tag,
       "E2 Detailer Support Team": addForm.supportTeam,
       "Data Stage": addForm.dataStage,
       status: "Open",
@@ -131,6 +156,7 @@ export default function LiveIssueTracker() {
         projectName: "",
         requester: "",
         leadDetailer: "",
+        e2Tag: "",
         supportTeam: [],
         dataStage: "Testing",
         sendToAgile: "No"
@@ -277,6 +303,7 @@ export default function LiveIssueTracker() {
         setTdOptions(Array.isArray(configData.technicalDirectionOptions) ? configData.technicalDirectionOptions : []);
         setProjectNameOptions(Array.isArray(configData.projectNameValues) ? configData.projectNameValues : []);
         setE2DetailerOptions(Array.isArray(configData.e2DetailerOptions) ? configData.e2DetailerOptions : []);
+        setE2TagOptions(Array.isArray(configData.e2TagValues) ? configData.e2TagValues : []);
       } catch (err) {
         // ignore, already handled above
       }
@@ -316,6 +343,35 @@ export default function LiveIssueTracker() {
     }
   };
 
+  const handleEnableRow = async (issue) => {
+    if (!issue || !issue.id) return;
+    try {
+      const db = getFirestore();
+      const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + issue.id);
+      await updateDoc(issueDocRef, {
+        "Disable Flag": "No",
+        "E2 Status Update": "To Do List",
+        "E2 Status Update Agile": "",
+      });
+
+      setIssues((prev) => prev.map((iss) => (
+        iss.id === issue.id
+          ? {
+              ...iss,
+              "Disable Flag": "No",
+              disableFlag: "No",
+              "E2 Status Update": "To Do List",
+              e2StatusUpdate: "To Do List",
+              "E2 Status Update Agile": "",
+              e2StatusUpdateAgile: "",
+            }
+          : iss
+      )));
+    } catch (err) {
+      alert("Failed to enable row. " + (err.message || ""));
+    }
+  };
+
   // Sort alphabetically, with '--' (empty) always first if present
   projectNames = projectNames.sort((a, b) => {
     if (a === "--") return -1;
@@ -323,13 +379,141 @@ export default function LiveIssueTracker() {
     return a.localeCompare(b);
   });
 
-  // Filter issues by selected project name
-  const filteredIssues = selectedProject
-    ? issues.filter(issue => {
-        const name = issue["Project Name"] || issue.projectName || issue.project || "";
-        return (name === "" ? "--" : name) === selectedProject;
-      })
-    : issues;
+  const tagOptions = Array.from(new Set([
+    ...e2TagOptions,
+    ...issues.flatMap((issue) => getIssueTagValues(issue)),
+  ])).sort((a, b) => String(a).localeCompare(String(b)));
+  const hasNoTagsIssues = issues.some((issue) => getIssueTagValues(issue).length === 0);
+
+  const toggleSelectedTag = (tagValue) => {
+    setSelectedE2Tags((prev) => (
+      prev.includes(tagValue)
+        ? prev.filter((value) => value !== tagValue)
+        : [...prev, tagValue]
+    ));
+  };
+
+  // Filter issues by selected project name and search term
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const filteredIssues = issues.filter(issue => {
+    const name = issue["Project Name"] || issue.projectName || issue.project || "";
+    const projectMatches = !selectedProject || (name === "" ? "--" : name) === selectedProject;
+    if (!projectMatches) return false;
+
+    const issueTags = getIssueTagValues(issue);
+    if (selectedE2Tags.length > 0) {
+      const selectedHasNoTags = selectedE2Tags.includes(NO_TAGS_FILTER_VALUE);
+      const selectedActualTags = selectedE2Tags.filter((tag) => tag !== NO_TAGS_FILTER_VALUE);
+      const matchesNoTags = selectedHasNoTags && issueTags.length === 0;
+      const matchesTag = selectedActualTags.some((selectedTag) => issueTags.includes(selectedTag));
+      if (!matchesNoTags && !matchesTag) return false;
+    }
+
+    if (!normalizedSearchTerm) return true;
+
+    const issueId = String(issue.id || issue.ID || issue["Issue ID"] || "").toLowerCase();
+    const title = String(issue.Title || issue.title || "").toLowerCase();
+    return issueId.includes(normalizedSearchTerm) || title.includes(normalizedSearchTerm);
+  });
+
+  const getImportDate = (value) => {
+    if (!value) return null;
+    if (typeof value?.toDate === "function") return value.toDate();
+    if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const latestExcelImportInfo = issues.reduce((latest, issue) => {
+    const importedAt = getImportDate(issue.lastExcelImportAt || issue["lastExcelImportAt"]);
+    if (!importedAt) return latest;
+    if (!latest || importedAt > latest.importedAt) {
+      return {
+        importedAt,
+        fileName: String(issue.lastExcelImportFile || issue["lastExcelImportFile"] || "").trim(),
+      };
+    }
+    return latest;
+  }, null);
+
+  const openMarkupViewer = (index) => {
+    setMarkupViewerIndex(index);
+  };
+
+  const closeMarkupViewer = () => {
+    setMarkupViewerIndex(-1);
+  };
+
+  const hasMarkupViewerOpen = markupViewerIndex >= 0 && markupViewerIndex < filteredIssues.length;
+  const markupViewerIssue = hasMarkupViewerOpen ? filteredIssues[markupViewerIndex] : null;
+  const canGoPrevMarkup = hasMarkupViewerOpen && markupViewerIndex > 0;
+  const canGoNextMarkup = hasMarkupViewerOpen && markupViewerIndex < filteredIssues.length - 1;
+
+  useEffect(() => {
+    if (!markupViewerIssue) return;
+    const currentTags = getIssueTagValues(markupViewerIssue);
+    setQuickTagValues(currentTags);
+    setQuickTagCustomValue("");
+    setQuickTagError("");
+  }, [markupViewerIssue]);
+
+  const toggleQuickTagValue = (tag) => {
+    const isSelected = quickTagValues.includes(tag);
+    const nextValues = isSelected
+      ? quickTagValues.filter((value) => value !== tag)
+      : [...quickTagValues, tag];
+
+    setQuickTagValues(nextValues);
+    void handleQuickTagSave(nextValues);
+
+    if (!isSelected && isTechnicalDetailsTag(tag) && markupViewerIssue) {
+      const issueForTechDetails = markupViewerIssue;
+      handleOpenPopup(issueForTechDetails);
+    }
+  };
+
+  const handleQuickTagAddCustom = () => {
+    const normalized = String(quickTagCustomValue || "").trim();
+    if (!normalized) return;
+    const wasSelected = quickTagValues.includes(normalized);
+    const nextValues = wasSelected ? quickTagValues : [...quickTagValues, normalized];
+    setQuickTagValues(nextValues);
+    void handleQuickTagSave(nextValues);
+    setE2TagOptions((prev) => {
+      const exists = prev.some((value) => String(value).trim().toLowerCase() === normalized.toLowerCase());
+      return exists ? prev : [...prev, normalized];
+    });
+    setQuickTagCustomValue("");
+
+    if (!wasSelected && isTechnicalDetailsTag(normalized) && markupViewerIssue) {
+      const issueForTechDetails = markupViewerIssue;
+      handleOpenPopup(issueForTechDetails);
+    }
+  };
+
+  const handleQuickTagSave = async (tagsToSave = quickTagValues) => {
+    if (!markupViewerIssue || !markupViewerIssue.id) return;
+    setQuickTagSaving(true);
+    setQuickTagError("");
+    const normalizedValue = tagsToSave.join(", ");
+    try {
+      const db = getFirestore();
+      const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + markupViewerIssue.id);
+      await updateDoc(issueDocRef, {
+        "E2 Tags": normalizedValue,
+      });
+
+      setIssues((prev) => prev.map((issue) => (
+        issue.id === markupViewerIssue.id
+          ? { ...issue, "E2 Tags": normalizedValue, e2Tags: normalizedValue }
+          : issue
+      )));
+    } catch (err) {
+      setQuickTagError("Failed to save E2 Tags. " + (err?.message || ""));
+    } finally {
+      setQuickTagSaving(false);
+    }
+  };
 
   // Open popup for a specific issue
   const handleOpenPopup = (issue) => {
@@ -337,6 +521,7 @@ export default function LiveIssueTracker() {
     setTdValue(issue["Technical Direction"] || issue.technicalDirection || "");
     setEditFields({
       leadDetailer: issue["E2 Detailer"] || "",
+      e2Tag: issue["E2 Tags"] || issue.e2Tags || "",
       supportTeam: Array.isArray(issue["E2 Detailer Support Team"]) ? issue["E2 Detailer Support Team"] : [],
       dataStage: issue["Data Stage"] || "Testing",
       comments: issue["e2Comments"] || "",
@@ -379,6 +564,7 @@ export default function LiveIssueTracker() {
       await updateDoc(issueDocRef, {
         "Technical Direction": tdValue,
         "E2 Detailer": editFields.leadDetailer,
+        "E2 Tags": "Provide Technical Details",
         "E2 Detailer Support Team": editFields.supportTeam,
         "Data Stage": editFields.dataStage,
         "e2Comments": editFields.comments,
@@ -393,104 +579,140 @@ export default function LiveIssueTracker() {
     setSaving(false);
   };
 
+  const topNavButtonStyle = {
+    background: "rgba(236, 239, 244, 0.88)",
+    color: "#111827",
+    border: "1px solid #a8a8a8",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontWeight: 500,
+    fontSize: 15,
+    letterSpacing: "0.2px",
+    textDecoration: "none",
+    display: "inline-block",
+    boxShadow: "0 1px 2px rgba(15, 23, 42, 0.08)",
+    cursor: "pointer",
+  };
+
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 24 }}>
-        <Link
-          to="/organization/2155/e2-agile-board"
-          style={{
-            fontWeight: "bold",
-            color: "#fff",
-            background: "#f59e42",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontSize: 15,
-            textDecoration: "none",
-            marginRight: 8
-          }}
-        >
-          🏃 Agile Dashboard
-        </Link>
-        <Link to="/organization/2155/project-issue-dashboard" style={{ fontWeight: "bold", color: "#0ea5e9" }}>
-          📋 Go to Project Issue Dashboard
-        </Link>
-        <button
-          style={{ background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 4, padding: "8px 18px", fontWeight: 600, fontSize: 15, cursor: "pointer" }}
-          onClick={() => setShowAddPopup(true)}
-        >
-          ➕ Add a New Issue/Task
-        </button>
-        <Link
-          to="/organization/2155/project-issue-dashboard/e2-detailers"
-          style={{
-            background: "#f59e42",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontWeight: 600,
-            fontSize: 15,
-            cursor: "pointer",
-            textDecoration: "none"
-          }}
-        >
-          🛠️ Manage E2 Fields
-        </Link>
-        <input
-          ref={excelUploadInputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          onChange={handleSecondTabUpload}
-          style={{ display: "none" }}
-        />
-        <button
-          style={{
-            background: "#0f766e",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontWeight: 600,
-            fontSize: 15,
-            cursor: excelUploading ? "not-allowed" : "pointer",
-            opacity: excelUploading ? 0.7 : 1,
-          }}
-          onClick={() => excelUploadInputRef.current?.click()}
-          disabled={excelUploading}
-        >
-          {excelUploading ? "Uploading 2nd Tab..." : "📥 Upload 2nd Tab"}
-        </button>
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+          <Link
+            to="/organization/2155/e2-agile-board"
+            style={topNavButtonStyle}
+          >
+            🏃 Agile Dashboard
+          </Link>
+          <Link to="/organization/2155/project-issue-dashboard" style={topNavButtonStyle}>
+            📋 Go to Project Issue Dashboard
+          </Link>
+          <button
+            style={topNavButtonStyle}
+            onClick={() => setShowAddPopup(true)}
+          >
+            ➕ Add a New Issue/Task
+          </button>
+          <Link
+            to="/organization/2155/project-issue-dashboard/e2-detailers"
+            style={topNavButtonStyle}
+          >
+            🛠️ Manage E2 Fields
+          </Link>
+          <input
+            ref={excelUploadInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleSecondTabUpload}
+            style={{ display: "none" }}
+          />
+          <button
+            style={{
+              ...topNavButtonStyle,
+              cursor: excelUploading ? "not-allowed" : "pointer",
+              opacity: excelUploading ? 0.7 : 1,
+            }}
+            onClick={() => excelUploadInputRef.current?.click()}
+            disabled={excelUploading}
+          >
+            {excelUploading ? "Uploading Excel File..." : "📥 Upload Excel File"}
+          </button>
+        </div>
+
+        <div style={{ textAlign: "right", color: "#475569", minWidth: 260 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Latest Uploaded Data File
+          </div>
+          <div style={{ fontSize: 14, marginTop: 2 }}>
+            {latestExcelImportInfo?.importedAt
+              ? latestExcelImportInfo.importedAt.toLocaleString()
+              : "No Excel uploads yet"}
+          </div>
+        </div>
       </div>
       {(excelUploadError || excelUploadSummary) && (
         <div
           style={{
-            marginBottom: 16,
-            border: "1px solid #cbd5e1",
-            borderRadius: 8,
-            background: "#f8fafc",
-            padding: 12,
-            maxWidth: 760,
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.3)",
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
           }}
         >
-          {excelUploadError && (
-            <div style={{ color: "#b91c1c", fontWeight: 600 }}>
-              Upload failed: {excelUploadError}
+          <div
+            style={{
+              background: "#fff",
+              padding: 28,
+              borderRadius: 8,
+              minWidth: 420,
+              maxWidth: 560,
+              boxShadow: "0 2px 16px #0002"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: 16 }}>Excel Upload Summary</h3>
+            {excelUploadError && (
+              <div style={{ color: "#b91c1c", fontWeight: 600, marginBottom: 16 }}>
+                Upload failed: {excelUploadError}
+              </div>
+            )}
+            {excelUploadSummary && (
+              <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+                <div>File: {excelUploadSummary.fileName}</div>
+                <div>Tab: {excelUploadSummary.sheetName}</div>
+                <div>Total rows read: {excelUploadSummary.totalRows}</div>
+                <div>Issues created: {excelUploadSummary.created}</div>
+                <div>Issues updated: {excelUploadSummary.updated}</div>
+                <div>Rows skipped (missing ID): {excelUploadSummary.skippedMissingId}</div>
+                <div>Rows skipped (empty): {excelUploadSummary.skippedEmptyRows}</div>
+                <div>Rows processed: {excelUploadSummary.processed}</div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setExcelUploadError("");
+                  setExcelUploadSummary(null);
+                }}
+                style={{
+                  padding: "8px 16px",
+                  background: "#0ea5e9",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                }}
+              >
+                Close
+              </button>
             </div>
-          )}
-          {excelUploadSummary && (
-            <div>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>Excel Upload Summary</div>
-              <div>File: {excelUploadSummary.fileName}</div>
-              <div>Tab: {excelUploadSummary.sheetName}</div>
-              <div>Total rows read: {excelUploadSummary.totalRows}</div>
-              <div>Issues created: {excelUploadSummary.created}</div>
-              <div>Issues updated: {excelUploadSummary.updated}</div>
-              <div>Rows skipped (missing ID): {excelUploadSummary.skippedMissingId}</div>
-              <div>Rows skipped (empty): {excelUploadSummary.skippedEmptyRows}</div>
-              <div>Rows processed: {excelUploadSummary.processed}</div>
-            </div>
-          )}
+          </div>
         </div>
       )}
             {/* Add Issue Popup */}
@@ -535,6 +757,15 @@ export default function LiveIssueTracker() {
                     <select value={addForm.leadDetailer} onChange={e => handleAddFormChange("leadDetailer", e.target.value)} required style={{ width: "100%", marginTop: 6, padding: 8, fontSize: 15 }}>
                       <option value="">Select a lead detailer</option>
                       {e2DetailerOptions.map((opt, idx) => (
+                        <option key={idx} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 500 }}>E2 Tags:</label>
+                    <select value={addForm.e2Tag} onChange={e => handleAddFormChange("e2Tag", e.target.value)} style={{ width: "100%", marginTop: 6, padding: 8, fontSize: 15 }}>
+                      <option value="">Select E2 Tag</option>
+                      {tagOptions.map((opt, idx) => (
                         <option key={idx} value={opt}>{opt}</option>
                       ))}
                     </select>
@@ -589,20 +820,92 @@ export default function LiveIssueTracker() {
                 </form>
               </div>
             )}
-      <h2>Live Issue Tracker</h2>
-      <div style={{ margin: "16px 0" }}>
-        <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>
-        <select
-          id="projectNameSelect"
-          value={selectedProject}
-          onChange={e => setSelectedProject(e.target.value)}
-          style={{ padding: "4px 8px", minWidth: 180 }}
-        >
-          <option value="">All Projects</option>
-          {projectNames.map(name => (
-            <option key={name} value={name}>{name}</option>
+      <h2 style={{ textAlign: "center", margin: "0 0 4px" }}>Live Issue Tracker</h2>
+      <p style={{ textAlign: "center", margin: "0 0 12px", color: "#64748b", fontSize: 14 }}>
+        © E2 Tech Support, LLC
+      </p>
+      <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>
+          <select
+            id="projectNameSelect"
+            value={selectedProject}
+            onChange={e => setSelectedProject(e.target.value)}
+            style={{ padding: "4px 8px", minWidth: 180 }}
+          >
+            <option value="">All Projects</option>
+            {projectNames.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="issueSearchInput" style={{ fontWeight: 500, marginRight: 8 }}>Search Issue ID or Title:</label>
+          <input
+            id="issueSearchInput"
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Type issue ID or title"
+            style={{ padding: "4px 8px", minWidth: 240 }}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 500 }}>E2 Tags:</span>
+          <button
+            type="button"
+            onClick={() => setSelectedE2Tags([])}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 999,
+              border: "1px solid #cbd5e1",
+              background: selectedE2Tags.length === 0 ? "#0ea5e9" : "#fff",
+              color: selectedE2Tags.length === 0 ? "#fff" : "#0f172a",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            All
+          </button>
+          {hasNoTagsIssues && (
+            <button
+              type="button"
+              onClick={() => toggleSelectedTag(NO_TAGS_FILTER_VALUE)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: "1px solid #cbd5e1",
+                background: selectedE2Tags.includes(NO_TAGS_FILTER_VALUE) ? "#0ea5e9" : "#fff",
+                color: selectedE2Tags.includes(NO_TAGS_FILTER_VALUE) ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              No Tags
+            </button>
+          )}
+          {tagOptions.map(tag => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => toggleSelectedTag(tag)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: "1px solid #cbd5e1",
+                background: selectedE2Tags.includes(tag) ? "#0ea5e9" : "#fff",
+                color: selectedE2Tags.includes(tag) ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {tag}
+            </button>
           ))}
-        </select>
+        </div>
       </div>
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
@@ -610,39 +913,41 @@ export default function LiveIssueTracker() {
         <table border="1" cellPadding="8" style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
-              <th>#</th>
-              <th>ID</th>
-              <th>Markup</th>
-              <th>Project Name</th>
-              <th>Technical Direction</th>
-              <th>Status</th>
-              <th>E2 Status Update</th>
-              <th>E2 Status Update Agile</th>
-              <th>Disable Flag</th>
-              <th>Action</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>#</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>ID</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Markup</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Project Name</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Technical Direction</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Status</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update Agile</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Tags</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Disable Flag</th>
+              <th style={{ textAlign: "center", paddingLeft: 8, paddingRight: 8 }}>Action</th>
             </tr>
           </thead>
           <tbody>
             {filteredIssues.length === 0 && (
               <tr>
-                <td colSpan="10" style={{ textAlign: "center" }}>No issues found.</td>
+                <td colSpan="11" style={{ textAlign: "center" }}>No issues found.</td>
               </tr>
             )}
             {filteredIssues.map((issue, idx) => (
               <tr
                 key={issue.id || idx}
                 style={(() => {
+                  const baseStyle = { borderBottom: "0.5px solid #e5e7eb" };
                   const disabled = issue["Disable Flag"] === "Yes" || issue.disableFlag === "Yes";
                   const agile = issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
                   const e2Status = issue["E2 Status Update"] || issue.e2StatusUpdate;
                   if (e2Status === "To Do List") {
-                    return { background: "#fef9c3" };
+                    return { ...baseStyle, background: "#fef9c3" };
                   } else if (disabled && agile) {
-                    return { background: "#e0f2fe" };
+                    return { ...baseStyle, background: "#e0f2fe" };
                   } else if (disabled && !agile) {
-                    return { background: "#fee2e2" };
+                    return { ...baseStyle, background: "#fee2e2" };
                   }
-                  return undefined;
+                  return baseStyle;
                 })()}
               >
                 <td>{idx + 1}</td>
@@ -661,7 +966,8 @@ export default function LiveIssueTracker() {
                     <img
                       src={issue["Link to markup"]}
                       alt="Markup Preview"
-                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4 }}
+                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4, cursor: "zoom-in" }}
+                      onClick={() => openMarkupViewer(idx)}
                     />
                   ) : (
                     "-"
@@ -672,6 +978,7 @@ export default function LiveIssueTracker() {
                 <td>{issue.status || "-"}</td>
                 <td>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
                 <td>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
+                <td>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
                 <td>{issue["Disable Flag"] !== undefined ? String(issue["Disable Flag"]) : (issue.disableFlag !== undefined ? String(issue.disableFlag) : "-")}</td>
                 <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
                   <button
@@ -712,6 +1019,17 @@ export default function LiveIssueTracker() {
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
                     />
                   </button>
+                  <button
+                    title="Enable Row"
+                    style={{ background: "none", border: "none", cursor: "pointer", marginLeft: 12 }}
+                    onClick={() => handleEnableRow(issue)}
+                  >
+                    <img
+                      src="https://img.icons8.com/ios-filled/32/16a34a/checkmark--v1.png"
+                      alt="Enable Row"
+                      style={{ width: 24, height: 24, verticalAlign: "middle" }}
+                    />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -719,10 +1037,159 @@ export default function LiveIssueTracker() {
         </table>
       )}
 
+      {hasMarkupViewerOpen && markupViewerIssue && (
+        <div style={{
+          position: "fixed",
+          left: 0,
+          top: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 1200,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+        }}>
+          <div style={{
+            background: "#fff",
+            borderRadius: 10,
+            width: "min(1100px, 96vw)",
+            maxHeight: "92vh",
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: "0 12px 40px #0005",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "12px 16px",
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "flex-start",
+            }}>
+              <div style={{ marginBottom: 0, width: "100%" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 0 }}>Quick Tagging</div>
+              </div>
+            </div>
+            <div style={{
+              padding: "8px 16px 12px 16px",
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 12,
+              alignItems: "center",
+            }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", color: "#0f172a", fontSize: 14, lineHeight: 1.4, flex: "1 1 680px" }}>
+                <span><strong>Issue ID:</strong> {markupViewerIssue.id || markupViewerIssue.ID || "-"}</span>
+                <span><strong>E2 Status Update:</strong> {markupViewerIssue["E2 Status Update"] || markupViewerIssue.e2StatusUpdate || "-"}</span>
+                <span><strong>Tags:</strong> {markupViewerIssue["E2 Tags"] || markupViewerIssue.e2Tags || "-"}</span>
+                <span><strong>Grid:</strong> {markupViewerIssue.Grid || markupViewerIssue["Grid"] || markupViewerIssue.grid || "-"}</span>
+                <span><strong>Level:</strong> {markupViewerIssue.Level || markupViewerIssue["Level"] || markupViewerIssue.level || "-"}</span>
+                <span><strong>Room:</strong> {markupViewerIssue.Room || markupViewerIssue["Room"] || markupViewerIssue.room || "-"}</span>
+                <span><strong>Zone:</strong> {markupViewerIssue.Zone || markupViewerIssue["Zone"] || markupViewerIssue.zone || "-"}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
+                <button
+                  type="button"
+                  disabled={!canGoPrevMarkup}
+                  onClick={() => canGoPrevMarkup && setMarkupViewerIndex((i) => i - 1)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: canGoPrevMarkup ? "#fff" : "#f1f5f9", cursor: canGoPrevMarkup ? "pointer" : "not-allowed" }}
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  disabled={!canGoNextMarkup}
+                  onClick={() => canGoNextMarkup && setMarkupViewerIndex((i) => i + 1)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: canGoNextMarkup ? "#fff" : "#f1f5f9", cursor: canGoNextMarkup ? "pointer" : "not-allowed" }}
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  onClick={closeMarkupViewer}
+                  style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: 12, overflow: "auto", background: "#f8fafc", textAlign: "center" }}>
+              {markupViewerIssue["Link to markup"] ? (
+                <img
+                  src={markupViewerIssue["Link to markup"]}
+                  alt="Issue Markup"
+                  style={{ maxWidth: "100%", maxHeight: "72vh", objectFit: "contain", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff" }}
+                />
+              ) : (
+                <div style={{ color: "#64748b", padding: 24 }}>No markup image available for this issue.</div>
+              )}
+            </div>
+            <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 16px", background: "#ffffff" }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: "#0f172a" }}>E2 Tags</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1", minHeight: 38, color: "#0f172a", background: "#fff" }}>
+                  {quickTagValues.length > 0 ? quickTagValues.join(", ") : "No tags selected"}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleQuickTagSave}
+                  disabled={quickTagSaving}
+                  style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: "#0ea5e9", color: "#fff", cursor: quickTagSaving ? "not-allowed" : "pointer", fontWeight: 600 }}
+                >
+                  {quickTagSaving ? "Saving..." : "Save Tag"}
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {tagOptions.map((tag) => (
+                  <button
+                    key={`quick-tag-${tag}`}
+                    type="button"
+                    onClick={() => toggleQuickTagValue(tag)}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      border: "1px solid #cbd5e1",
+                      background: quickTagValues.includes(tag) ? "#0ea5e9" : "#fff",
+                      color: quickTagValues.includes(tag) ? "#fff" : "#0f172a",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={quickTagCustomValue}
+                  onChange={(e) => setQuickTagCustomValue(e.target.value)}
+                  placeholder="Add new tag value"
+                  style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1" }}
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickTagAddCustom}
+                  style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#f8fafc", color: "#0f172a", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Add New Tag
+                </button>
+              </div>
+              {quickTagError && <div style={{ color: "#dc2626", marginTop: 8, fontSize: 13 }}>{quickTagError}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Popup for Technical Direction */}
       {showPopup && popupIssue && (
         <div style={{
-          position: "fixed", left: 0, top: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.3)", zIndex: 1000,
+          position: "fixed", left: 0, top: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.3)", zIndex: 1300,
           display: "flex", alignItems: "center", justifyContent: "center"
         }}>
           <div style={{ background: "#fff", padding: 32, borderRadius: 8, minWidth: 400, boxShadow: "0 2px 16px #0002", maxWidth: 520 }}>

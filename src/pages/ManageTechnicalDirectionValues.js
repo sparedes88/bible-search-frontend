@@ -3,6 +3,8 @@ import { useParams, Link } from "react-router-dom";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { PROJECT_ISSUE_CONFIG_DOC_ID } from "../components/projectIssueConstants";
+import commonStyles from "./commonStyles";
+import "./ManageTechnicalDirectionValues.css";
 
 const TECHNICAL_DIRECTION_OPTIONS_FIELD = "technicalDirectionOptions";
 const DEFAULT_TECHNICAL_DIRECTION_OPTIONS = [
@@ -84,80 +86,125 @@ const ManageTechnicalDirectionValues = () => {
   };
 
   return (
-    <div style={{ padding: 32, maxWidth: 600, margin: "0 auto" }}>
-      <h2>Manage Technical Direction Values</h2>
-      <Link to={"/organization/" + id + "/project-issue-dashboard/e2-detailers"} style={{ color: "#0ea5e9" }}>
+    <div style={commonStyles.fullWidthContainer}>
+      <Link to={"/organization/" + id + "/project-issue-dashboard/e2-detailers"} style={commonStyles.backButtonLink}>
         ← Back to E2 Detailers
       </Link>
-      <div style={{ margin: "24px 0" }}>
-        <label style={{ fontWeight: 500, marginRight: 8 }}>Sort:</label>
-        <select value={sortMode} onChange={e => setSortMode(e.target.value)}>
-          <option value="az">A-Z</option>
-          <option value="custom">Custom (manual order)</option>
-        </select>
-      </div>
-      {loading ? (
-        <div>Loading…</div>
-      ) : error ? (
-        <div style={{ color: "red" }}>{error}</div>
-      ) : (
-        <>
-          <ul style={{ listStyle: "none", padding: 0 }}>
-            {sortedOptions.map((opt, idx) => {
-              // Find the index in the original options array for custom sorting
-              const origIdx = sortMode === "custom" ? options.indexOf(opt) : idx;
-              return (
-                <li key={idx} style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-                  <input
-                    type="text"
-                    value={opt}
-                    onChange={e => handleEdit(origIdx, e.target.value)}
-                    style={{ flex: 1, marginRight: 8 }}
-                    disabled={saving}
-                  />
-                  {sortMode === "custom" && (
-                    <>
-                      <button
-                        onClick={() => moveOption(origIdx, "up")}
-                        disabled={saving || origIdx === 0}
-                        style={{ marginRight: 2 }}
-                        title="Move up"
-                      >
-                        ▲
-                      </button>
-                      <button
-                        onClick={() => moveOption(origIdx, "down")}
-                        disabled={saving || origIdx === options.length - 1}
-                        style={{ marginRight: 6 }}
-                        title="Move down"
-                      >
-                        ▼
-                      </button>
-                    </>
-                  )}
-                  <button onClick={() => handleRemove(origIdx)} disabled={saving} style={{ marginRight: 4 }}>
-                    Delete
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <div style={{ margin: "16px 0" }}>
-            <input
-              type="text"
-              value={newOption}
-              onChange={e => setNewOption(e.target.value)}
-              placeholder="Add new value"
-              style={{ marginRight: 8 }}
-              disabled={saving}
-            />
-            <button onClick={handleAdd} disabled={saving || !newOption.trim()}>Add</button>
+
+      <div className="tech-direction-page">
+        <div className="tech-direction-header">
+          <h1 className="tech-direction-title">Manage Technical Direction Values</h1>
+          <p className="tech-direction-subtitle">
+            Add, edit, and remove values for Technical Direction field.
+          </p>
+        </div>
+
+        <div className="tech-direction-list-wrap">
+          <div className="tech-direction-list-head">
+            <div className="tech-direction-list-meta">
+              <strong>Technical Direction Values</strong>
+              <span>{loading ? "Loading..." : `${options.length} value(s)`}</span>
+            </div>
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <select 
+                value={sortMode} 
+                onChange={e => setSortMode(e.target.value)}
+                className="tech-direction-btn"
+                style={{ flex: "0 0 auto", minWidth: "150px" }}
+                disabled={saving}
+              >
+                <option value="az">Sort A-Z</option>
+                <option value="custom">Custom Order</option>
+              </select>
+            </div>
           </div>
-          <button onClick={handleSave} disabled={saving} style={{ marginTop: 16, background: "#0ea5e9", color: "#fff", padding: "8px 24px", border: "none", borderRadius: 4 }}>
-            {saving ? "Saving…" : "Save Changes"}
-          </button>
-        </>
-      )}
+
+          {loading ? (
+            <div className="tech-direction-empty">Loading…</div>
+          ) : error ? (
+            <div className="tech-direction-empty" style={{ color: "red" }}>{error}</div>
+          ) : (
+            <>
+              {!options.length ? <div className="tech-direction-empty">No values found.</div> : null}
+
+              <ul className="tech-direction-list">
+                {sortedOptions.map((opt, idx) => {
+                  const origIdx = sortMode === "custom" ? options.indexOf(opt) : idx;
+                  return (
+                    <li key={idx} className="tech-direction-item">
+                      <input
+                        type="text"
+                        value={opt}
+                        onChange={e => handleEdit(origIdx, e.target.value)}
+                        className="tech-direction-input"
+                        disabled={saving}
+                      />
+                      <div className="tech-direction-actions">
+                        {sortMode === "custom" && (
+                          <>
+                            <button
+                              onClick={() => moveOption(origIdx, "up")}
+                              disabled={saving || origIdx === 0}
+                              className="tech-direction-btn"
+                              title="Move up"
+                            >
+                              Up
+                            </button>
+                            <button
+                              onClick={() => moveOption(origIdx, "down")}
+                              disabled={saving || origIdx === options.length - 1}
+                              className="tech-direction-btn"
+                              title="Move down"
+                            >
+                              Down
+                            </button>
+                          </>
+                        )}
+                        <button 
+                          onClick={() => handleRemove(origIdx)} 
+                          disabled={saving}
+                          className="tech-direction-btn tech-direction-btn-danger"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="tech-direction-add-row" style={{ padding: "1rem" }}>
+                <input
+                  type="text"
+                  value={newOption}
+                  onChange={e => setNewOption(e.target.value)}
+                  placeholder="Add new Technical Direction value"
+                  className="tech-direction-input"
+                  disabled={saving}
+                />
+                <button 
+                  onClick={handleAdd} 
+                  disabled={saving || !newOption.trim()}
+                  className="tech-direction-btn tech-direction-btn-primary"
+                >
+                  Add Value
+                </button>
+              </div>
+
+              <div style={{ padding: "0 1rem 1rem 1rem" }}>
+                <button 
+                  onClick={handleSave} 
+                  disabled={saving}
+                  className="tech-direction-btn tech-direction-btn-primary"
+                  style={{ width: "100%" }}
+                >
+                  {saving ? "Saving…" : "Save Changes"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
