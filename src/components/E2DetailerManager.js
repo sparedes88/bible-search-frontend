@@ -3,7 +3,6 @@ import { Link, useParams } from "react-router-dom";
 import { collection, doc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
-import ChurchHeader from "./ChurchHeader";
 import { db } from "../firebase";
 import {
   DEFAULT_E2_DETAILER_OPTIONS,
@@ -483,11 +482,9 @@ const E2DetailerManager = () => {
 
   return (
     <div style={commonStyles.fullWidthContainer}>
-      <Link to={`/organization/${id}/project-issue-dashboard`} style={commonStyles.backButtonLink}>
-        ← Back to Project Issue Dashboard
+      <Link to="/live-issue-tracker" style={commonStyles.backButtonLink}>
+        ← Back to Live Issue Tracker
       </Link>
-
-      <ChurchHeader id={id} applyShadow={false} allowEditBannerLogo={true} />
 
       <div className="e2-detailer-page">
 
@@ -733,132 +730,7 @@ const E2DetailerManager = () => {
             </ul>
           </div>
 
-          <div className="e2-detailer-list-wrap">
-            <div className="e2-detailer-list-head">
-              <div className="e2-detailer-list-meta">
-                <strong>E2 Agile Status Update Values</strong>
-                <span>{loading ? "Loading..." : `${agileStatusOptions.length} value(s)`}</span>
-              </div>
-              <button
-                type="button"
-                className="e2-detailer-btn"
-                onClick={() => handleSortAlphabetically("agile")}
-                disabled={saving || loading || agileStatusOptions.length < 2}
-              >
-                Sort A-Z
-              </button>
-            </div>
 
-            <div className="e2-detailer-add-row">
-              <input
-                type="text"
-                value={newAgileStatusValue}
-                onChange={(e) => setNewAgileStatusValue(e.target.value)}
-                placeholder="Add new Agile status value"
-                disabled={saving}
-              />
-              <button onClick={handleAgileStatusAdd} disabled={saving}>
-                Add
-              </button>
-            </div>
-
-            {!loading && !agileStatusOptions.length ? <div className="e2-detailer-empty">No values found.</div> : null}
-
-            <ul className="e2-detailer-list">
-              {agileStatusOptions.map((value, index) => (
-                <li key={`${value}-${index}`} className="e2-detailer-item">
-                  {editingType === "status" && editingIndex === index ? (
-                    <input
-                      type="text"
-                      className="e2-detailer-input"
-                      value={editingValue}
-                      onChange={(event) => setEditingValue(event.target.value)}
-                      disabled={saving}
-                    />
-                  ) : (
-                    <span className="e2-detailer-value">{value}</span>
-                  )}
-
-                  <div className="e2-detailer-actions">
-                    {editingType === "status" && editingIndex === index ? (
-                      <>
-                        <button
-                          type="button"
-                          className="e2-detailer-btn e2-detailer-btn-primary"
-                          onClick={saveEdit}
-                          disabled={saving}
-                        >
-                          Save
-                        </button>
-                        <button type="button" className="e2-detailer-btn" onClick={cancelEdit} disabled={saving}>
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="e2-detailer-btn"
-                          onClick={() => handleMoveOption("status", index, "up")}
-                          disabled={saving || index === 0}
-                        >
-                          Up
-                        </button>
-                        <button
-                          type="button"
-                          className="e2-detailer-btn"
-                          onClick={() => handleMoveOption("status", index, "down")}
-                          disabled={saving || index === agileStatusOptions.length - 1}
-                        >
-                          Down
-                        </button>
-                        <button
-                          type="button"
-                          className="e2-detailer-btn"
-                          onClick={() => startEdit("status", index)}
-                          disabled={saving}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="e2-detailer-btn e2-detailer-btn-danger"
-                          onClick={() => handleDelete("status", index)}
-                          disabled={saving}
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Agile Status Update Options Section */}
-          <div className="e2-detailer-section">
-            <h3>E2 Status Update Agile Values</h3>
-            <div className="e2-detailer-list">
-              {agileStatusOptions.map((option, idx) => (
-                <div key={option} className="e2-detailer-list-item">
-                  <span>{option}</span>
-                </div>
-              ))}
-            </div>
-            <div className="e2-detailer-add-row">
-              <input
-                type="text"
-                value={newAgileStatusValue}
-                onChange={(e) => setNewAgileStatusValue(e.target.value)}
-                placeholder="Add new E2 Agile Status value"
-                disabled={saving}
-              />
-              <button onClick={handleAgileStatusAdd} disabled={saving}>
-                Add
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>
