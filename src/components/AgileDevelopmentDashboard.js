@@ -353,6 +353,7 @@ const AgileDevelopmentDashboard = () => {
 
     const nextStatus = column.name;
     const targetRowData = resolveRowData(targetRow);
+    const statusField = issue.statusField || "E2 Status Update Agile";
     const prevStatus = targetRowData[statusField] || "-";
     const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
     const prevLogEntries = Array.isArray(targetRowData.LogEntries) ? targetRowData.LogEntries : [];
@@ -830,6 +831,8 @@ const AgileDevelopmentDashboard = () => {
         percentCompleted={percentCompleted}
         onPercentChange={setPercentCompleted}
         loading={updateLoading}
+        churchId={id}
+        issue={updateModal.issue}
         onSave={async () => {
           if (!updateModal.issue || !newUpdate.trim()) return;
           setUpdateLoading(true);
