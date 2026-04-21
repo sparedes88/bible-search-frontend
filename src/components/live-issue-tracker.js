@@ -34,6 +34,17 @@ const normalizeCellValue = (value) => {
   return String(value).trim();
 };
 
+const getIssueTagValues = (issue) => {
+  const raw = issue?.["E2 Tags"] ?? issue?.e2Tags ?? "";
+  if (Array.isArray(raw)) {
+    return raw.map((tag) => String(tag || "").trim()).filter(Boolean);
+  }
+  const normalized = String(raw || "").trim();
+  if (!normalized) return [];
+  if (!normalized.includes(",")) return [normalized];
+  return normalized.split(",").map((tag) => tag.trim()).filter(Boolean);
+};
+
 const getIssueIdFromRow = (rowData) => {
   const keys = Object.keys(rowData || {});
   for (const alias of ISSUE_ID_ALIASES) {
@@ -64,7 +75,7 @@ export default function LiveIssueTracker() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedProject, setSelectedProject] = useState("");
-  const [selectedE2Tag, setSelectedE2Tag] = useState("");
+  const [selectedE2Tags, setSelectedE2Tags] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showPopup, setShowPopup] = useState(false);
   const [popupIssue, setPopupIssue] = useState(null);
@@ -92,6 +103,11 @@ export default function LiveIssueTracker() {
   const [excelUploading, setExcelUploading] = useState(false);
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
+  const [markupViewerIndex, setMarkupViewerIndex] = useState(-1);
+  const [quickTagValue, setQuickTagValue] = useState("");
+  const [quickTagCustomValue, setQuickTagCustomValue] = useState("");
+  const [quickTagSaving, setQuickTagSaving] = useState(false);
+  const [quickTagError, setQuickTagError] = useState("");
 
   // Generate next ID (TD-xxxx)
   const generateNextId = () => {
@@ -334,9 +350,17 @@ export default function LiveIssueTracker() {
 
   const tagOptions = Array.from(new Set([
     ...e2TagOptions,
-    ...issues.map(issue => issue["E2 Tags"] || issue.e2Tags || "").filter(Boolean),
+    ...issues.flatMap((issue) => getIssueTagValues(issue)),
   ])).sort((a, b) => String(a).localeCompare(String(b)));
-  const hasNoTagsIssues = issues.some((issue) => !(issue["E2 Tags"] || issue.e2Tags || ""));
+  const hasNoTagsIssues = issues.some((issue) => getIssueTagValues(issue).length === 0);
+
+  const toggleSelectedTag = (tagValue) => {
+    setSelectedE2Tags((prev) => (
+      prev.includes(tagValue)
+        ? prev.filter((value) => value !== tagValue)
+        : [...prev, tagValue]
+    ));
+  };
 
   // Filter issues by selected project name and search term
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
@@ -345,9 +369,14 @@ export default function LiveIssueTracker() {
     const projectMatches = !selectedProject || (name === "" ? "--" : name) === selectedProject;
     if (!projectMatches) return false;
 
-    const issueTag = issue["E2 Tags"] || issue.e2Tags || "";
-    if (selectedE2Tag === NO_TAGS_FILTER_VALUE && issueTag) return false;
-    if (selectedE2Tag && selectedE2Tag !== NO_TAGS_FILTER_VALUE && issueTag !== selectedE2Tag) return false;
+    const issueTags = getIssueTagValues(issue);
+    if (selectedE2Tags.length > 0) {
+      const selectedHasNoTags = selectedE2Tags.includes(NO_TAGS_FILTER_VALUE);
+      const selectedActualTags = selectedE2Tags.filter((tag) => tag !== NO_TAGS_FILTER_VALUE);
+      const matchesNoTags = selectedHasNoTags && issueTags.length === 0;
+      const matchesTag = selectedActualTags.some((selectedTag) => issueTags.includes(selectedTag));
+      if (!matchesNoTags && !matchesTag) return false;
+    }
 
     if (!normalizedSearchTerm) return true;
 
@@ -355,6 +384,62 @@ export default function LiveIssueTracker() {
     const title = String(issue.Title || issue.title || "").toLowerCase();
     return issueId.includes(normalizedSearchTerm) || title.includes(normalizedSearchTerm);
   });
+
+  const openMarkupViewer = (index) => {
+    setMarkupViewerIndex(index);
+  };
+
+  const closeMarkupViewer = () => {
+    setMarkupViewerIndex(-1);
+  };
+
+  const hasMarkupViewerOpen = markupViewerIndex >= 0 && markupViewerIndex < filteredIssues.length;
+  const markupViewerIssue = hasMarkupViewerOpen ? filteredIssues[markupViewerIndex] : null;
+  const canGoPrevMarkup = hasMarkupViewerOpen && markupViewerIndex > 0;
+  const canGoNextMarkup = hasMarkupViewerOpen && markupViewerIndex < filteredIssues.length - 1;
+
+  useEffect(() => {
+    if (!markupViewerIssue) return;
+    const currentTag = markupViewerIssue["E2 Tags"] || markupViewerIssue.e2Tags || "";
+    setQuickTagValue(currentTag);
+    setQuickTagCustomValue("");
+    setQuickTagError("");
+  }, [markupViewerIssue]);
+
+  const handleQuickTagAddCustom = () => {
+    const normalized = String(quickTagCustomValue || "").trim();
+    if (!normalized) return;
+    setQuickTagValue(normalized);
+    setE2TagOptions((prev) => {
+      const exists = prev.some((value) => String(value).trim().toLowerCase() === normalized.toLowerCase());
+      return exists ? prev : [...prev, normalized];
+    });
+    setQuickTagCustomValue("");
+  };
+
+  const handleQuickTagSave = async () => {
+    if (!markupViewerIssue || !markupViewerIssue.id) return;
+    setQuickTagSaving(true);
+    setQuickTagError("");
+    const normalizedValue = String(quickTagValue || "").trim();
+    try {
+      const db = getFirestore();
+      const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + markupViewerIssue.id);
+      await updateDoc(issueDocRef, {
+        "E2 Tags": normalizedValue,
+      });
+
+      setIssues((prev) => prev.map((issue) => (
+        issue.id === markupViewerIssue.id
+          ? { ...issue, "E2 Tags": normalizedValue, e2Tags: normalizedValue }
+          : issue
+      )));
+    } catch (err) {
+      setQuickTagError("Failed to save E2 Tags. " + (err?.message || ""));
+    } finally {
+      setQuickTagSaving(false);
+    }
+  };
 
   // Open popup for a specific issue
   const handleOpenPopup = (issue) => {
@@ -690,13 +775,13 @@ export default function LiveIssueTracker() {
           <span style={{ fontWeight: 500 }}>E2 Tags:</span>
           <button
             type="button"
-            onClick={() => setSelectedE2Tag("")}
+            onClick={() => setSelectedE2Tags([])}
             style={{
               padding: "4px 10px",
               borderRadius: 999,
               border: "1px solid #cbd5e1",
-              background: selectedE2Tag === "" ? "#0ea5e9" : "#fff",
-              color: selectedE2Tag === "" ? "#fff" : "#0f172a",
+              background: selectedE2Tags.length === 0 ? "#0ea5e9" : "#fff",
+              color: selectedE2Tags.length === 0 ? "#fff" : "#0f172a",
               cursor: "pointer",
               fontSize: 13,
               fontWeight: 600,
@@ -707,13 +792,13 @@ export default function LiveIssueTracker() {
           {hasNoTagsIssues && (
             <button
               type="button"
-              onClick={() => setSelectedE2Tag(NO_TAGS_FILTER_VALUE)}
+              onClick={() => toggleSelectedTag(NO_TAGS_FILTER_VALUE)}
               style={{
                 padding: "4px 10px",
                 borderRadius: 999,
                 border: "1px solid #cbd5e1",
-                background: selectedE2Tag === NO_TAGS_FILTER_VALUE ? "#0ea5e9" : "#fff",
-                color: selectedE2Tag === NO_TAGS_FILTER_VALUE ? "#fff" : "#0f172a",
+                background: selectedE2Tags.includes(NO_TAGS_FILTER_VALUE) ? "#0ea5e9" : "#fff",
+                color: selectedE2Tags.includes(NO_TAGS_FILTER_VALUE) ? "#fff" : "#0f172a",
                 cursor: "pointer",
                 fontSize: 13,
                 fontWeight: 600,
@@ -726,13 +811,13 @@ export default function LiveIssueTracker() {
             <button
               key={tag}
               type="button"
-              onClick={() => setSelectedE2Tag(tag)}
+              onClick={() => toggleSelectedTag(tag)}
               style={{
                 padding: "4px 10px",
                 borderRadius: 999,
                 border: "1px solid #cbd5e1",
-                background: selectedE2Tag === tag ? "#0ea5e9" : "#fff",
-                color: selectedE2Tag === tag ? "#fff" : "#0f172a",
+                background: selectedE2Tags.includes(tag) ? "#0ea5e9" : "#fff",
+                color: selectedE2Tags.includes(tag) ? "#fff" : "#0f172a",
                 cursor: "pointer",
                 fontSize: 13,
                 fontWeight: 600,
@@ -801,7 +886,8 @@ export default function LiveIssueTracker() {
                     <img
                       src={issue["Link to markup"]}
                       alt="Markup Preview"
-                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4 }}
+                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4, cursor: "zoom-in" }}
+                      onClick={() => openMarkupViewer(idx)}
                     />
                   ) : (
                     "-"
@@ -858,6 +944,159 @@ export default function LiveIssueTracker() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {hasMarkupViewerOpen && markupViewerIssue && (
+        <div style={{
+          position: "fixed",
+          left: 0,
+          top: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 1200,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+        }}>
+          <div style={{
+            background: "#fff",
+            borderRadius: 10,
+            width: "min(1100px, 96vw)",
+            maxHeight: "92vh",
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: "0 12px 40px #0005",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "12px 16px",
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "flex-start",
+            }}>
+              <div style={{ marginBottom: 0, width: "100%" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 0 }}>Quick Tagging</div>
+              </div>
+            </div>
+            <div style={{
+              padding: "8px 16px 12px 16px",
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 12,
+              alignItems: "center",
+            }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", color: "#0f172a", fontSize: 14, lineHeight: 1.4, flex: "1 1 680px" }}>
+                <span><strong>Issue ID:</strong> {markupViewerIssue.id || markupViewerIssue.ID || "-"}</span>
+                <span><strong>E2 Status Update:</strong> {markupViewerIssue["E2 Status Update"] || markupViewerIssue.e2StatusUpdate || "-"}</span>
+                <span><strong>Tags:</strong> {markupViewerIssue["E2 Tags"] || markupViewerIssue.e2Tags || "-"}</span>
+                <span><strong>Grid:</strong> {markupViewerIssue.Grid || markupViewerIssue["Grid"] || markupViewerIssue.grid || "-"}</span>
+                <span><strong>Level:</strong> {markupViewerIssue.Level || markupViewerIssue["Level"] || markupViewerIssue.level || "-"}</span>
+                <span><strong>Room:</strong> {markupViewerIssue.Room || markupViewerIssue["Room"] || markupViewerIssue.room || "-"}</span>
+                <span><strong>Zone:</strong> {markupViewerIssue.Zone || markupViewerIssue["Zone"] || markupViewerIssue.zone || "-"}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
+                <button
+                  type="button"
+                  disabled={!canGoPrevMarkup}
+                  onClick={() => canGoPrevMarkup && setMarkupViewerIndex((i) => i - 1)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: canGoPrevMarkup ? "#fff" : "#f1f5f9", cursor: canGoPrevMarkup ? "pointer" : "not-allowed" }}
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  disabled={!canGoNextMarkup}
+                  onClick={() => canGoNextMarkup && setMarkupViewerIndex((i) => i + 1)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: canGoNextMarkup ? "#fff" : "#f1f5f9", cursor: canGoNextMarkup ? "pointer" : "not-allowed" }}
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  onClick={closeMarkupViewer}
+                  style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: 12, overflow: "auto", background: "#f8fafc", textAlign: "center" }}>
+              {markupViewerIssue["Link to markup"] ? (
+                <img
+                  src={markupViewerIssue["Link to markup"]}
+                  alt="Issue Markup"
+                  style={{ maxWidth: "100%", maxHeight: "72vh", objectFit: "contain", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff" }}
+                />
+              ) : (
+                <div style={{ color: "#64748b", padding: 24 }}>No markup image available for this issue.</div>
+              )}
+            </div>
+            <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 16px", background: "#ffffff" }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: "#0f172a" }}>E2 Tags</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <input
+                  type="text"
+                  value={quickTagValue}
+                  onChange={(e) => setQuickTagValue(e.target.value)}
+                  placeholder="Select or type tag"
+                  style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1" }}
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickTagSave}
+                  disabled={quickTagSaving}
+                  style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: "#0ea5e9", color: "#fff", cursor: quickTagSaving ? "not-allowed" : "pointer", fontWeight: 600 }}
+                >
+                  {quickTagSaving ? "Saving..." : "Save Tag"}
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {tagOptions.map((tag) => (
+                  <button
+                    key={`quick-tag-${tag}`}
+                    type="button"
+                    onClick={() => setQuickTagValue(tag)}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      border: "1px solid #cbd5e1",
+                      background: quickTagValue === tag ? "#0ea5e9" : "#fff",
+                      color: quickTagValue === tag ? "#fff" : "#0f172a",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={quickTagCustomValue}
+                  onChange={(e) => setQuickTagCustomValue(e.target.value)}
+                  placeholder="Add new tag value"
+                  style={{ flex: "1 1 240px", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1" }}
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickTagAddCustom}
+                  style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#f8fafc", color: "#0f172a", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Add New Tag
+                </button>
+              </div>
+              {quickTagError && <div style={{ color: "#dc2626", marginTop: 8, fontSize: 13 }}>{quickTagError}</div>}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Popup for Technical Direction */}
