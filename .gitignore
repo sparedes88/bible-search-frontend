@@ -1,5 +1,7 @@
 node_modules
 functions/serviceAccountKey.json
+igletechv1-firebase-adminsdk-fbsvc-3058d7b63b.json
+serviceAccountKey.json
 
 # Environment variables
 .env
