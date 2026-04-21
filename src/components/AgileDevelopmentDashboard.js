@@ -114,6 +114,19 @@ const getDueDateMs = (dueDateStr) => {
   const { year, month, day } = _getNyParts(raw);
   return _nyLocalToUtcMs(year, month, day, 16);
 };
+// Calculates the deadline label and color for a given due date.
+// Returns { label, color, diffMs, daysDiff } or null if date is invalid.
+const calculateDeadlineValue = (dueDateStr) => {
+  if (!dueDateStr) return null;
+  const dueDateMs = getDueDateMs(dueDateStr);
+  if (dueDateMs === null) return null;
+  const refMs = getDeadlineRefMs();
+  const diffMs = dueDateMs - refMs;
+  const absDiffMs = Math.abs(diffMs);
+  const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
+  const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+  return { diffMs, daysDiff, hoursDiff, absDiffMs };
+};
 // --- End deadline helpers ---
 
 const toPhaseId = (value) => {
@@ -422,6 +435,8 @@ const AgileDevelopmentDashboard = () => {
     };
 
     // Increment Development_Cycle_Counter if status changes to 'Completed' from any other status
+    const isMovingToCompletion = nextStatus === "Completed" || nextStatus === "Report Completion to Client";
+    
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
@@ -441,27 +456,49 @@ const AgileDevelopmentDashboard = () => {
         nextDevCycle = 1;
       }
 
+      // Calculate and freeze deadline if moving to completion columns
+      let permanentDeadlineLabel = null;
+      let permanentDeadlineColor = null;
+      if (isMovingToCompletion && !rowData.permanentDeadlineLabel) {
+        const calc = calculateDeadlineValue(rowData.e2DueDate);
+        if (calc) {
+          const { diffMs, daysDiff, hoursDiff } = calc;
+          if (diffMs > 0 && daysDiff > 1) {
+            permanentDeadlineLabel = "Delivered ahead of schedule";
+            permanentDeadlineColor = "#22c55e";
+          } else if (diffMs > 0) {
+            permanentDeadlineLabel = "Met";
+            permanentDeadlineColor = "#22c55e";
+          } else {
+            permanentDeadlineLabel = "Missed the Deadline";
+            permanentDeadlineColor = "#dc2626";
+          }
+        }
+      }
+
+      const nextRowData = {
+        ...rowData,
+        [statusField]: nextStatus,
+        updates: [...prevUpdates, statusChangeUpdate],
+        Development_Cycle_Counter: nextDevCycle,
+      };
+      
+      // Add permanent deadline if calculated
+      if (permanentDeadlineLabel) {
+        nextRowData.permanentDeadlineLabel = permanentDeadlineLabel;
+        nextRowData.permanentDeadlineColor = permanentDeadlineColor;
+      }
+
       if (hasNestedRowData) {
         return {
           ...row,
-          rowData: {
-            ...rowData,
-            [statusField]: nextStatus,
-            updates: [...prevUpdates, statusChangeUpdate],
-            Development_Cycle_Counter: nextDevCycle,
-          },
+          rowData: nextRowData,
         };
       }
 
       return {
         ...row,
-        rowData: {
-          ...rowData,
-          [statusField]: nextStatus,
-          updates: [...prevUpdates, statusChangeUpdate],
-          LogEntries: [...prevLogEntries, statusChangeLog],
-          Development_Cycle_Counter: nextDevCycle,
-        },
+        rowData: { ...nextRowData, LogEntries: [...prevLogEntries, statusChangeLog] },
       };
     });
 
@@ -480,10 +517,13 @@ const AgileDevelopmentDashboard = () => {
         if (item.key === issue.key) {
           // Find the updated row for this issue
           const updatedRow = updatedRows[issue.rowIndex];
-          const devCycle = updatedRow?.rowData?.Development_Cycle_Counter;
+          const updatedRowData = updatedRow?.rowData || {};
+          const devCycle = updatedRowData.Development_Cycle_Counter;
           return {
             ...item,
             status: nextStatus,
+            e2StatusUpdateAgile: nextStatus,
+            rowData: { ...item.rowData, ...updatedRowData },
             developmentCycleCounter: typeof devCycle === 'number' ? devCycle : item.developmentCycleCounter,
           };
         }
@@ -788,30 +828,65 @@ const AgileDevelopmentDashboard = () => {
                         <div className="agile-card-field-row" style={{ fontSize: '1.08em', color: '#334155', marginTop: 2 }}>
                           {(() => {
                             const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
+                            const e2StatusAgile = issue.rowData?.["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
+                            const isCompleted = e2StatusAgile === "Completed" || e2StatusAgile === "Report Completion to Client";
+                            
+                            // Check if deadline is already frozen (permanent)
+                            const permanentLabel = issue.rowData?.permanentDeadlineLabel;
+                            const permanentColor = issue.rowData?.permanentDeadlineColor;
+                            if (permanentLabel) {
+                              return (
+                                <span>
+                                  <span style={{ fontWeight: 600, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Deadline:</span>{' '}
+                                  <span style={{ color: permanentColor, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{permanentLabel}</span>
+                                </span>
+                              );
+                            }
+                            
                             let deadlineLabel = null;
-                            let isOverdue = false;
+                            let deadlineColor = 'inherit';
+                            let diffMs = 0;
+                            let daysDiff = 0;
+                            
                             if (dueDateStr) {
                               const dueDateMs = getDueDateMs(dueDateStr);
                               if (dueDateMs !== null) {
                                 const refMs = getDeadlineRefMs();
-                                const diffMs = dueDateMs - refMs;
+                                diffMs = dueDateMs - refMs;
                                 const absDiffMs = Math.abs(diffMs);
                                 const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
-                                const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
-                                if (absDiffMs < (1000 * 60 * 60 * 24)) {
-                                  const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
-                                  deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
+                                daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+                                
+                                // If card is in Completed or Report Completion to Client status, show conditional text
+                                if (isCompleted) {
+                                  if (diffMs > 0 && daysDiff > 1) {
+                                    deadlineLabel = "Delivered ahead of schedule";
+                                    deadlineColor = "#22c55e"; // green
+                                  } else if (diffMs > 0) {
+                                    deadlineLabel = "Met";
+                                    deadlineColor = "#22c55e"; // green
+                                  } else {
+                                    deadlineLabel = "Missed the Deadline";
+                                    deadlineColor = "#dc2626"; // red
+                                  }
                                 } else {
-                                  const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
-                                  deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
+                                  // Normal countdown display
+                                  if (absDiffMs < (1000 * 60 * 60 * 24)) {
+                                    const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
+                                    deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
+                                  } else {
+                                    const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
+                                    deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
+                                  }
+                                  deadlineColor = diffMs < 0 ? '#dc2626' : 'inherit';
                                 }
-                                isOverdue = diffMs < 0;
                               }
                             }
+                            
                             return (
                               <span>
                                 <span style={{ fontWeight: 600, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Deadline:</span>{' '}
-                                <span style={{ color: isOverdue ? '#dc2626' : 'inherit', fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{deadlineLabel ?? '—'}</span>
+                                <span style={{ color: deadlineColor, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{deadlineLabel ?? '—'}</span>
                               </span>
                             );
                           })()}
