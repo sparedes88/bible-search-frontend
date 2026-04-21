@@ -1,12 +1,3 @@
-import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
-          <Route
-            path="/organization/:id/project-name-manager"
-            element={
-              <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <ProjectNameManagerPage />
-              </PrivateRoute>
-            }
-          />
 import React, { Suspense } from "react";
 import {
   BrowserRouter as Router,
@@ -25,6 +16,7 @@ import PrivateRoute from "./components/PrivateRoute"; // Import PrivateRoute com
 import "bootstrap/dist/css/bootstrap.min.css";
 import { SafeToastContainer } from "./utils/toastUtils";
 import "react-toastify/dist/ReactToastify.css";
+import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
 // ...existing code...
 
 // Loading fallback component
@@ -170,6 +162,7 @@ const CampusesPage = React.lazy(() => import("./pages/organization/CampusesPage"
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
+const LiveIssueTracker = React.lazy(() => import("./components/live-issue-tracker"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
@@ -787,6 +780,14 @@ const App = () => {
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ProjectIssueDetail />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/live-issue-tracker"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <LiveIssueTracker />
               </PrivateRoute>
             }
           />

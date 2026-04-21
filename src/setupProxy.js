@@ -17,7 +17,7 @@ module.exports = function(app) {
       target: 'https://us-central1-igletechv1.cloudfunctions.net',
       changeOrigin: true,
       pathRewrite: {
-        '^/firebase-api': '/' // Remove /firebase-api prefix when forwarding the request
+        '^/firebase-api': '' // Remove /firebase-api prefix when forwarding the request
       },
       onProxyRes: function(proxyRes, req, res) {
         // Add CORS headers to the proxied response
