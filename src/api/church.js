@@ -10,6 +10,8 @@ import {
 import { getDownloadURL, ref } from "firebase/storage";
 import { db, storage } from "../firebase";
 
+const IGLESIA_TECH_API_BASE_URL = "https://iglesia-tech-api.e2api.com";
+
 const getChurchDisplayName = (churchData = {}) => (
   churchData.nombre
   || churchData.name
@@ -25,6 +27,7 @@ const getChurchAssetCandidate = (churchData = {}, field) => {
       || churchData.Logo
       || churchData.logoUrl
       || churchData.logoURL
+      || churchData.logoPath
       || churchData.churchLogo
       || null;
   }
@@ -32,8 +35,11 @@ const getChurchAssetCandidate = (churchData = {}, field) => {
   if (field === "banner") {
     return churchData.banner
       || churchData.Banner
+      || churchData.portadaArticulos
+      || churchData.headerImage
       || churchData.bannerUrl
       || churchData.bannerURL
+      || churchData.bannerPath
       || churchData.churchBanner
       || null;
   }
@@ -45,6 +51,21 @@ const buildFirebaseStorageMediaUrl = (assetPath) => {
   const normalizedPath = String(assetPath || "").trim().replace(/^\//, "");
   if (!normalizedPath) return null;
   return `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodeURIComponent(normalizedPath)}?alt=media`;
+};
+
+const buildApiAssetUrl = (assetPath) => {
+  const normalizedPath = String(assetPath || "").trim();
+  if (!normalizedPath) return null;
+  return normalizedPath.startsWith("/")
+    ? `${IGLESIA_TECH_API_BASE_URL}${normalizedPath}`
+    : `${IGLESIA_TECH_API_BASE_URL}/${normalizedPath}`;
+};
+
+const isLikelyApiRelativePath = (pathValue) => {
+  const normalizedPath = String(pathValue || "").trim();
+  if (!normalizedPath) return false;
+
+  return /^(\/?)(image_server|uploads|images|media)\//i.test(normalizedPath);
 };
 
 const resolveChurchAssetUrl = async (assetValue) => {
@@ -61,6 +82,10 @@ const resolveChurchAssetUrl = async (assetValue) => {
     || rawValue.startsWith("/img/")
   ) {
     return rawValue;
+  }
+
+  if (isLikelyApiRelativePath(rawValue)) {
+    return buildApiAssetUrl(rawValue);
   }
 
   if (!storage) {
@@ -85,6 +110,9 @@ const resolveChurchAssetUrl = async (assetValue) => {
   }
 
   if (rawValue.startsWith("/")) {
+    if (isLikelyApiRelativePath(rawValue)) {
+      return buildApiAssetUrl(rawValue);
+    }
     return buildFirebaseStorageMediaUrl(rawValue);
   }
 

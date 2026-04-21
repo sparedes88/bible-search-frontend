@@ -201,6 +201,9 @@ div[style*="height: 150px"] {
 .church-header-logo-image {
   width: clamp(100px, 26vw, 180px) !important;
   height: clamp(100px, 26vw, 180px) !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  display: block;
 }
 
 @media (max-width: 480px) {

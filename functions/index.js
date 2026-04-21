@@ -168,6 +168,120 @@ exports.sendNotification = functions.https.onRequest(async (req, res) => {
   });
 });
 
+exports.manageUserAccount = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Only POST method allowed" });
+    }
+
+    try {
+      const authHeader = req.headers.authorization || "";
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? tokenMatch[1] : null;
+
+      if (!idToken) {
+        return res.status(401).json({ error: "Missing Authorization Bearer token" });
+      }
+
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const callerUid = decodedToken.uid;
+
+      const callerSnap = await admin.firestore().doc(`users/${callerUid}`).get();
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Caller profile not found" });
+      }
+
+      const callerData = callerSnap.data() || {};
+      const callerRole = String(callerData.role || "").trim().toLowerCase();
+      const callerChurchId = String(
+        callerData.churchId
+        || callerData.churchID
+        || callerData.organizationId
+        || ""
+      ).trim();
+
+      const { action, targetUserId, churchId } = req.body || {};
+      const normalizedAction = String(action || "").trim().toLowerCase();
+      const normalizedTargetUserId = String(targetUserId || "").trim();
+      const normalizedChurchId = String(churchId || "").trim();
+
+      if (!normalizedTargetUserId || !["disable", "enable", "delete"].includes(normalizedAction)) {
+        return res.status(400).json({ error: "Invalid action or targetUserId" });
+      }
+
+      if (normalizedTargetUserId === callerUid) {
+        return res.status(400).json({ error: "You cannot modify your own account" });
+      }
+
+      const isGlobalAdmin = callerRole === "global_admin";
+      const isAdmin = callerRole === "admin";
+      const canManage = isGlobalAdmin || isAdmin;
+
+      if (!canManage) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+
+      const targetUserSnap = await admin.firestore().doc(`users/${normalizedTargetUserId}`).get();
+      const targetUserData = targetUserSnap.exists ? (targetUserSnap.data() || {}) : {};
+      const targetChurchId = String(
+        targetUserData.churchId
+        || targetUserData.churchID
+        || targetUserData.organizationId
+        || normalizedChurchId
+        || ""
+      ).trim();
+
+      if (!isGlobalAdmin) {
+        if (!callerChurchId || !targetChurchId || callerChurchId !== targetChurchId) {
+          return res.status(403).json({ error: "Admins can only manage users in their organization" });
+        }
+      }
+
+      if (normalizedAction === "delete" && !isGlobalAdmin) {
+        return res.status(403).json({ error: "Only global admins can delete users" });
+      }
+
+      if (normalizedAction === "disable") {
+        await admin.auth().updateUser(normalizedTargetUserId, { disabled: true });
+      }
+
+      if (normalizedAction === "enable") {
+        await admin.auth().updateUser(normalizedTargetUserId, { disabled: false });
+      }
+
+      if (normalizedAction === "delete") {
+        await admin.auth().deleteUser(normalizedTargetUserId);
+      }
+
+      await admin.firestore().collection("userAccountAuditLogs").add({
+        action: normalizedAction,
+        actorUid: callerUid,
+        actorRole: callerRole || null,
+        actorChurchId: callerChurchId || null,
+        targetUserId: normalizedTargetUserId,
+        targetEmail: targetUserData.email || null,
+        targetName: `${targetUserData.name || ""} ${targetUserData.lastName || ""}`.trim() || null,
+        targetChurchId: targetChurchId || null,
+        requestedChurchId: normalizedChurchId || null,
+        sourceIp: req.headers["x-forwarded-for"] || req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      return res.status(200).json({
+        success: true,
+        action: normalizedAction,
+        targetUserId: normalizedTargetUserId,
+      });
+    } catch (error) {
+      console.error("manageUserAccount error:", error);
+      return res.status(500).json({ error: error.message || "Internal error" });
+    }
+  });
+});
+
 exports.sendSMS = functions.https.onRequest((req, res) => {
   if (handleCors(req, res)) return;
 

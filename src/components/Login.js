@@ -6,15 +6,253 @@ import {
   browserLocalPersistence,
   browserSessionPersistence
 } from "firebase/auth";
-import { auth, db } from "../firebase";
+import { getDownloadURL, ref } from "firebase/storage";
+import { auth, db, storage } from "../firebase";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { doc, getDoc, collection, query, where, getDocs, limit, setDoc } from "firebase/firestore";
 import "react-loading-skeleton/dist/skeleton.css";
 import commonStyles from "../pages/commonStyles";
 import "../styles/LoginStyles.css";
 import "./Register.css";
+import {
+  decodeSwitchPassword,
+  encodeSwitchPassword,
+  getSwitchAccountsForOrganization,
+  removeSwitchAccountForOrganization,
+  saveSwitchAccountForOrganization,
+} from "../utils/accountSwitching";
 
 const ChurchHeader = React.lazy(() => import("./ChurchHeader"));
+const IGLESIA_TECH_API_BASE_URL = "https://iglesia-tech-api.e2api.com";
+
+const getBrandLogoCandidate = (brand = {}) => (
+  brand?.logo
+  || brand?.Logo
+  || brand?.logoUrl
+  || brand?.logoURL
+  || brand?.churchLogo
+  || brand?.brandLogo
+  || brand?.image
+  || brand?.imageUrl
+  || brand?.imageURL
+  || brand?.icon
+  || brand?.iconUrl
+  || brand?.files?.[0]?.url
+  || brand?.attachments?.[0]?.url
+  || brand?.documents?.[0]?.url
+  || null
+);
+
+const getBrandDisplayName = (brand = {}, index = 0) => (
+  brand?.name
+  || brand?.nombre
+  || brand?.brand
+  || brand?.title
+  || `Brand ${index + 1}`
+);
+
+const buildApiAssetUrl = (assetPath) => {
+  const normalizedPath = String(assetPath || "").trim();
+  if (!normalizedPath) return null;
+  return normalizedPath.startsWith("/")
+    ? `${IGLESIA_TECH_API_BASE_URL}${normalizedPath}`
+    : `${IGLESIA_TECH_API_BASE_URL}/${normalizedPath}`;
+};
+
+const buildFirebaseStorageMediaUrl = (assetPath) => {
+  const normalizedPath = String(assetPath || "").trim().replace(/^\//, "");
+  if (!normalizedPath) return null;
+  return `https://firebasestorage.googleapis.com/v0/b/igletechv1.firebasestorage.app/o/${encodeURIComponent(normalizedPath)}?alt=media`;
+};
+
+const isLikelyApiRelativePath = (pathValue) => {
+  const normalizedPath = String(pathValue || "").trim();
+  if (!normalizedPath) return false;
+  return /^(\/?)(image_server|uploads|images|media)\//i.test(normalizedPath);
+};
+
+const normalizeOrganizationId = (value) => {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string" || typeof value === "number") {
+    const normalized = String(value).trim();
+    return normalized || null;
+  }
+
+  if (typeof value === "object") {
+    const objectId = value.id
+      || value.churchId
+      || value.churchID
+      || value.organizationId
+      || value.organizationID
+      || value.value
+      || null;
+
+    if (objectId === null || objectId === undefined) return null;
+    const normalized = String(objectId).trim();
+    return normalized || null;
+  }
+
+  return null;
+};
+
+const collectOrganizationIdsFromUserData = (userData = {}) => {
+  const ids = new Set();
+
+  const singleValueCandidates = [
+    userData?.churchId,
+    userData?.churchID,
+    userData?.organizationId,
+    userData?.organizationID,
+    userData?.orgId,
+    userData?.defaultChurchId,
+    userData?.defaultOrganizationId,
+  ];
+
+  singleValueCandidates
+    .map((value) => normalizeOrganizationId(value))
+    .filter(Boolean)
+    .forEach((value) => ids.add(value));
+
+  const listCandidates = [
+    userData?.churchIds,
+    userData?.churchIDs,
+    userData?.organizationIds,
+    userData?.organizationIDs,
+    userData?.organizations,
+    userData?.churches,
+    userData?.accessibleOrganizations,
+    userData?.allowedOrganizations,
+    userData?.allowedChurchIds,
+    userData?.allowedOrganizationIds,
+  ];
+
+  listCandidates.forEach((candidate) => {
+    if (!Array.isArray(candidate)) return;
+
+    candidate
+      .map((value) => normalizeOrganizationId(value))
+      .filter(Boolean)
+      .forEach((value) => ids.add(value));
+  });
+
+  return Array.from(ids);
+};
+
+const collectStrings = (value, out = []) => {
+  if (value === null || value === undefined) return out;
+
+  if (
+    typeof value === "string"
+    || typeof value === "number"
+    || typeof value === "boolean"
+  ) {
+    out.push(String(value));
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectStrings(entry, out));
+    return out;
+  }
+
+  if (typeof value === "object") {
+    Object.keys(value).forEach((key) => collectStrings(value[key], out));
+    return out;
+  }
+
+  try {
+    out.push(String(value));
+  } catch (error) {
+    // Ignore non-stringable values.
+  }
+
+  return out;
+};
+
+const matchesBrandReference = (churchData = {}, brandData = {}) => {
+  const churchBrandRaw = churchData?.brand
+    || churchData?.brandId
+    || churchData?.brand_id
+    || churchData?.brands
+    || null;
+
+  const churchTokens = collectStrings(churchBrandRaw)
+    .map((token) => token.toLowerCase().trim())
+    .filter(Boolean);
+
+  if (churchTokens.length === 0) {
+    return false;
+  }
+
+  const brandTokens = collectStrings([
+    brandData?.id,
+    brandData?.name,
+    brandData?.nombre,
+    brandData?.brand,
+    brandData?.title,
+  ])
+    .map((token) => token.toLowerCase().trim())
+    .filter(Boolean);
+
+  if (brandTokens.length === 0) {
+    return false;
+  }
+
+  return churchTokens.some((churchToken) =>
+    brandTokens.some((brandToken) =>
+      churchToken === brandToken
+      || churchToken.includes(brandToken)
+      || brandToken.includes(churchToken)
+    )
+  );
+};
+
+const resolveBrandLogoUrl = async (assetValue) => {
+  if (!assetValue) return null;
+
+  const rawValue = String(assetValue).trim();
+  if (!rawValue) return null;
+
+  if (
+    rawValue.startsWith("http://")
+    || rawValue.startsWith("https://")
+    || rawValue.startsWith("data:")
+    || rawValue.startsWith("blob:")
+    || rawValue.startsWith("/img/")
+  ) {
+    return rawValue;
+  }
+
+  if (isLikelyApiRelativePath(rawValue)) {
+    return buildApiAssetUrl(rawValue);
+  }
+
+  if (rawValue.startsWith("gs://") && storage) {
+    try {
+      return await getDownloadURL(ref(storage, rawValue));
+    } catch (error) {
+      console.warn("Failed to resolve brand logo from gs path:", error.message);
+    }
+  }
+
+  if (storage && !rawValue.startsWith("/")) {
+    try {
+      return await getDownloadURL(ref(storage, rawValue));
+    } catch (error) {
+      // Continue to other fallbacks.
+    }
+  }
+
+  if (rawValue.startsWith("/")) {
+    if (isLikelyApiRelativePath(rawValue)) {
+      return buildApiAssetUrl(rawValue);
+    }
+    return buildFirebaseStorageMediaUrl(rawValue);
+  }
+
+  return rawValue;
+};
 
 const Login = () => {
   const MAX_COOLDOWN_SECONDS = 120;
@@ -33,6 +271,12 @@ const Login = () => {
   const [cooldownTime, setCooldownTime] = useState(0);
   const [rememberMe, setRememberMe] = useState(true);
   const [providerDisabled, setProviderDisabled] = useState(false);
+  const [brandLogos, setBrandLogos] = useState([]);
+  const [switchAccounts, setSwitchAccounts] = useState([]);
+  const [useForSwitching, setUseForSwitching] = useState(true);
+  const [showAccessRecovery, setShowAccessRecovery] = useState(false);
+  const [accessibleOrganizations, setAccessibleOrganizations] = useState([]);
+  const [isResolvingAccessOptions, setIsResolvingAccessOptions] = useState(false);
   const safeCooldownTime = Number.isFinite(cooldownTime)
     ? Math.max(0, Math.min(Math.floor(cooldownTime), MAX_COOLDOWN_SECONDS))
     : 0;
@@ -40,6 +284,99 @@ const Login = () => {
   // Extract return URL from query parameters if present
   const urlParams = new URLSearchParams(location.search);
   const returnUrl = urlParams.get('returnUrl');
+  const isSwitchUserFlow = urlParams.get("switchUser") === "1";
+
+  const clearAccessRecoveryState = () => {
+    setShowAccessRecovery(false);
+    setAccessibleOrganizations([]);
+    setIsResolvingAccessOptions(false);
+  };
+
+  const getOrganizationAccessList = async (userData = {}) => {
+    const normalizedRole = String(userData?.role || "").trim().toLowerCase();
+    if (["global_admin", "system_global_admin"].includes(normalizedRole)) {
+      const churchesSnapshot = await getDocs(collection(db, "churches"));
+      return churchesSnapshot.docs.map((organizationDoc) => ({
+        id: organizationDoc.id,
+        ...organizationDoc.data(),
+      }));
+    }
+
+    const organizationIds = collectOrganizationIdsFromUserData(userData);
+    if (organizationIds.length === 0) {
+      return [];
+    }
+
+    const organizations = await Promise.all(
+      organizationIds.map(async (organizationId) => {
+        try {
+          const organizationSnap = await getDoc(doc(db, "churches", String(organizationId)));
+          if (!organizationSnap.exists()) return null;
+
+          return {
+            id: organizationSnap.id,
+            ...organizationSnap.data(),
+          };
+        } catch (readError) {
+          return null;
+        }
+      })
+    );
+
+    return organizations.filter(Boolean);
+  };
+
+  const handlePermissionDeniedAccess = async (userData = {}, deniedMessage) => {
+    setShowAccessRecovery(true);
+    setError(`❌ ${deniedMessage}`);
+    setIsResolvingAccessOptions(true);
+
+    try {
+      const organizations = await getOrganizationAccessList(userData);
+      const filteredOrganizations = organizations.filter(
+        (organization) => String(organization?.id || "") !== String(id || "")
+      );
+      setAccessibleOrganizations(filteredOrganizations);
+    } catch (orgError) {
+      console.error("Error resolving accessible organizations:", orgError);
+      setAccessibleOrganizations([]);
+    } finally {
+      setIsResolvingAccessOptions(false);
+    }
+  };
+
+  const handleRequestPermission = () => {
+    navigate(`/organization/${id}/register?requestAccess=1`);
+  };
+
+  const handleSwitchOrganization = (nextOrganizationId) => {
+    if (!nextOrganizationId) return;
+    navigate(`/organization/${nextOrganizationId}/mi-organizacion`);
+  };
+
+  const getOrganizationLabel = (organization = {}) => {
+    return (
+      organization?.nombre
+      || organization?.name
+      || organization?.organizationName
+      || organization?.churchName
+      || organization?.title
+      || `Organization ${organization?.id || ""}`
+    );
+  };
+
+  useEffect(() => {
+    clearAccessRecoveryState();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setSwitchAccounts([]);
+      return;
+    }
+
+    setSwitchAccounts(getSwitchAccountsForOrganization(id));
+  }, [id]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -49,7 +386,7 @@ const Login = () => {
 
     const handleOffline = () => {
       setIsOnline(false);
-      setError("❌ Sin conexión a Internet - Por favor revisa tu conexión");
+      setError("❌ No internet connection - Please check your connection");
     };
 
     window.addEventListener("online", handleOnline);
@@ -85,6 +422,116 @@ const Login = () => {
     return () => clearInterval(timer);
   }, [loginDisabled, safeCooldownTime]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadOrganizationBrandLogos = async () => {
+      if (!id) {
+        if (isMounted) setBrandLogos([]);
+        return;
+      }
+
+      const dedupeByUrl = (brands = []) => {
+        const seen = new Set();
+        return brands.filter((brandItem) => {
+          const normalizedUrl = String(brandItem?.url || "").trim();
+          if (!normalizedUrl || seen.has(normalizedUrl)) {
+            return false;
+          }
+          seen.add(normalizedUrl);
+          return true;
+        });
+      };
+
+      try {
+        const churchSnap = await getDoc(doc(db, "churches", String(id)));
+        const churchData = churchSnap.exists() ? (churchSnap.data() || {}) : {};
+        let resolvedLogos = [];
+
+        try {
+          const brandsQuery = query(collection(db, `churches/${id}/brands`), limit(36));
+          const brandsSnapshot = await getDocs(brandsQuery);
+
+          const brandItems = await Promise.all(
+            brandsSnapshot.docs.map(async (docSnap, index) => {
+              const data = docSnap.data() || {};
+              const logoUrl = await resolveBrandLogoUrl(getBrandLogoCandidate(data));
+              if (!logoUrl) return null;
+
+              return {
+                id: docSnap.id,
+                name: getBrandDisplayName(data, index),
+                url: logoUrl,
+              };
+            })
+          );
+
+          resolvedLogos = brandItems.filter(Boolean);
+        } catch (subcollectionError) {
+          console.warn("Could not load churches/{id}/brands logos:", subcollectionError?.message || subcollectionError);
+        }
+
+        // Fallback 1: global brands mapped by church brand reference.
+        if (resolvedLogos.length === 0 && churchData) {
+          try {
+            const globalBrandsSnapshot = await getDocs(query(collection(db, "brands"), limit(120)));
+            const matchingGlobalBrands = globalBrandsSnapshot.docs
+              .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+              .filter((brandDoc) => matchesBrandReference(churchData, brandDoc));
+
+            const globalBrandItems = await Promise.all(
+              matchingGlobalBrands.map(async (brandDoc, index) => {
+                const logoUrl = await resolveBrandLogoUrl(getBrandLogoCandidate(brandDoc));
+                if (!logoUrl) return null;
+
+                return {
+                  id: brandDoc.id || `global-brand-${index}`,
+                  name: getBrandDisplayName(brandDoc, index),
+                  url: logoUrl,
+                };
+              })
+            );
+
+            resolvedLogos = globalBrandItems.filter(Boolean);
+          } catch (globalBrandsError) {
+            console.warn("Could not load global brands fallback:", globalBrandsError?.message || globalBrandsError);
+          }
+        }
+
+        // Fallback 2: church-level logo if no brand row is readable yet.
+        if (resolvedLogos.length === 0 && churchData) {
+          const churchLogoUrl = await resolveBrandLogoUrl(
+            churchData?.brandLogo
+            || churchData?.logo
+            || churchData?.Logo
+            || null
+          );
+
+          if (churchLogoUrl) {
+            resolvedLogos = [{
+              id: "church-brand-fallback",
+              name: getBrandDisplayName(churchData, 0),
+              url: churchLogoUrl,
+            }];
+          }
+        }
+
+        if (isMounted) {
+          setBrandLogos(dedupeByUrl(resolvedLogos).slice(0, 18));
+        }
+      } catch (brandError) {
+        console.warn("Could not load organization brand logos:", brandError);
+        if (isMounted) setBrandLogos([]);
+      }
+    };
+
+    loadOrganizationBrandLogos();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
+
   // Check if input is an email or phone number
   const isEmail = (value) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -110,6 +557,100 @@ const Login = () => {
     return emailLower.includes("admin") ||
            emailLower.endsWith("@iglesiatech.app") ||
            emailLower.endsWith("@churchadmin.app");
+  };
+
+  const refreshSwitchAccounts = () => {
+    if (!id) return;
+    setSwitchAccounts(getSwitchAccountsForOrganization(id));
+  };
+
+  const rememberAccountForSwitching = async (
+    identifierUsedForLogin,
+    resolvedEmail,
+    uid,
+    rawPassword
+  ) => {
+    if (!id || !useForSwitching) return;
+
+    const passwordCipher = await encodeSwitchPassword(rawPassword);
+
+    saveSwitchAccountForOrganization(id, {
+      identifier: identifierUsedForLogin,
+      email: resolvedEmail,
+      uid,
+      passwordCipher,
+      passwordUpdatedAt: Date.now(),
+      lastUsedAt: Date.now(),
+    });
+    refreshSwitchAccounts();
+  };
+
+  const handleRemoveSwitchAccount = (identifierToRemove) => {
+    removeSwitchAccountForOrganization(id, identifierToRemove);
+    refreshSwitchAccounts();
+  };
+
+  const handleQuickSwitchLogin = async (account) => {
+    if (!account?.identifier || loginDisabled || loading) {
+      return;
+    }
+
+    setIdentifier(account.identifier);
+    setError("");
+    clearAccessRecoveryState();
+
+    if (!isOnline) {
+      setError("❌ No internet connection - Please check your connection");
+      return;
+    }
+
+    if (providerDisabled) {
+      setError("❌ Email/password sign-in is disabled in Firebase for this project. Enable it in Authentication > Sign-in method.");
+      return;
+    }
+
+    const restoredPassword = await decodeSwitchPassword(account.passwordCipher);
+    if (!restoredPassword) {
+      setPassword("");
+      setError("Please enter password once for this account, then it can switch automatically next time.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        String(account.email || account.identifier).trim(),
+        restoredPassword
+      );
+
+      if (useForSwitching) {
+        await rememberAccountForSwitching(
+          account.identifier,
+          String(account.email || account.identifier).trim(),
+          userCredential?.user?.uid,
+          restoredPassword
+        );
+      }
+
+      const isAdminEmail = checkIfAdminEmail(String(account.email || account.identifier));
+      if (isAdminEmail) {
+        if (returnUrl) {
+          navigate(returnUrl);
+        } else {
+          navigate(`/organization/${id}/mi-organizacion`);
+        }
+      } else {
+        await checkUserChurchAccess(userCredential.user.uid);
+      }
+    } catch (err) {
+      handleAuthError(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const findUserByPhone = async (formattedPhone) => {
@@ -142,27 +683,29 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    let shouldClearPassword = false;
     
     // Clear previous errors
     setError("");
+    clearAccessRecoveryState();
     
     if (!isOnline) {
-      setError("❌ Sin conexión a Internet - Por favor revisa tu conexión");
+      setError("❌ No internet connection - Please check your connection");
       return;
     }
 
     if (!identifier || !password) {
-      setError("Por favor ingrese su correo electrónico/teléfono y contraseña");
+      setError("Please enter your email/phone and password");
       return;
     }
 
     if (providerDisabled) {
-      setError("❌ El inicio de sesión por correo/contraseña está deshabilitado en Firebase para este proyecto. Actívelo en Authentication > Sign-in method.");
+      setError("❌ Email/password sign-in is disabled in Firebase for this project. Enable it in Authentication > Sign-in method.");
       return;
     }
 
     if (loginDisabled) {
-      setError(`❌ Demasiados intentos. Por favor espere ${safeCooldownTime} segundos.`);
+      setError(`❌ Too many attempts. Please wait ${safeCooldownTime} seconds.`);
       return;
     }
 
@@ -182,13 +725,13 @@ const Login = () => {
         if (!isEmail(identifier)) {
           const foundUser = await findUserByPhone(formatPhoneNumber(identifier));
           if (!foundUser) {
-            setError("❌ No se encontró ninguna cuenta con este número de teléfono");
+            setError("❌ No account was found with this phone number");
             setLoading(false);
             return;
           }
           
           if (!foundUser.email) {
-            setError("❌ La cuenta encontrada no tiene correo electrónico asociado");
+            setError("❌ The account found does not have an email associated");
             setLoading(false);
             return;
           }
@@ -201,6 +744,14 @@ const Login = () => {
         const userCredential = await signInWithEmailAndPassword(
           auth,
           loginEmail.trim(),
+          password
+        );
+        shouldClearPassword = true;
+
+        await rememberAccountForSwitching(
+          identifier,
+          loginEmail.trim(),
+          userCredential?.user?.uid,
           password
         );
         
@@ -218,7 +769,7 @@ const Login = () => {
           if (returnUrl) {
             navigate(returnUrl);
           } else {
-            navigate(`/organization/${id}/mi-perfil`);
+            navigate(`/organization/${id}/mi-organizacion`);
           }
         } else {
           // Normal user - check church access in Firestore
@@ -231,6 +782,9 @@ const Login = () => {
       console.error("Login error:", err);
       handleAuthError(err);
     } finally {
+      if (shouldClearPassword) {
+        setPassword("");
+      }
       setLoading(false);
     }
   };
@@ -259,37 +813,37 @@ const Login = () => {
     
     switch (err.code) {
       case "auth/network-request-failed":
-        errorMessage += "Error de conexión. Por favor revisa tu conexión a Internet.";
+        errorMessage += "Connection error. Please check your internet connection.";
         break;
       case "auth/user-not-found":
-        errorMessage += "Usuario no encontrado. Verifique su correo electrónico o teléfono.";
+        errorMessage += "User not found. Please verify your email or phone.";
         break;
       case "auth/invalid-credential":
-        errorMessage += "Credenciales inválidas. Verifique su correo electrónico/teléfono y contraseña.";
+        errorMessage += "Invalid credentials. Please verify your email/phone and password.";
         cooldown = 5; // Small cooldown to prevent brute force
         break;
       case "auth/wrong-password":
-        errorMessage += "Contraseña incorrecta. Por favor intente nuevamente.";
+        errorMessage += "Incorrect password. Please try again.";
         cooldown = 5;
         break;
       case "auth/too-many-requests":
-        errorMessage += "Demasiados intentos. Su cuenta ha sido temporalmente bloqueada.";
+        errorMessage += "Too many attempts. Your account has been temporarily locked.";
         cooldown = 60; // 1 minute cooldown
         break;
       case "auth/user-disabled":
-        errorMessage += "Esta cuenta ha sido deshabilitada. Contacte al administrador.";
+        errorMessage += "This account has been disabled. Contact the administrator.";
         break;
       case "auth/invalid-email":
-        errorMessage += "Formato de correo electrónico inválido.";
+        errorMessage += "Invalid email format.";
         break;
       case "auth/operation-not-allowed":
-        errorMessage += "El inicio de sesión por correo/contraseña no está habilitado en Firebase Auth para este proyecto. Active Email/Password en Authentication > Sign-in method.";
+        errorMessage += "Email/password sign-in is not enabled in Firebase Auth for this project. Enable Email/Password in Authentication > Sign-in method.";
         setProviderDisabled(true);
         setLoginDisabled(false);
         setCooldownTime(0);
         break;
       default:
-        errorMessage += err.message || "Error desconocido. Por favor intente más tarde.";
+        errorMessage += err.message || "Unknown error. Please try again later.";
     }
     
     setError(errorMessage);
@@ -319,6 +873,30 @@ const Login = () => {
         const userData = userDoc.data();
         console.log("User data retrieved:", userData);
 
+        const normalizedAccessStatus = String(
+          userData?.accessStatus
+          || userData?.approvalStatus
+          || "approved"
+        ).trim().toLowerCase();
+
+        const requiresApproval = ["pending", "requested", "denied", "rejected"].includes(normalizedAccessStatus);
+
+        if (requiresApproval) {
+          if (normalizedAccessStatus === "denied" || normalizedAccessStatus === "rejected") {
+            await handlePermissionDeniedAccess(
+              userData,
+              "Your access request was not approved yet. You can request permission again or switch organizations."
+            );
+            return;
+          }
+
+          await handlePermissionDeniedAccess(
+            userData,
+            "Your account is waiting for admin approval in this organization."
+          );
+          return;
+        }
+
         // Check if user is global_admin, admin, or matches church ID
         if (
           userData.role === "global_admin" ||
@@ -329,10 +907,13 @@ const Login = () => {
           if (returnUrl) {
             navigate(returnUrl);
           } else {
-            navigate(`/organization/${id}/mi-perfil`);
+            navigate(`/organization/${id}/mi-organizacion`);
           }
         } else {
-          throw new Error("Usuario no tiene permiso para acceder a esta iglesia");
+          await handlePermissionDeniedAccess(
+            userData,
+            "You do not have permission to access this organization."
+          );
         }
       } else {
         // Special case: If the email indicates it's a admin or global admin
@@ -354,30 +935,35 @@ const Login = () => {
             if (returnUrl) {
               navigate(returnUrl);
             } else {
-              navigate(`/organization/${id}/mi-perfil`);
+              navigate(`/organization/${id}/mi-organizacion`);
             }
             return;
           }
         }
         
         // For normal users, we require a Firestore record
-        throw new Error("Usuario no encontrado en Firestore. Contacte al administrador.");
+        await handlePermissionDeniedAccess(
+          {},
+          "This account is not linked to this organization yet. Request permission to continue."
+        );
       }
     } catch (err) {
       console.error("Church access check error:", err);
-      setError(`❌ ${err.message}`);
+      if (!showAccessRecovery) {
+        setError(`❌ ${err.message}`);
+      }
       setLoading(false);
     }
   };
 
   const handleForgotPassword = async () => {
     if (!identifier) {
-      setError("Por favor, introduzca primero su dirección de correo electrónico.");
+      setError("Please enter your email address first.");
       return;
     }
 
     if (!isEmail(identifier)) {
-      setError("Por favor, ingrese un correo electrónico válido para restablecer su contraseña.");
+      setError("Please enter a valid email address to reset your password.");
       return;
     }
 
@@ -415,10 +1001,10 @@ const Login = () => {
       console.error("Password reset error:", error);
       if (error?.code === "auth/unauthorized-continue-uri") {
         setError(
-          "No se pudo enviar el correo. El dominio de esta aplicación no está autorizado en Firebase Auth. Agregue el dominio en Authorized domains o configure REACT_APP_AUTH_CONTINUE_URL."
+          "Could not send the email. This app domain is not authorized in Firebase Auth. Add the domain in Authorized domains or configure REACT_APP_AUTH_CONTINUE_URL."
         );
       } else {
-        setError("No se pudo enviar el correo electrónico de restablecimiento. Verifique su dirección.");
+        setError("Could not send the password reset email. Please verify your address.");
       }
     } finally {
       setIsLoading(false);
@@ -426,21 +1012,29 @@ const Login = () => {
   };
 
   return (
-    <div className="login-page-container" style={{...commonStyles.container, paddingLeft: 0, paddingRight: 0, overflowX: "hidden"}}>
-      {/* Back Button */}
-      <div style={{display:"flex", justifyContent:"space-between", paddingLeft: "15px", paddingRight: "15px"}}>
-        <button
-          onClick={() => navigate('/')}
-          style={commonStyles.backButton}
-        >
-          ⬅ Volver
-        </button>
-        <button
-          onClick={() => navigate(`/organization/${id}/church-app`)}
-          style={{...commonStyles.backButtonLink, width:"140px"}}
-        >
-          Church App ➞
-        </button>
+    <div
+      className="login-page-container"
+      style={{
+        ...commonStyles.fullWidthContainer,
+        paddingLeft: 0,
+        paddingRight: 0,
+        overflowX: "hidden",
+        margin: 0,
+        backgroundColor: "transparent",
+        boxShadow: "none",
+        borderRadius: 0,
+      }}
+    >
+      {/* Top actions */}
+      <div className="login-top-actions">
+        <div className="login-top-actions-inner">
+          <button
+            onClick={() => navigate('/')}
+            style={commonStyles.backButton}
+          >
+            ⬅ Back
+          </button>
+        </div>
       </div>
 
       {id && (
@@ -452,126 +1046,239 @@ const Login = () => {
       {/* Network Status */}
       {!isOnline && (
         <div className="network-status offline">
-          <span>📡 Sin conexión</span>
+          <span>📡 Offline</span>
         </div>
       )}
 
-      {/* Login Box */}
-      <div className="login-container">
-        <h2>Iniciar Sesión</h2>
+      {/* Login layout */}
+      <div className="login-content-shell">
+        <section className="login-intro-panel" aria-label="Access information">
+          <p className="login-kicker">Secure Access</p>
 
-        {error && <p style={{ color: "red" }}>{error}</p>}
+          <h1 className="login-title">Welcome to your organization</h1>
+          <p className="login-subtitle">
+            Sign in to manage members, events, and church resources from a trusted workspace.
+          </p>
+          <ul className="login-benefits-list">
+            <li>Email or phone authentication</li>
+            <li>Optional persistent session on your device</li>
+            <li>Fast password recovery</li>
+          </ul>
+        </section>
 
-        {loginDisabled && safeCooldownTime > 0 && (
-          <div style={{
-            backgroundColor: "#FEE2E2",
-            color: "#B91C1C",
-            padding: "10px",
-            borderRadius: "4px",
-            marginBottom: "15px",
-            textAlign: "center"
-          }}>
-            Por favor espere {safeCooldownTime} segundos antes de intentar nuevamente.
-          </div>
-        )}
+        <section className="login-card" aria-label="Sign-in form">
+          <h2 className="login-card-title">Sign In</h2>
+          <p className="login-card-subtitle">Use your credentials to continue</p>
 
-        {retryCount >= 2 && (
-          <div
-            style={{
-              backgroundColor: "#FEF3C7",
-              color: "#92400E",
-              padding: "8px",
-              borderRadius: "4px",
-              marginBottom: "10px",
-              fontSize: "14px",
-            }}
-          >
-            ⚠️ Detectamos problemas de conexión. Por favor:
-            <ul style={{ marginLeft: "20px", marginTop: "5px" }}>
-              <li>Verifica tu conexión a Internet</li>
-              <li>Intenta de nuevo en unos momentos</li>
-              <li>Si el problema persiste, contacta al soporte</li>
-            </ul>
-          </div>
-        )}
+          {isSwitchUserFlow && (
+            <p className="login-alert login-alert-info">
+              Tap a saved user below to switch instantly. Password is only needed for unsaved users.
+            </p>
+          )}
 
-        {/* Email Login Form */}
-        <form onSubmit={handleSubmit} className="login-form">
-          <input
-            type="text"
-            placeholder="Correo Electrónico o Número de Teléfono"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            required
-            className="form-field"
-            disabled={loginDisabled}
-          />
-          <input
-            type="password"
-            placeholder="Contraseña"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="form-field"
-            disabled={loginDisabled}
-          />
-          
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
+          {switchAccounts.length > 0 && (
+            <div className="login-switch-accounts" aria-label="Quick switch users">
+              <p className="login-switch-title">Recent users on this device</p>
+              <div className="login-switch-grid">
+                {switchAccounts.map((account) => {
+                  const isSelected =
+                    String(identifier || "").trim().toLowerCase()
+                    === String(account.identifier || "").trim().toLowerCase();
+
+                  return (
+                    <div key={account.identifier} className="login-switch-item">
+                      <button
+                        type="button"
+                        className={`login-switch-pick ${isSelected ? "is-selected" : ""}`}
+                        onClick={() => handleQuickSwitchLogin(account)}
+                        disabled={loginDisabled || loading}
+                      >
+                        <span className="login-switch-primary">{account.identifier}</span>
+                        {!!account.email && account.email !== account.identifier && (
+                          <span className="login-switch-secondary">{account.email}</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="login-switch-remove"
+                        onClick={() => handleRemoveSwitchAccount(account.identifier)}
+                        aria-label={`Remove ${account.identifier} from quick switch`}
+                        disabled={loginDisabled}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {error && <p className="login-alert login-alert-error">{error}</p>}
+
+          {showAccessRecovery && (
+            <div className="login-access-recovery" aria-live="polite">
+              <p className="login-access-recovery-title">Need access to this organization?</p>
+              <p className="login-access-recovery-text">
+                Request permission from this organization admin, or switch to one you already have access to.
+              </p>
+              <button
+                type="button"
+                className="login-access-request-btn"
+                onClick={handleRequestPermission}
+                disabled={loading}
+              >
+                Request Permission
+              </button>
+
+              <div className="login-access-switch-list" aria-label="Accessible organizations">
+                <p className="login-access-switch-title">Switch to an organization you can access</p>
+
+                {isResolvingAccessOptions && (
+                  <p className="login-access-switch-empty">Finding your available organizations...</p>
+                )}
+
+                {!isResolvingAccessOptions && accessibleOrganizations.length === 0 && (
+                  <p className="login-access-switch-empty">
+                    No additional organizations were found for this account yet.
+                  </p>
+                )}
+
+                {!isResolvingAccessOptions && accessibleOrganizations.length > 0 && (
+                  <div className="login-access-switch-grid">
+                    {accessibleOrganizations.map((organization) => (
+                      <button
+                        key={organization.id}
+                        type="button"
+                        className="login-access-switch-item"
+                        onClick={() => handleSwitchOrganization(organization.id)}
+                      >
+                        <span className="login-access-switch-name">
+                          {getOrganizationLabel(organization)}
+                        </span>
+                        <span className="login-access-switch-id">ID: {organization.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {loginDisabled && safeCooldownTime > 0 && (
+            <div className="login-alert login-alert-cooldown">
+              Please wait {safeCooldownTime} seconds before trying again.
+            </div>
+          )}
+
+          {retryCount >= 2 && (
+            <div className="login-alert login-alert-warning">
+              <p>We detected connection issues. Please:</p>
+              <ul className="login-warning-list">
+                <li>Check your internet connection</li>
+                <li>Try again in a few moments</li>
+                <li>If the issue continues, contact support</li>
+              </ul>
+            </div>
+          )}
+
+          {/* Email Login Form */}
+          <form onSubmit={handleSubmit} className="login-form" noValidate>
             <input
-              type="checkbox"
-              id="rememberMe"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              style={{ marginRight: '8px' }}
+              type="text"
+              placeholder="Email or Phone Number"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              required
+              className="form-field"
               disabled={loginDisabled}
             />
-            <label htmlFor="rememberMe" style={{ fontSize: '14px' }}>
-              Mantener sesión iniciada
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="form-field"
+              disabled={loginDisabled}
+            />
+            
+            <label className="login-remember" htmlFor="rememberMe">
+              <input
+                type="checkbox"
+                id="rememberMe"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                disabled={loginDisabled}
+              />
+              <span>Keep me signed in</span>
             </label>
-          </div>
-          
-          <button 
-            type="submit" 
-            className="loging-btn" 
-            disabled={loading || loginDisabled}
-          >
-            {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
-          </button>
-        </form>
 
-        <button
-          onClick={() => navigate(`/organization/${id}/register`)}
-          className="form-field"
-          style={{ marginTop: "20px" }}
-          disabled={loginDisabled}
-        >
-          No tienes cuenta? Regístrate
-        </button>
+            <label className="login-remember" htmlFor="useForSwitching">
+              <input
+                type="checkbox"
+                id="useForSwitching"
+                checked={useForSwitching}
+                onChange={(e) => setUseForSwitching(e.target.checked)}
+                disabled={loginDisabled}
+              />
+              <span>Use this account for switching between users</span>
+            </label>
+            
+            <button 
+              type="submit" 
+              className="loging-btn" 
+              disabled={loading || loginDisabled}
+            >
+              {loading ? "Signing in..." : "Sign In"}
+            </button>
+          </form>
 
-        {resetEmailSent ? (
-          <p style={{ color: "green", marginTop: "30px" }}>
-            ✅ ¡El correo electrónico de restablecimiento se envió
-            correctamente!
-          </p>
-        ) : (
           <button
-            onClick={handleForgotPassword}
-            disabled={isLoading || loginDisabled}
-            style={{
-              backgroundColor: "transparent",
-              border: "none",
-              color: "blue",
-              cursor: loginDisabled ? "not-allowed" : "pointer",
-              opacity: loginDisabled ? 0.7 : 1,
-              marginTop: '15px'
-            }}
+            onClick={() => navigate(`/organization/${id}/register`)}
+            className="login-secondary-action"
+            disabled={loginDisabled}
           >
-            {isLoading
-              ? "Enviando correo electrónico..."
-              : "¿Has olvidado tu contraseña?"}
+            Do not have an account? Register
           </button>
-        )}
+
+          {resetEmailSent ? (
+            <p className="login-alert login-alert-success">
+              ✅ Password reset email sent successfully!
+            </p>
+          ) : (
+            <button
+              onClick={handleForgotPassword}
+              disabled={isLoading || loginDisabled}
+              className="login-reset-link"
+            >
+              {isLoading
+                ? "Sending email..."
+                : "Forgot your password?"}
+            </button>
+          )}
+        </section>
       </div>
+
+      {brandLogos.length > 0 && (
+        <div className="login-brand-row" aria-label="Organization brand logos">
+          <div className="login-brand-strip login-brand-strip-bottom">
+            {brandLogos.map((brand) => (
+              <div key={brand.id} className="login-brand-logo-item" title={brand.name}>
+                <img
+                  src={brand.url}
+                  alt={`${brand.name} logo`}
+                  className="login-brand-logo-image"
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

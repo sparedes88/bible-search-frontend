@@ -158,10 +158,14 @@ const Register = () => {
         email,
         churchId: id,
         role: "member",
+        baseRole: "member",
+        accessStatus: "pending",
+        approvalStatus: "pending",
+        approvalRequestedAt: new Date().toISOString(),
       });
 
-      setSuccess("✅ Registro exitoso. Redirigiendo al inicio de sesión...");
-      setTimeout(() => navigate(`/church/${id}/login`), 2000);
+      setSuccess("✅ Registro enviado. Un administrador debe aprobar tu acceso antes de entrar.");
+      setTimeout(() => navigate(`/organization/${id}/login?requested=1`), 2500);
     } catch (error) {
       console.error("❌ Error registering:", error);
       setError("❌ Error registrando usuario. Intenta de nuevo.");

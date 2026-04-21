@@ -1,5 +1,85 @@
 import { db } from '../firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
+import {
+  MODULE_SETTINGS_SUBCOLLECTION,
+  MODULE_VISIBILITY_DOC_ID,
+  MODULE_VISIBILITY_FIELD,
+  isModuleVisibleForRole,
+} from './organizationModules';
+
+const isPermissionDeniedError = (error) =>
+  error?.code === 'permission-denied' ||
+  error?.code === 'firestore/permission-denied';
+
+const isGenericCustomRoleValue = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  return ['custom role', 'custom', 'role'].includes(normalizedValue);
+};
+
+const getPreferredUserRoleKey = (userData = {}) => {
+  const roleCandidates = [
+    userData?.customRoleId,
+    userData?.customRole,
+    userData?.assignedRoleId,
+    userData?.role,
+  ];
+
+  const concreteRole = roleCandidates.find((value) => {
+    const trimmedValue = String(value || '').trim();
+    return trimmedValue && !isGenericCustomRoleValue(trimmedValue);
+  });
+
+  if (concreteRole) {
+    return String(concreteRole).trim();
+  }
+
+  const fallbackRole = roleCandidates.find((value) => String(value || '').trim());
+  return fallbackRole ? String(fallbackRole).trim() : '';
+};
+
+const getEffectiveBaseRole = (userData = {}) => {
+  const baseRoleCandidate = String(
+    userData?.baseRole
+    || userData?.basedOn
+    || userData?.roleBase
+    || userData?.systemRole
+    || userData?.role
+    || 'member'
+  ).trim();
+
+  const normalizedBaseRole = normalizeSystemRole(baseRoleCandidate);
+  return ['global_admin', 'admin', 'member'].includes(normalizedBaseRole)
+    ? normalizedBaseRole
+    : 'member';
+};
+
+const canAccessViaModuleVisibilityFallback = async (user, churchId, module, action) => {
+  if (!churchId || !module) {
+    return false;
+  }
+
+  // Module visibility controls read-level access only.
+  if (action !== 'read') {
+    return false;
+  }
+
+  try {
+    const [visibilitySnap, churchSnap] = await Promise.all([
+      getDoc(doc(db, 'churches', churchId, MODULE_SETTINGS_SUBCOLLECTION, MODULE_VISIBILITY_DOC_ID)),
+      getDoc(doc(db, 'churches', churchId)),
+    ]);
+
+    const storedVisibilitySettings = visibilitySnap.exists()
+      ? visibilitySnap.data()?.settings
+      : churchSnap.data()?.[MODULE_VISIBILITY_FIELD] || {};
+
+    const roleKey = getPreferredUserRoleKey(user);
+    return isModuleVisibleForRole(module, roleKey, storedVisibilitySettings || {});
+  } catch (fallbackError) {
+    console.warn('Module visibility fallback check failed:', fallbackError);
+    return false;
+  }
+};
 
 const normalizeSystemRole = (role) => {
   switch (role) {
@@ -25,65 +105,23 @@ const normalizeSystemRole = (role) => {
 export const hasPermission = async (user, churchId, module, action) => {
   if (!user) return false;
 
+  const effectiveBaseRole = getEffectiveBaseRole(user);
+
   // Global admins have access to everything
-  if (['global_admin', 'system_global_admin'].includes(user.role)) return true;
+  if (effectiveBaseRole === 'global_admin') return true;
 
   // Check if user is a basic admin (for backward compatibility)
-  if (['admin', 'system_admin'].includes(user.role)) return true;
+  if (effectiveBaseRole === 'admin') return true;
 
-  // For custom roles, check the role permissions
+  // For member-level access, use built-in base role permissions.
   try {
-    const userRole = user.customRole || user.role;
-    const normalizedRole = normalizeSystemRole(userRole);
-    
-    // Check if it's a system role
-    if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
-      // Use system role logic
-      return await checkSystemRolePermission(normalizedRole, module, action);
-    }
-
-    // Check custom role from database
-    let roleData = null;
-    if (userRole) {
-      const roleRef = doc(db, 'roles', String(userRole));
-      const roleSnap = await getDoc(roleRef);
-      if (roleSnap.exists() && roleSnap.data()?.churchId === churchId) {
-        roleData = roleSnap.data();
-      }
-    }
-
-    if (!roleData) {
-      const rolesQuery = query(
-        collection(db, 'roles'),
-        where('churchId', '==', churchId),
-        where('name', '==', userRole)
-      );
-
-      const rolesSnapshot = await getDocs(rolesQuery);
-
-      if (rolesSnapshot.empty) {
-        console.warn(`Role ${userRole} not found for church ${churchId}`);
-        return false;
-      }
-
-      roleData = rolesSnapshot.docs[0].data();
-    }
-    
-    if (!roleData.permissions || !roleData.permissions[module]) {
-      return false;
-    }
-
-    const modulePermissions = roleData.permissions[module];
-    
-    // Check if the action is explicitly denied
-    if (modulePermissions[action] === 'deny') {
-      return false;
-    }
-
-    // Check if the action is allowed
-    return modulePermissions[action] === true;
+    return await checkSystemRolePermission(effectiveBaseRole, module, action);
 
   } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      return await canAccessViaModuleVisibilityFallback(user, churchId, module, action);
+    }
+
     console.error('Error checking permissions:', error);
     return false;
   }
@@ -121,7 +159,7 @@ const checkSystemRolePermission = async (role, module, action) => {
     const memberDeniedModules = [
       'admin', 'rolemanager', 'userassignment', 'miorganizacion',
       'courseadmin', 'mediaadmin', 'galleryadmin', 'galleryupload',
-      'balance', 'finances', 'invoices', 'messagebalance',
+      'balance', 'budget', 'finances', 'invoices', 'messagebalance',
       'businessintelligence', 'userdashboard', 'assistentepastoral',
       'leadershipdevelopment', 'leadershiprecommendations',
       'adminconnect', 'connectioncenter', 'visitormessages', 'visitordetails',
@@ -187,7 +225,7 @@ export const getUserAccessibleModules = async (user, churchId) => {
   const allModules = [
     'admin', 'rolemanager', 'userassignment', 'miorganizacion',
     'forms', 'courses', 'allevents', 'events', 'members', 'chat',
-    'directory', 'gallery', 'media', 'groups', 'balance', 'finances',
+    'directory', 'gallery', 'media', 'groups', 'balance', 'budget', 'finances',
     'timetracker'
     // Add all your modules here
   ];

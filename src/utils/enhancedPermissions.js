@@ -14,6 +14,22 @@ const normalizeSystemRole = (role) => {
   }
 };
 
+const getEffectiveBaseRole = (userData = {}) => {
+  const baseRoleCandidate = String(
+    userData?.baseRole
+    || userData?.basedOn
+    || userData?.roleBase
+    || userData?.systemRole
+    || userData?.role
+    || 'member'
+  ).trim();
+
+  const normalizedBaseRole = normalizeSystemRole(baseRoleCandidate);
+  return ['global_admin', 'admin', 'member'].includes(normalizedBaseRole)
+    ? normalizedBaseRole
+    : 'member';
+};
+
 /**
  * Enhanced permission system with granular access control
  * Supports both module-level, role-based, and user-specific permissions
@@ -33,11 +49,13 @@ const normalizeSystemRole = (role) => {
 export const hasPermission = async (user, churchId, module, action, resourceId = null, resourceType = null) => {
   if (!user) return false;
 
+  const effectiveBaseRole = getEffectiveBaseRole(user);
+
   // Global admins have access to everything
-  if (['global_admin', 'system_global_admin'].includes(user.role)) return true;
+  if (effectiveBaseRole === 'global_admin') return true;
 
   // Check if user is a basic admin (for backward compatibility)
-  if (['admin', 'system_admin'].includes(user.role)) return true;
+  if (effectiveBaseRole === 'admin') return true;
 
   try {
     // First check user-specific permissions if checking a specific resource
@@ -48,8 +66,7 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
       }
     }
 
-    const userRole = user.customRole || user.role;
-    const normalizedRole = normalizeSystemRole(userRole);
+    const normalizedRole = effectiveBaseRole;
     
     // Check if it's a system role
     if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
@@ -64,45 +81,7 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
       return hasModulePermission;
     }
 
-    // Check custom role from database
-    let roleData = null;
-    if (userRole) {
-      const roleRef = doc(db, 'roles', String(userRole));
-      const roleSnap = await getDoc(roleRef);
-      if (roleSnap.exists() && roleSnap.data()?.churchId === churchId) {
-        roleData = roleSnap.data();
-      }
-    }
-
-    if (!roleData) {
-      const rolesQuery = query(
-        collection(db, 'roles'),
-        where('churchId', '==', churchId),
-        where('name', '==', userRole)
-      );
-
-      const rolesSnapshot = await getDocs(rolesQuery);
-
-      if (rolesSnapshot.empty) {
-        console.warn(`Role ${userRole} not found for church ${churchId}`);
-        return false;
-      }
-
-      roleData = rolesSnapshot.docs[0].data();
-    }
-    
-    // Check module-level permissions first
-    const hasModulePermission = checkModulePermission(roleData, module, action);
-    
-    // If no module permission, deny immediately
-    if (!hasModulePermission) return false;
-    
-    // If checking specific resource and user has module permission
-    if (resourceId && resourceType) {
-      return await checkResourceSpecificPermission(user, churchId, module, action, resourceId, resourceType, roleData);
-    }
-    
-    return hasModulePermission;
+    return false;
 
   } catch (error) {
     console.error('Error checking permissions:', error);
@@ -167,26 +146,9 @@ const checkResourceSpecificPermission = async (user, churchId, module, action, r
   try {
     // If no role data provided, fetch it
     if (!roleData) {
-      const userRole = user.customRole || user.role;
-      const normalizedRole = normalizeSystemRole(userRole);
+      const normalizedRole = getEffectiveBaseRole(user);
       if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
-        return false;
-      }
-      const roleRef = doc(db, 'roles', String(userRole));
-      const roleSnap = await getDoc(roleRef);
-      if (roleSnap.exists() && roleSnap.data()?.churchId === churchId) {
-        roleData = roleSnap.data();
-      } else {
-        const rolesQuery = query(
-          collection(db, 'roles'),
-          where('churchId', '==', churchId),
-          where('name', '==', userRole)
-        );
-
-        const rolesSnapshot = await getDocs(rolesQuery);
-        if (rolesSnapshot.empty) return false;
-
-        roleData = rolesSnapshot.docs[0].data();
+        return true;
       }
     }
 
@@ -268,7 +230,7 @@ const checkSystemRolePermission = async (role, module, action) => {
     const memberDeniedModules = [
       'admin', 'rolemanager', 'userassignment', 'miorganizacion',
       'courseadmin', 'mediaadmin', 'galleryadmin', 'galleryupload',
-      'balance', 'finances', 'invoices', 'messagebalance',
+      'balance', 'budget', 'finances', 'invoices', 'messagebalance',
       'businessintelligence', 'userdashboard', 'assistentepastoral',
       'leadershipdevelopment', 'leadershiprecommendations',
       'adminconnect', 'connectioncenter', 'visitormessages', 'visitordetails',
@@ -432,7 +394,7 @@ export const getUserAccessibleModules = async (user, churchId) => {
   const allModules = [
     'admin', 'rolemanager', 'userassignment', 'miorganizacion',
     'forms', 'courses', 'allevents', 'events', 'members', 'chat',
-    'directory', 'gallery', 'media', 'groups', 'balance', 'finances',
+    'directory', 'gallery', 'media', 'groups', 'balance', 'budget', 'finances',
     'inventory', 'coursecategories', 'timetracker'
   ];
 

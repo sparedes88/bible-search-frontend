@@ -2,6 +2,12 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import NotAuthorized from './NotAuthorized';
 
+const ROLE_ALIASES = {
+  system_global_admin: 'global_admin',
+  system_admin: 'admin',
+  system_member: 'member',
+};
+
 const PrivateRoute = ({ children, roles = [] }) => {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -9,6 +15,7 @@ const PrivateRoute = ({ children, roles = [] }) => {
   const routeType = pathParts[1]; // 'organization' or 'church'
   const churchId = pathParts[2];
   const resolvedRole = String(user?.role || user?.customRole || '').trim().toLowerCase();
+  const normalizedRole = ROLE_ALIASES[resolvedRole] || resolvedRole;
   const allowedRoles = roles.map((role) => String(role).trim().toLowerCase());
 
   if (loading) {
@@ -53,7 +60,14 @@ const PrivateRoute = ({ children, roles = [] }) => {
     return <Navigate to={`${loginBasePath}?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
   }
 
-  if (roles.length > 0 && !allowedRoles.includes(resolvedRole)) {
+  if (roles.length > 0 && !allowedRoles.includes(normalizedRole)) {
+    const isCustomRole = Boolean(normalizedRole) && !['global_admin', 'admin', 'member'].includes(normalizedRole);
+    const memberRouteAllowed = allowedRoles.includes('member');
+
+    if (isCustomRole && memberRouteAllowed) {
+      return children;
+    }
+
     return <NotAuthorized message="You don't have permission to access this page." showLogin={false} />;
   }
 

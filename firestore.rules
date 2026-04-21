@@ -168,6 +168,12 @@ service cloud.firestore {
       match /config/process {
         allow read, write: if isAuthenticated() && isChurchAdmin(churchId);
       }
+
+      // Mi Organizacion module layout/visibility settings
+      match /settings/{settingId} {
+        allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+        allow write: if isAuthenticated() && isChurchAdmin(churchId);
+      }
       
       // Social Media permissions - allow admin role to CRUD
       match /socialMedia/{postId} {
@@ -195,6 +201,64 @@ service cloud.firestore {
         allow read: if isAuthenticated() && isUserInChurch(churchId);
         allow write, create, update, delete: if isAuthenticated() && 
           (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
+      }
+
+      // TimeRotate logs - users can create/edit/delete their own entries, church admins can manage all
+      match /timeRotateLogs/{logId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create: if isAuthenticated() &&
+          (request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
+        allow update, delete: if isAuthenticated() &&
+          (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
+      }
+
+      // TimeRotate task details (tags/project overrides/completion status)
+      match /timeRotateTaskDetails/{taskId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create: if isAuthenticated() &&
+          (
+            request.resource.data.updatedByUid == request.auth.uid ||
+            isChurchAdmin(churchId)
+          );
+        allow update, delete: if isAuthenticated() &&
+          (
+            resource.data.updatedByUid == request.auth.uid ||
+            request.resource.data.updatedByUid == request.auth.uid ||
+            isChurchAdmin(churchId)
+          );
+      }
+
+      // TimeRotate active timers - church users can read active timers, owners/admins can write
+      match /timeRotateActiveTimers/{timerId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() &&
+          (
+            request.resource.data.userId == request.auth.uid ||
+            request.resource.data.userEmail == request.auth.token.email ||
+            request.resource.data.ownerKey == request.auth.uid ||
+            request.resource.data.ownerKey == request.auth.token.email ||
+            isChurchAdmin(churchId)
+          );
+        allow update: if isAuthenticated() &&
+          (
+            resource.data.userId == request.auth.uid ||
+            request.resource.data.userId == request.auth.uid ||
+            resource.data.userEmail == request.auth.token.email ||
+            request.resource.data.userEmail == request.auth.token.email ||
+            resource.data.ownerKey == request.auth.uid ||
+            request.resource.data.ownerKey == request.auth.uid ||
+            resource.data.ownerKey == request.auth.token.email ||
+            request.resource.data.ownerKey == request.auth.token.email ||
+            isChurchAdmin(churchId)
+          );
+        allow delete: if isAuthenticated() &&
+          (
+            resource.data.userId == request.auth.uid ||
+            resource.data.userEmail == request.auth.token.email ||
+            resource.data.ownerKey == request.auth.uid ||
+            resource.data.ownerKey == request.auth.token.email ||
+            isChurchAdmin(churchId)
+          );
       }
 
       // Employee Expenses - Users can read their own, admins see all
@@ -294,7 +358,6 @@ service cloud.firestore {
         allow read, write, create, update, delete: if isAuthenticated();
       }
 
-<<<<<<< HEAD
       // BIM Projects - Authenticated users can read and write
       match /bimProjects/{projectId} {
         allow read: if true;
@@ -309,7 +372,8 @@ service cloud.firestore {
           allow read: if true;
           allow write, create, update, delete: if isAuthenticated();
         }
-=======
+      }
+
       // Catalogs for dropdowns (per church)
       match /catalogs/{catalogId} {
         allow read: if isAuthenticated() && isUserInChurch(churchId);
@@ -326,7 +390,6 @@ service cloud.firestore {
       match /donorSettings/{settingId} {
         allow read: if isAuthenticated() && isUserInChurch(churchId);
         allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
->>>>>>> a9f287621fea87e41e80addac008388e602a9522
       }
 
       // Evangelism Outreach contacts: public page where anyone can view and add contacts.

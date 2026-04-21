@@ -149,6 +149,7 @@ const RoleManager = () => {
       color: "#ffc107",
       modules: [
         { id: "finances", name: "Finances", description: "Financial management" },
+        { id: "budget", name: "Budget", description: "Budget planning and tracking" },
         { id: "balance", name: "Balance Management", description: "Financial tracking and reporting" },
         { id: "invoices", name: "Invoices", description: "Billing and invoice management" },
         { id: "messagebalance", name: "Message Balance", description: "SMS messaging credits" }
@@ -331,7 +332,7 @@ const RoleManager = () => {
     const memberDeniedModules = [
       'admin', 'rolemanager', 'userassignment', 'miorganizacion',
       'courseadmin', 'mediaadmin', 'galleryadmin', 'galleryupload',
-      'balance', 'finances', 'invoices', 'messagebalance',
+      'balance', 'budget', 'finances', 'invoices', 'messagebalance',
       'businessintelligence', 'userdashboard', 'assistentepastoral',
       'leadershipdevelopment', 'leadershiprecommendations',
       'adminconnect', 'connectioncenter', 'visitormessages', 'visitordetails',

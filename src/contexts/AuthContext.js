@@ -10,6 +10,53 @@ const isPermissionDeniedError = (error) =>
   error?.code === 'permission-denied' ||
   error?.code === 'firestore/permission-denied';
 
+const isGenericCustomRoleValue = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  return ['custom role', 'custom', 'role'].includes(normalizedValue);
+};
+
+const resolveUserRoleKey = (userData = {}) => {
+  const roleCandidates = [
+    userData?.customRoleId,
+    userData?.customRole,
+    userData?.assignedRoleId,
+    userData?.role,
+  ];
+
+  const concreteRole = roleCandidates.find((value) => {
+    const trimmedValue = String(value || '').trim();
+    return trimmedValue && !isGenericCustomRoleValue(trimmedValue);
+  });
+
+  if (concreteRole) {
+    return String(concreteRole).trim();
+  }
+
+  const fallbackRole = roleCandidates.find((value) => String(value || '').trim());
+  return fallbackRole ? String(fallbackRole).trim() : null;
+};
+
+const resolveBaseRole = (userData = {}, fallbackRole = null) => {
+  const normalizedBaseRole = String(
+    userData?.baseRole
+    || userData?.basedOn
+    || userData?.roleBase
+    || userData?.systemRole
+    || ''
+  ).trim().toLowerCase();
+
+  if (['global_admin', 'admin', 'member'].includes(normalizedBaseRole)) {
+    return normalizedBaseRole;
+  }
+
+  const normalizedFallbackRole = String(fallbackRole || '').trim().toLowerCase();
+  if (['global_admin', 'admin', 'member'].includes(normalizedFallbackRole)) {
+    return normalizedFallbackRole;
+  }
+
+  return 'member';
+};
+
 const buildFallbackUser = async (firebaseUser) => {
   const tokenResult = await getIdTokenResult(firebaseUser).catch(() => null);
   const storedChurchId = localStorage.getItem('userChurchId');
@@ -19,6 +66,7 @@ const buildFallbackUser = async (firebaseUser) => {
     uid: firebaseUser.uid,
     email: firebaseUser.email,
     role: fallbackRole,
+    baseRole: resolveBaseRole({}, fallbackRole),
     churchId: storedChurchId || null,
   };
 };
@@ -53,12 +101,13 @@ export function AuthProvider({ children }) {
           
           if (userDoc.exists()) {
             const userData = userDoc.data();
-            const resolvedRole = userData?.role || userData?.customRole || null;
+            const resolvedRole = resolveUserRoleKey(userData);
 
             setUser({
               ...userData,
               uid: firebaseUser.uid,
               role: resolvedRole,
+              baseRole: resolveBaseRole(userData, resolvedRole),
             });
 
             localStorage.setItem("userId", firebaseUser.uid);

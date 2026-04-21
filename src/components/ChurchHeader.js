@@ -262,6 +262,10 @@ const ChurchHeader = ({
                 preview.banner || church?.banner || "/img/banner-fallback.svg"
               }
               alt="Church Banner"
+              onError={(event) => {
+                event.currentTarget.onerror = null;
+                event.currentTarget.src = "/img/banner-fallback.svg";
+              }}
               draggable={false}
               onDragStart={(event) => event.preventDefault()}
               onMouseDown={(event) => {
@@ -374,6 +378,10 @@ const ChurchHeader = ({
               className="church-header-logo-image"
               src={preview.logo || church?.logo || "/img/logo-fallback.svg"}
               alt="Church Logo"
+              onError={(event) => {
+                event.currentTarget.onerror = null;
+                event.currentTarget.src = "/img/logo-fallback.svg";
+              }}
               style={commonStyles.logo}
             />
             {allowEditBannerLogo && (

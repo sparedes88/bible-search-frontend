@@ -1,10 +1,13 @@
-import LiveIssueTracker from "./components/live-issue-tracker";
-          <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
 import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
-import ManageAssigneesPage from "./pages/ManageAssigneesPage";
-import React, { Suspense, useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "./firebase";
+          <Route
+            path="/organization/:id/project-name-manager"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ProjectNameManagerPage />
+              </PrivateRoute>
+            }
+          />
+import React, { Suspense } from "react";
 import {
   BrowserRouter as Router,
   Route,
@@ -88,6 +91,7 @@ const AdminConnect = React.lazy(() => import("./components/AdminConnect"));
 const AddVisitor = React.lazy(() => import("./components/AddVisitor"));
 const SubcategorySettings = React.lazy(() => import("./components/SubcategorySettings"));
 const MiOrganizacion = React.lazy(() => import("./components/MiOrganizacion"));
+const ModuleVisibilitySettings = React.lazy(() => import("./components/ModuleVisibilitySettings"));
 const EvangelismOutreach = React.lazy(() => import("./components/EvangelismOutreach"));
 const AllEvents = React.lazy(() => import("./components/AllEvents"));
 const ChurchApp = React.lazy(() => import("./components/ChurchApp"));
@@ -109,6 +113,7 @@ const DonorsPage = React.lazy(() => import("./components/DonorsPage"));
 const RoomsPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.RoomsPage })));
 const InventoryPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.InventoryPage })));
 const FinancesPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.FinancesPage })));
+const BudgetPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.BudgetPage })));
 const PersonGivingLookupPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.PersonGivingLookupPage })));
 const TeamsPage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.TeamsPage })));
 const MaintenancePage = React.lazy(() => import("./pages/ChurchSubPages").then((module) => ({ default: module.MaintenancePage })));
@@ -149,6 +154,10 @@ const FormViewer = React.lazy(() => import("./components/FormViewer"));
 const FormEmbed = React.lazy(() => import("./components/FormEmbed"));
 const FormEntriesPage = React.lazy(() => import("./components/FormEntriesPage"));
 const TimeTracker = React.lazy(() => import("./components/TimeTracker"));
+const TimeRotate = React.lazy(() => import("./components/TimeRotate"));
+const TimeRotateProgress = React.lazy(() => import("./components/TimeRotateProgress"));
+const TimeRotateCardHours = React.lazy(() => import("./components/TimeRotateCardHours"));
+const TimeRotateInProgressNotes = React.lazy(() => import("./components/TimeRotateInProgressNotes"));
 const TimerPage = React.lazy(() => import("./components/TimerPage"));
 const TaskProgressDetail = React.lazy(() => import("./components/TaskProgressDetail"));
 const MySunday = React.lazy(() => import("./components/MySunday"));
@@ -166,22 +175,7 @@ const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"))
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
 
-const ManageTechnicalDirectionValues = React.lazy(() => import("./pages/ManageTechnicalDirectionValues"));
-
 const App = () => {
-  // Global assignee options state
-  const [assigneeOptions, setAssigneeOptions] = useState([]);
-  useEffect(() => {
-    // Only fetch when on a project-issue-dashboard route
-    const pathMatch = window.location.pathname.match(/organization\/(\d+)\//);
-    const id = pathMatch ? pathMatch[1] : null;
-    if (!id) return;
-    const docRef = doc(db, "churches", id, "bimProjects", "stanford-ff-rad", "data-option-values", "live-issue-tracker");
-    getDoc(docRef).then((snap) => {
-      const data = snap.data() || {};
-      setAssigneeOptions(Array.isArray(data.assignee) ? data.assignee : []);
-    });
-  }, []);
   return (
     <AuthProvider>
       <ErrorBoundary>
@@ -383,6 +377,14 @@ const App = () => {
             element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>}
           />
           <Route
+            path="/organization/:id/module-visibility-settings"
+            element={
+              <PrivateRoute roles={["admin", "global_admin"]}>
+                <ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/evangelism-outreach"
             element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>}
           />
@@ -477,6 +479,14 @@ const App = () => {
           <Route path="/organization/:id/inventory" element={<InventoryPage />} />
           <Route path="/organization/:id/inventory/:itemId" element={<InventoryItemDetail />} />
           <Route path="/organization/:id/finances" element={<FinancesPage />} />
+          <Route
+            path="/organization/:id/budget"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <BudgetPage />
+              </PrivateRoute>
+            }
+          />
           <Route path="/organization/:id/finances/new" element={<FinancesPage />} />
           <Route path="/organization/:id/finances/edit/:entryId" element={<FinancesPage />} />
           <Route path="/organization/:id/finances/view/:entryId" element={<FinancesPage />} />
@@ -768,7 +778,7 @@ const App = () => {
             path="/organization/:id/project-issue-dashboard"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <ProjectIssueDashboard assigneeOptions={assigneeOptions} setAssigneeOptions={setAssigneeOptions} />
+                <ProjectIssueDashboard />
               </PrivateRoute>
             }
           />
@@ -830,6 +840,7 @@ const App = () => {
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
           <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
           <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
@@ -868,24 +879,85 @@ const App = () => {
             }
           />
           <Route
-            path="/organization/:id/project-issue-dashboard/manage-technical-direction-values"
+            path="/organization/:id/time-rotate"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <React.Suspense fallback={<div>Loading…</div>}>
-                  <ManageTechnicalDirectionValues />
-                </React.Suspense>
+                <ErrorBoundary>
+                  <TimeRotate />
+                </ErrorBoundary>
               </PrivateRoute>
             }
           />
           <Route
-            path="/organization/:id/project-issue-dashboard/manage-assignees"
+            path="/organization/:id/time-rotate-progress"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <ManageAssigneesPage />
+                <ErrorBoundary>
+                  <TimeRotateProgress />
+                </ErrorBoundary>
               </PrivateRoute>
             }
           />
-            <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
+          <Route
+            path="/organization/:id/time-rotate-card-hours"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateCardHours />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/time-rotate-notes"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateInProgressNotes />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotate />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate-progress"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateProgress />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate-card-hours"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateCardHours />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate-notes"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateInProgressNotes />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           </Routes>
           </Suspense>
         </Router>

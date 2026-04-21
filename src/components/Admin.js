@@ -1,20 +1,23 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { db } from "../firebase";
 import {
   collection,
   getDocs,
   doc,
   updateDoc,
+  deleteDoc,
   getDoc,
   setDoc,
   serverTimestamp,
+  query,
+  where,
 } from "firebase/firestore";
 import { useNavigate, useParams } from "react-router-dom";
 import Select from "react-select";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./Admin.css";
 import { useAuth } from "../contexts/AuthContext";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { getAuth } from "firebase/auth";
@@ -22,6 +25,39 @@ import { initializeApp } from "firebase/app";
 import "./Admin.css";
 import commonStyles from "../pages/commonStyles";
 import { fetchGroupList } from "../api/church";
+
+const isLocalhostEnvironment =
+  typeof window !== "undefined"
+  && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+const CLOUD_FUNCTIONS_BASE_URL = isLocalhostEnvironment
+  ? "/firebase-api"
+  : (
+      process.env.REACT_APP_CLOUD_FUNCTIONS_BASE_URL
+      || "https://us-central1-igletechv1.cloudfunctions.net"
+    );
+
+function normalizeRoleValue(roleValue, { preserveCustom = true } = {}) {
+  const raw = String(roleValue || "").trim();
+  if (!raw) return "member";
+
+  const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "globaladmin" || normalized === "global_admin") {
+    return "global_admin";
+  }
+  if (normalized === "administrator" || normalized === "admin") {
+    return "admin";
+  }
+  if (normalized === "member" || normalized === "user") {
+    return "member";
+  }
+
+  if (["member", "admin", "global_admin"].includes(normalized)) {
+    return normalized;
+  }
+
+  return preserveCustom ? raw : "member";
+}
 
 // Remove the firebaseConfig import and create a secondary auth instance differently
 const secondaryAuth = getAuth(
@@ -48,15 +84,14 @@ const Admin = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
-  const [isChanged, setIsChanged] = useState(false);
+  const [savingUsers, setSavingUsers] = useState({});
+  const autoSaveTimeoutsRef = useRef({});
+  const pendingChangesRef = useRef({});
   const [visibleColumns, setVisibleColumns] = useState({
+    email: true,
     name: true,
     lastName: true,
-    phone: true, // Add this line
-    memberStreet: true,
-    memberCity: true,
-    memberState: true,
-    memberZip: true,
+    role: true,
   });
   const [authChecking, setAuthChecking] = useState(true);
   const [hasProcessAccess, setHasProcessAccess] = useState(false);
@@ -67,6 +102,7 @@ const Admin = () => {
     lastName: "",
     phone: "",
     role: "member",
+    baseRole: "member",
   });
   const [fieldErrors, setFieldErrors] = useState({
     email: false,
@@ -76,17 +112,54 @@ const Admin = () => {
   });
   const [adminUser, setAdminUser] = useState(null); // Add this state to store admin info
   const navigate = useNavigate();
-  const roles = [
-    { value: "member", label: "Member" },
-    { value: "admin", label: "Admin" },
-    { value: "global_admin", label: "Global Admin" },
+  const baseRoles = [
+    { value: "member", label: "Member", baseRole: "member" },
+    { value: "admin", label: "Admin", baseRole: "admin" },
+    { value: "global_admin", label: "Global Admin", baseRole: "global_admin" },
   ];
-console.log(groups)
-console.log("users list >>",users)
+  const [roleOptions, setRoleOptions] = useState(baseRoles);
+  const isGlobalAdminUser = normalizeRoleValue(adminUser?.role, { preserveCustom: false }) === "global_admin";
+
+  const callManageUserAccountFunction = async (action, targetUserId) => {
+    const authInstance = getAuth();
+    const idToken = await authInstance.currentUser?.getIdToken();
+
+    if (!idToken) {
+      throw new Error("Missing authentication token");
+    }
+
+    const response = await fetch(`${CLOUD_FUNCTIONS_BASE_URL}/manageUserAccount`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        action,
+        targetUserId,
+        churchId: id,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || `Cloud Function failed (${response.status})`);
+    }
+
+    return data;
+  };
+
+  const normalizeAccessStatus = (value) => {
+    const normalized = String(value || "approved").trim().toLowerCase();
+    if (["pending", "requested"].includes(normalized)) return "pending";
+    if (["denied", "rejected"].includes(normalized)) return "denied";
+    return "approved";
+  };
+
   const columnOptions = [
-    { value: "email", label: "Email" },
     { value: "name", label: "Name" },
     { value: "lastName", label: "Last Name" },
+    { value: "email", label: "Login Email" },
     { value: "phone", label: "Phone Number" }, // Add this line
     { value: "dob", label: "Date of Birth" },
     { value: "memberCity", label: "Member City" },
@@ -102,6 +175,12 @@ console.log("users list >>",users)
     { value: "groups", label: "Groups" },
     { value: "userAccess", label: "User Access" },
   ];
+  const defaultPredefinedOption = predefinedOptions.find(
+    (option) => option.value === "userAccess"
+  );
+  const [selectedPredefinedOption, setSelectedPredefinedOption] = useState(
+    defaultPredefinedOption
+  );
 
   const fetchGroups = async () => {
     try {
@@ -117,6 +196,55 @@ console.log("users list >>",users)
   }, [id]);
 
   useEffect(() => {
+    const fetchRoleOptions = async () => {
+      if (!id) return;
+
+      try {
+        const [rolesByChurchIdSnapshot, rolesByChurchIDSnapshot, rolesByOrganizationIdSnapshot] = await Promise.all([
+          getDocs(query(collection(db, "roles"), where("churchId", "==", id))),
+          getDocs(query(collection(db, "roles"), where("churchID", "==", id))),
+          getDocs(query(collection(db, "roles"), where("organizationId", "==", id))),
+        ]);
+
+        const customRoleMap = new Map();
+        [
+          ...rolesByChurchIdSnapshot.docs,
+          ...rolesByChurchIDSnapshot.docs,
+          ...rolesByOrganizationIdSnapshot.docs,
+        ].forEach((roleDoc) => {
+          const roleData = roleDoc.data() || {};
+          const roleName = String(
+            roleData?.name
+            || roleData?.roleName
+            || roleData?.title
+            || roleData?.displayName
+            || ""
+          ).trim();
+
+          if (!roleName) return;
+
+          customRoleMap.set(roleDoc.id, {
+            value: roleDoc.id,
+            label: roleName,
+            baseRole: normalizeRoleValue(roleData?.baseRole || roleData?.basedOn || "member", { preserveCustom: false }),
+          });
+        });
+
+        const customRoleOptions = Array.from(customRoleMap.values()).sort((a, b) =>
+          a.label.localeCompare(b.label)
+        );
+
+        setRoleOptions([...baseRoles, ...customRoleOptions]);
+      } catch (error) {
+        console.error("Error fetching role options:", error);
+        setRoleOptions(baseRoles);
+      }
+    };
+
+    fetchRoleOptions();
+  }, [id]);
+
+  useEffect(() => {
     const checkAuth = async () => {
       if (!user) {
         navigate("/not-authorized");
@@ -127,7 +255,8 @@ console.log("users list >>",users)
       setAdminUser(user);
 
       // Check if user role is global_admin or admin
-      if (user?.role !== "global_admin" && user?.role !== "admin") {
+      const currentUserRole = normalizeRoleValue(user?.role, { preserveCustom: false });
+      if (currentUserRole !== "global_admin" && currentUserRole !== "admin") {
         navigate("/not-authorized");
         return;
       }
@@ -135,10 +264,41 @@ console.log("users list >>",users)
       // Fetch users only for the current church
       const fetchUsers = async () => {
         try {
-          const querySnapshot = await getDocs(collection(db, "users"));
-          const usersData = querySnapshot.docs
-            .map((doc) => ({ uid: doc.id, ...doc.data() }))
-            .filter((user) => user.churchId === id); // Filter by church ID
+          const [byChurchIdSnapshot, byChurchIDSnapshot, byOrganizationIdSnapshot] = await Promise.all([
+            getDocs(query(collection(db, "users"), where("churchId", "==", id))),
+            getDocs(query(collection(db, "users"), where("churchID", "==", id))),
+            getDocs(query(collection(db, "users"), where("organizationId", "==", id))),
+          ]);
+
+          const uniqueUsers = new Map();
+          [
+            ...byChurchIdSnapshot.docs,
+            ...byChurchIDSnapshot.docs,
+            ...byOrganizationIdSnapshot.docs,
+          ].forEach((userDoc) => {
+            if (uniqueUsers.has(userDoc.id)) return;
+            uniqueUsers.set(userDoc.id, {
+              uid: userDoc.id,
+              ...userDoc.data(),
+            });
+          });
+
+          const usersData = Array.from(uniqueUsers.values())
+            .filter((userRecord) => {
+              const userOrgId = String(
+                userRecord?.churchId
+                || userRecord?.churchID
+                || userRecord?.organizationId
+                || ""
+              );
+              return userOrgId === String(id);
+            })
+            .map((userRecord) => ({
+              ...userRecord,
+              role: normalizeRoleValue(userRecord.role),
+              baseRole: normalizeRoleValue(userRecord.baseRole || userRecord.role, { preserveCustom: false }),
+              accessStatus: normalizeAccessStatus(userRecord.accessStatus || userRecord.approvalStatus),
+            }));
 
           // Get all groups first
           const groupsData = await fetchGroupList(id);
@@ -192,24 +352,66 @@ console.log("users list >>",users)
     checkProcessAccess();
   }, [user, id]);
 
+  useEffect(() => {
+    const timeoutMap = autoSaveTimeoutsRef.current;
+    return () => {
+      Object.values(timeoutMap).forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+    };
+  }, []);
+
+  const flushAutoSave = async (userId) => {
+    const pending = pendingChangesRef.current[userId];
+    if (!pending || Object.keys(pending).length === 0) return;
+
+    delete pendingChangesRef.current[userId];
+    setSavingUsers((prev) => ({ ...prev, [userId]: true }));
+
+    try {
+      await updateDoc(doc(db, "users", userId), pending);
+    } catch (error) {
+      console.error("Error auto-saving user:", error);
+      toast.error("Error auto-saving user changes");
+    } finally {
+      setSavingUsers((prev) => ({ ...prev, [userId]: false }));
+    }
+  };
+
+  const queueAutoSave = (userId, changedFields) => {
+    pendingChangesRef.current[userId] = {
+      ...(pendingChangesRef.current[userId] || {}),
+      ...changedFields,
+    };
+
+    if (autoSaveTimeoutsRef.current[userId]) {
+      clearTimeout(autoSaveTimeoutsRef.current[userId]);
+    }
+
+    autoSaveTimeoutsRef.current[userId] = setTimeout(() => {
+      flushAutoSave(userId);
+      delete autoSaveTimeoutsRef.current[userId];
+    }, 600);
+  };
+
   const handleInputChange = (e, userId, field) => {
     const { value } = e.target;
     setUsers((prevUsers) =>
       prevUsers.map((user) =>
-        user.id === userId ? { ...user, [field]: value, updated: true } : user
+        user.uid === userId ? { ...user, [field]: value, updated: true } : user
       )
     );
-    setIsChanged(true);
+    queueAutoSave(userId, { [field]: value });
   };
 
   const handleDateChange = (e, userId) => {
     const { value } = e.target;
     setUsers((prevUsers) =>
       prevUsers.map((user) =>
-        user.id === userId ? { ...user, dob: value, updated: true } : user
+        user.uid === userId ? { ...user, dob: value, updated: true } : user
       )
     );
-    setIsChanged(true);
+    queueAutoSave(userId, { dob: value });
   };
 
   const handleGroupChange = async (selectedOptions, userId) => {
@@ -332,8 +534,6 @@ console.log("users list >>",users)
       if (addedGroups.length > 0) {
         toast.success("Added selected groups");
       }
-      
-      setIsChanged(true);
     } catch (error) {
       console.error("Error updating group members:", error);
       toast.error("Error updating group membership");
@@ -342,42 +542,182 @@ console.log("users list >>",users)
 
   const handleRoleChange = (selectedOption, userId) => {
     const selectedRole = selectedOption ? selectedOption.value : "";
+    const selectedBaseRole = selectedOption
+      ? normalizeRoleValue(selectedOption.baseRole || selectedRole, { preserveCustom: false })
+      : "member";
     setUsers((prevUsers) =>
       prevUsers.map((user) =>
-        user.id === userId
-          ? { ...user, role: selectedRole, updated: true }
+        user.uid === userId
+          ? { ...user, role: selectedRole, baseRole: selectedBaseRole, updated: true }
           : user
       )
     );
-    setIsChanged(true);
+    queueAutoSave(userId, { role: selectedRole, baseRole: selectedBaseRole });
   };
 
-  const handleSave = async (userId) => {
-    const user = users.find((user) => user.id === userId);
-    const updatedFields = Object.keys(user).reduce((acc, key) => {
-      if (
-        visibleColumns[key] &&
-        key !== "id" &&
-        key !== "updated" &&
-        user[key] !== undefined
-      ) {
-        acc[key] = user[key];
-      }
-      return acc;
-    }, {});
+  const handleResetPassword = async (email) => {
+    const loginEmail = (email || "").trim();
+    if (!loginEmail) {
+      toast.error("This user does not have a login email");
+      return;
+    }
 
     try {
-      await updateDoc(doc(db, "users", userId), updatedFields);
-      alert("User updated successfully");
-      setIsChanged(false);
+      await sendPasswordResetEmail(getAuth(), loginEmail);
+      toast.success(`Password reset email sent to ${loginEmail}`);
     } catch (error) {
-      console.error("Error updating user:", error);
-      alert("Error updating user");
+      console.error("Error sending password reset email:", error);
+      toast.error(`Could not send reset email: ${error.message}`);
     }
   };
 
   const handleBackClick = (id) => {
     navigate(`/organization/${id}/mi-organizacion`);
+  };
+
+  const handleApproveUserAccess = async (targetUser) => {
+    if (!targetUser?.uid) return;
+
+    try {
+      await updateDoc(doc(db, "users", targetUser.uid), {
+        accessStatus: "approved",
+        approvalStatus: "approved",
+        approvedAt: serverTimestamp(),
+        approvedBy: user?.uid || null,
+        approvedByEmail: user?.email || null,
+      });
+
+      setUsers((prevUsers) =>
+        prevUsers.map((existingUser) =>
+          existingUser.uid === targetUser.uid
+            ? { ...existingUser, accessStatus: "approved", approvalStatus: "approved" }
+            : existingUser
+        )
+      );
+
+      toast.success(`Approved access for ${targetUser.email || targetUser.name || "user"}`);
+    } catch (approveError) {
+      console.error("Error approving user access:", approveError);
+      toast.error("Could not approve this user right now");
+    }
+  };
+
+  const clearPendingAutoSaveForUser = (userId) => {
+    if (autoSaveTimeoutsRef.current[userId]) {
+      clearTimeout(autoSaveTimeoutsRef.current[userId]);
+      delete autoSaveTimeoutsRef.current[userId];
+    }
+    delete pendingChangesRef.current[userId];
+    setSavingUsers((prev) => ({ ...prev, [userId]: false }));
+  };
+
+  const removeUserFromAllGroups = async (targetUserId) => {
+    const groupsWithUser = groups.filter(
+      (group) => (group.members || []).some((member) => member.userId === targetUserId)
+    );
+
+    await Promise.all(
+      groupsWithUser.map(async (group) => {
+        const groupRef = doc(db, "groups", group.id);
+        await updateDoc(groupRef, {
+          members: (group.members || []).filter((member) => member.userId !== targetUserId),
+        });
+      })
+    );
+
+    setGroups((prevGroups) =>
+      prevGroups.map((group) => ({
+        ...group,
+        members: (group.members || []).filter((member) => member.userId !== targetUserId),
+      }))
+    );
+  };
+
+  const handleToggleUserAccess = async (targetUser) => {
+    if (!targetUser?.uid) return;
+
+    if (targetUser.uid === adminUser?.uid) {
+      toast.error("You cannot disable your own account");
+      return;
+    }
+
+    const currentStatus = normalizeAccessStatus(
+      targetUser.accessStatus || targetUser.approvalStatus
+    );
+    const isDisabled = currentStatus === "denied";
+    const nextStatus = isDisabled ? "approved" : "denied";
+
+    const confirmed = window.confirm(
+      isDisabled
+        ? "Enable this user account and allow login access?"
+        : "Disable this user account? They will not be able to log in."
+    );
+    if (!confirmed) return;
+
+    try {
+      await callManageUserAccountFunction(isDisabled ? "enable" : "disable", targetUser.uid);
+
+      await updateDoc(doc(db, "users", targetUser.uid), {
+        accessStatus: nextStatus,
+        approvalStatus: nextStatus,
+        disabledAt: isDisabled ? null : serverTimestamp(),
+        disabledBy: isDisabled ? null : user?.uid || null,
+      });
+
+      setUsers((prevUsers) =>
+        prevUsers.map((existingUser) =>
+          existingUser.uid === targetUser.uid
+            ? {
+                ...existingUser,
+                accessStatus: nextStatus,
+                approvalStatus: nextStatus,
+              }
+            : existingUser
+        )
+      );
+
+      toast.success(
+        isDisabled
+          ? `Enabled ${targetUser.email || targetUser.name || "user"}`
+          : `Disabled ${targetUser.email || targetUser.name || "user"}`
+      );
+    } catch (toggleError) {
+      console.error("Error toggling user access:", toggleError);
+      toast.error("Could not update user access right now");
+    }
+  };
+
+  const handleDeleteUser = async (targetUser) => {
+    if (!targetUser?.uid) return;
+
+    if (!isGlobalAdminUser) {
+      toast.error("Only global admins can delete users");
+      return;
+    }
+
+    if (targetUser.uid === adminUser?.uid) {
+      toast.error("You cannot delete your own account");
+      return;
+    }
+
+    const targetLabel = targetUser.email || `${targetUser.name || ""} ${targetUser.lastName || ""}`.trim() || "this user";
+    const confirmed = window.confirm(
+      `Delete ${targetLabel}? This will remove the user record from this organization.`
+    );
+    if (!confirmed) return;
+
+    try {
+      clearPendingAutoSaveForUser(targetUser.uid);
+      await removeUserFromAllGroups(targetUser.uid);
+      await callManageUserAccountFunction("delete", targetUser.uid);
+      await deleteDoc(doc(db, "users", targetUser.uid));
+
+      setUsers((prevUsers) => prevUsers.filter((existingUser) => existingUser.uid !== targetUser.uid));
+      toast.success(`Deleted ${targetLabel}`);
+    } catch (deleteError) {
+      console.error("Error deleting user:", deleteError);
+      toast.error("Could not delete user right now");
+    }
   };
 
   const handleSearchChange = (e) => {
@@ -396,6 +736,9 @@ console.log("users list >>",users)
   };
 
   const handlePredefinedOptionChange = (selectedOption) => {
+    if (!selectedOption) return;
+    setSelectedPredefinedOption(selectedOption);
+
     let newVisibleColumns = {};
     if (selectedOption.value === "contacts") {
       newVisibleColumns = {
@@ -415,6 +758,7 @@ console.log("users list >>",users)
       };
     } else if (selectedOption.value === "userAccess") {
       newVisibleColumns = {
+        email: true,
         name: true,
         lastName: true,
         role: true,
@@ -429,18 +773,34 @@ console.log("users list >>",users)
     );
   };
 
-  const filteredUsers = users.filter(
-    (user) =>
-      user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.phone?.toLowerCase().includes(searchTerm.toLowerCase()) || // Add this line
-      user.dob?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.memberCity?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.memberState?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.memberStreet?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.memberZip?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const normalizeSearchValue = (value) => String(value || "").trim().toLowerCase();
+
+  const filteredUsers = users.filter((user) => {
+    // Prevent rendering empty/malformed rows with no identifying user data.
+    const hasIdentityData =
+      Boolean(normalizeSearchValue(user.email)) ||
+      Boolean(normalizeSearchValue(user.name)) ||
+      Boolean(normalizeSearchValue(user.lastName)) ||
+      Boolean(normalizeSearchValue(user.phone));
+
+    if (!hasIdentityData) return false;
+
+    const searchValue = normalizeSearchValue(searchTerm);
+    if (!searchValue) return true;
+
+    return (
+      normalizeSearchValue(user.email).includes(searchValue) ||
+      normalizeSearchValue(user.name).includes(searchValue) ||
+      normalizeSearchValue(user.lastName).includes(searchValue) ||
+      normalizeSearchValue(user.accessStatus).includes(searchValue) ||
+      normalizeSearchValue(user.phone).includes(searchValue) ||
+      normalizeSearchValue(user.dob).includes(searchValue) ||
+      normalizeSearchValue(user.memberCity).includes(searchValue) ||
+      normalizeSearchValue(user.memberState).includes(searchValue) ||
+      normalizeSearchValue(user.memberStreet).includes(searchValue) ||
+      normalizeSearchValue(user.memberZip).includes(searchValue)
+    );
+  });
 
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -489,6 +849,7 @@ console.log("users list >>",users)
         lastName: newUser.lastName,
         phone: newUser.phone,
         role: newUser.role || "member",
+        baseRole: normalizeRoleValue(newUser.baseRole || newUser.role || "member", { preserveCustom: false }),
         createdAt: serverTimestamp(),
         churchId: id,
       };
@@ -518,6 +879,7 @@ console.log("users list >>",users)
         lastName: "",
         phone: "",
         role: "member",
+        baseRole: "member",
       });
 
       toast.success(
@@ -532,6 +894,12 @@ console.log("users list >>",users)
       );
     } catch (error) {
       console.error("Error creating user:", error);
+      if (error?.code === "auth/email-already-in-use") {
+        toast.error(
+          "This email already exists in Firebase Auth. If it is not visible yet, refresh the users table and search by email."
+        );
+        return;
+      }
       toast.error(`Error creating user: ${error.message}`);
     }
   };
@@ -649,10 +1017,14 @@ console.log("users list >>",users)
                   </div>
 
                   <Select
-                    options={roles}
-                    value={roles.find((role) => role.value === newUser.role)}
+                    options={roleOptions}
+                    value={roleOptions.find((role) => role.value === normalizeRoleValue(newUser.role))}
                     onChange={(option) =>
-                      setNewUser({ ...newUser, role: option.value })
+                      setNewUser({
+                        ...newUser,
+                        role: option.value,
+                        baseRole: normalizeRoleValue(option.baseRole || option.value, { preserveCustom: false }),
+                      })
                     }
                     className="role-select"
                     placeholder="Select Role"
@@ -673,8 +1045,8 @@ console.log("users list >>",users)
               options={predefinedOptions}
               onChange={handlePredefinedOptionChange}
               placeholder="Select predefined column set"
-              defaultValue={predefinedOptions[0]}
-              value={predefinedOptions[0]}
+              defaultValue={defaultPredefinedOption}
+              value={selectedPredefinedOption}
             />
           </div>
           <div>
@@ -692,19 +1064,18 @@ console.log("users list >>",users)
               <table className="table">
                 <thead>
                   <tr>
-                    {visibleColumns.email && (
-                      <th className="table-header">Email</th>
-                    )}
                     {visibleColumns.name && (
                       <th className="table-header">Name</th>
                     )}
                     {visibleColumns.lastName && (
                       <th className="table-header">Last Name</th>
                     )}
+                    {visibleColumns.email && (
+                      <th className="table-header">Login Email</th>
+                    )}
                     {visibleColumns.phone && (
                       <th className="table-header">Phone Number</th>
-                    )}{" "}
-                    {/* Add this line */}
+                    )}
                     {visibleColumns.dob && (
                       <th className="table-header">Date of Birth</th>
                     )}
@@ -731,19 +1102,7 @@ console.log("users list >>",users)
                 </thead>
                 <tbody>
                   {currentUsers.map((user) => (
-                    <tr className="table-row" key={user.id}>
-                      {visibleColumns.email && (
-                        <td className="table-cell">
-                          <input
-                            className="input"
-                            type="text"
-                            value={user.email || ""}
-                            onChange={(e) =>
-                              handleInputChange(e, user.id, "email")
-                            }
-                          />
-                        </td>
-                      )}
+                    <tr className="table-row" key={user.uid}>
                       {visibleColumns.name && (
                         <td className="table-cell">
                           <input
@@ -751,7 +1110,7 @@ console.log("users list >>",users)
                             type="text"
                             value={user.name || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "name")
+                              handleInputChange(e, user.uid, "name")
                             }
                           />
                         </td>
@@ -763,7 +1122,19 @@ console.log("users list >>",users)
                             type="text"
                             value={user.lastName || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "lastName")
+                              handleInputChange(e, user.uid, "lastName")
+                            }
+                          />
+                        </td>
+                      )}
+                      {visibleColumns.email && (
+                        <td className="table-cell">
+                          <input
+                            className="input"
+                            type="text"
+                            value={user.email || ""}
+                            onChange={(e) =>
+                              handleInputChange(e, user.uid, "email")
                             }
                           />
                         </td>
@@ -775,7 +1146,7 @@ console.log("users list >>",users)
                             type="tel"
                             value={user.phone || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "phone")
+                              handleInputChange(e, user.uid, "phone")
                             }
                             placeholder="(123) 456-7890"
                           />
@@ -791,7 +1162,7 @@ console.log("users list >>",users)
                                 ? new Date(user.dob).toISOString().substr(0, 10)
                                 : ""
                             }
-                            onChange={(e) => handleDateChange(e, user.id)}
+                            onChange={(e) => handleDateChange(e, user.uid)}
                           />
                         </td>
                       )}
@@ -802,7 +1173,7 @@ console.log("users list >>",users)
                             type="text"
                             value={user.memberCity || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "memberCity")
+                              handleInputChange(e, user.uid, "memberCity")
                             }
                           />
                         </td>
@@ -814,7 +1185,7 @@ console.log("users list >>",users)
                             type="text"
                             value={user.memberState || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "memberState")
+                              handleInputChange(e, user.uid, "memberState")
                             }
                           />
                         </td>
@@ -826,7 +1197,7 @@ console.log("users list >>",users)
                             type="text"
                             value={user.memberStreet || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "memberStreet")
+                              handleInputChange(e, user.uid, "memberStreet")
                             }
                           />
                         </td>
@@ -838,7 +1209,7 @@ console.log("users list >>",users)
                             type="text"
                             value={user.memberZip || ""}
                             onChange={(e) =>
-                              handleInputChange(e, user.id, "memberZip")
+                              handleInputChange(e, user.uid, "memberZip")
                             }
                           />
                         </td>
@@ -866,27 +1237,86 @@ console.log("users list >>",users)
                       {visibleColumns.role && (
                         <td className="table-cell">
                           <Select
-                            value={roles.find(
-                              (role) => role.value === user.role
-                            )}
-                            options={roles}
+                            value={
+                              roleOptions.find(
+                                (role) => role.value === normalizeRoleValue(user.role)
+                              )
+                              || {
+                                value: normalizeRoleValue(user.role),
+                                label: normalizeRoleValue(user.role),
+                              }
+                            }
+                            options={roleOptions}
                             onChange={(selectedOption) =>
-                              handleRoleChange(selectedOption, user.id)
+                              handleRoleChange(selectedOption, user.uid)
                             }
                             isMulti={false}
                           />
                         </td>
                       )}
                       <td className="table-cell">
+                        {normalizeAccessStatus(user.accessStatus || user.approvalStatus) === "denied" ? (
+                          <button
+                            className="save-button"
+                            onClick={() => handleToggleUserAccess(user)}
+                            style={{ marginRight: "8px", backgroundColor: "#16a34a" }}
+                          >
+                            Enable User
+                          </button>
+                        ) : (
+                          <button
+                            className="save-button"
+                            onClick={() => handleToggleUserAccess(user)}
+                            style={{ marginRight: "8px", backgroundColor: "#dc2626" }}
+                          >
+                            Disable User
+                          </button>
+                        )}
+
+                        {normalizeAccessStatus(user.accessStatus || user.approvalStatus) === "pending" && (
+                          <button
+                            className="save-button"
+                            onClick={() => handleApproveUserAccess(user)}
+                            style={{ marginRight: "8px", backgroundColor: "#16a34a" }}
+                          >
+                            Approve Access
+                          </button>
+                        )}
+
                         <button
-                          className={`save-button ${
-                            isChanged ? "is-changed" : ""
-                          }`}
-                          onClick={() => handleSave(user.id)}
-                          disabled={!isChanged}
+                          className="save-button"
+                          onClick={() => handleResetPassword(user.email)}
+                          style={{ marginRight: "8px", backgroundColor: "#f59e0b" }}
                         >
-                          Save
+                          Reset Password
                         </button>
+                        <button
+                          className="save-button"
+                          onClick={() => handleDeleteUser(user)}
+                          disabled={!isGlobalAdminUser}
+                          style={{ marginRight: "8px", backgroundColor: "#7f1d1d" }}
+                          title={isGlobalAdminUser ? "Delete user" : "Only global admins can delete users"}
+                        >
+                          Delete User
+                        </button>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginRight: "8px",
+                            fontSize: "0.8rem",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            color:
+                              normalizeAccessStatus(user.accessStatus || user.approvalStatus) === "approved"
+                                ? "#166534"
+                                : normalizeAccessStatus(user.accessStatus || user.approvalStatus) === "pending"
+                                ? "#92400e"
+                                : "#991b1b",
+                          }}
+                        >
+                          {normalizeAccessStatus(user.accessStatus || user.approvalStatus)}
+                        </span>
+                        {savingUsers[user.uid] && <span>Auto-saving...</span>}
                       </td>
                     </tr>
                   ))}
