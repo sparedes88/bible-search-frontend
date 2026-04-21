@@ -476,10 +476,10 @@ const ProjectIssueDetail = () => {
 
         <div className="pid-detail-nav" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Link
-            to={`/organization/${id}/project-issue-dashboard`}
+            to="/live-issue-tracker"
             className="pid-detail-back-link"
           >
-            ← Go to Live Issues Tracker
+            ← Live Issue Tracker
           </Link>
           <Link
             to={`/organization/${id}/e2-agile-board`}
