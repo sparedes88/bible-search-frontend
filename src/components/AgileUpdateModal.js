@@ -1,7 +1,144 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { db, storage } from "../firebase";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { getDownloadURL, ref as storageRef, uploadBytes, deleteObject } from "firebase/storage";
+import { toast } from "react-toastify";
 
-export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading, percentCompleted, onPercentChange }) {
+export default function AgileUpdateModal({
+  isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading,
+  percentCompleted, onPercentChange, churchId, issue,
+}) {
+  const [e2Documents, setE2Documents] = useState([]);
+  const [docLoading, setDocLoading] = useState(false);
+  const [uploadingDocuments, setUploadingDocuments] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Fetch live e2Documents from Firestore whenever the modal opens or issue changes
+  useEffect(() => {
+    if (!isOpen || !churchId || !issue?.projectDocId || !issue?.issueId) {
+      setE2Documents([]);
+      return;
+    }
+    setDocLoading(true);
+    const decodedIssueId = decodeURIComponent(issue.issueId);
+    const issueRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+    getDoc(issueRef)
+      .then((snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setE2Documents(Array.isArray(data.e2Documents) ? data.e2Documents : []);
+        } else {
+          setE2Documents([]);
+        }
+      })
+      .catch(() => setE2Documents([]))
+      .finally(() => setDocLoading(false));
+  }, [isOpen, churchId, issue?.projectDocId, issue?.issueId]);
+
+  const handleDocumentUpload = async (event) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    if (!churchId || !issue?.projectDocId || !issue?.issueId) {
+      toast.error("Issue data not fully loaded. Please try again.");
+      return;
+    }
+
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
+      return;
+    }
+
+    const allowedCount = 10 - e2Documents.length;
+    if (allowedCount <= 0) {
+      toast.warn("Maximum 10 documents allowed.");
+      return;
+    }
+
+    const filesToUpload = Array.from(files).slice(0, allowedCount);
+    if (filesToUpload.length < files.length) {
+      toast.warn(`Only ${allowedCount} document(s) can be added. Uploading the first ${allowedCount}.`);
+    }
+
+    setUploadingDocuments(true);
+    try {
+      const uploadedDocs = [];
+      for (const file of filesToUpload) {
+        const safeIssueId = (issue.issueId || "").replace(/[^a-zA-Z0-9-_]/g, "_");
+        const ext = file.name.split(".").pop();
+        const timestamp = Date.now();
+        const storagePath = `churches/${churchId}/bimProjects/${issue.projectDocId}/e2-documents/${safeIssueId}/${timestamp}.${ext}`;
+        const fileRef = storageRef(storage, storagePath);
+        await uploadBytes(fileRef, file);
+        const downloadURL = await getDownloadURL(fileRef);
+        uploadedDocs.push({
+          name: file.name,
+          url: downloadURL,
+          uploadedAt: new Date().toISOString(),
+          storagePath,
+        });
+      }
+
+      const decodedIssueId = decodeURIComponent(issue.issueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+      const snapshot = await getDoc(issueDocRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
+      const nextDocs = [...prevDocs, ...uploadedDocs];
+      await updateDoc(issueDocRef, { e2Documents: nextDocs });
+      setE2Documents(nextDocs);
+      toast.success(`${uploadedDocs.length} document(s) uploaded.`);
+    } catch (err) {
+      console.error("Error uploading documents:", err);
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not upload document(s).";
+      toast.error(`Upload failed${errorCode}: ${errorMessage}`);
+    } finally {
+      setUploadingDocuments(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const deleteDocument = async (index) => {
+    if (index < 0 || index >= e2Documents.length) return;
+    const docToDelete = e2Documents[index];
+    const confirmed = window.confirm(`Delete "${docToDelete.name}"?`);
+    if (!confirmed) return;
+
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
+      return;
+    }
+
+    setUploadingDocuments(true);
+    try {
+      if (docToDelete.storagePath) {
+        const fileRef = storageRef(storage, docToDelete.storagePath);
+        await deleteObject(fileRef).catch((err) => {
+          if (err.code !== "storage/object-not-found") throw err;
+        });
+      }
+      const decodedIssueId = decodeURIComponent(issue.issueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+      const snapshot = await getDoc(issueDocRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
+      const updatedDocs = prevDocs.filter((_, i) => i !== index);
+      await updateDoc(issueDocRef, { e2Documents: updatedDocs });
+      setE2Documents(updatedDocs);
+      toast.success("Document deleted.");
+    } catch (err) {
+      console.error("Error deleting document:", err);
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not delete document.";
+      toast.error(`Delete failed${errorCode}: ${errorMessage}`);
+    } finally {
+      setUploadingDocuments(false);
+    }
+  };
+
   if (!isOpen) return null;
+
   // latestUpdate is now an object: { text, percentCompleted, date }
   let latestPercent = null, latestDate = null, latestText = "";
   if (latestUpdate && typeof latestUpdate === "object") {
@@ -11,6 +148,9 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
   } else {
     latestText = latestUpdate;
   }
+
+  const availableSlots = 10 - e2Documents.length;
+
   return (
     <div className="agile-update-overlay">
       <div className="agile-update-modal">
@@ -61,6 +201,102 @@ export default function AgileUpdateModal({ isOpen, onClose, onSave, latestUpdate
               disabled={loading}
             />
             <span style={{ marginLeft: 4 }}>%</span>
+          </div>
+
+          {/* Documents Section */}
+          <div style={{ marginTop: 24, borderTop: '1px solid #e5e7eb', paddingTop: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span className="agile-update-label" style={{ margin: 0 }}>Documents</span>
+              {docLoading ? (
+                <span style={{ fontSize: '0.85em', color: '#6b7280' }}>Loading…</span>
+              ) : (
+                <span style={{ fontSize: '0.85em', color: availableSlots > 0 ? '#059669' : '#dc2626', fontWeight: 500 }}>
+                  {availableSlots} slot{availableSlots !== 1 ? 's' : ''} available ({e2Documents.length}/10)
+                </span>
+              )}
+            </div>
+
+            {/* Upload Button */}
+            {!docLoading && availableSlots > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
+                  multiple
+                  onChange={handleDocumentUpload}
+                  disabled={uploadingDocuments}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingDocuments}
+                  style={{
+                    padding: '6px 14px',
+                    background: uploadingDocuments ? '#9ca3af' : '#4f46e5',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: uploadingDocuments ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9em',
+                    fontWeight: 500,
+                  }}
+                >
+                  {uploadingDocuments ? 'Uploading…' : '📎 Add New Document'}
+                </button>
+              </div>
+            )}
+
+            {/* Document List */}
+            {docLoading ? (
+              <p style={{ color: '#9ca3af', fontSize: '0.9em', margin: 0 }}>Loading documents…</p>
+            ) : e2Documents.length === 0 ? (
+              <p style={{ color: '#9ca3af', fontSize: '0.9em', margin: 0 }}>No documents attached yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {e2Documents.map((docItem, index) => (
+                  <div key={index} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6,
+                    padding: '6px 10px',
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                      <a
+                        href={docItem.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: '#4f46e5', fontSize: '0.9em', textDecoration: 'none',
+                          fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        📄 {docItem.name}
+                      </a>
+                      {docItem.uploadedAt && (
+                        <span style={{ color: '#9ca3af', fontSize: '0.78em' }}>
+                          {new Date(docItem.uploadedAt).toLocaleDateString()}{' '}
+                          {new Date(docItem.uploadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => deleteDocument(index)}
+                      disabled={uploadingDocuments}
+                      title="Delete this document"
+                      style={{
+                        background: 'none', border: 'none',
+                        cursor: uploadingDocuments ? 'not-allowed' : 'pointer',
+                        color: '#dc2626', fontSize: '1em', marginLeft: 8, flexShrink: 0,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="agile-update-modal-actions">

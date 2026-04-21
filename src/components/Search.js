@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { db, auth, firebaseDebug, storage } from "../firebase";
 import { ref, getDownloadURL } from "firebase/storage";
 import "./Search.css";
@@ -585,6 +585,12 @@ const Search = () => {
 
   return (
     <div className="search-container">
+      {/* Quick access link to Live Issue Tracker */}
+      <div style={{ margin: "16px 0" }}>
+        <Link to="/live-issue-tracker" style={{ fontWeight: "bold", color: "#0ea5e9" }}>
+          🚦 Live Issue Tracker
+        </Link>
+      </div>
       {/* Header Section */}
       <div className="search-header">
         {/* Logo - changes based on selected brand */}

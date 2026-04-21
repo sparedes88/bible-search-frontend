@@ -1,8 +1,9 @@
+// Removed feature flag: always use new Firestore subcollection for issues
 import AgileDevelopmentDashboard from "../components/AgileDevelopmentDashboard";
 import { useEffect, useState } from "react";
 import AgileUpdateModal from "../components/AgileUpdateModal";
 import { useParams } from "react-router-dom";
-import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import { DEFAULT_E2_STATUS_UPDATE_AGILE_OPTIONS, E2_STATUS_UPDATE_AGILE_OPTIONS_FIELD, PROJECT_ISSUE_CONFIG_DOC_ID } from "../components/projectIssueConstants";
 
@@ -126,60 +127,64 @@ const AgileBoardPage = () => {
   useEffect(() => {
     if (!id) return;
     const projectsRef = collection(db, "churches", id, "bimProjects");
-    const unsubscribe = onSnapshot(projectsRef, (snapshot) => {
+    let unsubscribers = [];
+    const unsubscribeProjects = onSnapshot(projectsRef, (snapshot) => {
+      // Remove previous listeners
+      unsubscribers.forEach((unsub) => unsub());
+      unsubscribers = [];
       const nextIssues = [];
       const nextProjectSources = {};
-      snapshot.forEach((projectDoc) => {
+      snapshot.docs.forEach((projectDoc) => {
         const projectData = projectDoc.data() || {};
         const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
-        const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-        nextProjectSources[projectDoc.id] = { fields, rows };
-        rows.forEach((row, rowIndex) => {
-          const rowData = row?.rowData || {};
-          const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
-          const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
-          const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
-          const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
-          const disableFlagField = findFieldByAliases(fields, rowData, DISABLE_FLAG_ALIASES) || "Disable Flag";
-          const projectNameField = findFieldByAliases(fields, rowData, ["project name", "project", "projectname"]);
-          const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
-          const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
-          const statusAgile = normalizeValue(statusAgileField ? rowData[statusAgileField] : "");
-          const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
-          const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
-          const disableFlag = normalizeValue(disableFlagField ? rowData[disableFlagField] : "No");
-          const dataStageField = findFieldByAliases(fields, rowData, DATA_STAGE_ALIASES) || "Data Stage";
-          const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || DEFAULT_DATA_STAGE;
-
-          // Debug: Log updates array for SRF-3632
-          if (issueId === "SRF-3632") {
-            // eslint-disable-next-line no-console
-            console.log("[DEBUG] Issue SRF-3632 updates:", rowData.updates);
-          }
-
-          nextIssues.push({
-            key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
-            projectDocId: projectDoc.id,
-            rowIndex,
-            statusField: statusAgileField,
-            technicalDirectionField,
-            disableFlagField,
-            projectNameField,
-            issueId,
-            statusAgile,
-            leadDetailer,
-            technicalDirection,
-            disableFlag,
-            dataStageField,
-            dataStage,
-            projectName,
+        const issuesRef = collection(db, "churches", id, "bimProjects", projectDoc.id, "issues");
+        // Listen to issues in real-time
+        const unsubIssues = onSnapshot(issuesRef, (issuesSnap) => {
+          const issues = issuesSnap.docs.map((issueDoc) => {
+            const rowData = issueDoc.data() || {};
+            const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
+            const statusAgileField = findFieldByAliases(fields, rowData, E2_STATUS_AGILE_ALIASES) || "E2 Status Update Agile";
+            const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
+            const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
+            const disableFlagField = findFieldByAliases(fields, rowData, DISABLE_FLAG_ALIASES) || "Disable Flag";
+            const projectNameField = findFieldByAliases(fields, rowData, ["project name", "project", "projectname"]);
+            const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
+            const issueId = issueDoc.id; // Use Firestore document ID
+            const statusAgile = normalizeValue(statusAgileField ? rowData[statusAgileField] : "");
+            const leadDetailer = normalizeValue(leadDetailerField ? rowData[leadDetailerField] : "");
+            const technicalDirection = normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : "");
+            const disableFlag = normalizeValue(disableFlagField ? rowData[disableFlagField] : "No");
+            const dataStageField = findFieldByAliases(fields, rowData, DATA_STAGE_ALIASES) || "Data Stage";
+            const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || DEFAULT_DATA_STAGE;
+            return {
+              key: `${projectDoc.id}-${issueDoc.id}`,
+              projectDocId: projectDoc.id,
+              statusField: statusAgileField,
+              technicalDirectionField,
+              disableFlagField,
+              projectNameField,
+              issueId, // Firestore doc ID
+              statusAgile,
+              leadDetailer,
+              technicalDirection,
+              disableFlag,
+              dataStageField,
+              dataStage,
+              projectName,
+            };
           });
+          nextProjectSources[projectDoc.id] = { fields, rows: issues };
+          nextIssues.push(...issues);
+          setProjectSources({ ...nextProjectSources });
+          setIssues([...nextIssues]);
         });
+        unsubscribers.push(unsubIssues);
       });
-      setProjectSources(nextProjectSources);
-      setIssues(nextIssues);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribeProjects();
+      unsubscribers.forEach((unsub) => unsub());
+    };
   }, [id]);
 
   return (
@@ -218,22 +223,11 @@ const AgileBoardPage = () => {
                         const newValue = e.target.value;
                         setSavingKey(issue.key);
                         try {
-                          const source = projectSources[issue.projectDocId];
-                          if (!source) return;
-                          const rows = Array.isArray(source.rows) ? source.rows : [];
-                          const targetRow = rows[issue.rowIndex];
-                          if (!targetRow) return;
-                          const updatedRows = rows.map((row, idx) => {
-                            if (idx !== issue.rowIndex) return row;
-                            return {
-                              ...row,
-                              rowData: {
-                                ...row.rowData,
-                                [issue.projectNameField || "Project Name"]: newValue,
-                              },
-                            };
+                          // Update the issue document in the subcollection
+                          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                          await updateDoc(issueRef, {
+                            [issue.projectNameField || "Project Name"]: newValue,
                           });
-                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
                         } finally {
                           setSavingKey("");
                         }
@@ -254,22 +248,11 @@ const AgileBoardPage = () => {
                         const newValue = e.target.value;
                         setSavingKey(issue.key);
                         try {
-                          const source = projectSources[issue.projectDocId];
-                          if (!source) return;
-                          const rows = Array.isArray(source.rows) ? source.rows : [];
-                          const targetRow = rows[issue.rowIndex];
-                          if (!targetRow) return;
-                          const updatedRows = rows.map((row, idx) => {
-                            if (idx !== issue.rowIndex) return row;
-                            return {
-                              ...row,
-                              rowData: {
-                                ...row.rowData,
-                                [issue.statusField]: newValue,
-                              },
-                            };
+                          // Update the issue document in the subcollection
+                          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                          await updateDoc(issueRef, {
+                            [issue.statusField]: newValue,
                           });
-                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
                         } finally {
                           setSavingKey("");
                         }
@@ -292,22 +275,11 @@ const AgileBoardPage = () => {
                         const newValue = e.target.value;
                         setSavingKey(issue.key);
                         try {
-                          const source = projectSources[issue.projectDocId];
-                          if (!source) return;
-                          const rows = Array.isArray(source.rows) ? source.rows : [];
-                          const targetRow = rows[issue.rowIndex];
-                          if (!targetRow) return;
-                          const updatedRows = rows.map((row, idx) => {
-                            if (idx !== issue.rowIndex) return row;
-                            return {
-                              ...row,
-                              rowData: {
-                                ...row.rowData,
-                                [issue.disableFlagField]: newValue,
-                              },
-                            };
+                          // Update the issue document in the subcollection
+                          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                          await updateDoc(issueRef, {
+                            [issue.disableFlagField]: newValue,
                           });
-                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
                         } finally {
                           setSavingKey("");
                         }
@@ -327,22 +299,11 @@ const AgileBoardPage = () => {
                         const newValue = e.target.value;
                         setSavingKey(issue.key);
                         try {
-                          const source = projectSources[issue.projectDocId];
-                          if (!source) return;
-                          const rows = Array.isArray(source.rows) ? source.rows : [];
-                          const targetRow = rows[issue.rowIndex];
-                          if (!targetRow) return;
-                          const updatedRows = rows.map((row, idx) => {
-                            if (idx !== issue.rowIndex) return row;
-                            return {
-                              ...row,
-                              rowData: {
-                                ...row.rowData,
-                                [issue.dataStageField]: newValue,
-                              },
-                            };
+                          // Update the issue document in the subcollection
+                          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                          await updateDoc(issueRef, {
+                            [issue.dataStageField]: newValue,
                           });
-                          await updateDoc(doc(db, "churches", id, "bimProjects", issue.projectDocId), { rows: updatedRows });
                         } finally {
                           setSavingKey("");
                         }

@@ -1,3 +1,4 @@
+  // Removed feature flag: always use new Firestore subcollection for issues
   // Technical Direction dropdown options
   const technicalDirectionOptions = [
     "Stop and Start",
@@ -5,6 +6,7 @@
     "Add to Queue"
   ];
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 // --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
 const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
 import { findFieldByAliases } from "./ProjectIssueDetail";
@@ -30,7 +32,7 @@ const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
   );
 };
 import { useParams, Link } from "react-router-dom";
-import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { collection, doc, onSnapshot, updateDoc, getDocs } from "firebase/firestore";
 import { toast } from "react-toastify";
 import { db } from "../firebase";
 import {
@@ -99,6 +101,11 @@ const TECH_DETAILS_ALIASES = [
 ];
 
 const AgileDevelopmentDashboard = () => {
+    // Popup state for support team icon (must be before return)
+    // showSupportTeamPopup: { key, rect } | null
+    const [showSupportTeamPopup, setShowSupportTeamPopup] = useState(null);
+    // Search box state
+    const [searchTerm, setSearchTerm] = useState("");
   const { id } = useParams();
   // Project Name values managed in Project Name Manager
   const [projectNameValues, setProjectNameValues] = useState([]);
@@ -166,24 +173,29 @@ const AgileDevelopmentDashboard = () => {
 
   useEffect(() => {
     if (!id) return undefined;
+    let unsubscribe = () => {};
+    // Always use new structure: fetch issues from subcollection for each project
     const projectsRef = collection(db, "churches", id, "bimProjects");
-    const unsubscribe = onSnapshot(
+    unsubscribe = onSnapshot(
       projectsRef,
       async (snapshot) => {
         const nextProjectSources = {};
         let nextIssues = [];
-
-        // For each project
         for (const projectDoc of snapshot.docs) {
           const projectData = projectDoc.data() || {};
           const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
-          const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
-          const defaultProjectName = normalizeValue(projectData.name) || projectDoc.id;
-
-          // Always use parent document's rows array, even for stanford-ff-rad
-          nextProjectSources[projectDoc.id] = { fields, rows };
-          rows.forEach((row, rowIndex) => {
-            const rowData = resolveRowData(row);
+          // Fetch issues subcollection for this project
+          const issuesRef = collection(db, "churches", id, "bimProjects", projectDoc.id, "issues");
+          const issuesSnap = await getDocs(issuesRef);
+          // Fetch LogEntries for each issue
+          const issues = await Promise.all(issuesSnap.docs.map(async (issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
+            let logEntries = [];
+            try {
+              if (Array.isArray(rowData.LogEntries)) {
+                logEntries = rowData.LogEntries;
+              }
+            } catch {}
             const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
             const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
             const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
@@ -192,8 +204,7 @@ const AgileDevelopmentDashboard = () => {
             const leadDetailerField = findFieldByAliases(fields, rowData, LEAD_DETAILER_ALIASES);
             const dataStageField = findFieldByAliases(fields, rowData, ["data stage", "datastage"]);
             const dataStage = normalizeValue(dataStageField ? rowData[dataStageField] : "") || "Testing";
-
-            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
+            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(rowIndex + 1);
             const title = normalizeValue(titleField ? rowData[titleField] : "") || "Untitled issue";
             const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "");
             const techDetailsAvailable = getDefaultTechDetailsAvailable(techDetailsField ? rowData[techDetailsField] : "");
@@ -204,9 +215,8 @@ const AgileDevelopmentDashboard = () => {
             }
             const technicalDirectionField = "Technical Direction";
             const technicalDirection = normalizeValue(rowData[technicalDirectionField] || "");
-
-            nextIssues.push({
-              key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
+            return {
+              key: `${projectDoc.id}-${issueDoc.id}`,
               projectDocId: projectDoc.id,
               rowIndex,
               statusField: statusAgileField,
@@ -220,11 +230,13 @@ const AgileDevelopmentDashboard = () => {
               status,
               technicalDirection,
               developmentCycleCounter: typeof rowData.Development_Cycle_Counter === 'number' ? rowData.Development_Cycle_Counter : 0,
-              rowData, // <-- Add rowData so Quick Edit popup can access all fields
-            });
-          });
+              rowData,
+              LogEntries: logEntries,
+            };
+          }));
+          nextProjectSources[projectDoc.id] = { fields, rows: issues };
+          nextIssues = nextIssues.concat(issues);
         }
-
         setProjectSources(nextProjectSources);
         setIssues(nextIssues);
         setLoadingIssues(false);
@@ -235,7 +247,6 @@ const AgileDevelopmentDashboard = () => {
         setLoadingIssues(false);
       }
     );
-
     return () => unsubscribe();
   }, [id]);
 
@@ -272,37 +283,10 @@ const AgileDevelopmentDashboard = () => {
     return () => unsubscribe();
   }, [id]);
 
+  // E2 Detailer Support Team options from Firestore config (e2DetailerOptions)
   const supportTeamOptions = useMemo(() => {
-    // Use the same aliases as ProjectIssueDetail
-    const SUPPORT_TEAM_ALIASES = [
-      "e2 detailer support team",
-      "e2 detailer support",
-      "e2 support team",
-      "support team"
-    ];
-    const all = issues.flatMap(issue => {
-      // Find the correct field key for this issue
-      const source = projectSources[issue.projectDocId];
-      const fields = Array.isArray(source?.fields) ? source.fields : [];
-      const rowData = issue?.rowData || {};
-      const key = findFieldByAliases(fields, rowData, SUPPORT_TEAM_ALIASES);
-      const val = key ? rowData[key] : issue.e2DetailerSupportTeam;
-      console.log('[SupportTeamOptions Debug]', {
-        issueId: rowData['ID'] || rowData['Issue ID'] || rowData['id'],
-        key,
-        val,
-        rowDataKeys: Object.keys(rowData),
-        rowData
-      });
-      if (Array.isArray(val)) return val;
-      if (typeof val === "string" && val.includes(",")) return val.split(",").map(s => s.trim()).filter(Boolean);
-      if (typeof val === "string" && val) return [val];
-      return [];
-    });
-    const uniqueOptions = dedupeValues(all);
-    console.log('[SupportTeamOptions Available]', uniqueOptions);
-    return uniqueOptions;
-  }, [issues, projectSources]);
+    return e2LeadDetailerOptions;
+  }, [e2LeadDetailerOptions]);
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
@@ -314,9 +298,14 @@ const AgileDevelopmentDashboard = () => {
         selectedE2StatusAgile === "All" || normalizeValue(issue.status) === selectedE2StatusAgile;
       const dataStageMatched =
         selectedDataStage === "All" || normalizeValue(issue.dataStage) === selectedDataStage;
-      return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched;
+      // Search filter: match Issue ID or Title (case-insensitive, partial)
+      const search = searchTerm.trim().toLowerCase();
+      const idMatch = normalizeValue(issue.issueId).toLowerCase().includes(search);
+      const titleMatch = normalizeValue(issue.title).toLowerCase().includes(search);
+      const searchMatched = !search || idMatch || titleMatch;
+      return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched && searchMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage]);
+  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
 
   const e2StatusAgileOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
@@ -364,8 +353,26 @@ const AgileDevelopmentDashboard = () => {
 
     const nextStatus = column.name;
     const targetRowData = resolveRowData(targetRow);
-    const statusField = issue.statusField || "E2 Status Update";
+    const statusField = issue.statusField || "E2 Status Update Agile";
     const prevStatus = targetRowData[statusField] || "-";
+    const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
+    const prevLogEntries = Array.isArray(targetRowData.LogEntries) ? targetRowData.LogEntries : [];
+    const now = new Date().toISOString();
+    const statusChangeUpdate = {
+      text: `Moved card from column '${prevStatus}' to column '${nextStatus}'`,
+      percentCompleted: 0,
+      date: now,
+    };
+    const statusChangeLog = {
+      type: "status-change",
+      update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
+      from: prevStatus,
+      to: nextStatus,
+      user: (window.currentUser && window.currentUser.displayName) || "System",
+      timestamp: now,
+    };
+
+    // Increment Development_Cycle_Counter if status changes to 'Completed' from any other status
     const updatedRows = rows.map((row, index) => {
       if (index !== issue.rowIndex) return row;
       const rowData = resolveRowData(row);
@@ -399,9 +406,13 @@ const AgileDevelopmentDashboard = () => {
 
       return {
         ...row,
-        [statusField]: nextStatus,
-        updates: [...prevUpdates, statusChangeUpdate],
-        Development_Cycle_Counter: nextDevCycle,
+        rowData: {
+          ...rowData,
+          [statusField]: nextStatus,
+          updates: [...prevUpdates, statusChangeUpdate],
+          LogEntries: [...prevLogEntries, statusChangeLog],
+          Development_Cycle_Counter: nextDevCycle,
+        },
       };
     });
 
@@ -414,32 +425,31 @@ const AgileDevelopmentDashboard = () => {
         rows: updatedRows,
       },
     }));
+    // Also update developmentCycleCounter for real-time UI update
     setIssues((previous) =>
-      previous.map((item) => (item.key === issue.key ? { ...item, status: nextStatus } : item))
+      previous.map((item) => {
+        if (item.key === issue.key) {
+          // Find the updated row for this issue
+          const updatedRow = updatedRows[issue.rowIndex];
+          const devCycle = updatedRow?.rowData?.Development_Cycle_Counter;
+          return {
+            ...item,
+            status: nextStatus,
+            developmentCycleCounter: typeof devCycle === 'number' ? devCycle : item.developmentCycleCounter,
+          };
+        }
+        return item;
+      })
     );
 
     try {
-      const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-      // --- Also update the log structure in internalCardMeta for ProjectIssueDetail ---
-      // Compute cardKey as in ProjectIssueDetail (shared logic)
-      const normalizeCardKey = (id, rowNumber) => {
-        const norm = String(id || "").trim().toUpperCase();
-        return norm ? `id:${norm}` : `row:${issue.rowIndex}`;
-      };
-      const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
-      const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectRef);
-      const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
-      const internalCardMeta = projectDocData.internalCardMeta || {};
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
-      const logEntry = {
-        update: `Status changed from '${prevStatus}' to '${nextStatus}'`,
-        percent: 0,
-        timestamp: new Date().toISOString(),
-      };
-      const nextLog = [logEntry, ...prevLog];
-      internalCardMeta[cardKey].logEntries = nextLog;
-      await updateDoc(projectRef, { rows: updatedRows, internalCardMeta });
+      // Always update the issue document in the subcollection
+      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      await updateDoc(issueRef, {
+        ...updatedRows[issue.rowIndex].rowData,
+        status: nextStatus,
+        LogEntries: [...prevLogEntries, statusChangeLog],
+      });
       toast.success(`Moved to ${nextStatus}.`);
     } catch (error) {
       toast.error("Could not move the issue. Please try again.");
@@ -456,23 +466,28 @@ const AgileDevelopmentDashboard = () => {
   const [latestUpdate, setLatestUpdate] = useState("");
   const [updateLoading, setUpdateLoading] = useState(false);
 
-  // Fetch latest update and percent completed for a given issue
-  const fetchLatestUpdate = (issue) => {
-    const source = projectSources[issue.projectDocId];
-    if (!source) return { text: "", percentCompleted: null, date: null };
-    const row = source.rows[issue.rowIndex];
-    if (!row) return { text: "", percentCompleted: null, date: null };
-    const rowData = resolveRowData(row);
-    const updates = rowData.updates;
-    if (Array.isArray(updates) && updates.length > 0) {
-      const last = updates[updates.length - 1];
-      return {
-        text: last.text || last.comment || JSON.stringify(last),
-        percentCompleted: typeof last.percentCompleted === "number" ? last.percentCompleted : null,
-        date: last.date || null
-      };
+  // Fetch latest update and percent completed for a given issue from Firestore LogEntries
+  const fetchLatestUpdate = async (issue) => {
+    if (!issue || !issue.projectDocId || !issue.issueId || !id) return { text: "", percentCompleted: null, date: null };
+    try {
+      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
+      if (issueSnap.exists()) {
+        const data = issueSnap.data();
+        const logEntries = Array.isArray(data.LogEntries) ? data.LogEntries : [];
+        if (logEntries.length > 0) {
+          const latest = logEntries[0];
+          return {
+            text: latest.update || "",
+            percentCompleted: typeof latest.percent === "number" ? latest.percent : null,
+            date: latest.timestamp || null
+          };
+        }
+      }
+    } catch (e) {
+      // ignore
     }
-    return { text: rowData.update || "", percentCompleted: null, date: null };
+    return { text: "", percentCompleted: null, date: null };
   };
 
   if (loading) {
@@ -483,30 +498,46 @@ const AgileDevelopmentDashboard = () => {
     <div className="agile-dashboard-wrapper">
       <div className="agile-dashboard-header">
         <div className="agile-dashboard-header-top">
-          <Link to={`/organization/${id}/project-issue-dashboard`} className="agile-dashboard-back-button">
-            ← Back to Live Issues Tracker
-          </Link>
-          <h1>Agile Development Dashboard</h1>
-        </div>
-        <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Removed Back to Project Issue Dashboard link as requested */}
           <Link
-            to={`/organization/${id}/project-name-manager`}
+            to="/live-issue-tracker"
             style={{
-              display: 'inline-block',
-              background: '#f59e0b',
+              marginLeft: 16,
+              background: '#0ea5e9',
               color: '#fff',
               padding: '10px 18px',
               borderRadius: 6,
               fontWeight: 600,
               textDecoration: 'none',
-              width: 'fit-content',
+              display: 'inline-block',
+              border: 'none',
+              cursor: 'pointer',
             }}
           >
-            Manage Project Name Values
+            🚦 Go to Live Issue Tracker
           </Link>
         </div>
+        <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ textAlign: 'center', width: '100%' }}>
+            <h1 style={{ margin: 0 }}>Agile Development Dashboard</h1>
+          </div>
+          {/* Removed Manage Project Name Values button as requested */}
+        </div>
         <div className="agile-dashboard-filters">
-          {/* Removed E2 Status Update Agile filter dropdown as requested */}
+          {/* Search box for Issue ID and Title */}
+          <label className="agile-dashboard-filter-item" htmlFor="agile-search-box" style={{ minWidth: 220 }}>
+            <span>Search Issue ID or Title</span>
+            <input
+              id="agile-search-box"
+              className="agile-dashboard-filter-select"
+              type="text"
+              placeholder="Search by ID or Title..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              style={{ minWidth: 180 }}
+            />
+          </label>
+
           <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
             <span>Project Name</span>
             <select
@@ -579,17 +610,12 @@ const AgileDevelopmentDashboard = () => {
                 onDrop={() => handleDrop(column)}
               >
                 {columnIssues.map((issue) => {
-                  // Find latest percentCompleted from updates
+                  // Find latest percent from LogEntries in Firestore
                   let percentCompleted = null;
-                  const source = projectSources[issue.projectDocId];
-                  if (source) {
-                    const row = source.rows[issue.rowIndex];
-                    const rowData = resolveRowData(row);
-                    if (row && Array.isArray(rowData.updates) && rowData.updates.length > 0) {
-                      const last = rowData.updates[rowData.updates.length - 1];
-                      if (typeof last.percentCompleted === 'number') {
-                        percentCompleted = last.percentCompleted;
-                      }
+                  if (Array.isArray(issue.LogEntries) && issue.LogEntries.length > 0) {
+                    const latestLog = issue.LogEntries[0];
+                    if (typeof latestLog.percent === 'number') {
+                      percentCompleted = latestLog.percent;
                     }
                   }
                   return (
@@ -604,9 +630,6 @@ const AgileDevelopmentDashboard = () => {
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                             {normalizeValue(issue.dataStage) === 'Testing' && (
                               <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
-                            )}
-                            {normalizeValue(issue.dataStage) === 'Production' && (
-                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
                             )}
                             {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
                               <>
@@ -626,9 +649,22 @@ const AgileDevelopmentDashboard = () => {
                             <a
                               href="#"
                               style={{ color: '#059669', textDecoration: 'underline', cursor: 'pointer', fontSize: 13, marginRight: 12 }}
-                              onClick={e => {
+                              onClick={async e => {
                                 e.preventDefault();
-                                setQuickEditModal({ open: true, issue });
+                                // Fetch latest issue data from Firestore
+                                try {
+                                  const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                                  const snap = await getDocs(collection(db, "churches", id, "bimProjects", issue.projectDocId, "issues"));
+                                  let latestDoc = null;
+                                  snap.forEach(docSnap => {
+                                    if (docSnap.id === issue.issueId) latestDoc = docSnap;
+                                  });
+                                  let latestData = latestDoc ? latestDoc.data() : null;
+                                  // fallback to old if not found
+                                  setQuickEditModal({ open: true, issue: latestData ? { ...issue, rowData: latestData } : issue });
+                                } catch (err) {
+                                  setQuickEditModal({ open: true, issue });
+                                }
                               }}
                             >Quick Edit</a>
                             <a
@@ -638,9 +674,9 @@ const AgileDevelopmentDashboard = () => {
                                 e.preventDefault();
                                 setUpdateModal({ open: true, issue });
                                 setNewUpdate("");
-                                const latest = fetchLatestUpdate(issue);
                                 setPercentCompleted("");
-                                setLatestUpdate(latest);
+                                // Fetch latest update from Firestore
+                                fetchLatestUpdate(issue).then(setLatestUpdate);
                               }}
                             >Add Update</a>
                           </div>
@@ -650,11 +686,75 @@ const AgileDevelopmentDashboard = () => {
                             <span style={{ fontWeight: 'bold' }}>{normalizeValue(issue.projectName) || "-"}</span>: {normalizeValue(issue.title) || "-"}
                           </span>
                         </div>
-                        <div className="agile-card-field-row">
+                        <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span className="agile-card-label" style={{ fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Assignee:</span>
                           <span className="agile-card-detailer" style={{ marginLeft: 4, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{normalizeValue(issue.e3LeadDetailer) || "-"}</span>
+                          <span
+                            style={{ position: 'relative', display: 'inline-block' }}
+                            onMouseEnter={e => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setShowSupportTeamPopup({ key: issue.key, rect });
+                            }}
+                            onMouseLeave={() => setShowSupportTeamPopup(null)}
+                          >
+                            <img
+                              src="/img/person.svg"
+                              alt="Show E2 Detailer Support Team"
+                              title="Show E2 Detailer Support Team"
+                              style={{ width: 18, height: 18, marginLeft: 6, cursor: 'pointer', verticalAlign: 'middle' }}
+                            />
+                            {showSupportTeamPopup && showSupportTeamPopup.key === issue.key && typeof window !== 'undefined' && createPortal(
+                              <div
+                                style={{
+                                  position: 'fixed',
+                                  left: (showSupportTeamPopup.rect?.right || 0) + 8,
+                                  top: showSupportTeamPopup.rect?.top || 0,
+                                  zIndex: 9999,
+                                  background: '#fff',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: 6,
+                                  boxShadow: '0 2px 8px #0002',
+                                  padding: '6px 10px',
+                                  minWidth: 150,
+                                  fontSize: '0.92em',
+                                  color: '#222',
+                                }}
+                              >
+                                <div style={{ fontWeight: 600, marginBottom: 6, color: '#6366f1' }}>E2 Detailer Support Team</div>
+                                {Array.isArray(issue.rowData?.["E2 Detailer Support Team"]) && issue.rowData["E2 Detailer Support Team"].length > 0 ? (
+                                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                                    {issue.rowData["E2 Detailer Support Team"].map((name, idx) => (
+                                      <li key={idx} style={{ padding: '2px 0' }}>{name}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={{ color: '#888' }}>(No support team listed)</div>
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                          </span>
                         </div>
-                        {/* Removed empty row below Assignee */}
+                        {/* Deadline row below Assignee */}
+                        <div className="agile-card-field-row" style={{ fontSize: '1.08em', color: '#334155', marginTop: 2 }}>
+                          {(() => {
+                            const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
+                            let days = null;
+                            if (dueDateStr) {
+                              const today = new Date();
+                              const dueDate = new Date(dueDateStr);
+                              // Zero out time for accurate day diff
+                              today.setHours(0,0,0,0);
+                              dueDate.setHours(0,0,0,0);
+                              days = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+                            }
+                            return (
+                              <span>
+                                <span style={{ fontWeight: 600 }}>Deadline:</span> {days !== null ? `${days} day${Math.abs(days) === 1 ? '' : 's'}` : '—'}
+                              </span>
+                            );
+                          })()}
+                        </div>
                         {/* Data Stage row removed as per request; T/P icon remains in card header */}
                         <div className="agile-card-field-row">
                           {(() => {
@@ -731,59 +831,37 @@ const AgileDevelopmentDashboard = () => {
         percentCompleted={percentCompleted}
         onPercentChange={setPercentCompleted}
         loading={updateLoading}
+        churchId={id}
+        issue={updateModal.issue}
         onSave={async () => {
           if (!updateModal.issue || !newUpdate.trim()) return;
           setUpdateLoading(true);
           try {
             const { issue } = updateModal;
-            const source = projectSources[issue.projectDocId];
-            if (!source) return;
-            const rows = Array.isArray(source.rows) ? source.rows : [];
-            const targetRow = rows[issue.rowIndex];
-            if (!targetRow) return;
-            const targetRowData = resolveRowData(targetRow);
-            const hasNestedRowData = Boolean(targetRow?.rowData && typeof targetRow.rowData === "object");
-            const prevUpdates = Array.isArray(targetRowData.updates) ? targetRowData.updates : [];
+            const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+            // Fetch current log entries
+            const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
+            const issueData = issueSnap.exists() ? issueSnap.data() : {};
+            const prevLog = Array.isArray(issueData.LogEntries) ? issueData.LogEntries : [];
             const now = new Date().toISOString();
-            const newEntry = {
-              date: now,
-              text: newUpdate.trim(),
-              percentCompleted: percentCompleted === "" ? null : Number(percentCompleted)
-            };
-            const updatedRow = hasNestedRowData
-              ? {
-                  ...targetRow,
-                  rowData: {
-                    ...targetRowData,
-                    updates: [...prevUpdates, newEntry],
-                  },
-                }
-              : {
-                  ...targetRow,
-                  updates: [...prevUpdates, newEntry],
-                };
-            const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
-            // --- Update log structure in internalCardMeta for ProjectIssueDetail ---
-            const normalizeCardKey = (id, rowNumber) => {
-              const norm = String(id || "").trim().toUpperCase();
-              return norm ? `id:${norm}` : `row:${rowNumber}`;
-            };
-            const cardKey = normalizeCardKey(issue.issueId, issue.rowIndex);
-            const projectDocRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-            const projectDocSnap = await (await import("firebase/firestore")).getDoc(projectDocRef);
-            const projectDocData = projectDocSnap.data ? projectDocSnap.data() : {};
-            const internalCardMeta = projectDocData.internalCardMeta || {};
-            internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-            const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries) ? internalCardMeta[cardKey].logEntries : [];
             const logEntry = {
               update: newUpdate.trim(),
               percent: Number(percentCompleted) || 0,
               timestamp: now,
             };
             const nextLog = [logEntry, ...prevLog];
-            internalCardMeta[cardKey].logEntries = nextLog;
-            await updateDoc(projectDocRef, { rows: updatedRows, internalCardMeta });
-            setLatestUpdate({ text: newEntry.text, percentCompleted: newEntry.percentCompleted, date: newEntry.date });
+            await updateDoc(issueRef, { LogEntries: nextLog });
+            // Optimistically update local issues state for instant UI feedback
+            setIssues((prevIssues) => prevIssues.map((i) => {
+              if (
+                i.issueId === issue.issueId &&
+                i.projectDocId === issue.projectDocId
+              ) {
+                return { ...i, LogEntries: nextLog };
+              }
+              return i;
+            }));
+            setLatestUpdate({ text: logEntry.update, percentCompleted: logEntry.percent, date: logEntry.timestamp });
             setNewUpdate("");
             setPercentCompleted("");
             setUpdateModal({ open: false, issue: null });
@@ -823,15 +901,33 @@ const AgileDevelopmentDashboard = () => {
           setFieldByAliases(["e2 documents", "e2documents"], formData.e2Documents);
           setFieldByAliases(["data stage", "datastage"], formData.dataStage);
           rowData["Technical Direction"] = formData.technicalDirection;
+          // Always set E2 Due Date directly
+          rowData["e2DueDate"] = formData.e2DueDate;
 
-          const updatedRow = {
-            ...targetRow,
-            rowData,
-          };
-          const updatedRows = rows.map((row, idx) => idx === issue.rowIndex ? updatedRow : row);
+          // Always update the issue document in the subcollection
+          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
           try {
-            const projectRef = doc(db, "churches", id, "bimProjects", issue.projectDocId);
-            await updateDoc(projectRef, { rows: updatedRows });
+            await updateDoc(issueRef, rowData);
+            // Optimistically update local state for instant UI feedback
+            setProjectSources((prevSources) => {
+              const prev = prevSources[issue.projectDocId];
+              if (!prev) return prevSources;
+              const updatedRows = prev.rows.map((row, idx) =>
+                idx === issue.rowIndex ? { ...row, rowData: { ...rowData } } : row
+              );
+              return {
+                ...prevSources,
+                [issue.projectDocId]: {
+                  ...prev,
+                  rows: updatedRows,
+                },
+              };
+            });
+            setIssues((prevIssues) =>
+              prevIssues.map((item) =>
+                item.key === issue.key ? { ...item, ...formData, rowData: { ...rowData } } : item
+              )
+            );
             toast.success("Issue updated successfully.");
           } catch (err) {
             toast.error("Failed to update issue.");

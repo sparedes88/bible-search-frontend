@@ -42,19 +42,12 @@ const ContactSection = ({ icon, label, value, link }) => {
   );
 
   return (
-    <div
-      style={{
-        gap: "10px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "5px",
-        }}
-      >
+    <div style={{ gap: "10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
         <div>{icon}</div>
+        <span style={{ fontWeight: 600 }}>{label}:</span>
+        {content}
+      </div>
     </div>
   );
 };
@@ -125,8 +118,6 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/teams`
         },
         {
-<<<<<<< Updated upstream
-=======
           title: "Discipleship",
           description: "See who is discipling who and assign new disciples",
           icon: "🧭",
@@ -139,7 +130,6 @@ const MiOrganizacion = () => {
           path: `/organization/${id}/evangelism-outreach`
         },
         {
->>>>>>> Stashed changes
           title: "Song Manager",
           description: "Create and edit songs for presentations",
           icon: "🎵",
@@ -232,7 +222,7 @@ const MiOrganizacion = () => {
           title: "Project Issue Dashboard",
           description: "Track and review project issues by status and owner",
           icon: "🧩",
-          path: `/organization/${id}/project-issue-dashboard`
+          path: `/organization/${id}/e2-agile-board`
         },
         {
           title: "Time Tracker",
@@ -357,7 +347,7 @@ const MiOrganizacion = () => {
         setLoading(true);
         const organizationRef = doc(db, "churches", id);
         const organizationSnap = await getDoc(organizationRef);
-        
+
         if (organizationSnap.exists()) {
           const data = organizationSnap.data();
           setOrganizationData(data);
@@ -386,22 +376,6 @@ const MiOrganizacion = () => {
       if (!user || !id) {
         // Don't check permissions if user or id is missing
         return;
-      }
-
-      try {
-        // Check permissions for modules that need special access control
-        const formsAccess = await canAccessModule(user, id, 'forms');
-        
-        setUserPermissions({
-          forms: formsAccess,
-          // Add other modules as needed
-        });
-      } catch (error) {
-        console.error('Error checking permissions:', error);
-        // Fallback to basic role checking
-        setUserPermissions({
-          forms: isAdminUser,
-        });
       }
     };
 

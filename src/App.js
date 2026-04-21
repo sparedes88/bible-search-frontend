@@ -1,13 +1,10 @@
+import LiveIssueTracker from "./components/live-issue-tracker";
+          <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
 import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
-          <Route
-            path="/organization/:id/project-name-manager"
-            element={
-              <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <ProjectNameManagerPage />
-              </PrivateRoute>
-            }
-          />
-import React, { Suspense } from "react";
+import ManageAssigneesPage from "./pages/ManageAssigneesPage";
+import React, { Suspense, useEffect, useState } from "react";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "./firebase";
 import {
   BrowserRouter as Router,
   Route,
@@ -169,7 +166,22 @@ const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"))
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
 
+const ManageTechnicalDirectionValues = React.lazy(() => import("./pages/ManageTechnicalDirectionValues"));
+
 const App = () => {
+  // Global assignee options state
+  const [assigneeOptions, setAssigneeOptions] = useState([]);
+  useEffect(() => {
+    // Only fetch when on a project-issue-dashboard route
+    const pathMatch = window.location.pathname.match(/organization\/(\d+)\//);
+    const id = pathMatch ? pathMatch[1] : null;
+    if (!id) return;
+    const docRef = doc(db, "churches", id, "bimProjects", "stanford-ff-rad", "data-option-values", "live-issue-tracker");
+    getDoc(docRef).then((snap) => {
+      const data = snap.data() || {};
+      setAssigneeOptions(Array.isArray(data.assignee) ? data.assignee : []);
+    });
+  }, []);
   return (
     <AuthProvider>
       <ErrorBoundary>
@@ -756,7 +768,7 @@ const App = () => {
             path="/organization/:id/project-issue-dashboard"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
-                <ProjectIssueDashboard />
+                <ProjectIssueDashboard assigneeOptions={assigneeOptions} setAssigneeOptions={setAssigneeOptions} />
               </PrivateRoute>
             }
           />
@@ -855,6 +867,25 @@ const App = () => {
               </PrivateRoute>
             }
           />
+          <Route
+            path="/organization/:id/project-issue-dashboard/manage-technical-direction-values"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <React.Suspense fallback={<div>Loading…</div>}>
+                  <ManageTechnicalDirectionValues />
+                </React.Suspense>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/project-issue-dashboard/manage-assignees"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ManageAssigneesPage />
+              </PrivateRoute>
+            }
+          />
+            <Route path="/live-issue-tracker" element={<ErrorBoundary><LiveIssueTracker /></ErrorBoundary>} />
           </Routes>
           </Suspense>
         </Router>

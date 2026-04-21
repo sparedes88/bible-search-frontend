@@ -110,12 +110,13 @@ const DEFAULT_SELECTED_FIELD_KEYS = new Set(
 
 // ── component ──────────────────────────────────────────────────────────────────
 
+
 const ProjectIssueDetail = () => {
-    // Log state
-    const [logEntries, setLogEntries] = useState(getInitialLog());
-    const [newLogUpdate, setNewLogUpdate] = useState("");
-    const [newLogPercent, setNewLogPercent] = useState("");
-    const [logLoading, setLogLoading] = useState(false);
+  // Log state
+  const [logEntries, setLogEntries] = useState(getInitialLog());
+  const [newLogUpdate, setNewLogUpdate] = useState("");
+  const [newLogPercent, setNewLogPercent] = useState("");
+  const [logLoading, setLogLoading] = useState(false);
   const { id, projectDocId, issueId } = useParams();
   const decodedIssueId = decodeURIComponent(issueId || "");
 
@@ -124,6 +125,9 @@ const ProjectIssueDetail = () => {
   const [rowData, setRowData] = useState({});
   const [fields, setFields] = useState([]);
   const [projectName, setProjectName] = useState("");
+
+  // Column sort state: 'default', 'az', 'custom'
+  const [columnSort, setColumnSort] = useState('default');
 
   const [hiddenFields, setHiddenFields] = useState(() => {
     try {
@@ -146,72 +150,77 @@ const ProjectIssueDetail = () => {
     setLoading(true);
     setError(null);
 
-    const unsub = onSnapshot(doc(db, "churches", id, "bimProjects", projectDocId), (snapshot) => {
-      if (!snapshot.exists()) {
-        setError("Project not found.");
-        setLoading(false);
-        return;
+    // Listen to project doc for project name and meta only
+    const unsubProject = onSnapshot(doc(db, "churches", id, "bimProjects", projectDocId), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setProjectName(normalizeValue(data.name));
+        const internalCardMeta = data.internalCardMeta || {};
+        // Documents can still fallback to meta
+        const normalizeCardKey = (id, rowNumber) => {
+          const norm = String(id || "").trim().toUpperCase();
+          return norm ? `id:${norm}` : `row:${rowNumber || "unknown"}`;
+        };
+        const computedCardKey = normalizeCardKey(decodedIssueId);
+        // No longer setE2Documents from internalCardMeta; handled below from issue doc
       }
-      const data = snapshot.data();
-      const docFields = Array.isArray(data.fields) ? data.fields : [];
-      const rows = Array.isArray(data.rows) ? data.rows : [];
-      const internalCardMeta = data.internalCardMeta || {};
+    });
 
-      setProjectName(normalizeValue(data.name));
-
-      const idAliases = ["id", "issue id", "task id", "card id", "row id"];
-
-      const matched =
-        rows.find((row) => {
-          const rd = row?.rowData || {};
-          const fieldName = findFieldByAliases(docFields, rd, idAliases);
-          return (
-            fieldName &&
-            normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase()
-          );
-        }) ||
-        rows.find((row) => String(row?.rowNumber) === decodedIssueId);
-
-      if (!matched) {
-        setError(`Issue "${decodedIssueId}" was not found in this project.`);
-        setLoading(false);
-        return;
+    // Listen to Issue doc for all field values
+    const issueDocRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+    const unsubIssueDoc = onSnapshot(issueDocRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setRowData(data || {});
+        setFields(Object.keys(data || {}));
+        if (typeof data.e2Comments === "string") setE2Comments(data.e2Comments);
+        if (Array.isArray(data.e2Documents)) setE2Documents(data.e2Documents);
+        else setE2Documents([]);
+        if (Array.isArray(data.LogEntries) && data.LogEntries.length > 0) {
+          setLogEntries(data.LogEntries);
+        } else {
+          setLogEntries(getInitialLog());
+        }
+      } else {
+        setRowData({});
+        setFields([]);
+        setE2Documents([]);
+        setLogEntries(getInitialLog());
       }
+      setLoading(false);
+    }, (err) => {
+      console.error("Issue doc fetch error:", err);
+      setRowData({});
+      setFields([]);
+      setE2Documents([]);
+      setLogEntries(getInitialLog());
+      setLoading(false);
+    });
 
-      setFields(docFields);
-      setRowData(matched?.rowData || {});
-
-      // Determine cardKey (shared logic)
-      const normalizeCardKey = (id, rowNumber) => {
-        const norm = String(id || "").trim().toUpperCase();
-        return norm ? `id:${norm}` : `row:${rowNumber || "unknown"}`;
-      };
-      const computedCardKey = normalizeCardKey(decodedIssueId, matched?.rowNumber);
-      setCardKey(computedCardKey);
-
-      // Always load E2 Comments from rowData (main Firestore location)
-      setE2Comments(normalizeValue(matched?.rowData?.e2Comments) || "");
-      // Documents can still fallback to meta
-      const meta = internalCardMeta[computedCardKey] || {};
-      setE2Documents(Array.isArray(meta.e2Documents) ? meta.e2Documents : []);
-
-      // Load log entries from meta or initialize
-      if (Array.isArray(meta.logEntries) && meta.logEntries.length > 0) {
-        setLogEntries(meta.logEntries);
+    // Listen to the Issue document for LogEntries
+    const issueRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+    const unsubIssue = onSnapshot(issueRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setLogEntries(data.LogEntries);
       } else {
         setLogEntries(getInitialLog());
       }
       setLoading(false);
     }, (err) => {
-      console.error("ProjectIssueDetail fetch error:", err);
-      setError("Could not load issue data. Please try again.");
+      console.error("Issue log fetch error:", err);
+      setLogEntries(getInitialLog());
       setLoading(false);
     });
-    return () => unsub();
+
+    return () => {
+      unsubProject();
+      unsubIssueDoc();
+    };
   }, [id, projectDocId, decodedIssueId]);
   // Add new log entry
   const handleAddLogEntry = async () => {
-    if (!newLogUpdate.trim() || !cardKey || !id || !projectDocId) return;
+    if (!newLogUpdate.trim() || !id || !projectDocId || !decodedIssueId) return;
     setLogLoading(true);
     const entry = {
       update: newLogUpdate.trim(),
@@ -219,17 +228,12 @@ const ProjectIssueDetail = () => {
       timestamp: new Date().toISOString(),
     };
     try {
-      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
-      const snapshot = await getDoc(projectDoc);
-      const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      const prevLog = Array.isArray(internalCardMeta[cardKey].logEntries)
-        ? internalCardMeta[cardKey].logEntries
-        : [];
+      const issueRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+      const snapshot = await getDoc(issueRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevLog = Array.isArray(data.LogEntries) ? data.LogEntries : [];
       const nextLog = [entry, ...prevLog];
-      internalCardMeta[cardKey].logEntries = nextLog;
-      await updateDoc(projectDoc, { internalCardMeta });
+      await updateDoc(issueRef, { LogEntries: nextLog });
       setLogEntries(nextLog);
       setNewLogUpdate("");
       setNewLogPercent("");
@@ -242,18 +246,29 @@ const ProjectIssueDetail = () => {
 
   // ── derived data ─────────────────────────────────────────────────────────────
 
+
+  // Sorting logic for columns
   const orderedFields = useMemo(() => {
     const keys = new Set([...fields, ...Object.keys(rowData)]);
-    return Array.from(keys).filter(Boolean);
-  }, [fields, rowData]);
+    let arr = Array.from(keys).filter(Boolean);
+    if (columnSort === 'az') {
+      arr = arr.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
+    // 'custom' can be implemented later (stub)
+    return arr;
+  }, [fields, rowData, columnSort]);
+  // Handler for column sort dropdown
+  const handleColumnSortChange = (e) => {
+    setColumnSort(e.target.value);
+  };
 
   const visibleFields = useMemo(
-    () => orderedFields.filter((f) => !hiddenFields[f]),
+    () => (orderedFields || []).filter((f) => !hiddenFields[f]),
     [orderedFields, hiddenFields]
   );
 
   useEffect(() => {
-    if (!projectDocId || !orderedFields.length) return;
+    if (!projectDocId || !(orderedFields && orderedFields.length)) return;
     let hasStoredPreferences = false;
     try {
       hasStoredPreferences = localStorage.getItem(`${STORAGE_PREFIX}${projectDocId}`) !== null;
@@ -336,29 +351,11 @@ const ProjectIssueDetail = () => {
   // ── E2 metadata handlers ──────────────────────────────────────────────────────
 
   const saveE2Comments = async () => {
-    if (!id || !projectDocId) return;
+    if (!id || !projectDocId || !decodedIssueId) return;
     setSavingE2Metadata(true);
-
     try {
-      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
-      const snapshot = await getDoc(projectDoc);
-      const data = snapshot.data();
-      const rows = Array.isArray(data?.rows) ? [...data.rows] : [];
-
-      // Update e2Comments in the correct row's rowData (by id)
-      const idAliases = ["id", "issue id", "task id", "card id", "row id"];
-      const rowIndex = rows.findIndex(row => {
-        const rd = row?.rowData || {};
-        const fieldName = findFieldByAliases(fields, rd, idAliases);
-        return fieldName && normalizeValue(rd[fieldName]).toLowerCase() === decodedIssueId.toLowerCase();
-      });
-      if (rowIndex !== -1) {
-        const row = { ...rows[rowIndex] };
-        row.rowData = { ...row.rowData, e2Comments: normalizeValue(e2Comments) };
-        rows[rowIndex] = row;
-      }
-
-      await updateDoc(projectDoc, { rows });
+      const issueRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+      await updateDoc(issueRef, { e2Comments: normalizeValue(e2Comments) });
       toast.success("E2 Comments saved.");
     } catch (err) {
       console.error("Error saving E2 Comments:", err);
@@ -372,14 +369,19 @@ const ProjectIssueDetail = () => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    if (!cardKey) {
+    if (!id || !projectDocId || !issueId) {
       toast.error("Issue data not fully loaded. Please refresh the page.");
       return;
     }
 
-    const allowedCount = 3 - e2Documents.length;
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
+      return;
+    }
+
+    const allowedCount = 10 - e2Documents.length;
     if (allowedCount <= 0) {
-      toast.warn("Maximum 3 documents allowed.");
+      toast.warn("Maximum 10 documents allowed.");
       return;
     }
 
@@ -394,10 +396,10 @@ const ProjectIssueDetail = () => {
       const uploadedDocs = [];
 
       for (const file of filesToUpload) {
-        const safeCardKey = cardKey.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const safeIssueId = (issueId || "").replace(/[^a-zA-Z0-9-_]/g, "_");
         const ext = file.name.split(".").pop();
         const timestamp = Date.now();
-        const storagePath = `churches/${id}/bimProjects/${projectDocId}/e2-documents/${safeCardKey}/${timestamp}.${ext}`;
+        const storagePath = `churches/${id}/bimProjects/${projectDocId}/e2-documents/${safeIssueId}/${timestamp}.${ext}`;
         const fileRef = storageRef(storage, storagePath);
 
         await uploadBytes(fileRef, file);
@@ -411,22 +413,22 @@ const ProjectIssueDetail = () => {
         });
       }
 
-      // Update Firestore
-      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
-      const snapshot = await getDoc(projectDoc);
-      const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      // Update Firestore: store in the issue doc's e2Documents array
+      const decodedIssueId = decodeURIComponent(issueId);
+      const issueDocRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
+      const snapshot = await getDoc(issueDocRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
+      const nextDocs = [...prevDocs, ...uploadedDocs];
+      await updateDoc(issueDocRef, { e2Documents: nextDocs });
 
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      internalCardMeta[cardKey].e2Documents = [...(internalCardMeta[cardKey].e2Documents || []), ...uploadedDocs];
-
-      await updateDoc(projectDoc, { internalCardMeta });
-
-      setE2Documents((prev) => [...prev, ...uploadedDocs]);
+      setE2Documents(nextDocs);
       toast.success(`${uploadedDocs.length} document(s) uploaded.`);
     } catch (err) {
       console.error("Error uploading documents:", err);
-      toast.error(err?.message || "Could not upload document(s).");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not upload document(s).";
+      toast.error(`Upload failed${errorCode}: ${errorMessage}`);
     } finally {
       setUploadingDocuments(false);
       if (fileInputRef.current) {
@@ -453,24 +455,21 @@ const ProjectIssueDetail = () => {
         });
       }
 
-      // Update Firestore
-      const projectDoc = doc(db, "churches", id, "bimProjects", projectDocId);
-      const snapshot = await getDoc(projectDoc);
-      const data = snapshot.data();
-      const internalCardMeta = data?.internalCardMeta || {};
+      // Update Firestore: remove from issue doc's e2Documents array
+      const issueDocRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodeURIComponent(issueId));
+      const snapshot = await getDoc(issueDocRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
+      const updatedDocs = prevDocs.filter((_, i) => i !== index);
+      await updateDoc(issueDocRef, { e2Documents: updatedDocs });
 
-      internalCardMeta[cardKey] = internalCardMeta[cardKey] || {};
-      const updatedDocs = internalCardMeta[cardKey].e2Documents || [];
-      updatedDocs.splice(index, 1);
-      internalCardMeta[cardKey].e2Documents = updatedDocs;
-
-      await updateDoc(projectDoc, { internalCardMeta });
-
-      setE2Documents((prev) => prev.filter((_, i) => i !== index));
+      setE2Documents(updatedDocs);
       toast.success("Document deleted.");
     } catch (err) {
       console.error("Error deleting document:", err);
-      toast.error("Could not delete document.");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not delete document.";
+      toast.error(`Delete failed${errorCode}: ${errorMessage}`);
     } finally {
       setSavingE2Metadata(false);
     }
@@ -487,10 +486,10 @@ const ProjectIssueDetail = () => {
 
         <div className="pid-detail-nav" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Link
-            to={`/organization/${id}/project-issue-dashboard`}
+            to="/live-issue-tracker"
             className="pid-detail-back-link"
           >
-            ← Go to Live Issues Tracker
+            ← Live Issue Tracker
           </Link>
           <Link
             to={`/organization/${id}/e2-agile-board`}
@@ -549,11 +548,19 @@ const ProjectIssueDetail = () => {
               {/* Field selector panel (always visible, left side) */}
               <aside className="pid-detail-field-bar">
                 <div className="pid-detail-field-selector">
-                  <div className="pid-detail-fields-heading">
+                  <div className="pid-detail-fields-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                     <span className="pid-detail-fields-title">Fields</span>
                     <span className="pid-detail-fields-count">
-                      ({visibleFields.length} / {orderedFields.length})
+                      ({(visibleFields?.length || 0)} / {(orderedFields?.length || 0)})
                     </span>
+                  </div>
+                  <div style={{ margin: '10px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label htmlFor="column-sort-select" style={{ fontSize: '0.97em', color: '#374151' }}>Sort:</label>
+                    <select id="column-sort-select" value={columnSort} onChange={handleColumnSortChange} style={{ padding: '2px 8px', borderRadius: 4 }}>
+                      <option value="default">Default</option>
+                      <option value="az">A-Z</option>
+                      <option value="custom" disabled>Custom (coming soon)</option>
+                    </select>
                   </div>
                   <div className="pid-detail-fs-actions">
                     <button
@@ -572,7 +579,7 @@ const ProjectIssueDetail = () => {
                     </button>
                   </div>
                   <div className="pid-detail-field-checkboxes">
-                    {orderedFields.map((fieldName) => (
+                    {(orderedFields || []).map((fieldName) => (
                       <label key={fieldName} className="pid-detail-field-chk">
                         <input
                           type="checkbox"
@@ -588,7 +595,7 @@ const ProjectIssueDetail = () => {
 
               {/* Detail table */}
               <div className="pid-detail-main-content">
-                {visibleFields.length === 0 ? (
+                {(visibleFields?.length || 0) === 0 ? (
                   <p className="pid-detail-no-fields">
                     All fields are hidden. Use the Fields panel on the left to show fields.
                   </p>
@@ -596,7 +603,7 @@ const ProjectIssueDetail = () => {
                   <div className="pid-detail-table-wrap">
                     <table className="pid-detail-table">
                       <tbody>
-                        {visibleFields.map((fieldName) => {
+                        {(visibleFields || []).map((fieldName) => {
                           const raw = normalizeValue(rowData[fieldName]);
                           const isEmpty = !raw;
                           const isImageField =
@@ -656,11 +663,18 @@ const ProjectIssueDetail = () => {
                 <textarea
                   className="pid-detail-e2-textarea"
                   value={e2Comments}
-                  onChange={(e) => setE2Comments(e.target.value)}
+                  onChange={e => {
+                    // Limit to 1000 words
+                    const words = e.target.value.split(/\s+/);
+                    if (words.length <= 1000) setE2Comments(e.target.value);
+                  }}
                   placeholder="Add notes, observations, or feedback for E2 team members…"
                   rows={4}
                   disabled={savingE2Metadata}
                 />
+                <div style={{ textAlign: 'right', fontSize: '0.95em', color: (e2Comments?.split(/\s+/)?.length || 0) > 1000 ? '#dc2626' : '#666' }}>
+                  {e2Comments?.trim() ? (e2Comments?.split(/\s+/)?.length || 0) : 0}/1000 words
+                </div>
                 <div className="pid-detail-e2-actions">
                   <button
                     type="button"
@@ -668,7 +682,7 @@ const ProjectIssueDetail = () => {
                     onClick={saveE2Comments}
                     disabled={savingE2Metadata}
                   >
-                    {savingE2Metadata ? "Saving…" : "Save Comments"}
+                    {savingE2Metadata ? "Saving…" : "Add/Edit Comments"}
                   </button>
                 </div>
               </div>
@@ -678,12 +692,12 @@ const ProjectIssueDetail = () => {
                 <h3 className="pid-detail-e2-title">
                   E2 Documents
                   <span className="pid-detail-e2-count">
-                    ({e2Documents.length} / 3)
+                    ({(Array.isArray(e2Documents) ? e2Documents.length : 0)} / 10)
                   </span>
                 </h3>
 
                 {/* Upload Area */}
-                {e2Documents.length < 3 && (
+                {(Array.isArray(e2Documents) ? e2Documents.length : 0) < 10 && (
                   <div className="pid-detail-upload-area">
                     <input
                       ref={fileInputRef}
@@ -691,29 +705,29 @@ const ProjectIssueDetail = () => {
                       accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
                       multiple
                       onChange={handleDocumentUpload}
-                      disabled={uploadingDocuments || e2Documents.length >= 3}
+                      disabled={uploadingDocuments || (Array.isArray(e2Documents) ? e2Documents.length : 0) >= 10}
                       style={{ display: "none" }}
                     />
                     <button
                       type="button"
                       className="pid-detail-upload-btn"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadingDocuments || e2Documents.length >= 3}
+                      disabled={uploadingDocuments || (Array.isArray(e2Documents) ? e2Documents.length : 0) >= 10}
                     >
                       {uploadingDocuments ? "Uploading…" : "📎 Add Document"}
                     </button>
                     <span className="pid-detail-upload-hint">
-                      {3 - e2Documents.length} slot{3 - e2Documents.length !== 1 ? "s" : ""} available
+                      {10 - (Array.isArray(e2Documents) ? e2Documents.length : 0)} slot{10 - (Array.isArray(e2Documents) ? e2Documents.length : 0) !== 1 ? "s" : ""} available
                     </span>
                   </div>
                 )}
 
                 {/* Document List */}
-                {e2Documents.length === 0 ? (
+                {(Array.isArray(e2Documents) ? e2Documents.length : 0) === 0 ? (
                   <p className="pid-detail-no-docs">No documents attached yet.</p>
                 ) : (
                   <div className="pid-detail-doc-list">
-                    {e2Documents.map((doc, index) => (
+                    {(Array.isArray(e2Documents) ? e2Documents : []).map((doc, index) => (
                       <div key={index} className="pid-detail-doc-item">
                         <div className="pid-detail-doc-info">
                           <a
@@ -785,16 +799,22 @@ const ProjectIssueDetail = () => {
                 </tr>
               </thead>
               <tbody>
-                {logEntries.length === 0 ? (
+                {(logEntries?.length || 0) === 0 ? (
                   <tr><td colSpan={3} style={{ textAlign: "center", padding: 16 }}>No log entries yet.</td></tr>
                 ) : (
-                  logEntries.map((entry, idx) => (
-                    <tr key={idx}>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{formatTimestamp(entry.timestamp)}</td>
-                    </tr>
-                  ))
+                  [...(logEntries || [])]
+                    .sort((a, b) => {
+                      const ta = new Date(a.timestamp || a.date || 0).getTime();
+                      const tb = new Date(b.timestamp || b.date || 0).getTime();
+                      return tb - ta;
+                    })
+                    .map((entry, idx) => (
+                      <tr key={idx}>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.update}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{entry.percent}%</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f3f4f6" }}>{formatTimestamp(entry.timestamp || entry.date)}</td>
+                      </tr>
+                    ))
                 )}
               </tbody>
             </table>
