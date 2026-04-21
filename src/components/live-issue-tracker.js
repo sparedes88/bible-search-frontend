@@ -604,9 +604,6 @@ export default function LiveIssueTracker() {
           >
             🏃 Agile Dashboard
           </Link>
-          <Link to="/organization/2155/project-issue-dashboard" style={topNavButtonStyle}>
-            📋 Go to Project Issue Dashboard
-          </Link>
           <button
             style={topNavButtonStyle}
             onClick={() => setShowAddPopup(true)}
