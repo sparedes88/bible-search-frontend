@@ -592,23 +592,28 @@ const AgileDevelopmentDashboard = () => {
             to="/live-issue-tracker"
             style={{
               marginLeft: 16,
-              background: '#0ea5e9',
-              color: '#fff',
-              padding: '10px 18px',
-              borderRadius: 6,
-              fontWeight: 600,
+              background: 'rgba(236, 239, 244, 0.88)',
+              color: '#111827',
+              padding: '10px 16px',
+              borderRadius: 8,
+              fontWeight: 500,
+              letterSpacing: '0.2px',
               textDecoration: 'none',
               display: 'inline-block',
-              border: 'none',
+              border: '1px solid #a8a8a8',
+              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
               cursor: 'pointer',
             }}
           >
-            🚦 Go to Live Issue Tracker
+            Open Live Issue Tracker
           </Link>
         </div>
         <div style={{ marginTop: 16, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ textAlign: 'center', width: '100%' }}>
             <h1 style={{ margin: 0 }}>Agile Development Dashboard</h1>
+            <p style={{ margin: '6px 0 0 0', color: '#64748b', fontSize: 14 }}>
+              © E2 Tech Support, LLC
+            </p>
           </div>
           {/* Removed Manage Project Name Values button as requested */}
         </div>
@@ -717,8 +722,11 @@ const AgileDevelopmentDashboard = () => {
                       <div className="agile-card-header">
                         <div className="agile-card-field-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                            {normalizeValue(issue.dataStage) === 'Testing' && (
+                            {normalizeValue(issue.dataStage).toLowerCase() === 'testing' && (
                               <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16, marginRight: 4 }} />
+                            )}
+                            {normalizeValue(issue.dataStage).toLowerCase() === 'production' && (
+                              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16, marginRight: 4 }} />
                             )}
                             {Number.isFinite(issue.developmentCycleCounter) && issue.developmentCycleCounter > 0 && (
                               <>

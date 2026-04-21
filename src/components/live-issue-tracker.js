@@ -416,6 +416,26 @@ export default function LiveIssueTracker() {
     return issueId.includes(normalizedSearchTerm) || title.includes(normalizedSearchTerm);
   });
 
+  const getImportDate = (value) => {
+    if (!value) return null;
+    if (typeof value?.toDate === "function") return value.toDate();
+    if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const latestExcelImportInfo = issues.reduce((latest, issue) => {
+    const importedAt = getImportDate(issue.lastExcelImportAt || issue["lastExcelImportAt"]);
+    if (!importedAt) return latest;
+    if (!latest || importedAt > latest.importedAt) {
+      return {
+        importedAt,
+        fileName: String(issue.lastExcelImportFile || issue["lastExcelImportFile"] || "").trim(),
+      };
+    }
+    return latest;
+  }, null);
+
   const openMarkupViewer = (index) => {
     setMarkupViewerIndex(index);
   };
@@ -544,7 +564,7 @@ export default function LiveIssueTracker() {
       await updateDoc(issueDocRef, {
         "Technical Direction": tdValue,
         "E2 Detailer": editFields.leadDetailer,
-        "E2 Tags": editFields.e2Tag,
+        "E2 Tags": "Provide Technical Details",
         "E2 Detailer Support Team": editFields.supportTeam,
         "Data Stage": editFields.dataStage,
         "e2Comments": editFields.comments,
@@ -559,74 +579,76 @@ export default function LiveIssueTracker() {
     setSaving(false);
   };
 
+  const topNavButtonStyle = {
+    background: "rgba(236, 239, 244, 0.88)",
+    color: "#111827",
+    border: "1px solid #a8a8a8",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontWeight: 500,
+    fontSize: 15,
+    letterSpacing: "0.2px",
+    textDecoration: "none",
+    display: "inline-block",
+    boxShadow: "0 1px 2px rgba(15, 23, 42, 0.08)",
+    cursor: "pointer",
+  };
+
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 24 }}>
-        <Link
-          to="/organization/2155/e2-agile-board"
-          style={{
-            fontWeight: "bold",
-            color: "#fff",
-            background: "#f59e42",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontSize: 15,
-            textDecoration: "none",
-            marginRight: 8
-          }}
-        >
-          🏃 Agile Dashboard
-        </Link>
-        <Link to="/organization/2155/project-issue-dashboard" style={{ fontWeight: "bold", color: "#0ea5e9" }}>
-          📋 Go to Project Issue Dashboard
-        </Link>
-        <button
-          style={{ background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 4, padding: "8px 18px", fontWeight: 600, fontSize: 15, cursor: "pointer" }}
-          onClick={() => setShowAddPopup(true)}
-        >
-          ➕ Add a New Issue/Task
-        </button>
-        <Link
-          to="/organization/2155/project-issue-dashboard/e2-detailers"
-          style={{
-            background: "#f59e42",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontWeight: 600,
-            fontSize: 15,
-            cursor: "pointer",
-            textDecoration: "none"
-          }}
-        >
-          🛠️ Manage E2 Fields
-        </Link>
-        <input
-          ref={excelUploadInputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          onChange={handleSecondTabUpload}
-          style={{ display: "none" }}
-        />
-        <button
-          style={{
-            background: "#0f766e",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 18px",
-            fontWeight: 600,
-            fontSize: 15,
-            cursor: excelUploading ? "not-allowed" : "pointer",
-            opacity: excelUploading ? 0.7 : 1,
-          }}
-          onClick={() => excelUploadInputRef.current?.click()}
-          disabled={excelUploading}
-        >
-          {excelUploading ? "Uploading Excel File..." : "📥 Upload Excel File"}
-        </button>
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+          <Link
+            to="/organization/2155/e2-agile-board"
+            style={topNavButtonStyle}
+          >
+            🏃 Agile Dashboard
+          </Link>
+          <Link to="/organization/2155/project-issue-dashboard" style={topNavButtonStyle}>
+            📋 Go to Project Issue Dashboard
+          </Link>
+          <button
+            style={topNavButtonStyle}
+            onClick={() => setShowAddPopup(true)}
+          >
+            ➕ Add a New Issue/Task
+          </button>
+          <Link
+            to="/organization/2155/project-issue-dashboard/e2-detailers"
+            style={topNavButtonStyle}
+          >
+            🛠️ Manage E2 Fields
+          </Link>
+          <input
+            ref={excelUploadInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleSecondTabUpload}
+            style={{ display: "none" }}
+          />
+          <button
+            style={{
+              ...topNavButtonStyle,
+              cursor: excelUploading ? "not-allowed" : "pointer",
+              opacity: excelUploading ? 0.7 : 1,
+            }}
+            onClick={() => excelUploadInputRef.current?.click()}
+            disabled={excelUploading}
+          >
+            {excelUploading ? "Uploading Excel File..." : "📥 Upload Excel File"}
+          </button>
+        </div>
+
+        <div style={{ textAlign: "right", color: "#475569", minWidth: 260 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Latest Uploaded Data File
+          </div>
+          <div style={{ fontSize: 14, marginTop: 2 }}>
+            {latestExcelImportInfo?.importedAt
+              ? latestExcelImportInfo.importedAt.toLocaleString()
+              : "No Excel uploads yet"}
+          </div>
+        </div>
       </div>
       {(excelUploadError || excelUploadSummary) && (
         <div
@@ -798,7 +820,10 @@ export default function LiveIssueTracker() {
                 </form>
               </div>
             )}
-      <h2>Live Issue Tracker</h2>
+      <h2 style={{ textAlign: "center", margin: "0 0 4px" }}>Live Issue Tracker</h2>
+      <p style={{ textAlign: "center", margin: "0 0 12px", color: "#64748b", fontSize: 14 }}>
+        © E2 Tech Support, LLC
+      </p>
       <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <div>
           <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>

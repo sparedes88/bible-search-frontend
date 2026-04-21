@@ -1,33 +1,33 @@
-.e2-detailer-page {
+.tech-direction-page {
   margin-top: 1rem;
   display: grid;
   gap: 1rem;
 }
 
-.e2-detailer-header {
+.tech-direction-header {
   border: 1px solid #dbe7ff;
   border-radius: 12px;
   padding: 1rem 1.1rem;
   background: linear-gradient(120deg, #f5f7ff 0%, #e6f4ff 100%);
 }
 
-.e2-detailer-title {
+.tech-direction-title {
   margin: 0;
   color: #102a43;
 }
 
-.e2-detailer-subtitle {
+.tech-direction-subtitle {
   margin: 0.35rem 0 0;
   color: #486581;
 }
 
-.e2-detailer-add-row {
+.tech-direction-add-row {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.75rem;
 }
 
-.e2-detailer-input {
+.tech-direction-input {
   width: 100%;
   border: 1px solid #cbd2d9;
   border-radius: 8px;
@@ -36,27 +36,20 @@
   color: #102a43;
 }
 
-.e2-detailer-input:focus-visible {
+.tech-direction-input:focus-visible {
   outline: 2px solid #0f766e;
   outline-offset: 1px;
   border-color: #0f766e;
 }
 
-.e2-detailer-list-wrap {
+.tech-direction-list-wrap {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #ffffff;
   overflow: hidden;
 }
 
-.e2-detailer-sections {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  align-items: start;
-}
-
-.e2-detailer-list-head {
+.tech-direction-list-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -67,23 +60,23 @@
   background: #f8fafc;
 }
 
-.e2-detailer-list-meta {
+.tech-direction-list-meta {
   display: grid;
   gap: 0.2rem;
 }
 
-.e2-detailer-empty {
+.tech-direction-empty {
   padding: 1rem;
   color: #64748b;
 }
 
-.e2-detailer-list {
+.tech-direction-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.e2-detailer-item {
+.tech-direction-item {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.75rem;
@@ -92,86 +85,79 @@
   border-bottom: 1px solid #f1f5f9;
 }
 
-.e2-detailer-item:last-child {
+.tech-direction-item:last-child {
   border-bottom: none;
 }
 
-.e2-detailer-value {
+.tech-direction-value {
   color: #102a43;
   font-weight: 600;
 }
 
-.e2-detailer-actions {
+.tech-direction-actions {
   display: inline-flex;
   gap: 0.45rem;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
-.e2-detailer-btn {
-  border: 1px solid #a8a8a8;
-  background: rgba(236, 239, 244, 0.88);
-  color: #111827;
+.tech-direction-btn {
+  border: 1px solid #cbd2d9;
+  background: #ffffff;
+  color: #334e68;
   border-radius: 8px;
-  padding: 0.5rem 0.75rem;
-  font-weight: 500;
-  letter-spacing: 0.2px;
-  text-decoration: none;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  padding: 0.45rem 0.65rem;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.e2-detailer-btn:hover:not(:disabled) {
-  border-color: #9ca3af;
-  background: rgba(243, 244, 246, 0.92);
+.tech-direction-btn:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
 }
 
-.e2-detailer-btn:disabled {
+.tech-direction-btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
 
-.e2-detailer-btn-primary {
+.tech-direction-btn-primary {
   background: #14532d;
   border-color: #14532d;
   color: #ffffff;
 }
 
-.e2-detailer-btn-primary:hover:not(:disabled) {
+.tech-direction-btn-primary:hover:not(:disabled) {
   background: #166534;
   border-color: #166534;
 }
 
-.e2-detailer-btn-danger {
+.tech-direction-btn-danger {
   background: #b91c1c;
   border-color: #b91c1c;
   color: #ffffff;
 }
 
-.e2-detailer-btn-danger:hover:not(:disabled) {
+.tech-direction-btn-danger:hover:not(:disabled) {
   background: #991b1b;
   border-color: #991b1b;
 }
 
 @media (max-width: 768px) {
-  .e2-detailer-sections {
-    grid-template-columns: 1fr;
-  }
-
-  .e2-detailer-list-head {
+  .tech-direction-list-head {
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
-  .e2-detailer-add-row {
+  .tech-direction-add-row {
     grid-template-columns: 1fr;
   }
 
-  .e2-detailer-item {
+  .tech-direction-item {
     grid-template-columns: 1fr;
   }
 
-  .e2-detailer-actions {
+  .tech-direction-actions {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;

@@ -162,6 +162,7 @@ const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
+const E2StatusUpdate = React.lazy(() => import("./components/E2StatusUpdate"));
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
@@ -785,6 +786,14 @@ const App = () => {
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <E2DetailerManager />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/project-issue-dashboard/e2-status_update"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <E2StatusUpdate />
               </PrivateRoute>
             }
           />
