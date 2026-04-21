@@ -67,6 +67,55 @@ const resolveRowData = (row) => {
   return row;
 };
 
+// --- Deadline timezone helpers (America/New_York) ---
+const _nyFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hourCycle: "h23",
+});
+const _getNyParts = (date) => {
+  const p = {};
+  _nyFmt.formatToParts(date).forEach(({ type, value }) => { if (type !== "literal") p[type] = Number(value); });
+  return p;
+};
+const _nyLocalToUtcMs = (year, month, day, hour, min = 0, sec = 0) => {
+  let utcMs = Date.UTC(year, month - 1, day, hour, min, sec);
+  for (let i = 0; i < 3; i++) {
+    const a = _getNyParts(new Date(utcMs));
+    const delta = Date.UTC(year, month - 1, day, hour, min, sec) - Date.UTC(a.year, a.month - 1, a.day, a.hour, a.minute, a.second);
+    if (delta === 0) break;
+    utcMs += delta;
+  }
+  return utcMs;
+};
+const _shiftDay = (year, month, day, delta) => {
+  const d = new Date(Date.UTC(year, month - 1, day + delta));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+};
+// Returns the current moment as UTC ms (reference for deadline countdown).
+const getDeadlineRefMs = () => Date.now();
+// Returns the due date pinned to 4 PM EST on that calendar day as UTC ms.
+const getDueDateMs = (dueDateStr) => {
+  // Try to extract date parts directly from the string to avoid JS's
+  // UTC-midnight parsing of ISO dates (e.g. "2026-04-21") which shifts
+  // the day backward by one in negative-UTC-offset timezones like EDT.
+  const isoMatch = String(dueDateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return _nyLocalToUtcMs(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]), 16);
+  }
+  const mdyMatch = String(dueDateStr).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (mdyMatch) {
+    return _nyLocalToUtcMs(Number(mdyMatch[3]), Number(mdyMatch[1]), Number(mdyMatch[2]), 16);
+  }
+  // Fallback: parse normally and use NY calendar day
+  const raw = new Date(dueDateStr);
+  if (Number.isNaN(raw.getTime())) return null;
+  const { year, month, day } = _getNyParts(raw);
+  return _nyLocalToUtcMs(year, month, day, 16);
+};
+// --- End deadline helpers ---
+
 const toPhaseId = (value) => {
   const normalized = normalizeValue(value).toLowerCase();
   if (!normalized) return "phase-empty";
@@ -742,14 +791,13 @@ const AgileDevelopmentDashboard = () => {
                             let deadlineLabel = null;
                             let isOverdue = false;
                             if (dueDateStr) {
-                              const now = new Date();
-                              const dueDate = new Date(dueDateStr);
-                              if (!Number.isNaN(dueDate.getTime())) {
-                                const diffMs = dueDate - now;
+                              const dueDateMs = getDueDateMs(dueDateStr);
+                              if (dueDateMs !== null) {
+                                const refMs = getDeadlineRefMs();
+                                const diffMs = dueDateMs - refMs;
                                 const absDiffMs = Math.abs(diffMs);
                                 const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
                                 const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
-
                                 if (absDiffMs < (1000 * 60 * 60 * 24)) {
                                   const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
                                   deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
