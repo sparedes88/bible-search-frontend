@@ -21,6 +21,7 @@ import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 
 const ISSUE_ID_ALIASES = ["id", "issue id", "task id", "card id", "row id"];
+const NO_TAGS_FILTER_VALUE = "__NO_TAGS__";
 
 const normalizeHeaderKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
@@ -49,6 +50,7 @@ export default function LiveIssueTracker() {
   // State for edit popup extra fields (must be inside component)
   const [editFields, setEditFields] = useState({
     leadDetailer: "",
+    e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
     comments: "",
@@ -62,6 +64,7 @@ export default function LiveIssueTracker() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedProject, setSelectedProject] = useState("");
+  const [selectedE2Tag, setSelectedE2Tag] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [showPopup, setShowPopup] = useState(false);
   const [popupIssue, setPopupIssue] = useState(null);
@@ -76,6 +79,7 @@ export default function LiveIssueTracker() {
     projectName: "",
     requester: "",
     leadDetailer: "",
+    e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
     sendToAgile: "No"
@@ -84,6 +88,7 @@ export default function LiveIssueTracker() {
   const [addFormLoading, setAddFormLoading] = useState(false);
   const [projectNameOptions, setProjectNameOptions] = useState([]);
   const [e2DetailerOptions, setE2DetailerOptions] = useState([]);
+  const [e2TagOptions, setE2TagOptions] = useState([]);
   const [excelUploading, setExcelUploading] = useState(false);
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
@@ -116,6 +121,7 @@ export default function LiveIssueTracker() {
       "Project Name": addForm.projectName,
       Assignee: addForm.requester,
       "E2 Detailer": addForm.leadDetailer,
+      "E2 Tags": addForm.e2Tag,
       "E2 Detailer Support Team": addForm.supportTeam,
       "Data Stage": addForm.dataStage,
       status: "Open",
@@ -132,6 +138,7 @@ export default function LiveIssueTracker() {
         projectName: "",
         requester: "",
         leadDetailer: "",
+        e2Tag: "",
         supportTeam: [],
         dataStage: "Testing",
         sendToAgile: "No"
@@ -278,6 +285,7 @@ export default function LiveIssueTracker() {
         setTdOptions(Array.isArray(configData.technicalDirectionOptions) ? configData.technicalDirectionOptions : []);
         setProjectNameOptions(Array.isArray(configData.projectNameValues) ? configData.projectNameValues : []);
         setE2DetailerOptions(Array.isArray(configData.e2DetailerOptions) ? configData.e2DetailerOptions : []);
+        setE2TagOptions(Array.isArray(configData.e2TagValues) ? configData.e2TagValues : []);
       } catch (err) {
         // ignore, already handled above
       }
@@ -324,12 +332,22 @@ export default function LiveIssueTracker() {
     return a.localeCompare(b);
   });
 
+  const tagOptions = Array.from(new Set([
+    ...e2TagOptions,
+    ...issues.map(issue => issue["E2 Tags"] || issue.e2Tags || "").filter(Boolean),
+  ])).sort((a, b) => String(a).localeCompare(String(b)));
+  const hasNoTagsIssues = issues.some((issue) => !(issue["E2 Tags"] || issue.e2Tags || ""));
+
   // Filter issues by selected project name and search term
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const filteredIssues = issues.filter(issue => {
     const name = issue["Project Name"] || issue.projectName || issue.project || "";
     const projectMatches = !selectedProject || (name === "" ? "--" : name) === selectedProject;
     if (!projectMatches) return false;
+
+    const issueTag = issue["E2 Tags"] || issue.e2Tags || "";
+    if (selectedE2Tag === NO_TAGS_FILTER_VALUE && issueTag) return false;
+    if (selectedE2Tag && selectedE2Tag !== NO_TAGS_FILTER_VALUE && issueTag !== selectedE2Tag) return false;
 
     if (!normalizedSearchTerm) return true;
 
@@ -344,6 +362,7 @@ export default function LiveIssueTracker() {
     setTdValue(issue["Technical Direction"] || issue.technicalDirection || "");
     setEditFields({
       leadDetailer: issue["E2 Detailer"] || "",
+      e2Tag: issue["E2 Tags"] || issue.e2Tags || "",
       supportTeam: Array.isArray(issue["E2 Detailer Support Team"]) ? issue["E2 Detailer Support Team"] : [],
       dataStage: issue["Data Stage"] || "Testing",
       comments: issue["e2Comments"] || "",
@@ -386,6 +405,7 @@ export default function LiveIssueTracker() {
       await updateDoc(issueDocRef, {
         "Technical Direction": tdValue,
         "E2 Detailer": editFields.leadDetailer,
+        "E2 Tags": editFields.e2Tag,
         "E2 Detailer Support Team": editFields.supportTeam,
         "Data Stage": editFields.dataStage,
         "e2Comments": editFields.comments,
@@ -581,6 +601,15 @@ export default function LiveIssueTracker() {
                     </select>
                   </div>
                   <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 500 }}>E2 Tags:</label>
+                    <select value={addForm.e2Tag} onChange={e => handleAddFormChange("e2Tag", e.target.value)} style={{ width: "100%", marginTop: 6, padding: 8, fontSize: 15 }}>
+                      <option value="">Select E2 Tag</option>
+                      {tagOptions.map((opt, idx) => (
+                        <option key={idx} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
                     <label style={{ fontWeight: 500 }}>Support Team:</label>
                     <select
                       multiple
@@ -657,6 +686,62 @@ export default function LiveIssueTracker() {
             style={{ padding: "4px 8px", minWidth: 240 }}
           />
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 500 }}>E2 Tags:</span>
+          <button
+            type="button"
+            onClick={() => setSelectedE2Tag("")}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 999,
+              border: "1px solid #cbd5e1",
+              background: selectedE2Tag === "" ? "#0ea5e9" : "#fff",
+              color: selectedE2Tag === "" ? "#fff" : "#0f172a",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            All
+          </button>
+          {hasNoTagsIssues && (
+            <button
+              type="button"
+              onClick={() => setSelectedE2Tag(NO_TAGS_FILTER_VALUE)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: "1px solid #cbd5e1",
+                background: selectedE2Tag === NO_TAGS_FILTER_VALUE ? "#0ea5e9" : "#fff",
+                color: selectedE2Tag === NO_TAGS_FILTER_VALUE ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              No Tags
+            </button>
+          )}
+          {tagOptions.map(tag => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => setSelectedE2Tag(tag)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: "1px solid #cbd5e1",
+                background: selectedE2Tag === tag ? "#0ea5e9" : "#fff",
+                color: selectedE2Tag === tag ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
       </div>
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
@@ -672,6 +757,7 @@ export default function LiveIssueTracker() {
               <th>Status</th>
               <th>E2 Status Update</th>
               <th>E2 Status Update Agile</th>
+              <th>E2 Tags</th>
               <th>Disable Flag</th>
               <th>Action</th>
             </tr>
@@ -679,7 +765,7 @@ export default function LiveIssueTracker() {
           <tbody>
             {filteredIssues.length === 0 && (
               <tr>
-                <td colSpan="10" style={{ textAlign: "center" }}>No issues found.</td>
+                <td colSpan="11" style={{ textAlign: "center" }}>No issues found.</td>
               </tr>
             )}
             {filteredIssues.map((issue, idx) => (
@@ -726,6 +812,7 @@ export default function LiveIssueTracker() {
                 <td>{issue.status || "-"}</td>
                 <td>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
                 <td>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
+                <td>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
                 <td>{issue["Disable Flag"] !== undefined ? String(issue["Disable Flag"]) : (issue.disableFlag !== undefined ? String(issue.disableFlag) : "-")}</td>
                 <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
                   <button
@@ -809,6 +896,20 @@ export default function LiveIssueTracker() {
               >
                 <option value="">Select a lead detailer</option>
                 {e2DetailerOptions.map((opt, idx) => (
+                  <option key={idx} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 500 }}>E2 Tags:</label>
+              <select
+                value={editFields.e2Tag}
+                onChange={e => setEditFields(f => ({ ...f, e2Tag: e.target.value }))}
+                disabled={saving}
+                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
+              >
+                <option value="">Select E2 Tag</option>
+                {tagOptions.map((opt, idx) => (
                   <option key={idx} value={opt}>{opt}</option>
                 ))}
               </select>
