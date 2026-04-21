@@ -144,20 +144,24 @@ try {
 // Initialize storage with better error handling - make it optional
 let storage = null;
 try {
-  // Try to initialize storage with explicit bucket first
-  if (firebaseConfig.storageBucket) {
-    storage = getStorage(app, firebaseConfig.storageBucket);
-    debugLog(`Firebase storage initialized with explicit bucket: ${firebaseConfig.storageBucket}`);
-  } else {
-    // Fallback to default bucket
-    storage = getStorage(app);
-    debugLog("Firebase storage initialized with default bucket");
-  }
+  // Prefer default app config first to avoid malformed explicit bucket URLs in production.
+  storage = getStorage(app);
+  debugLog("Firebase storage initialized with app default bucket");
 } catch (error) {
-  if (isFirebaseDebugEnabled) {
-    console.warn("Firebase storage initialization failed:", error.message);
+  // Fallback to a computed bucket when env config is incomplete for production builds.
+  try {
+    const bucketFromProject = firebaseConfig.projectId ? `gs://${firebaseConfig.projectId}.firebasestorage.app` : null;
+    if (bucketFromProject) {
+      storage = getStorage(app, bucketFromProject);
+      debugLog(`Firebase storage initialized with fallback bucket: ${bucketFromProject}`);
+    }
+  } catch (fallbackError) {
+    if (isFirebaseDebugEnabled) {
+      console.warn("Firebase storage initialization failed:", error.message);
+      console.warn("Firebase storage fallback initialization failed:", fallbackError.message);
+    }
+    storage = null;
   }
-  storage = null;
 }
 
 // If storage is still null, log a warning but don't crash

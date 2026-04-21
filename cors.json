@@ -1,7 +1,22 @@
 [
   {
-    "origin": ["*"],
-    "method": ["GET", "POST", "PUT", "DELETE"],
+    "origin": [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://igletechv1.web.app",
+      "https://igletechv1.firebaseapp.com"
+    ],
+    "method": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "x-firebase-storage-version",
+      "x-goog-resumable",
+      "x-goog-upload-protocol",
+      "x-goog-upload-command",
+      "x-goog-upload-offset",
+      "x-goog-upload-url"
+    ],
     "maxAgeSeconds": 3600
   }
 ]

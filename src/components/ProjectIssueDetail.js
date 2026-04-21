@@ -374,6 +374,11 @@ const ProjectIssueDetail = () => {
       return;
     }
 
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
+      return;
+    }
+
     const allowedCount = 10 - e2Documents.length;
     if (allowedCount <= 0) {
       toast.warn("Maximum 10 documents allowed.");
@@ -409,7 +414,8 @@ const ProjectIssueDetail = () => {
       }
 
       // Update Firestore: store in the issue doc's e2Documents array
-      const issueDocRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodeURIComponent(issueId));
+      const decodedIssueId = decodeURIComponent(issueId);
+      const issueDocRef = doc(db, "churches", id, "bimProjects", projectDocId, "issues", decodedIssueId);
       const snapshot = await getDoc(issueDocRef);
       const data = snapshot.exists() ? snapshot.data() : {};
       const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
@@ -420,7 +426,9 @@ const ProjectIssueDetail = () => {
       toast.success(`${uploadedDocs.length} document(s) uploaded.`);
     } catch (err) {
       console.error("Error uploading documents:", err);
-      toast.error(err?.message || "Could not upload document(s).");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not upload document(s).";
+      toast.error(`Upload failed${errorCode}: ${errorMessage}`);
     } finally {
       setUploadingDocuments(false);
       if (fileInputRef.current) {
@@ -459,7 +467,9 @@ const ProjectIssueDetail = () => {
       toast.success("Document deleted.");
     } catch (err) {
       console.error("Error deleting document:", err);
-      toast.error("Could not delete document.");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not delete document.";
+      toast.error(`Delete failed${errorCode}: ${errorMessage}`);
     } finally {
       setSavingE2Metadata(false);
     }

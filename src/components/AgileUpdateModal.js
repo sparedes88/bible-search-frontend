@@ -20,7 +20,8 @@ export default function AgileUpdateModal({
       return;
     }
     setDocLoading(true);
-    const issueRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+    const decodedIssueId = decodeURIComponent(issue.issueId);
+    const issueRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
     getDoc(issueRef)
       .then((snap) => {
         if (snap.exists()) {
@@ -40,6 +41,11 @@ export default function AgileUpdateModal({
 
     if (!churchId || !issue?.projectDocId || !issue?.issueId) {
       toast.error("Issue data not fully loaded. Please try again.");
+      return;
+    }
+
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
       return;
     }
 
@@ -73,7 +79,8 @@ export default function AgileUpdateModal({
         });
       }
 
-      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const decodedIssueId = decodeURIComponent(issue.issueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
       const snapshot = await getDoc(issueDocRef);
       const data = snapshot.exists() ? snapshot.data() : {};
       const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
@@ -83,7 +90,9 @@ export default function AgileUpdateModal({
       toast.success(`${uploadedDocs.length} document(s) uploaded.`);
     } catch (err) {
       console.error("Error uploading documents:", err);
-      toast.error(err?.message || "Could not upload document(s).");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not upload document(s).";
+      toast.error(`Upload failed${errorCode}: ${errorMessage}`);
     } finally {
       setUploadingDocuments(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -96,6 +105,11 @@ export default function AgileUpdateModal({
     const confirmed = window.confirm(`Delete "${docToDelete.name}"?`);
     if (!confirmed) return;
 
+    if (!storage) {
+      toast.error("File storage is not configured in this environment.");
+      return;
+    }
+
     setUploadingDocuments(true);
     try {
       if (docToDelete.storagePath) {
@@ -104,7 +118,8 @@ export default function AgileUpdateModal({
           if (err.code !== "storage/object-not-found") throw err;
         });
       }
-      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const decodedIssueId = decodeURIComponent(issue.issueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
       const snapshot = await getDoc(issueDocRef);
       const data = snapshot.exists() ? snapshot.data() : {};
       const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
@@ -114,7 +129,9 @@ export default function AgileUpdateModal({
       toast.success("Document deleted.");
     } catch (err) {
       console.error("Error deleting document:", err);
-      toast.error("Could not delete document.");
+      const errorCode = err?.code ? ` (${err.code})` : "";
+      const errorMessage = err?.message || "Could not delete document.";
+      toast.error(`Delete failed${errorCode}: ${errorMessage}`);
     } finally {
       setUploadingDocuments(false);
     }
