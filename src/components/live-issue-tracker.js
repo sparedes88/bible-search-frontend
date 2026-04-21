@@ -14,10 +14,35 @@
 // ...imports and main component below...
 
 import React, { useState, useRef, useEffect } from "react";
-import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc, setDoc, writeBatch, serverTimestamp } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../firebase";
 import { Link } from "react-router-dom";
+import * as XLSX from "xlsx";
+
+const ISSUE_ID_ALIASES = ["id", "issue id", "task id", "card id", "row id"];
+
+const normalizeHeaderKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+const normalizeCellValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value instanceof Date) return value.toISOString();
+  return String(value).trim();
+};
+
+const getIssueIdFromRow = (rowData) => {
+  const keys = Object.keys(rowData || {});
+  for (const alias of ISSUE_ID_ALIASES) {
+    const foundKey = keys.find((key) => normalizeHeaderKey(key) === alias);
+    if (!foundKey) continue;
+    const candidate = normalizeCellValue(rowData[foundKey]);
+    if (candidate) return candidate;
+  }
+  return "";
+};
 
 // Simple grid/table for displaying issues
 export default function LiveIssueTracker() {
@@ -32,6 +57,7 @@ export default function LiveIssueTracker() {
     uploadError: ""
   });
   const fileInputRef = useRef();
+  const excelUploadInputRef = useRef();
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -57,6 +83,9 @@ export default function LiveIssueTracker() {
   const [addFormLoading, setAddFormLoading] = useState(false);
   const [projectNameOptions, setProjectNameOptions] = useState([]);
   const [e2DetailerOptions, setE2DetailerOptions] = useState([]);
+  const [excelUploading, setExcelUploading] = useState(false);
+  const [excelUploadError, setExcelUploadError] = useState("");
+  const [excelUploadSummary, setExcelUploadSummary] = useState(null);
 
   // Generate next ID (TD-xxxx)
   const generateNextId = () => {
@@ -110,6 +139,118 @@ export default function LiveIssueTracker() {
       setAddFormError("Failed to add issue. " + (err.message || ""));
     }
     setAddFormLoading(false);
+  };
+
+  const handleSecondTabUpload = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+
+    setExcelUploading(true);
+    setExcelUploadError("");
+    setExcelUploadSummary(null);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+
+      if (!Array.isArray(workbook.SheetNames) || workbook.SheetNames.length < 2) {
+        throw new Error("The uploaded file does not include a second tab.");
+      }
+
+      const secondSheetName = workbook.SheetNames[1];
+      const secondSheet = workbook.Sheets[secondSheetName];
+      const rawRows = XLSX.utils.sheet_to_json(secondSheet, { defval: "", raw: false });
+
+      if (!rawRows.length) {
+        throw new Error("The second tab is empty.");
+      }
+
+      const db = getFirestore();
+      const existingIds = new Set(
+        issues
+          .map((issue) => normalizeCellValue(issue?.id || issue?.ID))
+          .filter(Boolean)
+      );
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let skippedMissingId = 0;
+      let skippedEmptyRows = 0;
+      let processedCount = 0;
+      let batch = writeBatch(db);
+      let opsInBatch = 0;
+
+      for (const rawRow of rawRows) {
+        const normalizedRow = {};
+        for (const [header, value] of Object.entries(rawRow || {})) {
+          const key = String(header || "").trim();
+          if (!key) continue;
+          normalizedRow[key] = normalizeCellValue(value);
+        }
+
+        if (!Object.keys(normalizedRow).length) {
+          skippedEmptyRows += 1;
+          continue;
+        }
+
+        const issueId = getIssueIdFromRow(normalizedRow);
+        if (!issueId) {
+          skippedMissingId += 1;
+          continue;
+        }
+
+        const issueRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + issueId);
+        if (existingIds.has(issueId)) {
+          updatedCount += 1;
+        } else {
+          createdCount += 1;
+          existingIds.add(issueId);
+        }
+
+        batch.set(
+          issueRef,
+          {
+            ...normalizedRow,
+            id: issueId,
+            ID: issueId,
+            lastExcelImportFile: file.name,
+            lastExcelImportAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        processedCount += 1;
+        opsInBatch += 1;
+
+        if (opsInBatch >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          opsInBatch = 0;
+        }
+      }
+
+      if (opsInBatch > 0) {
+        await batch.commit();
+      }
+
+      setExcelUploadSummary({
+        fileName: file.name,
+        sheetName: secondSheetName,
+        totalRows: rawRows.length,
+        processed: processedCount,
+        created: createdCount,
+        updated: updatedCount,
+        skippedMissingId,
+        skippedEmptyRows,
+      });
+    } catch (err) {
+      setExcelUploadError(err?.message || "Failed to upload second tab.");
+    } finally {
+      setExcelUploading(false);
+      if (event?.target) {
+        event.target.value = "";
+      }
+    }
   };
 
   useEffect(() => {
@@ -296,7 +437,62 @@ export default function LiveIssueTracker() {
         >
           🛠️ Manage E2 Fields
         </Link>
+        <input
+          ref={excelUploadInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={handleSecondTabUpload}
+          style={{ display: "none" }}
+        />
+        <button
+          style={{
+            background: "#0f766e",
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            padding: "8px 18px",
+            fontWeight: 600,
+            fontSize: 15,
+            cursor: excelUploading ? "not-allowed" : "pointer",
+            opacity: excelUploading ? 0.7 : 1,
+          }}
+          onClick={() => excelUploadInputRef.current?.click()}
+          disabled={excelUploading}
+        >
+          {excelUploading ? "Uploading 2nd Tab..." : "📥 Upload 2nd Tab"}
+        </button>
       </div>
+      {(excelUploadError || excelUploadSummary) && (
+        <div
+          style={{
+            marginBottom: 16,
+            border: "1px solid #cbd5e1",
+            borderRadius: 8,
+            background: "#f8fafc",
+            padding: 12,
+            maxWidth: 760,
+          }}
+        >
+          {excelUploadError && (
+            <div style={{ color: "#b91c1c", fontWeight: 600 }}>
+              Upload failed: {excelUploadError}
+            </div>
+          )}
+          {excelUploadSummary && (
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Excel Upload Summary</div>
+              <div>File: {excelUploadSummary.fileName}</div>
+              <div>Tab: {excelUploadSummary.sheetName}</div>
+              <div>Total rows read: {excelUploadSummary.totalRows}</div>
+              <div>Issues created: {excelUploadSummary.created}</div>
+              <div>Issues updated: {excelUploadSummary.updated}</div>
+              <div>Rows skipped (missing ID): {excelUploadSummary.skippedMissingId}</div>
+              <div>Rows skipped (empty): {excelUploadSummary.skippedEmptyRows}</div>
+              <div>Rows processed: {excelUploadSummary.processed}</div>
+            </div>
+          )}
+        </div>
+      )}
             {/* Add Issue Popup */}
             {showAddPopup && (
               <div style={{
