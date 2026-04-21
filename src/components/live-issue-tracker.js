@@ -834,17 +834,17 @@ export default function LiveIssueTracker() {
         <table border="1" cellPadding="8" style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
-              <th>#</th>
-              <th>ID</th>
-              <th>Markup</th>
-              <th>Project Name</th>
-              <th>Technical Direction</th>
-              <th>Status</th>
-              <th>E2 Status Update</th>
-              <th>E2 Status Update Agile</th>
-              <th>E2 Tags</th>
-              <th>Disable Flag</th>
-              <th>Action</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>#</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>ID</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Markup</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Project Name</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Technical Direction</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Status</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update Agile</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Tags</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8 }}>Disable Flag</th>
+              <th style={{ textAlign: "center", paddingLeft: 8, paddingRight: 8 }}>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -857,17 +857,18 @@ export default function LiveIssueTracker() {
               <tr
                 key={issue.id || idx}
                 style={(() => {
+                  const baseStyle = { borderBottom: "0.5px solid #e5e7eb" };
                   const disabled = issue["Disable Flag"] === "Yes" || issue.disableFlag === "Yes";
                   const agile = issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
                   const e2Status = issue["E2 Status Update"] || issue.e2StatusUpdate;
                   if (e2Status === "To Do List") {
-                    return { background: "#fef9c3" };
+                    return { ...baseStyle, background: "#fef9c3" };
                   } else if (disabled && agile) {
-                    return { background: "#e0f2fe" };
+                    return { ...baseStyle, background: "#e0f2fe" };
                   } else if (disabled && !agile) {
-                    return { background: "#fee2e2" };
+                    return { ...baseStyle, background: "#fee2e2" };
                   }
-                  return undefined;
+                  return baseStyle;
                 })()}
               >
                 <td>{idx + 1}</td>
