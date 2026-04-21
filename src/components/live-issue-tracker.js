@@ -343,6 +343,35 @@ export default function LiveIssueTracker() {
     }
   };
 
+  const handleEnableRow = async (issue) => {
+    if (!issue || !issue.id) return;
+    try {
+      const db = getFirestore();
+      const issueDocRef = doc(db, "/churches/2155/bimProjects/stanford-ff-rad/issues/" + issue.id);
+      await updateDoc(issueDocRef, {
+        "Disable Flag": "No",
+        "E2 Status Update": "To Do List",
+        "E2 Status Update Agile": "",
+      });
+
+      setIssues((prev) => prev.map((iss) => (
+        iss.id === issue.id
+          ? {
+              ...iss,
+              "Disable Flag": "No",
+              disableFlag: "No",
+              "E2 Status Update": "To Do List",
+              e2StatusUpdate: "To Do List",
+              "E2 Status Update Agile": "",
+              e2StatusUpdateAgile: "",
+            }
+          : iss
+      )));
+    } catch (err) {
+      alert("Failed to enable row. " + (err.message || ""));
+    }
+  };
+
   // Sort alphabetically, with '--' (empty) always first if present
   projectNames = projectNames.sort((a, b) => {
     if (a === "--") return -1;
@@ -965,6 +994,17 @@ export default function LiveIssueTracker() {
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
                     />
                   </button>
+                  <button
+                    title="Enable Row"
+                    style={{ background: "none", border: "none", cursor: "pointer", marginLeft: 12 }}
+                    onClick={() => handleEnableRow(issue)}
+                  >
+                    <img
+                      src="https://img.icons8.com/ios-filled/32/16a34a/checkmark--v1.png"
+                      alt="Enable Row"
+                      style={{ width: 24, height: 24, verticalAlign: "middle" }}
+                    />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -1157,20 +1197,6 @@ export default function LiveIssueTracker() {
               >
                 <option value="">Select a lead detailer</option>
                 {e2DetailerOptions.map((opt, idx) => (
-                  <option key={idx} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontWeight: 500 }}>E2 Tags:</label>
-              <select
-                value={editFields.e2Tag}
-                onChange={e => setEditFields(f => ({ ...f, e2Tag: e.target.value }))}
-                disabled={saving}
-                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
-              >
-                <option value="">Select E2 Tag</option>
-                {tagOptions.map((opt, idx) => (
                   <option key={idx} value={opt}>{opt}</option>
                 ))}
               </select>
