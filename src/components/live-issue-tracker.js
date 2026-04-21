@@ -62,6 +62,7 @@ export default function LiveIssueTracker() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedProject, setSelectedProject] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [showPopup, setShowPopup] = useState(false);
   const [popupIssue, setPopupIssue] = useState(null);
   const [tdValue, setTdValue] = useState("");
@@ -323,13 +324,19 @@ export default function LiveIssueTracker() {
     return a.localeCompare(b);
   });
 
-  // Filter issues by selected project name
-  const filteredIssues = selectedProject
-    ? issues.filter(issue => {
-        const name = issue["Project Name"] || issue.projectName || issue.project || "";
-        return (name === "" ? "--" : name) === selectedProject;
-      })
-    : issues;
+  // Filter issues by selected project name and search term
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const filteredIssues = issues.filter(issue => {
+    const name = issue["Project Name"] || issue.projectName || issue.project || "";
+    const projectMatches = !selectedProject || (name === "" ? "--" : name) === selectedProject;
+    if (!projectMatches) return false;
+
+    if (!normalizedSearchTerm) return true;
+
+    const issueId = String(issue.id || issue.ID || issue["Issue ID"] || "").toLowerCase();
+    const title = String(issue.Title || issue.title || "").toLowerCase();
+    return issueId.includes(normalizedSearchTerm) || title.includes(normalizedSearchTerm);
+  });
 
   // Open popup for a specific issue
   const handleOpenPopup = (issue) => {
@@ -459,38 +466,72 @@ export default function LiveIssueTracker() {
           onClick={() => excelUploadInputRef.current?.click()}
           disabled={excelUploading}
         >
-          {excelUploading ? "Uploading 2nd Tab..." : "📥 Upload 2nd Tab"}
+          {excelUploading ? "Uploading Excel File..." : "📥 Upload Excel File"}
         </button>
       </div>
       {(excelUploadError || excelUploadSummary) && (
         <div
           style={{
-            marginBottom: 16,
-            border: "1px solid #cbd5e1",
-            borderRadius: 8,
-            background: "#f8fafc",
-            padding: 12,
-            maxWidth: 760,
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.3)",
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
           }}
         >
-          {excelUploadError && (
-            <div style={{ color: "#b91c1c", fontWeight: 600 }}>
-              Upload failed: {excelUploadError}
+          <div
+            style={{
+              background: "#fff",
+              padding: 28,
+              borderRadius: 8,
+              minWidth: 420,
+              maxWidth: 560,
+              boxShadow: "0 2px 16px #0002"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: 16 }}>Excel Upload Summary</h3>
+            {excelUploadError && (
+              <div style={{ color: "#b91c1c", fontWeight: 600, marginBottom: 16 }}>
+                Upload failed: {excelUploadError}
+              </div>
+            )}
+            {excelUploadSummary && (
+              <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+                <div>File: {excelUploadSummary.fileName}</div>
+                <div>Tab: {excelUploadSummary.sheetName}</div>
+                <div>Total rows read: {excelUploadSummary.totalRows}</div>
+                <div>Issues created: {excelUploadSummary.created}</div>
+                <div>Issues updated: {excelUploadSummary.updated}</div>
+                <div>Rows skipped (missing ID): {excelUploadSummary.skippedMissingId}</div>
+                <div>Rows skipped (empty): {excelUploadSummary.skippedEmptyRows}</div>
+                <div>Rows processed: {excelUploadSummary.processed}</div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setExcelUploadError("");
+                  setExcelUploadSummary(null);
+                }}
+                style={{
+                  padding: "8px 16px",
+                  background: "#0ea5e9",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                }}
+              >
+                Close
+              </button>
             </div>
-          )}
-          {excelUploadSummary && (
-            <div>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>Excel Upload Summary</div>
-              <div>File: {excelUploadSummary.fileName}</div>
-              <div>Tab: {excelUploadSummary.sheetName}</div>
-              <div>Total rows read: {excelUploadSummary.totalRows}</div>
-              <div>Issues created: {excelUploadSummary.created}</div>
-              <div>Issues updated: {excelUploadSummary.updated}</div>
-              <div>Rows skipped (missing ID): {excelUploadSummary.skippedMissingId}</div>
-              <div>Rows skipped (empty): {excelUploadSummary.skippedEmptyRows}</div>
-              <div>Rows processed: {excelUploadSummary.processed}</div>
-            </div>
-          )}
+          </div>
         </div>
       )}
             {/* Add Issue Popup */}
@@ -590,19 +631,32 @@ export default function LiveIssueTracker() {
               </div>
             )}
       <h2>Live Issue Tracker</h2>
-      <div style={{ margin: "16px 0" }}>
-        <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>
-        <select
-          id="projectNameSelect"
-          value={selectedProject}
-          onChange={e => setSelectedProject(e.target.value)}
-          style={{ padding: "4px 8px", minWidth: 180 }}
-        >
-          <option value="">All Projects</option>
-          {projectNames.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
+      <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>
+          <select
+            id="projectNameSelect"
+            value={selectedProject}
+            onChange={e => setSelectedProject(e.target.value)}
+            style={{ padding: "4px 8px", minWidth: 180 }}
+          >
+            <option value="">All Projects</option>
+            {projectNames.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="issueSearchInput" style={{ fontWeight: 500, marginRight: 8 }}>Search Issue ID or Title:</label>
+          <input
+            id="issueSearchInput"
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Type issue ID or title"
+            style={{ padding: "4px 8px", minWidth: 240 }}
+          />
+        </div>
       </div>
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}

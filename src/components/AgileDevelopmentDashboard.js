@@ -739,18 +739,31 @@ const AgileDevelopmentDashboard = () => {
                         <div className="agile-card-field-row" style={{ fontSize: '1.08em', color: '#334155', marginTop: 2 }}>
                           {(() => {
                             const dueDateStr = issue.rowData?.e2DueDate || issue.e2DueDate;
-                            let days = null;
+                            let deadlineLabel = null;
+                            let isOverdue = false;
                             if (dueDateStr) {
-                              const today = new Date();
+                              const now = new Date();
                               const dueDate = new Date(dueDateStr);
-                              // Zero out time for accurate day diff
-                              today.setHours(0,0,0,0);
-                              dueDate.setHours(0,0,0,0);
-                              days = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+                              if (!Number.isNaN(dueDate.getTime())) {
+                                const diffMs = dueDate - now;
+                                const absDiffMs = Math.abs(diffMs);
+                                const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
+                                const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+
+                                if (absDiffMs < (1000 * 60 * 60 * 24)) {
+                                  const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
+                                  deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
+                                } else {
+                                  const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
+                                  deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
+                                }
+                                isOverdue = diffMs < 0;
+                              }
                             }
                             return (
                               <span>
-                                <span style={{ fontWeight: 600 }}>Deadline:</span> {days !== null ? `${days} day${Math.abs(days) === 1 ? '' : 's'}` : '—'}
+                                <span style={{ fontWeight: 600, fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>Deadline:</span>{' '}
+                                <span style={{ color: isOverdue ? '#dc2626' : 'inherit', fontFamily: 'Arial, sans-serif', fontSize: '11pt' }}>{deadlineLabel ?? '—'}</span>
                               </span>
                             );
                           })()}
