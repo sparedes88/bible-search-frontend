@@ -809,6 +809,46 @@ const AgileDevelopmentDashboard = () => {
             </select>
           </label>
         </div>
+
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 12,
+              background: "transparent",
+              border: "1px solid #cbd5e1",
+              borderRadius: 8,
+              padding: "6px 10px",
+              color: "#334155",
+              fontSize: 13,
+              fontWeight: 500,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16 }} />
+              <span>Production</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16 }} />
+              <span>Testing</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/star.svg" alt="Development Cycle Completed at Least Once" title="Development Cycle Completed at Least Once" style={{ width: 16, height: 16 }} />
+              <span style={{ color: '#2563eb', fontWeight: 600, fontSize: '13px' }}>1</span>
+              <span>Cycle Completed at Least Once</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/person.svg" alt="When Hovering, it displays the Detailer Support Team" title="When Hovering, it displays the Detailer Support Team" style={{ width: 16, height: 16 }} />
+              <span>Support Team</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ color: '#16a34a', fontSize: 14, fontWeight: 700, lineHeight: 1 }}>✓</span>
+              <span>Today's Update Provided</span>
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="agile-dashboard-board">
