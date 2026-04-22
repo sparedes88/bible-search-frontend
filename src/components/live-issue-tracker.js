@@ -19,6 +19,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { storage } from "../firebase";
 import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
+import { DEFAULT_E2_STATUS_UPDATE_OPTIONS, E2_STATUS_UPDATE_OPTIONS_FIELD } from "./projectIssueConstants";
 
 const ISSUE_ID_ALIASES = ["id", "issue id", "task id", "card id", "row id"];
 const NO_TAGS_FILTER_VALUE = "__NO_TAGS__";
@@ -63,6 +64,7 @@ export default function LiveIssueTracker() {
   // State for edit popup extra fields (must be inside component)
   const [editFields, setEditFields] = useState({
     leadDetailer: "",
+    e2StatusUpdate: "",
     e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
@@ -105,6 +107,7 @@ export default function LiveIssueTracker() {
   const [projectNameOptions, setProjectNameOptions] = useState([]);
   const [e2DetailerOptions, setE2DetailerOptions] = useState([]);
   const [e2TagOptions, setE2TagOptions] = useState([]);
+  const [popupE2StatusUpdateOptions, setPopupE2StatusUpdateOptions] = useState(DEFAULT_E2_STATUS_UPDATE_OPTIONS);
   const [excelUploading, setExcelUploading] = useState(false);
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
@@ -308,6 +311,11 @@ export default function LiveIssueTracker() {
         setProjectNameOptions(Array.isArray(configData.projectNameValues) ? configData.projectNameValues : []);
         setE2DetailerOptions(Array.isArray(configData.e2DetailerOptions) ? configData.e2DetailerOptions : []);
         setE2TagOptions(Array.isArray(configData.e2TagValues) ? configData.e2TagValues : []);
+        setPopupE2StatusUpdateOptions(
+          Array.isArray(configData[E2_STATUS_UPDATE_OPTIONS_FIELD]) && configData[E2_STATUS_UPDATE_OPTIONS_FIELD].length > 0
+            ? configData[E2_STATUS_UPDATE_OPTIONS_FIELD]
+            : DEFAULT_E2_STATUS_UPDATE_OPTIONS
+        );
       } catch (err) {
         // ignore, already handled above
       }
@@ -571,6 +579,7 @@ export default function LiveIssueTracker() {
     setTdValue(issue["Technical Direction"] || issue.technicalDirection || "");
     setEditFields({
       leadDetailer: issue["E2 Detailer"] || "",
+      e2StatusUpdate: issue["E2 Status Update"] || issue.e2StatusUpdate || "",
       e2Tag: issue["E2 Tags"] || issue.e2Tags || "",
       supportTeam: Array.isArray(issue["E2 Detailer Support Team"]) ? issue["E2 Detailer Support Team"] : [],
       dataStage: issue["Data Stage"] || "Testing",
@@ -613,16 +622,35 @@ export default function LiveIssueTracker() {
       }
       await updateDoc(issueDocRef, {
         "Technical Direction": tdValue,
+        "E2 Status Update": editFields.e2StatusUpdate,
         "E2 Detailer": editFields.leadDetailer,
         "E2 Tags": "Provide Technical Details",
         "E2 Detailer Support Team": editFields.supportTeam,
         "Data Stage": editFields.dataStage,
         "e2Comments": editFields.comments,
         "e2Documents": uploadedDocs,
-        "E2 Status Update": "To Do List"
       });
       setShowPopup(false);
       setEditFields(f => ({ ...f, uploadingFiles: [] }));
+      setIssues((prev) => prev.map((issue) => (
+        issue.id === popupIssue.id
+          ? {
+              ...issue,
+              "Technical Direction": tdValue,
+              technicalDirection: tdValue,
+              "E2 Status Update": editFields.e2StatusUpdate,
+              e2StatusUpdate: editFields.e2StatusUpdate,
+              "E2 Detailer": editFields.leadDetailer,
+              "E2 Tags": "Provide Technical Details",
+              e2Tags: "Provide Technical Details",
+              "E2 Detailer Support Team": editFields.supportTeam,
+              "Data Stage": editFields.dataStage,
+              dataStage: editFields.dataStage,
+              e2Comments: editFields.comments,
+              e2Documents: uploadedDocs,
+            }
+          : issue
+      )));
     } catch (err) {
       setSaveError("Failed to save. " + (err.message || ""));
     }
@@ -1145,7 +1173,17 @@ export default function LiveIssueTracker() {
                   )}
                 </td>
                 <td>{issue["Project Name"] || issue.projectName || issue.project || "-"}</td>
-                <td style={rowBlurTextStyle}>{issue["Technical Direction"] || issue.technicalDirection || "-"}</td>
+                <td style={{ ...rowBlurTextStyle, paddingLeft: 14, paddingRight: 14 }}>
+                  {(() => {
+                    const technicalDirectionValue = issue["Technical Direction"] || issue.technicalDirection || "-";
+                    let technicalDirectionColor = "inherit";
+                    if (technicalDirectionValue === "Stop and Start") technicalDirectionColor = "#ef4444";
+                    else if (technicalDirectionValue === "Steer with current task") technicalDirectionColor = "#2563eb";
+                    else if (technicalDirectionValue === "Add to Queue") technicalDirectionColor = "#6b7280";
+
+                    return <span style={{ color: technicalDirectionColor, fontWeight: 700 }}>{technicalDirectionValue}</span>;
+                  })()}
+                </td>
                 <td style={rowBlurTextStyle}>{issue.status || "-"}</td>
                 <td style={rowBlurTextStyle}>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
                 <td style={rowBlurTextStyle}>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
@@ -1387,6 +1425,20 @@ export default function LiveIssueTracker() {
               </select>
             </div>
             <div style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 500 }}>E2 Status Update:</label>
+              <select
+                value={editFields.e2StatusUpdate}
+                onChange={e => setEditFields(f => ({ ...f, e2StatusUpdate: e.target.value }))}
+                disabled={saving}
+                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
+              >
+                <option value="">Select a value</option>
+                {popupE2StatusUpdateOptions.map((opt, idx) => (
+                  <option key={idx} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
               <label style={{ fontWeight: 500 }}>Lead Detailer:</label>
               <select
                 value={editFields.leadDetailer}
@@ -1410,7 +1462,7 @@ export default function LiveIssueTracker() {
                   setEditFields(f => ({ ...f, supportTeam: selected }));
                 }}
                 disabled={saving}
-                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15, minHeight: 60 }}
+                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15, height: 72, overflowY: "auto" }}
               >
                 {e2DetailerOptions.map((opt, idx) => (
                   <option
@@ -1445,7 +1497,7 @@ export default function LiveIssueTracker() {
                 value={editFields.comments}
                 onChange={e => setEditFields(f => ({ ...f, comments: e.target.value.slice(0, 1000) }))}
                 maxLength={1000}
-                rows={4}
+                rows={3}
                 style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
                 disabled={saving}
               />
@@ -1453,7 +1505,7 @@ export default function LiveIssueTracker() {
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Documents:</label>
-              <div className="pid-detail-upload-area" style={{ margin: 0, padding: '0.75rem 1rem' }}>
+              <div className="pid-detail-upload-area" style={{ margin: 0, padding: '0.75rem 1rem', maxHeight: 132, overflowY: 'auto' }}>
                 <input
                   ref={fileInputRef}
                   type="file"
