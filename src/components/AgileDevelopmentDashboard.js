@@ -19,6 +19,48 @@ const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
 };
+
+const toDateSafe = (value) => {
+  if (!value) return null;
+  if (typeof value?.toDate === "function") return value.toDate();
+  if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getLatestLogEntry = (logEntries = []) => {
+  if (!Array.isArray(logEntries) || logEntries.length === 0) return null;
+
+  let latestEntry = null;
+  let latestMs = -Infinity;
+
+  logEntries.forEach((entry) => {
+    const dateValue = entry?.timestamp || entry?.date || entry?.createdAt;
+    const parsedDate = toDateSafe(dateValue);
+    const ms = parsedDate ? parsedDate.getTime() : -Infinity;
+
+    if (ms > latestMs) {
+      latestMs = ms;
+      latestEntry = entry;
+    }
+  });
+
+  if (latestEntry) return latestEntry;
+  return logEntries[logEntries.length - 1] || null;
+};
+
+const isSameCalendarDay = (a, b) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const hasLatestUpdateToday = (issue) => {
+  const latestEntry = getLatestLogEntry(issue?.LogEntries);
+  if (!latestEntry) return false;
+  const latestDate = toDateSafe(latestEntry.timestamp || latestEntry.date || latestEntry.createdAt);
+  if (!latestDate) return false;
+  return isSameCalendarDay(latestDate, new Date());
+};
 // Helper to get Project Name display value (matches ProjectIssueDashboard.js)
 const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
   const normalizedTag = normalizeValue(issue?.tags).toLowerCase();
@@ -114,6 +156,43 @@ const getDueDateMs = (dueDateStr) => {
   const { year, month, day } = _getNyParts(raw);
   return _nyLocalToUtcMs(year, month, day, 16);
 };
+
+const _getNyDateOnlyFromMs = (ms) => {
+  const { year, month, day } = _getNyParts(new Date(ms));
+  return { year, month, day };
+};
+
+const _isWeekendNy = (year, month, day) => {
+  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return dow === 0 || dow === 6;
+};
+
+const _compareNyDate = (a, b) => {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.month !== b.month) return a.month - b.month;
+  return a.day - b.day;
+};
+
+const _businessDaysBetweenNy = (startMs, endMs) => {
+  const start = _getNyDateOnlyFromMs(startMs);
+  const end = _getNyDateOnlyFromMs(endMs);
+
+  const cmp = _compareNyDate(start, end);
+  if (cmp === 0) return 0;
+
+  const step = cmp < 0 ? 1 : -1;
+  let cursor = { ...start };
+  let count = 0;
+
+  while (_compareNyDate(cursor, end) !== 0) {
+    cursor = _shiftDay(cursor.year, cursor.month, cursor.day, step);
+    if (!_isWeekendNy(cursor.year, cursor.month, cursor.day)) {
+      count += 1;
+    }
+  }
+
+  return count;
+};
 // Calculates the deadline label and color for a given due date.
 // Returns { label, color, diffMs, daysDiff } or null if date is invalid.
 const calculateDeadlineValue = (dueDateStr) => {
@@ -124,7 +203,7 @@ const calculateDeadlineValue = (dueDateStr) => {
   const diffMs = dueDateMs - refMs;
   const absDiffMs = Math.abs(diffMs);
   const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
-  const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+  const daysDiff = _businessDaysBetweenNy(refMs, dueDateMs);
   return { diffMs, daysDiff, hoursDiff, absDiffMs };
 };
 // --- End deadline helpers ---
@@ -760,6 +839,7 @@ const AgileDevelopmentDashboard = () => {
                       percentCompleted = latestLog.percent;
                     }
                   }
+                  const latestUpdateDoneToday = hasLatestUpdateToday(issue);
                   return (
                     <div
                       key={issue.key}
@@ -789,6 +869,15 @@ const AgileDevelopmentDashboard = () => {
                             >
                               {normalizeValue(issue.issueId) || "-"}
                             </Link>
+                            {latestUpdateDoneToday ? (
+                              <span
+                                title="Latest update added today"
+                                aria-label="Latest update added today"
+                                style={{ marginLeft: 6, color: '#16a34a', fontSize: 14, fontWeight: 700, lineHeight: 1 }}
+                              >
+                                ✓
+                              </span>
+                            ) : null}
                           </span>
                           <div style={{ display: 'flex', alignItems: 'center' }}>
                             <a
@@ -903,15 +992,14 @@ const AgileDevelopmentDashboard = () => {
                             let deadlineColor = 'inherit';
                             let diffMs = 0;
                             let daysDiff = 0;
+                            let hoursDiff = 0;
                             
                             if (dueDateStr) {
-                              const dueDateMs = getDueDateMs(dueDateStr);
-                              if (dueDateMs !== null) {
-                                const refMs = getDeadlineRefMs();
-                                diffMs = dueDateMs - refMs;
-                                const absDiffMs = Math.abs(diffMs);
-                                const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
-                                daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+                              const calc = calculateDeadlineValue(dueDateStr);
+                              if (calc) {
+                                diffMs = calc.diffMs;
+                                daysDiff = calc.daysDiff;
+                                hoursDiff = calc.hoursDiff;
                                 
                                 // If card is in Completed or Report Completion to Client status, show conditional text
                                 if (isCompleted) {
@@ -927,11 +1015,11 @@ const AgileDevelopmentDashboard = () => {
                                   }
                                 } else {
                                   // Normal countdown display
-                                  if (absDiffMs < (1000 * 60 * 60 * 24)) {
+                                  if (daysDiff <= 0) {
                                     const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
                                     deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
                                   } else {
-                                    const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
+                                    const dayLabel = `${daysDiff} business day${daysDiff === 1 ? '' : 's'}`;
                                     deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
                                   }
                                   deadlineColor = diffMs < 0 ? '#dc2626' : 'inherit';
