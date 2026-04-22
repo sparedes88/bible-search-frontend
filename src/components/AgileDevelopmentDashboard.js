@@ -5,7 +5,7 @@
     "Steer with current task",
     "Add to Queue"
   ];
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 // --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
 const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
@@ -18,6 +18,48 @@ import QuickEditModal from "./QuickEditModal";
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const toDateSafe = (value) => {
+  if (!value) return null;
+  if (typeof value?.toDate === "function") return value.toDate();
+  if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getLatestLogEntry = (logEntries = []) => {
+  if (!Array.isArray(logEntries) || logEntries.length === 0) return null;
+
+  let latestEntry = null;
+  let latestMs = -Infinity;
+
+  logEntries.forEach((entry) => {
+    const dateValue = entry?.timestamp || entry?.date || entry?.createdAt;
+    const parsedDate = toDateSafe(dateValue);
+    const ms = parsedDate ? parsedDate.getTime() : -Infinity;
+
+    if (ms > latestMs) {
+      latestMs = ms;
+      latestEntry = entry;
+    }
+  });
+
+  if (latestEntry) return latestEntry;
+  return logEntries[logEntries.length - 1] || null;
+};
+
+const isSameCalendarDay = (a, b) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const hasLatestUpdateToday = (issue) => {
+  const latestEntry = getLatestLogEntry(issue?.LogEntries);
+  if (!latestEntry) return false;
+  const latestDate = toDateSafe(latestEntry.timestamp || latestEntry.date || latestEntry.createdAt);
+  if (!latestDate) return false;
+  return isSameCalendarDay(latestDate, new Date());
 };
 // Helper to get Project Name display value (matches ProjectIssueDashboard.js)
 const getProjectNameDisplay = (issue, tagAliasByLowerTag) => {
@@ -114,6 +156,43 @@ const getDueDateMs = (dueDateStr) => {
   const { year, month, day } = _getNyParts(raw);
   return _nyLocalToUtcMs(year, month, day, 16);
 };
+
+const _getNyDateOnlyFromMs = (ms) => {
+  const { year, month, day } = _getNyParts(new Date(ms));
+  return { year, month, day };
+};
+
+const _isWeekendNy = (year, month, day) => {
+  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return dow === 0 || dow === 6;
+};
+
+const _compareNyDate = (a, b) => {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.month !== b.month) return a.month - b.month;
+  return a.day - b.day;
+};
+
+const _businessDaysBetweenNy = (startMs, endMs) => {
+  const start = _getNyDateOnlyFromMs(startMs);
+  const end = _getNyDateOnlyFromMs(endMs);
+
+  const cmp = _compareNyDate(start, end);
+  if (cmp === 0) return 0;
+
+  const step = cmp < 0 ? 1 : -1;
+  let cursor = { ...start };
+  let count = 0;
+
+  while (_compareNyDate(cursor, end) !== 0) {
+    cursor = _shiftDay(cursor.year, cursor.month, cursor.day, step);
+    if (!_isWeekendNy(cursor.year, cursor.month, cursor.day)) {
+      count += 1;
+    }
+  }
+
+  return count;
+};
 // Calculates the deadline label and color for a given due date.
 // Returns { label, color, diffMs, daysDiff } or null if date is invalid.
 const calculateDeadlineValue = (dueDateStr) => {
@@ -124,7 +203,7 @@ const calculateDeadlineValue = (dueDateStr) => {
   const diffMs = dueDateMs - refMs;
   const absDiffMs = Math.abs(diffMs);
   const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
-  const daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+  const daysDiff = _businessDaysBetweenNy(refMs, dueDateMs);
   return { diffMs, daysDiff, hoursDiff, absDiffMs };
 };
 // --- End deadline helpers ---
@@ -190,12 +269,26 @@ const AgileDevelopmentDashboard = () => {
   const [loadingIssues, setLoadingIssues] = useState(true);
   const [draggedIssueKey, setDraggedIssueKey] = useState("");
   const [savingIssueKey, setSavingIssueKey] = useState("");
-  const [selectedProjectName, setSelectedProjectName] = useState("All");
+  const [selectedProjectNames, setSelectedProjectNames] = useState([]);
+  const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false);
   const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
   const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
   const [selectedDataStage, setSelectedDataStage] = useState("All");
   const [tagAliasByLowerTag, setTagAliasByLowerTag] = useState({});
   const DATA_STAGE_OPTIONS = ["Testing", "Production"];
+  const projectFilterRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!projectFilterRef.current) return;
+      if (!projectFilterRef.current.contains(event.target)) {
+        setIsProjectFilterOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
   // Load tag aliases from Firestore (same as ProjectIssueDashboard)
   useEffect(() => {
     if (!id) return;
@@ -352,8 +445,9 @@ const AgileDevelopmentDashboard = () => {
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
+      const selectedProjectSet = new Set(selectedProjectNames);
       const projectMatched =
-        selectedProjectName === "All" || normalizeValue(issue.projectName) === selectedProjectName;
+        selectedProjectSet.size === 0 || selectedProjectSet.has(normalizeValue(issue.projectName));
       const detailerMatched =
         selectedE2LeadDetailer === "All" || normalizeValue(issue.e2LeadDetailer) === selectedE2LeadDetailer;
       const e2StatusAgileMatched =
@@ -367,7 +461,7 @@ const AgileDevelopmentDashboard = () => {
       const searchMatched = !search || idMatch || titleMatch;
       return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched && searchMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
+  }, [issues, selectedProjectNames, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
 
   const e2StatusAgileOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
@@ -632,22 +726,55 @@ const AgileDevelopmentDashboard = () => {
             />
           </label>
 
-          <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
+          <div className="agile-dashboard-filter-item agile-project-filter" ref={projectFilterRef}>
             <span>Project Name</span>
-            <select
-              id="agile-project-filter"
-              className="agile-dashboard-filter-select"
-              value={selectedProjectName}
-              onChange={(event) => setSelectedProjectName(event.target.value)}
-            >
-              <option value="All">All Projects</option>
-              {projectNameOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="agile-project-filter-controls">
+              <button
+                type="button"
+                className="agile-dashboard-filter-select"
+                onClick={() => setIsProjectFilterOpen((prev) => !prev)}
+                style={{ minWidth: 220, textAlign: "left" }}
+              >
+                {selectedProjectNames.length > 0
+                  ? `${selectedProjectNames.length} project(s) selected`
+                  : "All Projects"}
+              </button>
+
+              <button
+                type="button"
+                className="agile-dashboard-filter-select"
+                onClick={() => setSelectedProjectNames([])}
+                disabled={selectedProjectNames.length === 0}
+                style={{ minWidth: "auto", padding: "0.5rem 0.55rem", whiteSpace: "nowrap" }}
+              >
+                Clear
+              </button>
+            </div>
+
+            {isProjectFilterOpen && (
+              <div className="agile-project-filter-dropdown">
+                {projectNameOptions.map((option) => {
+                  const checked = selectedProjectNames.includes(option);
+                  return (
+                    <label key={option} className="agile-project-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedProjectNames((prev) =>
+                            prev.includes(option)
+                              ? prev.filter((value) => value !== option)
+                              : [...prev, option]
+                          );
+                        }}
+                      />
+                      <div className="agile-project-filter-option-text">{option}</div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <label className="agile-dashboard-filter-item" htmlFor="agile-detailer-filter">
             <span>E2 Lead Detailer</span>
@@ -682,6 +809,46 @@ const AgileDevelopmentDashboard = () => {
             </select>
           </label>
         </div>
+
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 12,
+              background: "transparent",
+              border: "1px solid #cbd5e1",
+              borderRadius: 8,
+              padding: "6px 10px",
+              color: "#334155",
+              fontSize: 13,
+              fontWeight: 500,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/data-stage-p.svg" alt="Production" title="Production" style={{ width: 16, height: 16 }} />
+              <span>Production</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/data-stage-t.svg" alt="Testing" title="Testing" style={{ width: 16, height: 16 }} />
+              <span>Testing</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/star.svg" alt="Development Cycle Completed at Least Once" title="Development Cycle Completed at Least Once" style={{ width: 16, height: 16 }} />
+              <span style={{ color: '#2563eb', fontWeight: 600, fontSize: '13px' }}>1</span>
+              <span>Cycle Completed at Least Once</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <img src="/img/person.svg" alt="When Hovering, it displays the Detailer Support Team" title="When Hovering, it displays the Detailer Support Team" style={{ width: 16, height: 16 }} />
+              <span>Support Team</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ color: '#16a34a', fontSize: 14, fontWeight: 700, lineHeight: 1 }}>✓</span>
+              <span>Today's Update Provided</span>
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="agile-dashboard-board">
@@ -712,6 +879,7 @@ const AgileDevelopmentDashboard = () => {
                       percentCompleted = latestLog.percent;
                     }
                   }
+                  const latestUpdateDoneToday = hasLatestUpdateToday(issue);
                   return (
                     <div
                       key={issue.key}
@@ -741,6 +909,15 @@ const AgileDevelopmentDashboard = () => {
                             >
                               {normalizeValue(issue.issueId) || "-"}
                             </Link>
+                            {latestUpdateDoneToday ? (
+                              <span
+                                title="Latest update added today"
+                                aria-label="Latest update added today"
+                                style={{ marginLeft: 6, color: '#16a34a', fontSize: 14, fontWeight: 700, lineHeight: 1 }}
+                              >
+                                ✓
+                              </span>
+                            ) : null}
                           </span>
                           <div style={{ display: 'flex', alignItems: 'center' }}>
                             <a
@@ -855,15 +1032,14 @@ const AgileDevelopmentDashboard = () => {
                             let deadlineColor = 'inherit';
                             let diffMs = 0;
                             let daysDiff = 0;
+                            let hoursDiff = 0;
                             
                             if (dueDateStr) {
-                              const dueDateMs = getDueDateMs(dueDateStr);
-                              if (dueDateMs !== null) {
-                                const refMs = getDeadlineRefMs();
-                                diffMs = dueDateMs - refMs;
-                                const absDiffMs = Math.abs(diffMs);
-                                const hoursDiff = Math.ceil(absDiffMs / (1000 * 60 * 60));
-                                daysDiff = Math.ceil(absDiffMs / (1000 * 60 * 60 * 24));
+                              const calc = calculateDeadlineValue(dueDateStr);
+                              if (calc) {
+                                diffMs = calc.diffMs;
+                                daysDiff = calc.daysDiff;
+                                hoursDiff = calc.hoursDiff;
                                 
                                 // If card is in Completed or Report Completion to Client status, show conditional text
                                 if (isCompleted) {
@@ -879,11 +1055,11 @@ const AgileDevelopmentDashboard = () => {
                                   }
                                 } else {
                                   // Normal countdown display
-                                  if (absDiffMs < (1000 * 60 * 60 * 24)) {
+                                  if (daysDiff <= 0) {
                                     const hourLabel = `${hoursDiff} hour${hoursDiff === 1 ? '' : 's'}`;
                                     deadlineLabel = diffMs < 0 ? `Overdue by ${hourLabel}` : hourLabel;
                                   } else {
-                                    const dayLabel = `${daysDiff} day${daysDiff === 1 ? '' : 's'}`;
+                                    const dayLabel = `${daysDiff} business day${daysDiff === 1 ? '' : 's'}`;
                                     deadlineLabel = diffMs < 0 ? `Overdue by ${dayLabel}` : dayLabel;
                                   }
                                   deadlineColor = diffMs < 0 ? '#dc2626' : 'inherit';

@@ -19,6 +19,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { storage } from "../firebase";
 import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
+import { DEFAULT_E2_STATUS_UPDATE_OPTIONS, E2_STATUS_UPDATE_OPTIONS_FIELD } from "./projectIssueConstants";
 
 const ISSUE_ID_ALIASES = ["id", "issue id", "task id", "card id", "row id"];
 const NO_TAGS_FILTER_VALUE = "__NO_TAGS__";
@@ -63,6 +64,7 @@ export default function LiveIssueTracker() {
   // State for edit popup extra fields (must be inside component)
   const [editFields, setEditFields] = useState({
     leadDetailer: "",
+    e2StatusUpdate: "",
     e2Tag: "",
     supportTeam: [],
     dataStage: "Testing",
@@ -76,7 +78,10 @@ export default function LiveIssueTracker() {
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedProject, setSelectedProject] = useState("");
+  const [selectedProjects, setSelectedProjects] = useState([]);
+  const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false);
+  const [selectedE2StatusUpdate, setSelectedE2StatusUpdate] = useState("");
+  const [selectedDisableFlag, setSelectedDisableFlag] = useState("");
   const [selectedE2Tags, setSelectedE2Tags] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showPopup, setShowPopup] = useState(false);
@@ -102,6 +107,7 @@ export default function LiveIssueTracker() {
   const [projectNameOptions, setProjectNameOptions] = useState([]);
   const [e2DetailerOptions, setE2DetailerOptions] = useState([]);
   const [e2TagOptions, setE2TagOptions] = useState([]);
+  const [popupE2StatusUpdateOptions, setPopupE2StatusUpdateOptions] = useState(DEFAULT_E2_STATUS_UPDATE_OPTIONS);
   const [excelUploading, setExcelUploading] = useState(false);
   const [excelUploadError, setExcelUploadError] = useState("");
   const [excelUploadSummary, setExcelUploadSummary] = useState(null);
@@ -110,6 +116,7 @@ export default function LiveIssueTracker() {
   const [quickTagCustomValue, setQuickTagCustomValue] = useState("");
   const [quickTagSaving, setQuickTagSaving] = useState(false);
   const [quickTagError, setQuickTagError] = useState("");
+  const projectFilterRef = useRef(null);
 
   // Generate next ID (TD-xxxx)
   const generateNextId = () => {
@@ -304,6 +311,11 @@ export default function LiveIssueTracker() {
         setProjectNameOptions(Array.isArray(configData.projectNameValues) ? configData.projectNameValues : []);
         setE2DetailerOptions(Array.isArray(configData.e2DetailerOptions) ? configData.e2DetailerOptions : []);
         setE2TagOptions(Array.isArray(configData.e2TagValues) ? configData.e2TagValues : []);
+        setPopupE2StatusUpdateOptions(
+          Array.isArray(configData[E2_STATUS_UPDATE_OPTIONS_FIELD]) && configData[E2_STATUS_UPDATE_OPTIONS_FIELD].length > 0
+            ? configData[E2_STATUS_UPDATE_OPTIONS_FIELD]
+            : DEFAULT_E2_STATUS_UPDATE_OPTIONS
+        );
       } catch (err) {
         // ignore, already handled above
       }
@@ -379,6 +391,18 @@ export default function LiveIssueTracker() {
     return a.localeCompare(b);
   });
 
+  const e2StatusUpdateOptions = Array.from(new Set(
+    issues
+      .map((issue) => String(issue["E2 Status Update"] || issue.e2StatusUpdate || "").trim())
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+
+  const disableFlagOptions = Array.from(new Set(
+    issues
+      .map((issue) => String(issue["Disable Flag"] ?? issue.disableFlag ?? "").trim())
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+
   const tagOptions = Array.from(new Set([
     ...e2TagOptions,
     ...issues.flatMap((issue) => getIssueTagValues(issue)),
@@ -393,12 +417,46 @@ export default function LiveIssueTracker() {
     ));
   };
 
-  // Filter issues by selected project name and search term
+  const toggleSelectedProject = (projectValue) => {
+    setSelectedProjects((prev) => (
+      prev.includes(projectValue)
+        ? prev.filter((value) => value !== projectValue)
+        : [...prev, projectValue]
+    ));
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!projectFilterRef.current) return;
+      if (!projectFilterRef.current.contains(event.target)) {
+        setIsProjectFilterOpen(false);
+      }
+    };
+
+    if (isProjectFilterOpen) {
+      document.addEventListener("mousedown", handleOutsideClick);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [isProjectFilterOpen]);
+
+  // Filter issues by selected project names and search term
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const filteredIssues = issues.filter(issue => {
     const name = issue["Project Name"] || issue.projectName || issue.project || "";
-    const projectMatches = !selectedProject || (name === "" ? "--" : name) === selectedProject;
+    const normalizedProjectName = name === "" ? "--" : name;
+    const projectMatches = selectedProjects.length === 0 || selectedProjects.includes(normalizedProjectName);
     if (!projectMatches) return false;
+
+    const issueE2StatusUpdate = String(issue["E2 Status Update"] || issue.e2StatusUpdate || "").trim();
+    const e2StatusMatches = !selectedE2StatusUpdate || issueE2StatusUpdate === selectedE2StatusUpdate;
+    if (!e2StatusMatches) return false;
+
+    const issueDisableFlag = String(issue["Disable Flag"] ?? issue.disableFlag ?? "").trim();
+    const disableFlagMatches = !selectedDisableFlag || issueDisableFlag === selectedDisableFlag;
+    if (!disableFlagMatches) return false;
 
     const issueTags = getIssueTagValues(issue);
     if (selectedE2Tags.length > 0) {
@@ -521,6 +579,7 @@ export default function LiveIssueTracker() {
     setTdValue(issue["Technical Direction"] || issue.technicalDirection || "");
     setEditFields({
       leadDetailer: issue["E2 Detailer"] || "",
+      e2StatusUpdate: issue["E2 Status Update"] || issue.e2StatusUpdate || "",
       e2Tag: issue["E2 Tags"] || issue.e2Tags || "",
       supportTeam: Array.isArray(issue["E2 Detailer Support Team"]) ? issue["E2 Detailer Support Team"] : [],
       dataStage: issue["Data Stage"] || "Testing",
@@ -563,16 +622,35 @@ export default function LiveIssueTracker() {
       }
       await updateDoc(issueDocRef, {
         "Technical Direction": tdValue,
+        "E2 Status Update": editFields.e2StatusUpdate,
         "E2 Detailer": editFields.leadDetailer,
         "E2 Tags": "Provide Technical Details",
         "E2 Detailer Support Team": editFields.supportTeam,
         "Data Stage": editFields.dataStage,
         "e2Comments": editFields.comments,
         "e2Documents": uploadedDocs,
-        "E2 Status Update": "To Do List"
       });
       setShowPopup(false);
       setEditFields(f => ({ ...f, uploadingFiles: [] }));
+      setIssues((prev) => prev.map((issue) => (
+        issue.id === popupIssue.id
+          ? {
+              ...issue,
+              "Technical Direction": tdValue,
+              technicalDirection: tdValue,
+              "E2 Status Update": editFields.e2StatusUpdate,
+              e2StatusUpdate: editFields.e2StatusUpdate,
+              "E2 Detailer": editFields.leadDetailer,
+              "E2 Tags": "Provide Technical Details",
+              e2Tags: "Provide Technical Details",
+              "E2 Detailer Support Team": editFields.supportTeam,
+              "Data Stage": editFields.dataStage,
+              dataStage: editFields.dataStage,
+              e2Comments: editFields.comments,
+              e2Documents: uploadedDocs,
+            }
+          : issue
+      )));
     } catch (err) {
       setSaveError("Failed to save. " + (err.message || ""));
     }
@@ -603,9 +681,6 @@ export default function LiveIssueTracker() {
             style={topNavButtonStyle}
           >
             🏃 Agile Dashboard
-          </Link>
-          <Link to="/organization/2155/project-issue-dashboard" style={topNavButtonStyle}>
-            📋 Go to Project Issue Dashboard
           </Link>
           <button
             style={topNavButtonStyle}
@@ -825,17 +900,79 @@ export default function LiveIssueTracker() {
         © E2 Tech Support, LLC
       </p>
       <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div ref={projectFilterRef} style={{ position: "relative" }}>
+          <span style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</span>
+          <button
+            type="button"
+            onClick={() => setIsProjectFilterOpen((prev) => !prev)}
+            style={{ padding: "4px 8px", minWidth: 220, textAlign: "left", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", cursor: "pointer" }}
+          >
+            {selectedProjects.length === 0 ? "All Projects" : `${selectedProjects.length} selected`}
+          </button>
+          {isProjectFilterOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0,
+                zIndex: 20,
+                background: "#fff",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.15)",
+                maxHeight: 260,
+                overflowY: "auto",
+                minWidth: 260,
+                padding: 8,
+                textAlign: "left",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedProjects([])}
+                style={{ width: "100%", textAlign: "left", border: "none", background: "transparent", color: "#2563eb", fontWeight: 600, cursor: "pointer", padding: "6px 8px", marginBottom: 4 }}
+              >
+                Clear Project Filter
+              </button>
+              {projectNames.map((name) => (
+                <label key={name} style={{ display: "grid", gridTemplateColumns: "16px 1fr", alignItems: "center", columnGap: 8, padding: "6px 8px", cursor: "pointer", borderRadius: 6, textAlign: "left", width: "100%" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedProjects.includes(name)}
+                    onChange={() => toggleSelectedProject(name)}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{ display: "block", width: "100%", textAlign: "left", justifySelf: "start" }}>{name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <div>
-          <label htmlFor="projectNameSelect" style={{ fontWeight: 500, marginRight: 8 }}>Project Name:</label>
+          <label htmlFor="e2StatusUpdateSelect" style={{ fontWeight: 500, marginRight: 8 }}>E2 Status Update:</label>
           <select
-            id="projectNameSelect"
-            value={selectedProject}
-            onChange={e => setSelectedProject(e.target.value)}
+            id="e2StatusUpdateSelect"
+            value={selectedE2StatusUpdate}
+            onChange={e => setSelectedE2StatusUpdate(e.target.value)}
             style={{ padding: "4px 8px", minWidth: 180 }}
           >
-            <option value="">All Projects</option>
-            {projectNames.map(name => (
-              <option key={name} value={name}>{name}</option>
+            <option value="">All</option>
+            {e2StatusUpdateOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="disableFlagSelect" style={{ fontWeight: 500, marginRight: 8 }}>Disable Flag:</label>
+          <select
+            id="disableFlagSelect"
+            value={selectedDisableFlag}
+            onChange={e => setSelectedDisableFlag(e.target.value)}
+            style={{ padding: "4px 8px", minWidth: 140 }}
+          >
+            <option value="">All</option>
+            {disableFlagOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
             ))}
           </select>
         </div>
@@ -907,13 +1044,64 @@ export default function LiveIssueTracker() {
           ))}
         </div>
       </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          margin: "0 0 12px",
+        }}
+      >
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 14,
+            border: "1px solid #cbd5e1",
+            borderRadius: 8,
+            padding: "6px 10px",
+            background: "#ffffff",
+            color: "#334155",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <img src="https://img.icons8.com/ios-filled/32/16a34a/add--v1.png" alt="Add Technical Details" title="Add Technical Details" style={{ width: 16, height: 16 }} />
+            <span>Add Technical Details</span>
+          </div>
+          <div style={{ width: 1, height: 14, background: "#cbd5e1" }} />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <img src="https://img.icons8.com/ios-filled/32/2563eb/sent.png" alt="Send to Agile Board" title="Send to Agile Board" style={{ width: 16, height: 16 }} />
+            <span>Send to Agile Board</span>
+          </div>
+          <div style={{ width: 1, height: 14, background: "#cbd5e1" }} />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <img src="https://img.icons8.com/ios-filled/32/f87171/cancel.png" alt="Disable Row" title="Disable Row" style={{ width: 16, height: 16 }} />
+            <span>Disable Row</span>
+          </div>
+          <div style={{ width: 1, height: 14, background: "#cbd5e1" }} />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <img src="https://img.icons8.com/ios-filled/32/16a34a/checkmark--v1.png" alt="Enable Row" title="Enable Row" style={{ width: 16, height: 16 }} />
+            <span>Enable Row</span>
+          </div>
+          <div style={{ width: 1, height: 14, background: "#cbd5e1" }} />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 12, height: 12, display: "inline-block", background: "#eef6ff", border: "1px solid #cbd5e1", borderRadius: 2 }} />
+            <span>Issue/Row Is Now In The Agile Board</span>
+          </div>
+          <div style={{ width: 1, height: 14, background: "#cbd5e1" }} />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 12, height: 12, display: "inline-block", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 2 }} />
+            <span>Issue/Row is Disabled</span>
+          </div>
+        </div>
+      </div>
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
       {!loading && !error && (
-        <table border="1" cellPadding="8" style={{ borderCollapse: "collapse", width: "100%" }}>
+        <table border="1" cellPadding="10" style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
-              <th style={{ paddingLeft: 8, paddingRight: 8 }}>#</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>ID</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Markup</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Project Name</th>
@@ -921,7 +1109,7 @@ export default function LiveIssueTracker() {
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Status</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update Agile</th>
-              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Tags</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8, width: 300, minWidth: 300, maxWidth: 300 }}>E2 Tags</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Disable Flag</th>
               <th style={{ textAlign: "center", paddingLeft: 8, paddingRight: 8 }}>Action</th>
             </tr>
@@ -929,36 +1117,44 @@ export default function LiveIssueTracker() {
           <tbody>
             {filteredIssues.length === 0 && (
               <tr>
-                <td colSpan="11" style={{ textAlign: "center" }}>No issues found.</td>
+                <td colSpan="10" style={{ textAlign: "center" }}>No issues found.</td>
               </tr>
             )}
-            {filteredIssues.map((issue, idx) => (
+            {filteredIssues.map((issue, idx) => {
+              const disabled = issue["Disable Flag"] === "Yes" || issue.disableFlag === "Yes";
+              const agile = issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
+              const hasAgileStatus = String(agile || "").trim() !== "";
+              const isAgileBoardRow = disabled && hasAgileStatus;
+              const isDisabledNoAgileRow = disabled && !hasAgileStatus;
+              const isActionLockedRow = isAgileBoardRow || isDisabledNoAgileRow;
+              const rowBlurTextStyle = isDisabledNoAgileRow ? { filter: "blur(0.7px)", opacity: 0.85 } : undefined;
+              const rowStyle = (() => {
+                const baseStyle = { borderBottom: "0.5px solid #e5e7eb" };
+                if (isAgileBoardRow) {
+                  return { ...baseStyle, background: "#eef6ff" };
+                } else if (isDisabledNoAgileRow) {
+                  return { ...baseStyle, background: "#fef2f2" };
+                }
+                return baseStyle;
+              })();
+
+              return (
               <tr
                 key={issue.id || idx}
-                style={(() => {
-                  const baseStyle = { borderBottom: "0.5px solid #e5e7eb" };
-                  const disabled = issue["Disable Flag"] === "Yes" || issue.disableFlag === "Yes";
-                  const agile = issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile;
-                  const e2Status = issue["E2 Status Update"] || issue.e2StatusUpdate;
-                  if (e2Status === "To Do List") {
-                    return { ...baseStyle, background: "#fef9c3" };
-                  } else if (disabled && agile) {
-                    return { ...baseStyle, background: "#e0f2fe" };
-                  } else if (disabled && !agile) {
-                    return { ...baseStyle, background: "#fee2e2" };
-                  }
-                  return baseStyle;
-                })()}
+                style={rowStyle}
               >
-                <td>{idx + 1}</td>
-                <td>
+                <td style={{ paddingLeft: 14, paddingRight: 14 }}>
                   {issue.id ? (
-                    <Link
-                      to={`/organization/2155/project-issue-dashboard/issue/stanford-ff-rad/${issue.id}`}
-                      style={{ color: "#0ea5e9", fontWeight: 600, textDecoration: "underline" }}
-                    >
-                      {issue.id}
-                    </Link>
+                    isDisabledNoAgileRow ? (
+                      <span style={{ ...rowBlurTextStyle, color: "#64748b", fontWeight: 600 }}>{issue.id}</span>
+                    ) : (
+                      <Link
+                        to={`/organization/2155/project-issue-dashboard/issue/stanford-ff-rad/${issue.id}`}
+                        style={{ color: "#0ea5e9", fontWeight: 600, textDecoration: "underline" }}
+                      >
+                        {issue.id}
+                      </Link>
+                    )
                   ) : "-"}
                 </td>
                 <td>
@@ -966,55 +1162,70 @@ export default function LiveIssueTracker() {
                     <img
                       src={issue["Link to markup"]}
                       alt="Markup Preview"
-                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4, cursor: "zoom-in" }}
-                      onClick={() => openMarkupViewer(idx)}
+                      style={{ maxWidth: 100, maxHeight: 80, objectFit: "contain", border: "1px solid #ccc", borderRadius: 4, cursor: isActionLockedRow ? "not-allowed" : "zoom-in", opacity: isActionLockedRow ? 0.6 : 1 }}
+                      onClick={() => {
+                        if (isActionLockedRow) return;
+                        openMarkupViewer(idx);
+                      }}
                     />
                   ) : (
                     "-"
                   )}
                 </td>
                 <td>{issue["Project Name"] || issue.projectName || issue.project || "-"}</td>
-                <td>{issue["Technical Direction"] || issue.technicalDirection || "-"}</td>
-                <td>{issue.status || "-"}</td>
-                <td>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
-                <td>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
-                <td>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
-                <td>{issue["Disable Flag"] !== undefined ? String(issue["Disable Flag"]) : (issue.disableFlag !== undefined ? String(issue.disableFlag) : "-")}</td>
+                <td style={{ ...rowBlurTextStyle, paddingLeft: 14, paddingRight: 14 }}>
+                  {(() => {
+                    const technicalDirectionValue = issue["Technical Direction"] || issue.technicalDirection || "-";
+                    let technicalDirectionColor = "inherit";
+                    if (technicalDirectionValue === "Stop and Start") technicalDirectionColor = "#ef4444";
+                    else if (technicalDirectionValue === "Steer with current task") technicalDirectionColor = "#2563eb";
+                    else if (technicalDirectionValue === "Add to Queue") technicalDirectionColor = "#6b7280";
+
+                    return <span style={{ color: technicalDirectionColor, fontWeight: 700 }}>{technicalDirectionValue}</span>;
+                  })()}
+                </td>
+                <td style={rowBlurTextStyle}>{issue.status || "-"}</td>
+                <td style={rowBlurTextStyle}>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
+                <td style={rowBlurTextStyle}>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
+                <td style={{ ...rowBlurTextStyle, width: 300, minWidth: 300, maxWidth: 300 }}>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
+                <td style={rowBlurTextStyle}>{issue["Disable Flag"] !== undefined ? String(issue["Disable Flag"]) : (issue.disableFlag !== undefined ? String(issue.disableFlag) : "-")}</td>
                 <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
                   <button
-                    title="Add Technical Direction"
-                    style={{ background: "none", border: "none", cursor: "pointer" }}
+                    title="Add Technical Details"
+                    style={{ background: "none", border: "none", cursor: isActionLockedRow ? "not-allowed" : "pointer", opacity: isActionLockedRow ? 0.45 : 1 }}
                     onClick={() => handleOpenPopup(issue)}
+                    disabled={isActionLockedRow}
                   >
                     <img
-                      src="https://img.icons8.com/ios-filled/32/000000/add--v1.png"
+                      src="https://img.icons8.com/ios-filled/32/16a34a/add--v1.png"
                       alt="Add TD"
-                      style={{ width: 24, height: 24, verticalAlign: "middle", marginRight: 4 }}
+                      style={{ width: 24, height: 24, verticalAlign: "middle" }}
                     />
-                    <span style={{ fontWeight: 600, color: "#0ea5e9", fontSize: 13 }}>Add TD</span>
                   </button>
                   <a
                     href="/live-issue-tracker"
                     title="Send to Agile Board"
-                    style={{ marginLeft: 12, display: "inline-block", verticalAlign: "middle" }}
+                    style={{ marginLeft: 12, display: "inline-block", verticalAlign: "middle", pointerEvents: isActionLockedRow ? "none" : "auto", opacity: isActionLockedRow ? 0.45 : 1, cursor: isActionLockedRow ? "not-allowed" : "pointer" }}
                     onClick={e => {
                       e.preventDefault();
+                      if (isActionLockedRow) return;
                       handleSendToAgile(issue);
                     }}
                   >
                     <img
-                      src="https://img.icons8.com/ios-filled/32/000000/sent.png"
+                      src="https://img.icons8.com/ios-filled/32/2563eb/sent.png"
                       alt="Send to Agile Board"
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
                     />
                   </a>
                   <button
                     title="Disable Row"
-                    style={{ background: "none", border: "none", cursor: "pointer", marginLeft: 12 }}
+                    style={{ background: "none", border: "none", cursor: isActionLockedRow ? "not-allowed" : "pointer", marginLeft: 12, opacity: isActionLockedRow ? 0.45 : 1 }}
                     onClick={() => handleDisableRow(issue)}
+                    disabled={isActionLockedRow}
                   >
                     <img
-                      src="https://img.icons8.com/ios-filled/32/000000/cancel.png"
+                      src="https://img.icons8.com/ios-filled/32/f87171/cancel.png"
                       alt="Disable Row"
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
                     />
@@ -1032,7 +1243,8 @@ export default function LiveIssueTracker() {
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -1193,7 +1405,7 @@ export default function LiveIssueTracker() {
           display: "flex", alignItems: "center", justifyContent: "center"
         }}>
           <div style={{ background: "#fff", padding: 32, borderRadius: 8, minWidth: 400, boxShadow: "0 2px 16px #0002", maxWidth: 520 }}>
-            <h3 style={{ marginTop: 0 }}>Edit/Add Technical Direction</h3>
+            <h3 style={{ marginTop: 0 }}>Edit/Add Technical Details</h3>
             <div style={{ marginBottom: 12, fontWeight: 500, color: '#0ea5e9' }}>
               Issue ID: {popupIssue?.id || "-"}
             </div>
@@ -1208,6 +1420,20 @@ export default function LiveIssueTracker() {
               >
                 <option value="">Select a value</option>
                 {tdOptions.map((opt, idx) => (
+                  <option key={idx} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 500 }}>E2 Status Update:</label>
+              <select
+                value={editFields.e2StatusUpdate}
+                onChange={e => setEditFields(f => ({ ...f, e2StatusUpdate: e.target.value }))}
+                disabled={saving}
+                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
+              >
+                <option value="">Select a value</option>
+                {popupE2StatusUpdateOptions.map((opt, idx) => (
                   <option key={idx} value={opt}>{opt}</option>
                 ))}
               </select>
@@ -1236,7 +1462,7 @@ export default function LiveIssueTracker() {
                   setEditFields(f => ({ ...f, supportTeam: selected }));
                 }}
                 disabled={saving}
-                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15, minHeight: 60 }}
+                style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15, height: 72, overflowY: "auto" }}
               >
                 {e2DetailerOptions.map((opt, idx) => (
                   <option
@@ -1271,7 +1497,7 @@ export default function LiveIssueTracker() {
                 value={editFields.comments}
                 onChange={e => setEditFields(f => ({ ...f, comments: e.target.value.slice(0, 1000) }))}
                 maxLength={1000}
-                rows={4}
+                rows={3}
                 style={{ width: "100%", marginTop: 8, padding: 8, fontSize: 15 }}
                 disabled={saving}
               />
@@ -1279,7 +1505,7 @@ export default function LiveIssueTracker() {
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ fontWeight: 500, display: 'block', marginBottom: 6 }}>Documents:</label>
-              <div className="pid-detail-upload-area" style={{ margin: 0, padding: '0.75rem 1rem' }}>
+              <div className="pid-detail-upload-area" style={{ margin: 0, padding: '0.75rem 1rem', maxHeight: 132, overflowY: 'auto' }}>
                 <input
                   ref={fileInputRef}
                   type="file"
