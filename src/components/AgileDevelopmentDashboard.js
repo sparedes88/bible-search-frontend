@@ -5,7 +5,7 @@
     "Steer with current task",
     "Add to Queue"
   ];
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 // --- Project Name Values from Firestore (source of truth, as in ProjectIssueDashboard) ---
 const PROJECT_NAME_VALUES_FIELD = "projectNameValues";
@@ -190,12 +190,26 @@ const AgileDevelopmentDashboard = () => {
   const [loadingIssues, setLoadingIssues] = useState(true);
   const [draggedIssueKey, setDraggedIssueKey] = useState("");
   const [savingIssueKey, setSavingIssueKey] = useState("");
-  const [selectedProjectName, setSelectedProjectName] = useState("All");
+  const [selectedProjectNames, setSelectedProjectNames] = useState([]);
+  const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false);
   const [selectedE2LeadDetailer, setSelectedE2LeadDetailer] = useState("All");
   const [selectedE2StatusAgile, setSelectedE2StatusAgile] = useState("All");
   const [selectedDataStage, setSelectedDataStage] = useState("All");
   const [tagAliasByLowerTag, setTagAliasByLowerTag] = useState({});
   const DATA_STAGE_OPTIONS = ["Testing", "Production"];
+  const projectFilterRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!projectFilterRef.current) return;
+      if (!projectFilterRef.current.contains(event.target)) {
+        setIsProjectFilterOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
   // Load tag aliases from Firestore (same as ProjectIssueDashboard)
   useEffect(() => {
     if (!id) return;
@@ -352,8 +366,9 @@ const AgileDevelopmentDashboard = () => {
 
   const visibleIssues = useMemo(() => {
     return issues.filter((issue) => {
+      const selectedProjectSet = new Set(selectedProjectNames);
       const projectMatched =
-        selectedProjectName === "All" || normalizeValue(issue.projectName) === selectedProjectName;
+        selectedProjectSet.size === 0 || selectedProjectSet.has(normalizeValue(issue.projectName));
       const detailerMatched =
         selectedE2LeadDetailer === "All" || normalizeValue(issue.e2LeadDetailer) === selectedE2LeadDetailer;
       const e2StatusAgileMatched =
@@ -367,7 +382,7 @@ const AgileDevelopmentDashboard = () => {
       const searchMatched = !search || idMatch || titleMatch;
       return projectMatched && detailerMatched && e2StatusAgileMatched && dataStageMatched && searchMatched;
     });
-  }, [issues, selectedProjectName, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
+  }, [issues, selectedProjectNames, selectedE2LeadDetailer, selectedE2StatusAgile, selectedDataStage, searchTerm]);
 
   const e2StatusAgileOptions = useMemo(
     () => dedupeValues(issues.map((issue) => normalizeValue(issue.status))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
@@ -632,22 +647,55 @@ const AgileDevelopmentDashboard = () => {
             />
           </label>
 
-          <label className="agile-dashboard-filter-item" htmlFor="agile-project-filter">
+          <div className="agile-dashboard-filter-item agile-project-filter" ref={projectFilterRef}>
             <span>Project Name</span>
-            <select
-              id="agile-project-filter"
-              className="agile-dashboard-filter-select"
-              value={selectedProjectName}
-              onChange={(event) => setSelectedProjectName(event.target.value)}
-            >
-              <option value="All">All Projects</option>
-              {projectNameOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="agile-project-filter-controls">
+              <button
+                type="button"
+                className="agile-dashboard-filter-select"
+                onClick={() => setIsProjectFilterOpen((prev) => !prev)}
+                style={{ minWidth: 220, textAlign: "left" }}
+              >
+                {selectedProjectNames.length > 0
+                  ? `${selectedProjectNames.length} project(s) selected`
+                  : "All Projects"}
+              </button>
+
+              <button
+                type="button"
+                className="agile-dashboard-filter-select"
+                onClick={() => setSelectedProjectNames([])}
+                disabled={selectedProjectNames.length === 0}
+                style={{ minWidth: "auto", padding: "0.5rem 0.55rem", whiteSpace: "nowrap" }}
+              >
+                Clear
+              </button>
+            </div>
+
+            {isProjectFilterOpen && (
+              <div className="agile-project-filter-dropdown">
+                {projectNameOptions.map((option) => {
+                  const checked = selectedProjectNames.includes(option);
+                  return (
+                    <label key={option} className="agile-project-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedProjectNames((prev) =>
+                            prev.includes(option)
+                              ? prev.filter((value) => value !== option)
+                              : [...prev, option]
+                          );
+                        }}
+                      />
+                      <div className="agile-project-filter-option-text">{option}</div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <label className="agile-dashboard-filter-item" htmlFor="agile-detailer-filter">
             <span>E2 Lead Detailer</span>
