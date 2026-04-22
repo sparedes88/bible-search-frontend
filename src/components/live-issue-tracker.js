@@ -1071,7 +1071,7 @@ export default function LiveIssueTracker() {
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
       {!loading && !error && (
-        <table border="1" cellPadding="8" style={{ borderCollapse: "collapse", width: "100%" }}>
+        <table border="1" cellPadding="10" style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>ID</th>
@@ -1081,7 +1081,7 @@ export default function LiveIssueTracker() {
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Status</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Status Update Agile</th>
-              <th style={{ paddingLeft: 8, paddingRight: 8 }}>E2 Tags</th>
+              <th style={{ paddingLeft: 8, paddingRight: 8, width: 300, minWidth: 300, maxWidth: 300 }}>E2 Tags</th>
               <th style={{ paddingLeft: 8, paddingRight: 8 }}>Disable Flag</th>
               <th style={{ textAlign: "center", paddingLeft: 8, paddingRight: 8 }}>Action</th>
             </tr>
@@ -1115,7 +1115,7 @@ export default function LiveIssueTracker() {
                 key={issue.id || idx}
                 style={rowStyle}
               >
-                <td>
+                <td style={{ paddingLeft: 14, paddingRight: 14 }}>
                   {issue.id ? (
                     isDisabledNoAgileRow ? (
                       <span style={{ ...rowBlurTextStyle, color: "#64748b", fontWeight: 600 }}>{issue.id}</span>
@@ -1149,7 +1149,7 @@ export default function LiveIssueTracker() {
                 <td style={rowBlurTextStyle}>{issue.status || "-"}</td>
                 <td style={rowBlurTextStyle}>{issue["E2 Status Update"] || issue.e2StatusUpdate || "-"}</td>
                 <td style={rowBlurTextStyle}>{issue["E2 Status Update Agile"] || issue.e2StatusUpdateAgile || "-"}</td>
-                <td style={rowBlurTextStyle}>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
+                <td style={{ ...rowBlurTextStyle, width: 300, minWidth: 300, maxWidth: 300 }}>{issue["E2 Tags"] || issue.e2Tags || "-"}</td>
                 <td style={rowBlurTextStyle}>{issue["Disable Flag"] !== undefined ? String(issue["Disable Flag"]) : (issue.disableFlag !== undefined ? String(issue.disableFlag) : "-")}</td>
                 <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
                   <button
