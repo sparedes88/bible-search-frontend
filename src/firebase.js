@@ -126,8 +126,12 @@ const auth = isRunningOnLocalhost
 let db;
 try {
   if (isRunningOnLocalhost) {
-    db = getFirestore(app);
-    debugLog("Firestore initialized without persistent local cache on localhost");
+    db = initializeFirestore(app, {
+      // Dev-only transport hardening to reduce watch-stream instability on HMR/proxy setups.
+      experimentalAutoDetectLongPolling: true,
+      useFetchStreams: false,
+    });
+    debugLog("Firestore initialized with localhost watch-stream hardening");
   } else {
     db = initializeFirestore(app, {
       localCache: persistentLocalCache({

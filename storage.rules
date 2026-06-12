@@ -4,27 +4,66 @@ service firebase.storage {
     function isAuthenticated() {
       return request.auth != null;
     }
+
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasUserDoc() {
+      return firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function hasGlobalAdminRole(user) {
+      return user.role in ['global_admin', 'system_global_admin'] ||
+        user.baseRole in ['global_admin', 'system_global_admin'] ||
+        user.basedOn in ['global_admin', 'system_global_admin'] ||
+        user.systemRole in ['global_admin', 'system_global_admin'];
+    }
+
+    function hasChurchAdminRole(user) {
+      return user.role in ['admin', 'system_admin'] ||
+        user.baseRole in ['admin', 'system_admin'] ||
+        user.basedOn in ['admin', 'system_admin'] ||
+        user.systemRole in ['admin', 'system_admin'];
+    }
+
+    function userBelongsToChurch(user, churchId) {
+      return user.churchId == churchId ||
+        string(user.churchId) == churchId ||
+        user.churchID == churchId ||
+        string(user.churchID) == churchId ||
+        user.organizationId == churchId ||
+        string(user.organizationId) == churchId ||
+        firestore.exists(/databases/(default)/documents/churches/$(churchId)/members/$(request.auth.uid));
+    }
     
     function isGlobalAdmin() {
-      return isAuthenticated() && (
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'global_admin'
-      );
+      return isAuthenticated() && hasUserDoc() && hasGlobalAdminRole(userDoc());
     }
     
     function isChurchAdmin(churchId) {
-      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
       return isAuthenticated() && (
-        (user.role == 'admin' && (user.churchId == churchId || string(user.churchId) == churchId)) || 
-        user.role == 'global_admin'
+        firestore.exists(/databases/(default)/documents/churches/$(churchId)/members/$(request.auth.uid)) ||
+        (
+          hasUserDoc() &&
+          (
+            hasGlobalAdminRole(userDoc()) ||
+            (hasChurchAdminRole(userDoc()) && userBelongsToChurch(userDoc(), churchId))
+          )
+        )
       );
     }
     
     function isChurchMember(churchId) {
-      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
       return isAuthenticated() && (
-        user.churchId == churchId || 
-        string(user.churchId) == churchId ||
-        user.role == 'global_admin'
+        firestore.exists(/databases/(default)/documents/churches/$(churchId)/members/$(request.auth.uid)) ||
+        (
+          hasUserDoc() &&
+          (
+            userBelongsToChurch(userDoc(), churchId) ||
+            hasGlobalAdminRole(userDoc())
+          )
+        )
       );
     }
 
@@ -87,6 +126,17 @@ service firebase.storage {
       allow write: if request.auth != null
         && (isGlobalAdmin() || isChurchAdmin(churchId))
         && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
+    // Quick links media assets - allow members/admins to upload images for rotating media
+    match /quick-links/{churchId}/media/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId) || isChurchMember(churchId))
+        && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
       allow delete: if request.auth != null
         && (isGlobalAdmin() || isChurchAdmin(churchId));
@@ -208,6 +258,20 @@ service firebase.storage {
       allow write: if request.auth != null
         && request.resource.size < 5 * 1024 * 1024  // 5MB max
         && request.resource.contentType.matches('image/.*');
+    }
+
+    // My Design Team assets (organization references, generated images, logo settings)
+    match /churches/{churchId}/my-design-team/{assetType}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuthenticated() &&
+        (
+          isChurchMember(churchId) ||
+          isChurchAdmin(churchId)
+        );
     }
     
     // Courses wildcard rule

@@ -1,27 +1,30 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { db, storage } from "../firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes, deleteObject } from "firebase/storage";
 import { toast } from "react-toastify";
+import "./AgileUpdateModal.css";
 
 export default function AgileUpdateModal({
   isOpen, onClose, onSave, latestUpdate, onChange, newUpdate, loading,
   percentCompleted, onPercentChange, churchId, issue,
+  requireDocument = false,
 }) {
   const [e2Documents, setE2Documents] = useState([]);
   const [docLoading, setDocLoading] = useState(false);
   const [uploadingDocuments, setUploadingDocuments] = useState(false);
   const fileInputRef = useRef(null);
+  const resolvedIssueDocId = issue?.issueDocId || issue?.issueId;
 
   // Fetch live e2Documents from Firestore whenever the modal opens or issue changes
   useEffect(() => {
-    if (!isOpen || !churchId || !issue?.projectDocId || !issue?.issueId) {
+    if (!isOpen || !churchId || !issue?.projectDocId || !resolvedIssueDocId) {
       setE2Documents([]);
       return;
     }
     setDocLoading(true);
-    const decodedIssueId = decodeURIComponent(issue.issueId);
-    const issueRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+    const issueRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", resolvedIssueDocId);
     getDoc(issueRef)
       .then((snap) => {
         if (snap.exists()) {
@@ -33,13 +36,13 @@ export default function AgileUpdateModal({
       })
       .catch(() => setE2Documents([]))
       .finally(() => setDocLoading(false));
-  }, [isOpen, churchId, issue?.projectDocId, issue?.issueId]);
+  }, [isOpen, churchId, issue?.projectDocId, resolvedIssueDocId]);
 
   const handleDocumentUpload = async (event) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    if (!churchId || !issue?.projectDocId || !issue?.issueId) {
+    if (!churchId || !issue?.projectDocId || !resolvedIssueDocId) {
       toast.error("Issue data not fully loaded. Please try again.");
       return;
     }
@@ -79,8 +82,7 @@ export default function AgileUpdateModal({
         });
       }
 
-      const decodedIssueId = decodeURIComponent(issue.issueId);
-      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", resolvedIssueDocId);
       const snapshot = await getDoc(issueDocRef);
       const data = snapshot.exists() ? snapshot.data() : {};
       const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
@@ -118,8 +120,7 @@ export default function AgileUpdateModal({
           if (err.code !== "storage/object-not-found") throw err;
         });
       }
-      const decodedIssueId = decodeURIComponent(issue.issueId);
-      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", decodedIssueId);
+      const issueDocRef = doc(db, "churches", churchId, "bimProjects", issue.projectDocId, "issues", resolvedIssueDocId);
       const snapshot = await getDoc(issueDocRef);
       const data = snapshot.exists() ? snapshot.data() : {};
       const prevDocs = Array.isArray(data.e2Documents) ? data.e2Documents : [];
@@ -151,7 +152,9 @@ export default function AgileUpdateModal({
 
   const availableSlots = 10 - e2Documents.length;
 
-  return (
+  const hasRequiredDocument = !requireDocument || e2Documents.length > 0;
+
+  const modalMarkup = (
     <div className="agile-update-overlay">
       <div className="agile-update-modal">
         <div className="agile-update-modal-header">
@@ -297,10 +300,20 @@ export default function AgileUpdateModal({
                 ))}
               </div>
             )}
+
+            {requireDocument && !docLoading && e2Documents.length === 0 ? (
+              <p style={{ color: '#dc2626', fontSize: '0.85em', margin: '10px 0 0' }}>
+                A document is required before saving this percent update.
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="agile-update-modal-actions">
-          <button className="agile-update-save-btn" onClick={() => onSave(percentCompleted)} disabled={loading || !newUpdate.trim()}>
+          <button
+            className="agile-update-save-btn"
+            onClick={() => onSave(percentCompleted)}
+            disabled={loading || !newUpdate.trim() || !hasRequiredDocument}
+          >
             {loading ? "Saving..." : "Save"}
           </button>
           <button className="agile-update-cancel-btn" onClick={onClose} disabled={loading}>Close</button>
@@ -308,4 +321,7 @@ export default function AgileUpdateModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return modalMarkup;
+  return createPortal(modalMarkup, document.body);
 }

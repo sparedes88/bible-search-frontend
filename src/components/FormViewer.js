@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { 
@@ -7,19 +7,21 @@ import {
   getDoc, 
   collection, 
   addDoc, 
-  serverTimestamp,
-  getDocs
+  serverTimestamp
 } from 'firebase/firestore';
 import { toast } from 'react-toastify';
+import Skeleton from 'react-loading-skeleton';
+import 'react-loading-skeleton/dist/skeleton.css';
 import commonStyles from '../pages/commonStyles';
 import './Forms.css';
 import { getChurchData } from '../api/church';
-import { FiCheckCircle, FiGrid } from 'react-icons/fi';
+import { FiCheckCircle } from 'react-icons/fi';
 import NotAuthorized from './NotAuthorized';
 import DebugPanel from './DebugPanel';
 
 const FormViewer = () => {
   const { id, formId } = useParams();
+  const location = useLocation();
   const { user } = useAuth();
   
   console.log('🚀 FormViewer: Component initialized', { 
@@ -38,10 +40,34 @@ const FormViewer = () => {
   const [churchLogo, setChurchLogo] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [countdown, setCountdown] = useState(15);
-  const [showSwitcher, setShowSwitcher] = useState(false);
-  const [formsList, setFormsList] = useState([]);
-  const [formsLoading, setFormsLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+
+  const postSubmitRedirectPath = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    const rawReturnTo = String(new URLSearchParams(location.search).get('returnTo') || '').trim();
+    if (!rawReturnTo) {
+      return '';
+    }
+
+    try {
+      const parsedUrl = new URL(rawReturnTo, window.location.origin);
+      if (parsedUrl.origin !== window.location.origin) {
+        return '';
+      }
+
+      // Only allow redirecting to an internal quick-links route.
+      const isQuickLinksPath = /^\/(organization|church)\/[^/]+\/quick-links\/?$/i.test(parsedUrl.pathname);
+      if (!isQuickLinksPath) {
+        return '';
+      }
+
+      return `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    } catch (error) {
+      return '';
+    }
+  }, [location.search]);
 
   // Check authentication - only required for certain features, not for viewing forms
   useEffect(() => {
@@ -51,40 +77,18 @@ const FormViewer = () => {
   }, [user, id]);
 
   useEffect(() => {
-    // Allow fetching form for both authenticated and unauthenticated users
-    if (!error) {
-      fetchForm();
-    }
-  }, [id, formId]);
+    // Clear previous form state immediately to avoid stale-content flashes.
+    setForm(null);
+    setFormData({});
+    setErrors({});
+    setError(null);
+    setSubmitted(false);
+    setCountdown(15);
+    setLoading(true);
 
-  // Load available active forms for quick switching
-  useEffect(() => {
-    const fetchForms = async () => {
-      try {
-        if (!id) return;
-        setFormsLoading(true);
-        const formsRef = collection(db, 'churches', id, 'forms');
-        // Query only active forms to comply with security rules and avoid permission errors
-        const q = window?.firebase?.firestoreQuery
-          ? window.firebase.firestoreQuery(formsRef, window.firebase.firestoreWhere('isActive', '==', true))
-          : (await import('firebase/firestore')).query(formsRef, (await import('firebase/firestore')).where('isActive', '==', true));
-        const snap = await getDocs(q);
-        const items = [];
-        snap.forEach(docSnap => {
-          const data = docSnap.data();
-          items.push({ id: docSnap.id, title: data.title || 'Untitled', description: data.description || '' });
-        });
-        // Sort by title for nicer UX
-        items.sort((a, b) => a.title.localeCompare(b.title));
-        setFormsList(items);
-      } catch (e) {
-        console.warn('Failed to load forms list for switcher', e);
-      } finally {
-        setFormsLoading(false);
-      }
-    };
-    fetchForms();
-  }, [id]);
+    // Allow fetching form for both authenticated and unauthenticated users.
+    fetchForm();
+  }, [id, formId]);
 
   useEffect(() => {
     const fetchChurch = async () => {
@@ -104,7 +108,7 @@ const FormViewer = () => {
     fetchChurch();
   }, [id]);
 
-  // Handle post-submit countdown and auto-refresh
+  // Handle post-submit countdown and either redirect or refresh.
   useEffect(() => {
     let timer;
     if (submitted) {
@@ -112,8 +116,11 @@ const FormViewer = () => {
         setCountdown((prev) => {
           if (prev <= 1) {
             clearInterval(timer);
-            // Refresh the page to allow a new submission flow
-            window.location.reload();
+            if (postSubmitRedirectPath) {
+              window.location.assign(postSubmitRedirectPath);
+            } else {
+              window.location.reload();
+            }
             return 0;
           }
           return prev - 1;
@@ -123,7 +130,7 @@ const FormViewer = () => {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [submitted]);
+  }, [postSubmitRedirectPath, submitted]);
 
   useEffect(() => {
     if (form) {
@@ -297,7 +304,8 @@ const FormViewer = () => {
       const entriesRef = collection(db, 'churches', id, 'forms', form.id, 'entries');
       await addDoc(entriesRef, submissionData);
       
-      // Show thank you screen with countdown and auto-refresh
+      // Show thank you screen with countdown and auto-navigation.
+      setCountdown(postSubmitRedirectPath ? 3 : 15);
       setSubmitted(true);
       toast.success('Form submitted successfully!');
       
@@ -565,32 +573,36 @@ const FormViewer = () => {
       <div style={{
         minHeight: '100vh',
         background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
         padding: '24px'
       }}>
         <div style={{
-          textAlign: 'center',
-          padding: '3rem',
+          width: '100%',
+          maxWidth: '720px',
+          margin: '0 auto',
+          padding: '2.25rem',
           backgroundColor: 'white',
           borderRadius: '16px',
           border: '1px solid #E5E7EB',
           boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
         }}>
-          <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
-          <div style={{ fontSize: '1.1rem', color: '#6b7280' }}>Loading form...</div>
+          <div style={{ display: 'grid', justifyItems: 'center', gap: '14px', marginBottom: '2rem' }}>
+            <Skeleton circle width={64} height={64} />
+            <Skeleton width={260} height={30} />
+            <Skeleton width="72%" height={16} />
+          </div>
 
-          <DebugPanel
-            data={{
-              churchId: id,
-              formId: formId,
-              userEmail: user?.email,
-              userRole: user?.role,
-              timestamp: new Date().toISOString()
-            }}
-            title="Loading Debug Info"
-          />
+          <div style={{ display: 'grid', gap: '1.3rem' }}>
+            {[1, 2, 3].map((fieldIndex) => (
+              <div key={`form-skeleton-field-${fieldIndex}`} style={{ display: 'grid', gap: '0.55rem' }}>
+                <Skeleton width={150} height={14} />
+                <Skeleton height={44} borderRadius={10} />
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #E5E7EB' }}>
+            <Skeleton height={46} borderRadius={10} />
+          </div>
         </div>
       </div>
     );
@@ -696,28 +708,6 @@ const FormViewer = () => {
         border: '1px solid #E5E7EB',
         boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
-          <button
-            type="button"
-            onClick={() => setShowSwitcher(true)}
-            className="form-input"
-            style={{
-              backgroundColor: '#111827',
-              color: 'white',
-              padding: '0.5rem 0.875rem',
-              borderRadius: 10,
-              border: 'none',
-              cursor: 'pointer',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8
-            }}
-          >
-            <FiGrid />
-            Switch Form
-          </button>
-        </div>
         <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
           {churchLogo && (
             <div style={{ marginBottom: '1rem' }}>
@@ -795,11 +785,21 @@ const FormViewer = () => {
             </div>
             <h2 style={{ margin: 0, marginBottom: 8, fontSize: '1.5rem', color: '#111827' }}>Thank you!</h2>
             <p style={{ margin: 0, marginBottom: 8, color: '#374151' }}>Your response has been recorded.</p>
-            <p style={{ marginTop: 8, color: '#6B7280' }}>Refreshing in <strong>{countdown}s</strong>…</p>
+            <p style={{ marginTop: 8, color: '#6B7280' }}>
+              {postSubmitRedirectPath
+                ? <>Returning to Quick Links in <strong>{countdown}s</strong>…</>
+                : <>Refreshing in <strong>{countdown}s</strong>…</>}
+            </p>
             <div style={{ marginTop: 16 }}>
               <button
                 className="form-input"
-                onClick={() => window.location.reload()}
+                onClick={() => {
+                  if (postSubmitRedirectPath) {
+                    window.location.assign(postSubmitRedirectPath);
+                    return;
+                  }
+                  window.location.reload();
+                }}
                 style={{
                   backgroundColor: '#111827',
                   color: 'white',
@@ -810,64 +810,8 @@ const FormViewer = () => {
                   fontWeight: 700
                 }}
               >
-                Refresh now
+                {postSubmitRedirectPath ? 'Return to Quick Links now' : 'Refresh now'}
               </button>
-            </div>
-          </div>
-        )}
-        {/* Switcher Modal */}
-        {showSwitcher && (
-          <div className="modal-overlay" onClick={() => setShowSwitcher(false)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-              <h3>Switch Form</h3>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <input
-                  type="text"
-                  placeholder="Search forms..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="form-input"
-                  style={{ width: '100%' }}
-                />
-              </div>
-              {formsLoading ? (
-                <div>Loading forms…</div>
-              ) : (
-                <div style={{ maxHeight: '50vh', overflowY: 'auto', display: 'grid', gap: '0.5rem' }}>
-                  {formsList
-                    .filter(f => f.title.toLowerCase().includes(searchTerm.toLowerCase()))
-                    .map(f => (
-                      <button
-                        key={f.id}
-                        onClick={() => { setShowSwitcher(false); window.location.href = `/church/${id}/form/${f.id}`; }}
-                        style={{
-                          textAlign: 'left',
-                          padding: '0.75rem 1rem',
-                          borderRadius: 8,
-                          border: '1px solid #e5e7eb',
-                          backgroundColor: f.id === formId ? '#EEF2FF' : '#ffffff',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ fontWeight: 700, color: '#111827' }}>{f.title}</div>
-                        {f.description && (
-                          <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>{f.description}</div>
-                        )}
-                      </button>
-                    ))}
-                  {formsList.filter(f => f.title.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
-                    <div style={{ color: '#6b7280' }}>No forms found.</div>
-                  )}
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-                <button
-                  onClick={() => setShowSwitcher(false)}
-                  style={{ backgroundColor: '#6b7280', color: 'white', padding: '0.5rem 1rem', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
-                >
-                  Close
-                </button>
-              </div>
             </div>
           </div>
         )}

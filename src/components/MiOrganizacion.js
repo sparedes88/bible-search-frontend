@@ -1238,6 +1238,8 @@ const MiOrganizacion = () => {
                 <Link 
                   key={cardIndex} 
                   to={card.path}
+                  target={card.openInNewTab ? "_blank" : undefined}
+                  rel={card.openInNewTab ? "noopener noreferrer" : undefined}
                   style={{
                     textDecoration: "none",
                     color: "inherit"

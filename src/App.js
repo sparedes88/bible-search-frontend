@@ -54,6 +54,7 @@ const GalleryPage = React.lazy(() => import("./pages/GalleryPage"));
 const BiblePage = React.lazy(() => import("./pages/BiblePage"));
 const LetterGeneratorPage = React.lazy(() => import("./components/ChurchLetterGenerator"));
 const Chat = React.lazy(() => import("./components/Chat"));
+const QuickLinksPage = React.lazy(() => import("./pages/QuickLinksPage"));
 const GroupList = React.lazy(() => import("./components/GroupList"));
 const Admin = React.lazy(() => import("./components/Admin"));
 const ArticlePageDetail = React.lazy(() => import("./pages/ArticleDetailPage"));
@@ -93,6 +94,7 @@ const EventCoordination = React.lazy(() => import("./components/EventCoordinatio
 const ManageGroups = React.lazy(() => import("./components/ManageGroups"));
 const GroupDetails = React.lazy(() => import("./components/GroupDetails"));
 const AsistentePastoral = React.lazy(() => import("./components/AsistentePastoral"));
+const PastorTech = React.lazy(() => import("./components/PastorTech"));
 const EasyProjector = React.lazy(() => import("./components/EasyProjector"));
 const BroadcastView = React.lazy(() => import("./components/BroadcastView"));
 const BroadcastView3 = React.lazy(() => import("./components/BroadcastView3"));
@@ -147,10 +149,17 @@ const FormEmbed = React.lazy(() => import("./components/FormEmbed"));
 const FormEntriesPage = React.lazy(() => import("./components/FormEntriesPage"));
 const TimeTracker = React.lazy(() => import("./components/TimeTracker"));
 const TimeRotate = React.lazy(() => import("./components/TimeRotate"));
+const TimeTracking = React.lazy(() => import("./components/TimeTracking"));
+const AgileDataTableModule = React.lazy(() => import("./components/AgileDataTableModule"));
 const TimeRotateProgress = React.lazy(() => import("./components/TimeRotateProgress"));
 const TimeRotateCardHours = React.lazy(() => import("./components/TimeRotateCardHours"));
 const TimeRotateInProgressNotes = React.lazy(() => import("./components/TimeRotateInProgressNotes"));
+const TimeRotateTracker = React.lazy(() => import("./components/TimeRotateTracker"));
+const TimeRotateOfficeStatus = React.lazy(() => import("./components/TimeRotateOfficeStatus"));
 const TimerPage = React.lazy(() => import("./components/TimerPage"));
+const MyDesignTeam = React.lazy(() => import("./components/MyDesignTeam"));
+const MyEZLink = React.lazy(() => import("./components/MyEZLink"));
+const EzLinkRedirect = React.lazy(() => import("./components/EzLinkRedirect"));
 const TaskProgressDetail = React.lazy(() => import("./components/TaskProgressDetail"));
 const MySunday = React.lazy(() => import("./components/MySunday"));
 const GlobalOrganizationManager = React.lazy(() => import("./components/GlobalOrganizationManager"));
@@ -162,6 +171,7 @@ const CampusesPage = React.lazy(() => import("./pages/organization/CampusesPage"
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
+const ProjectListsIssuesModule = React.lazy(() => import("./components/ProjectListsIssuesModule"));
 const LiveIssueTracker = React.lazy(() => import("./components/live-issue-tracker"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const E2StatusUpdate = React.lazy(() => import("./components/E2StatusUpdate"));
@@ -371,6 +381,10 @@ const App = () => {
             element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>}
           />
           <Route
+            path="/organization/:id/quick-links"
+            element={<ErrorBoundary><QuickLinksPage /></ErrorBoundary>}
+          />
+          <Route
             path="/organization/:id/module-visibility-settings"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
@@ -413,6 +427,14 @@ const App = () => {
             element={
               <PrivateRoute>
                 <AsistentePastoral />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/pastortech"
+            element={
+              <PrivateRoute>
+                <PastorTech />
               </PrivateRoute>
             }
           />
@@ -785,6 +807,22 @@ const App = () => {
             }
           />
           <Route
+            path="/organization/:id/project-lists-issues"
+            element={<ProjectListsIssuesModule />}
+          />
+          <Route
+            path="/organization/:id/my-design-team"
+            element={<MyDesignTeam />}
+          />
+          <Route
+            path="/organization/:id/my-ezlink"
+            element={<ErrorBoundary><MyEZLink /></ErrorBoundary>}
+          />
+          <Route
+            path="/organization/:id/ezlink/:slug"
+            element={<ErrorBoundary><EzLinkRedirect /></ErrorBoundary>}
+          />
+          <Route
             path="/live-issue-tracker"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
@@ -850,6 +888,10 @@ const App = () => {
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
           <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route path="/church/:id/quick-links" element={<ErrorBoundary><QuickLinksPage /></ErrorBoundary>} />
+          <Route path="/church/:id/my-design-team" element={<MyDesignTeam />} />
+          <Route path="/church/:id/my-ezlink" element={<ErrorBoundary><MyEZLink /></ErrorBoundary>} />
+          <Route path="/church/:id/ezlink/:slug" element={<ErrorBoundary><EzLinkRedirect /></ErrorBoundary>} />
           <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
@@ -889,6 +931,26 @@ const App = () => {
             }
           />
           <Route
+            path="/organization/:id/time-tracking"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeTracking />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/agile-data-table-module"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <AgileDataTableModule />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/time-rotate"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
@@ -904,6 +966,26 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary>
                   <TimeRotateProgress />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/time-rotate-office-status"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateOfficeStatus />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/time-rotate-tracker"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateTracker />
                 </ErrorBoundary>
               </PrivateRoute>
             }
@@ -929,6 +1011,26 @@ const App = () => {
             }
           />
           <Route
+            path="/church/:id/time-tracking"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeTracking />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/agile-data-table-module"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <AgileDataTableModule />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/church/:id/time-rotate"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
@@ -944,6 +1046,26 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary>
                   <TimeRotateProgress />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate-office-status"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateOfficeStatus />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/time-rotate-tracker"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <TimeRotateTracker />
                 </ErrorBoundary>
               </PrivateRoute>
             }

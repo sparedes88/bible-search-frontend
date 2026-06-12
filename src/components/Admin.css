@@ -36,6 +36,23 @@
   background: #f2f2f2;
 }
 
+.table-row-needs-update {
+  background: #fff7ed !important;
+}
+
+.profile-needs-update-badge {
+  display: inline-block;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: #f59e0b;
+  color: #111827;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .table-cell {
   padding: 10px;
   border: 1px solid #ddd;

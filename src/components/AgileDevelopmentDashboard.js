@@ -373,6 +373,7 @@ const AgileDevelopmentDashboard = () => {
             return {
               key: `${projectDoc.id}-${issueDoc.id}`,
               projectDocId: projectDoc.id,
+              issueDocId: issueDoc.id,
               rowIndex,
               statusField: statusAgileField,
               issueId,
@@ -627,7 +628,15 @@ const AgileDevelopmentDashboard = () => {
 
     try {
       // Always update the issue document in the subcollection
-      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const issueRef = doc(
+        db,
+        "churches",
+        id,
+        "bimProjects",
+        issue.projectDocId,
+        "issues",
+        issue.issueDocId || issue.issueId
+      );
       await updateDoc(issueRef, {
         ...updatedRows[issue.rowIndex].rowData,
         status: nextStatus,
@@ -653,7 +662,15 @@ const AgileDevelopmentDashboard = () => {
   const fetchLatestUpdate = async (issue) => {
     if (!issue || !issue.projectDocId || !issue.issueId || !id) return { text: "", percentCompleted: null, date: null };
     try {
-      const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+      const issueRef = doc(
+        db,
+        "churches",
+        id,
+        "bimProjects",
+        issue.projectDocId,
+        "issues",
+        issue.issueDocId || issue.issueId
+      );
       const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
       if (issueSnap.exists()) {
         const data = issueSnap.data();
@@ -927,11 +944,19 @@ const AgileDevelopmentDashboard = () => {
                                 e.preventDefault();
                                 // Fetch latest issue data from Firestore
                                 try {
-                                  const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+                                  const issueRef = doc(
+                                    db,
+                                    "churches",
+                                    id,
+                                    "bimProjects",
+                                    issue.projectDocId,
+                                    "issues",
+                                    issue.issueDocId || issue.issueId
+                                  );
                                   const snap = await getDocs(collection(db, "churches", id, "bimProjects", issue.projectDocId, "issues"));
                                   let latestDoc = null;
                                   snap.forEach(docSnap => {
-                                    if (docSnap.id === issue.issueId) latestDoc = docSnap;
+                                    if (docSnap.id === (issue.issueDocId || issue.issueId)) latestDoc = docSnap;
                                   });
                                   let latestData = latestDoc ? latestDoc.data() : null;
                                   // fallback to old if not found
@@ -1158,7 +1183,15 @@ const AgileDevelopmentDashboard = () => {
           setUpdateLoading(true);
           try {
             const { issue } = updateModal;
-            const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+            const issueRef = doc(
+              db,
+              "churches",
+              id,
+              "bimProjects",
+              issue.projectDocId,
+              "issues",
+              issue.issueDocId || issue.issueId
+            );
             // Fetch current log entries
             const issueSnap = await (await import("firebase/firestore")).getDoc(issueRef);
             const issueData = issueSnap.exists() ? issueSnap.data() : {};
@@ -1170,14 +1203,22 @@ const AgileDevelopmentDashboard = () => {
               timestamp: now,
             };
             const nextLog = [logEntry, ...prevLog];
-            await updateDoc(issueRef, { LogEntries: nextLog });
+            await updateDoc(issueRef, {
+              LogEntries: nextLog,
+              percentCompleted: Number(percentCompleted) || 0,
+              "Percent Completed": Number(percentCompleted) || 0,
+            });
             // Optimistically update local issues state for instant UI feedback
             setIssues((prevIssues) => prevIssues.map((i) => {
               if (
-                i.issueId === issue.issueId &&
+                (i.issueDocId || i.issueId) === (issue.issueDocId || issue.issueId) &&
                 i.projectDocId === issue.projectDocId
               ) {
-                return { ...i, LogEntries: nextLog };
+                return {
+                  ...i,
+                  LogEntries: nextLog,
+                  percentCompleted: Number(percentCompleted) || 0,
+                };
               }
               return i;
             }));
@@ -1225,7 +1266,15 @@ const AgileDevelopmentDashboard = () => {
           rowData["e2DueDate"] = formData.e2DueDate;
 
           // Always update the issue document in the subcollection
-          const issueRef = doc(db, "churches", id, "bimProjects", issue.projectDocId, "issues", issue.issueId);
+          const issueRef = doc(
+            db,
+            "churches",
+            id,
+            "bimProjects",
+            issue.projectDocId,
+            "issues",
+            issue.issueDocId || issue.issueId
+          );
           try {
             await updateDoc(issueRef, rowData);
             // Optimistically update local state for instant UI feedback

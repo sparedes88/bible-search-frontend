@@ -149,6 +149,39 @@ const Admin = () => {
     return data;
   };
 
+  const callHydrateUsersFromAuthFunction = async (userIds = []) => {
+    const uniqueUserIds = Array.from(new Set(userIds.map((uid) => String(uid || "").trim()).filter(Boolean)));
+    if (uniqueUserIds.length === 0) {
+      return { updated: [] };
+    }
+
+    const authInstance = getAuth();
+    const idToken = await authInstance.currentUser?.getIdToken();
+
+    if (!idToken) {
+      throw new Error("Missing authentication token");
+    }
+
+    const response = await fetch(`${CLOUD_FUNCTIONS_BASE_URL}/hydrateUsersFromAuth`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        churchId: id,
+        userIds: uniqueUserIds,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || `Cloud Function failed (${response.status})`);
+    }
+
+    return data;
+  };
+
   const normalizeAccessStatus = (value) => {
     const normalized = String(value || "approved").trim().toLowerCase();
     if (["pending", "requested"].includes(normalized)) return "pending";
@@ -264,17 +297,24 @@ const Admin = () => {
       // Fetch users only for the current church
       const fetchUsers = async () => {
         try {
-          const [byChurchIdSnapshot, byChurchIDSnapshot, byOrganizationIdSnapshot] = await Promise.all([
-            getDocs(query(collection(db, "users"), where("churchId", "==", id))),
-            getDocs(query(collection(db, "users"), where("churchID", "==", id))),
-            getDocs(query(collection(db, "users"), where("organizationId", "==", id))),
-          ]);
+          const parsedOrgId = Number(id);
+          const hasNumericOrgId = Number.isFinite(parsedOrgId) && String(parsedOrgId) === String(id);
+          const orgIdValues = hasNumericOrgId ? [id, parsedOrgId] : [id];
+
+          const userQueryTasks = [];
+          ["churchId", "churchID", "organizationId"].forEach((fieldName) => {
+            orgIdValues.forEach((orgIdValue) => {
+              userQueryTasks.push(
+                getDocs(query(collection(db, "users"), where(fieldName, "==", orgIdValue)))
+              );
+            });
+          });
+
+          const userSnapshots = await Promise.all(userQueryTasks);
 
           const uniqueUsers = new Map();
           [
-            ...byChurchIdSnapshot.docs,
-            ...byChurchIDSnapshot.docs,
-            ...byOrganizationIdSnapshot.docs,
+            ...userSnapshots.flatMap((snapshot) => snapshot.docs),
           ].forEach((userDoc) => {
             if (uniqueUsers.has(userDoc.id)) return;
             uniqueUsers.set(userDoc.id, {
@@ -319,7 +359,37 @@ const Admin = () => {
             };
           });
 
-          setUsers(usersWithGroups);
+          const usersMissingEmail = usersWithGroups
+            .filter((entry) => !String(entry?.email || "").trim())
+            .map((entry) => entry.uid);
+
+          if (usersMissingEmail.length > 0) {
+            try {
+              const hydrateResult = await callHydrateUsersFromAuthFunction(usersMissingEmail);
+              const hydratedEmailMap = new Map(
+                (hydrateResult?.updated || []).map((entry) => [
+                  String(entry?.userId || "").trim(),
+                  String(entry?.email || "").trim(),
+                ])
+              );
+
+              const hydratedUsers = usersWithGroups.map((entry) => {
+                const hydratedEmail = hydratedEmailMap.get(String(entry.uid || "").trim());
+                if (!hydratedEmail) return entry;
+                return {
+                  ...entry,
+                  email: hydratedEmail,
+                };
+              });
+
+              setUsers(hydratedUsers);
+            } catch (hydrateError) {
+              console.error("Error hydrating missing user emails:", hydrateError);
+              setUsers(usersWithGroups);
+            }
+          } else {
+            setUsers(usersWithGroups);
+          }
         } catch (error) {
           console.error("Error fetching users:", error);
         } finally {
@@ -776,19 +846,11 @@ const Admin = () => {
   const normalizeSearchValue = (value) => String(value || "").trim().toLowerCase();
 
   const filteredUsers = users.filter((user) => {
-    // Prevent rendering empty/malformed rows with no identifying user data.
-    const hasIdentityData =
-      Boolean(normalizeSearchValue(user.email)) ||
-      Boolean(normalizeSearchValue(user.name)) ||
-      Boolean(normalizeSearchValue(user.lastName)) ||
-      Boolean(normalizeSearchValue(user.phone));
-
-    if (!hasIdentityData) return false;
-
     const searchValue = normalizeSearchValue(searchTerm);
     if (!searchValue) return true;
 
     return (
+      normalizeSearchValue(user.uid).includes(searchValue) ||
       normalizeSearchValue(user.email).includes(searchValue) ||
       normalizeSearchValue(user.name).includes(searchValue) ||
       normalizeSearchValue(user.lastName).includes(searchValue) ||
@@ -1101,8 +1163,15 @@ const Admin = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {currentUsers.map((user) => (
-                    <tr className="table-row" key={user.uid}>
+                  {currentUsers.map((user) => {
+                    const needsProfileUpdate =
+                      !normalizeSearchValue(user.email)
+                      || !normalizeSearchValue(user.name)
+                      || !normalizeSearchValue(user.lastName)
+                      || !normalizeSearchValue(user.phone);
+
+                    return (
+                    <tr className={`table-row${needsProfileUpdate ? " table-row-needs-update" : ""}`} key={user.uid}>
                       {visibleColumns.name && (
                         <td className="table-cell">
                           <input
@@ -1255,6 +1324,9 @@ const Admin = () => {
                         </td>
                       )}
                       <td className="table-cell">
+                        {needsProfileUpdate && (
+                          <span className="profile-needs-update-badge">Needs Update</span>
+                        )}
                         {normalizeAccessStatus(user.accessStatus || user.approvalStatus) === "denied" ? (
                           <button
                             className="save-button"
@@ -1319,7 +1391,8 @@ const Admin = () => {
                         {savingUsers[user.uid] && <span>Auto-saving...</span>}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

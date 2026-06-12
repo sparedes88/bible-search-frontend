@@ -4,6 +4,7 @@ const cors = require("cors");
 let twilioLib = null;
 // const stripe = require('stripe')(functions.config().stripe.secret_key); // Commented out to fix deployment error
 const axios = require('axios');
+const crypto = require('crypto');
 let sql = null;
 // const { freshbooksToken } = require('./freshbooksToken'); // Temporarily commented out to fix deployment
 
@@ -18,7 +19,9 @@ const ALLOWED_ORIGINS = [
   'https://iglesiatech.app',
   'https://www.iglesiatech.app',
   'https://churchadmin.app',
-  'https://www.churchadmin.app'
+  'https://www.churchadmin.app',
+  'https://igletechv1.web.app',
+  'https://igletechv1.firebaseapp.com'
 ];
 
 // Create a reusable CORS handler function
@@ -28,15 +31,16 @@ const handleCors = (req, res) => {
   // Check if the origin is in our allowed list
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
+    // Credentials are only valid with a specific origin, never with wildcard.
+    res.set('Access-Control-Allow-Credentials', 'true');
   } else {
-    // For requests from unknown origins, set a wildcard
+    // Unknown origin — allow all but without credentials (required by the CORS spec).
     res.set('Access-Control-Allow-Origin', '*');
   }
   
   // Set other CORS headers
   res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, Accept, X-Requested-With');
-  res.set('Access-Control-Allow-Credentials', 'true');
   
   // Handle OPTIONS request for CORS preflight
   if (req.method === 'OPTIONS') {
@@ -125,6 +129,547 @@ const getTwilioClient = () => {
   twilioClient = twilioLib(accountSid, authToken);
   return twilioClient;
 };
+
+const getGeminiApiKey = () => {
+  return (
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    functions.config().gemini?.apikey ||
+    functions.config().gemini?.api_key ||
+    functions.config().google?.apikey ||
+    functions.config().google?.api_key ||
+    ""
+  );
+};
+
+const normalizeText = (value) => String(value || '').trim();
+
+let geminiModelCache = {
+  names: [],
+  expiresAtMs: 0,
+};
+
+const normalizeGeminiModelName = (name) => {
+  const normalized = normalizeText(name);
+  if (!normalized) {
+    return '';
+  }
+  return normalized.startsWith('models/') ? normalized.slice('models/'.length) : normalized;
+};
+
+const listGeminiModelCandidates = async (geminiApiKey) => {
+  const nowMs = Date.now();
+  if (geminiModelCache.names.length && geminiModelCache.expiresAtMs > nowMs) {
+    return geminiModelCache.names;
+  }
+
+  const response = await axios.get(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(geminiApiKey)}`,
+    {
+      timeout: 30000,
+    }
+  );
+
+  const models = Array.isArray(response.data?.models) ? response.data.models : [];
+  const scored = models
+    .map((model) => {
+      const name = normalizeGeminiModelName(model?.name);
+      if (!name) {
+        return null;
+      }
+
+      const methods = Array.isArray(model?.supportedGenerationMethods)
+        ? model.supportedGenerationMethods.map((method) => normalizeText(method).toLowerCase())
+        : [];
+      const supportsGenerateContent = methods.includes('generatecontent');
+      if (!supportsGenerateContent) {
+        return null;
+      }
+
+      const searchableText = [
+        name,
+        normalizeText(model?.displayName),
+        normalizeText(model?.description),
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      let score = 0;
+      if (searchableText.includes('image')) score += 50;
+      if (searchableText.includes('preview')) score += 10;
+      if (searchableText.includes('flash')) score += 5;
+      if (searchableText.includes('gemini-2.5')) score += 6;
+      if (searchableText.includes('gemini-2.0')) score += 4;
+
+      return {
+        name,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  const names = scored.map((entry) => entry.name);
+  geminiModelCache = {
+    names,
+    expiresAtMs: nowMs + (10 * 60 * 1000),
+  };
+
+  return names;
+};
+
+const toInlineDataFromUrl = async (url) => {
+  const normalizedUrl = normalizeText(url);
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  const response = await axios.get(normalizedUrl, {
+    responseType: 'arraybuffer',
+    timeout: 45000,
+    maxContentLength: 8 * 1024 * 1024,
+    maxBodyLength: 8 * 1024 * 1024,
+  });
+
+  const mimeType = normalizeText(response.headers?.['content-type']) || 'image/png';
+  const rawBuffer = Buffer.from(response.data);
+  const data = rawBuffer.toString('base64');
+  const hash = crypto.createHash('sha256').update(rawBuffer).digest('hex');
+
+  return {
+    part: {
+      inlineData: {
+        mimeType,
+        data,
+      },
+    },
+    hash,
+  };
+};
+
+const extractGeminiText = (data) => {
+  return (Array.isArray(data?.candidates) ? data.candidates : [])
+    .flatMap((candidate) => (Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []))
+    .map((part) => String(part?.text || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+};
+
+const parseGeminiJson = (value) => {
+  const text = normalizeText(value);
+  if (!text) {
+    return null;
+  }
+
+  const fencedMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+  const candidateText = fencedMatch ? fencedMatch[1] : text;
+
+  try {
+    return JSON.parse(candidateText);
+  } catch (error) {
+    const fallbackMatch = candidateText.match(/\{[\s\S]*\}/);
+    if (!fallbackMatch) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(fallbackMatch[0]);
+    } catch (parseError) {
+      return null;
+    }
+  }
+};
+
+const buildPastortechSourceContext = (sources = []) =>
+  sources
+    .slice(0, 10)
+    .map((source, index) => {
+      const title = normalizeText(source?.title) || `Source ${index + 1}`;
+      const sourceType = normalizeText(source?.sourceType) || 'text';
+      const summary = normalizeText(source?.summary);
+      const content = normalizeText(source?.content);
+      const tags = Array.isArray(source?.tags) ? source.tags.map((tag) => normalizeText(tag)).filter(Boolean) : [];
+      const excerpt = content ? content.slice(0, 1200) : '';
+
+      return [
+        `Title: ${title}`,
+        `Type: ${sourceType}`,
+        tags.length ? `Tags: ${tags.join(', ')}` : '',
+        summary ? `Summary: ${summary}` : '',
+        excerpt ? `Excerpt: ${excerpt}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n\n---\n\n');
+
+const toCompactJsonValue = (value, depth = 0) => {
+  if (depth > 3) {
+    return '[max-depth]';
+  }
+
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    return value.length > 400 ? `${value.slice(0, 400)}...` : value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value?.toDate === 'function') {
+    try {
+      return value.toDate().toISOString();
+    } catch (error) {
+      return String(value);
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 12).map((item) => toCompactJsonValue(item, depth + 1));
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .slice(0, 20)
+      .reduce((accumulator, [key, nestedValue]) => {
+        accumulator[key] = toCompactJsonValue(nestedValue, depth + 1);
+        return accumulator;
+      }, {});
+  }
+
+  return String(value);
+};
+
+const serializeDocSnippet = (docSnapshot) => {
+  const rawData = docSnapshot?.data ? docSnapshot.data() : {};
+  const compactData = toCompactJsonValue(rawData, 0);
+  return {
+    id: docSnapshot.id,
+    data: compactData,
+  };
+};
+
+const fetchCollectionDocSnippets = async (collectionRef, maxDocs = 12) => {
+  try {
+    const snapshot = await collectionRef.limit(maxDocs).get();
+    return snapshot.docs.map((docSnapshot) => serializeDocSnippet(docSnapshot));
+  } catch (error) {
+    return [];
+  }
+};
+
+const buildPastortechFirestoreContext = async (churchId) => {
+  const db = admin.firestore();
+  const churchRef = db.collection('churches').doc(churchId);
+  const sections = [];
+
+  try {
+    const churchSnap = await churchRef.get();
+    if (churchSnap.exists) {
+      const churchData = toCompactJsonValue(churchSnap.data(), 0);
+      sections.push([
+        'Section: Organization root document',
+        `Path: churches/${churchId}`,
+        `Data: ${JSON.stringify(churchData)}`,
+      ].join('\n'));
+    }
+  } catch (error) {
+    // Ignore root doc read failure and continue with available context.
+  }
+
+  const subcollectionContexts = [];
+  try {
+    const subcollections = await churchRef.listCollections();
+    for (const collectionRef of subcollections.slice(0, 28)) {
+      const docs = await fetchCollectionDocSnippets(collectionRef, 14);
+      if (!docs.length) {
+        continue;
+      }
+
+      subcollectionContexts.push([
+        `Section: churches/${churchId}/${collectionRef.id}`,
+        `Doc count sampled: ${docs.length}`,
+        `Docs: ${JSON.stringify(docs)}`,
+      ].join('\n'));
+    }
+  } catch (error) {
+    // Ignore subcollection listing failures.
+  }
+
+  if (subcollectionContexts.length) {
+    sections.push(subcollectionContexts.join('\n\n'));
+  }
+
+  const scopedTopLevelCollections = [
+    'groups',
+    'roles',
+    'events',
+    'forms',
+    'courses',
+    'galleries',
+    'teams',
+    'users',
+  ];
+
+  const churchIdFields = ['churchId', 'churchID', 'organizationId', 'idIglesia'];
+  const topLevelSections = [];
+
+  for (const collectionName of scopedTopLevelCollections) {
+    for (const churchIdField of churchIdFields) {
+      try {
+        const querySnap = await db
+          .collection(collectionName)
+          .where(churchIdField, '==', churchId)
+          .limit(14)
+          .get();
+
+        if (querySnap.empty) {
+          continue;
+        }
+
+        const docs = querySnap.docs.map((docSnapshot) => serializeDocSnippet(docSnapshot));
+        topLevelSections.push([
+          `Section: ${collectionName} scoped by ${churchIdField}`,
+          `Doc count sampled: ${docs.length}`,
+          `Docs: ${JSON.stringify(docs)}`,
+        ].join('\n'));
+
+        break;
+      } catch (error) {
+        // Try the next possible church field.
+      }
+    }
+  }
+
+  if (topLevelSections.length) {
+    sections.push(topLevelSections.join('\n\n'));
+  }
+
+  const fullContext = sections.join('\n\n---\n\n');
+  return fullContext.length > 32000 ? `${fullContext.slice(0, 32000)}\n\n[context truncated]` : fullContext;
+};
+
+exports.pastortechAnalyzeSource = functions.runWith({ memory: '512MB', timeoutSeconds: 120 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const authHeader = normalizeText(req.headers.authorization);
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? normalizeText(tokenMatch[1]) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization Bearer token.' });
+      }
+
+      try {
+        await admin.auth().verifyIdToken(idToken);
+      } catch (authError) {
+        return res.status(401).json({ error: 'Invalid auth token.' });
+      }
+
+      const churchId = normalizeText(req.body?.churchId);
+      const title = normalizeText(req.body?.title);
+      const sourceType = normalizeText(req.body?.sourceType) || 'text';
+      const rawText = normalizeText(req.body?.rawText);
+      const notes = normalizeText(req.body?.notes);
+      const fileUrl = normalizeText(req.body?.fileUrl);
+      const fileName = normalizeText(req.body?.fileName);
+      const fileMimeType = normalizeText(req.body?.fileMimeType).toLowerCase();
+
+      if (!churchId) {
+        return res.status(400).json({ error: 'Missing `churchId` in request body.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      const prompt = [
+        'You are PastorTech, an organization knowledge curator.',
+        'Summarize the uploaded church content so it can be searched and used later in a chat assistant.',
+        'Return only valid JSON with these keys:',
+        '{"summary":"string","title":"string","tags":["string"],"highlights":["string"]}',
+        'Rules:',
+        '- Keep the summary concise but specific.',
+        '- Infer useful tags from the content.',
+        '- Preserve names, scripture references, and organization-specific terms.',
+        '- If the content is an image or PDF, describe what is visible and any text or key concepts you can identify.',
+        '- If the content is already plain text, summarize the substance directly.',
+        '',
+        `Source title: ${title || fileName || 'Untitled source'}`,
+        `Source type: ${sourceType}`,
+        notes ? `User notes: ${notes}` : '',
+        rawText ? `Raw text:\n${rawText}` : '',
+        fileUrl ? `File URL: ${fileUrl}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const inlineParts = [];
+      if (fileUrl && [sourceType, fileMimeType].some((value) => ['image', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'pdf', 'application/pdf'].includes(value))) {
+        try {
+          const inlineData = await toInlineDataFromUrl(fileUrl);
+          if (inlineData?.part) {
+            inlineParts.push(inlineData.part);
+          }
+        } catch (error) {
+          console.warn('PastorTech source inline fetch failed:', error?.message || error);
+        }
+      }
+
+      const geminiResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                ...inlineParts,
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            topP: 0.9,
+            maxOutputTokens: 1024,
+          },
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000,
+        }
+      );
+
+      const rawResponseText = extractGeminiText(geminiResponse.data);
+      const parsedResponse = parseGeminiJson(rawResponseText);
+
+      return res.status(200).json({
+        summary: normalizeText(parsedResponse?.summary) || rawResponseText,
+        title: normalizeText(parsedResponse?.title) || title || fileName || 'Untitled source',
+        tags: Array.isArray(parsedResponse?.tags) ? parsedResponse.tags.map((tag) => normalizeText(tag)).filter(Boolean) : [],
+        highlights: Array.isArray(parsedResponse?.highlights)
+          ? parsedResponse.highlights.map((item) => normalizeText(item)).filter(Boolean)
+          : [],
+      });
+    } catch (error) {
+      console.error('pastortechAnalyzeSource error:', error?.response?.data || error.message);
+      return res.status(500).json({ error: error.message || 'Unexpected error in pastortechAnalyzeSource.' });
+    }
+  });
+});
+
+exports.pastortechChat = functions.runWith({ memory: '512MB', timeoutSeconds: 120 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const authHeader = normalizeText(req.headers.authorization);
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? normalizeText(tokenMatch[1]) : '';
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization Bearer token.' });
+      }
+
+      try {
+        await admin.auth().verifyIdToken(idToken);
+      } catch (authError) {
+        return res.status(401).json({ error: 'Invalid auth token.' });
+      }
+
+      const churchId = normalizeText(req.body?.churchId);
+      const question = normalizeText(req.body?.question);
+      const organizationName = normalizeText(req.body?.organizationName) || 'this organization';
+      const sources = Array.isArray(req.body?.sources) ? req.body.sources : [];
+
+      if (!churchId) {
+        return res.status(400).json({ error: 'Missing `churchId` in request body.' });
+      }
+
+      if (!question) {
+        return res.status(400).json({ error: 'Missing `question` in request body.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      const sourceContext = buildPastortechSourceContext(sources);
+      const firestoreContext = await buildPastortechFirestoreContext(churchId);
+      const systemPrompt = [
+        `You are PastorTech, a knowledge assistant for ${organizationName}.`,
+        'Use ONLY the provided organization sources/context and the user message.',
+        'If the context does not contain the answer, say exactly what is missing and ask the user to teach more content.',
+        'Be practical, concise, and respectful.',
+        'Cite the most relevant source titles inline when possible.',
+        'Return markdown only.',
+      ].join(' ');
+
+      const userPrompt = [
+        `Organization: ${organizationName}`,
+        sourceContext ? `Knowledge base context:\n${sourceContext}` : 'Knowledge base context: no sources have been taught yet.',
+        firestoreContext ? `Firestore organization data context:\n${firestoreContext}` : 'Firestore organization data context: unavailable.',
+        `User question: ${question}`,
+      ].join('\n\n');
+
+      const geminiResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: `${systemPrompt}\n\n${userPrompt}` },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.25,
+            topP: 0.9,
+            maxOutputTokens: 1800,
+          },
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000,
+        }
+      );
+
+      const answer = extractGeminiText(geminiResponse.data);
+      if (!answer) {
+        return res.status(502).json({ error: 'Gemini returned no response text.' });
+      }
+
+      return res.status(200).json({ answer });
+    } catch (error) {
+      console.error('pastortechChat error:', error?.response?.data || error.message);
+      return res.status(500).json({ error: error.message || 'Unexpected error in pastortechChat.' });
+    }
+  });
+});
+
 
 const corsHandler = cors({origin: true});
 
@@ -243,16 +788,44 @@ exports.manageUserAccount = functions.https.onRequest(async (req, res) => {
         return res.status(403).json({ error: "Only global admins can delete users" });
       }
 
+      let authUserMissing = false;
+
       if (normalizedAction === "disable") {
-        await admin.auth().updateUser(normalizedTargetUserId, { disabled: true });
+        try {
+          await admin.auth().updateUser(normalizedTargetUserId, { disabled: true });
+        } catch (authError) {
+          if (authError?.code === "auth/user-not-found") {
+            return res.status(404).json({ error: "Target Auth user not found" });
+          }
+          throw authError;
+        }
       }
 
       if (normalizedAction === "enable") {
-        await admin.auth().updateUser(normalizedTargetUserId, { disabled: false });
+        try {
+          await admin.auth().updateUser(normalizedTargetUserId, { disabled: false });
+        } catch (authError) {
+          if (authError?.code === "auth/user-not-found") {
+            return res.status(404).json({ error: "Target Auth user not found" });
+          }
+          throw authError;
+        }
       }
 
       if (normalizedAction === "delete") {
-        await admin.auth().deleteUser(normalizedTargetUserId);
+        try {
+          await admin.auth().deleteUser(normalizedTargetUserId);
+        } catch (authError) {
+          // Treat delete as idempotent when Auth record is already gone.
+          if (authError?.code === "auth/user-not-found") {
+            authUserMissing = true;
+          } else {
+            throw authError;
+          }
+        }
+
+        // Remove corresponding Firestore profile if present.
+        await admin.firestore().doc(`users/${normalizedTargetUserId}`).delete().catch(() => {});
       }
 
       await admin.firestore().collection("userAccountAuditLogs").add({
@@ -274,9 +847,140 @@ exports.manageUserAccount = functions.https.onRequest(async (req, res) => {
         success: true,
         action: normalizedAction,
         targetUserId: normalizedTargetUserId,
+        authUserMissing,
       });
     } catch (error) {
       console.error("manageUserAccount error:", error);
+      return res.status(500).json({ error: error.message || "Internal error" });
+    }
+  });
+});
+
+exports.hydrateUsersFromAuth = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Only POST method allowed" });
+    }
+
+    try {
+      const authHeader = req.headers.authorization || "";
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? tokenMatch[1] : null;
+
+      if (!idToken) {
+        return res.status(401).json({ error: "Missing Authorization Bearer token" });
+      }
+
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const callerUid = decodedToken.uid;
+
+      const callerSnap = await admin.firestore().doc(`users/${callerUid}`).get();
+      if (!callerSnap.exists) {
+        return res.status(403).json({ error: "Caller profile not found" });
+      }
+
+      const callerData = callerSnap.data() || {};
+      const callerRole = String(callerData.role || "").trim().toLowerCase();
+      const callerChurchId = String(
+        callerData.churchId
+        || callerData.churchID
+        || callerData.organizationId
+        || ""
+      ).trim();
+
+      if (!["global_admin", "admin"].includes(callerRole)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+
+      const { churchId, userIds } = req.body || {};
+      const normalizedChurchId = String(churchId || "").trim();
+      const normalizedUserIds = Array.isArray(userIds)
+        ? userIds.map((uid) => String(uid || "").trim()).filter(Boolean)
+        : [];
+
+      if (!normalizedChurchId) {
+        return res.status(400).json({ error: "Missing churchId" });
+      }
+
+      if (normalizedUserIds.length === 0) {
+        return res.status(200).json({ success: true, updated: [], skipped: [] });
+      }
+
+      if (callerRole !== "global_admin" && callerChurchId !== normalizedChurchId) {
+        return res.status(403).json({ error: "Admins can only hydrate users in their organization" });
+      }
+
+      const updated = [];
+      const skipped = [];
+
+      for (const targetUid of normalizedUserIds) {
+        try {
+          const userRef = admin.firestore().doc(`users/${targetUid}`);
+          const userSnap = await userRef.get();
+          if (!userSnap.exists) {
+            skipped.push({ userId: targetUid, reason: "user-profile-not-found" });
+            continue;
+          }
+
+          const userData = userSnap.data() || {};
+          const targetChurchId = String(
+            userData.churchId
+            || userData.churchID
+            || userData.organizationId
+            || ""
+          ).trim();
+
+          if (targetChurchId !== normalizedChurchId) {
+            skipped.push({ userId: targetUid, reason: "outside-organization" });
+            continue;
+          }
+
+          const firestoreEmail = String(userData.email || "").trim();
+          if (firestoreEmail) {
+            skipped.push({ userId: targetUid, reason: "email-already-present" });
+            continue;
+          }
+
+          let authUser;
+          try {
+            authUser = await admin.auth().getUser(targetUid);
+          } catch (authError) {
+            if (authError?.code === "auth/user-not-found") {
+              skipped.push({ userId: targetUid, reason: "auth-user-not-found" });
+              continue;
+            }
+            throw authError;
+          }
+
+          const authEmail = String(authUser.email || "").trim();
+          if (!authEmail) {
+            skipped.push({ userId: targetUid, reason: "auth-email-empty" });
+            continue;
+          }
+
+          await userRef.set(
+            {
+              email: authEmail,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          updated.push({ userId: targetUid, email: authEmail });
+        } catch (itemError) {
+          skipped.push({ userId: targetUid, reason: itemError.message || "unknown-error" });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        updated,
+        skipped,
+      });
+    } catch (error) {
+      console.error("hydrateUsersFromAuth error:", error);
       return res.status(500).json({ error: error.message || "Internal error" });
     }
   });
@@ -1712,6 +2416,340 @@ exports.openaiChat = functions.https.onRequest((req, res) => {
   });
 });
 
+exports.generateTimeRotateInvoiceReview = functions.https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const prompt = String(req.body?.prompt || '').trim();
+      const model = String(req.body?.model || 'gemini-flash-latest').trim() || 'gemini-flash-latest';
+
+      if (!prompt) {
+        return res.status(400).json({ error: 'Missing `prompt` in request body.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        console.error('Gemini API key not configured');
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      try {
+        const geminiResponse = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+          {
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: prompt }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              topP: 0.9,
+              maxOutputTokens: 2048,
+            },
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 60000,
+          }
+        );
+
+        const responseText = (Array.isArray(geminiResponse.data?.candidates) ? geminiResponse.data.candidates : [])
+          .flatMap((candidate) => (Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []))
+          .map((part) => String(part?.text || '').trim())
+          .filter(Boolean)
+          .join('\n\n');
+
+        if (!responseText) {
+          return res.status(502).json({ error: 'Gemini returned no summary text for this dataset.' });
+        }
+
+        return res.status(200).json({ text: responseText, model });
+      } catch (geminiError) {
+        console.error('Gemini invoice review proxy error:', geminiError.response?.data || geminiError.message);
+        return res.status(500).json({
+          error: 'Gemini request failed',
+          details: geminiError.response?.data || geminiError.message,
+        });
+      }
+    } catch (error) {
+      console.error('generateTimeRotateInvoiceReview server error:', error);
+      return res.status(500).json({ error: 'Internal server error', message: error.message });
+    }
+  });
+});
+
+exports.generateDesignWithGemini = functions.runWith({ memory: "512MB", timeoutSeconds: 120 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const authHeader = normalizeText(req.headers.authorization);
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? normalizeText(tokenMatch[1]) : '';
+
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization Bearer token.' });
+      }
+
+      let decodedToken = null;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(idToken);
+      } catch (authError) {
+        return res.status(401).json({ error: 'Invalid auth token.' });
+      }
+
+      const churchId = normalizeText(req.body?.churchId);
+      const prompt = normalizeText(req.body?.prompt);
+      const requestedModel = normalizeGeminiModelName(req.body?.model);
+      const fallbackImageModel = 'gemini-2.0-flash-exp-image-generation';
+      const staticModelCandidates = [
+        requestedModel,
+        fallbackImageModel,
+        'gemini-2.5-flash-image-preview',
+        'gemini-2.0-flash-preview-image-generation',
+      ].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean);
+      const previousImageUrl = normalizeText(req.body?.previousImageUrl);
+      const referenceImageUrls = Array.isArray(req.body?.referenceImageUrls)
+        ? req.body.referenceImageUrls.map((url) => normalizeText(url)).filter(Boolean)
+        : [];
+
+      if (!churchId) {
+        return res.status(400).json({ error: 'Missing `churchId` in request body.' });
+      }
+
+      if (!prompt) {
+        return res.status(400).json({ error: 'Missing `prompt` in request body.' });
+      }
+
+      const callerDoc = await admin.firestore().doc(`users/${decodedToken.uid}`).get();
+      if (!callerDoc.exists) {
+        return res.status(403).json({ error: 'Caller user profile not found.' });
+      }
+
+      const callerData = callerDoc.data() || {};
+      const roleCandidates = [
+        callerData.role,
+        callerData.baseRole,
+        callerData.systemRole,
+        callerData.basedOn,
+      ]
+        .map((role) => normalizeText(role).toLowerCase())
+        .filter(Boolean);
+      const isGlobalAdmin = roleCandidates.includes('global_admin') || roleCandidates.includes('system_global_admin');
+
+      const callerChurchCandidates = [
+        callerData.churchId,
+        callerData.churchID,
+        callerData.organizationId,
+      ]
+        .map((entry) => normalizeText(entry))
+        .filter(Boolean);
+
+      let hasChurchAccess = isGlobalAdmin || callerChurchCandidates.includes(churchId);
+      if (!hasChurchAccess) {
+        const memberDoc = await admin
+          .firestore()
+          .doc(`churches/${churchId}/members/${decodedToken.uid}`)
+          .get();
+        hasChurchAccess = memberDoc.exists;
+      }
+
+      if (!hasChurchAccess) {
+        return res.status(403).json({ error: 'You do not have access to this organization.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        console.error('Gemini API key not configured');
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      let discoveredModelCandidates = [];
+      try {
+        discoveredModelCandidates = await listGeminiModelCandidates(geminiApiKey);
+      } catch (modelDiscoveryError) {
+        console.warn('Unable to list Gemini models:', modelDiscoveryError?.message || modelDiscoveryError);
+      }
+
+      const modelCandidates = Array.from(
+        new Set([
+          ...staticModelCandidates,
+          ...discoveredModelCandidates,
+        ].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean))
+      );
+
+      const userParts = [];
+      const inputImageHashes = new Set();
+      const isRevisionRequest = Boolean(previousImageUrl);
+
+      if (previousImageUrl) {
+        try {
+          const previousImageInlineData = await toInlineDataFromUrl(previousImageUrl);
+          if (previousImageInlineData?.part) {
+            userParts.push({ text: 'REVISION MODE: The attached image is the base design. Do NOT redesign from scratch. Keep composition, background, imagery, typography style, and color treatment the same unless explicitly instructed otherwise.' });
+            userParts.push(previousImageInlineData.part);
+            if (previousImageInlineData.hash) {
+              inputImageHashes.add(previousImageInlineData.hash);
+            }
+            userParts.push({ text: 'Apply only the requested changes. Preserve at least 90% of the original design structure and visual identity.' });
+          }
+        } catch (imageError) {
+          console.warn('Failed loading previous image for Gemini edit:', imageError.message);
+        }
+      }
+
+      userParts.push({ text: prompt });
+
+      const limitedReferenceUrls = referenceImageUrls.slice(0, 6);
+      if (limitedReferenceUrls.length) {
+        userParts.push({
+          text: `CORPORATE IMAGE LOCK: ${limitedReferenceUrls.length} reference image(s) are attached. Treat them as mandatory style anchors. Keep brand consistency in hierarchy, spacing rhythm, typography behavior, and finishing quality. Do not drift to generic styles.`,
+        });
+      }
+      for (const referenceUrl of limitedReferenceUrls) {
+        try {
+          const inlineDataPart = await toInlineDataFromUrl(referenceUrl);
+          if (inlineDataPart?.part) {
+            userParts.push(inlineDataPart.part);
+            if (inlineDataPart.hash) {
+              inputImageHashes.add(inlineDataPart.hash);
+            }
+          }
+        } catch (referenceError) {
+          console.warn('Skipping invalid reference image URL:', referenceError.message);
+        }
+      }
+      if (limitedReferenceUrls.length) {
+        userParts.push({
+          text: 'REFERENCE PRIORITY: If there is a conflict between generic model tendencies and reference style language, follow the references while still generating a fresh composition.',
+        });
+      }
+
+      const geminiRequestBody = {
+        contents: [
+          {
+            role: 'user',
+            parts: userParts,
+          },
+        ],
+        generationConfig: {
+          temperature: isRevisionRequest ? 0.2 : 0.8,
+          topP: isRevisionRequest ? 0.7 : 0.95,
+          maxOutputTokens: 2048,
+          responseModalities: ['TEXT', 'IMAGE'],
+        },
+      };
+
+      try {
+        let geminiResponse = null;
+        let resolvedModel = modelCandidates[0] || fallbackImageModel;
+        let lastModelError = null;
+        const attemptedModels = [];
+
+        for (const modelCandidate of modelCandidates.length ? modelCandidates : [fallbackImageModel]) {
+          attemptedModels.push(modelCandidate);
+          try {
+            geminiResponse = await axios.post(
+              `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelCandidate)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+              geminiRequestBody,
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                timeout: 90000,
+              }
+            );
+            resolvedModel = modelCandidate;
+            lastModelError = null;
+            break;
+          } catch (modelError) {
+            lastModelError = modelError;
+            const statusCode = modelError?.response?.status;
+            const isModelNotFound = statusCode === 404;
+            if (isModelNotFound) {
+              continue;
+            }
+            throw modelError;
+          }
+        }
+
+        if (!geminiResponse) {
+          const modelLookupError = new Error('No Gemini image model candidate was available for generateContent.');
+          modelLookupError.details = {
+            attemptedModels,
+            upstream: lastModelError?.response?.data || lastModelError?.message || '',
+          };
+          throw modelLookupError;
+        }
+
+        const candidates = Array.isArray(geminiResponse.data?.candidates)
+          ? geminiResponse.data.candidates
+          : [];
+
+        const candidateParts = candidates.flatMap((candidate) =>
+          Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+        );
+
+        const responseText = candidateParts
+          .map((part) => normalizeText(part?.text))
+          .filter(Boolean)
+          .join('\n\n');
+
+        const imagePart = candidateParts.find((part) => part?.inlineData?.data);
+        if (!imagePart?.inlineData?.data) {
+          return res.status(502).json({
+            error: 'Gemini returned no image for this request.',
+            details: responseText || 'No text explanation returned by model.',
+          });
+        }
+
+        const outputBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+        const outputHash = crypto.createHash('sha256').update(outputBuffer).digest('hex');
+        if (inputImageHashes.has(outputHash)) {
+          return res.status(502).json({
+            error: 'Gemini returned an attached image instead of a newly generated design.',
+            details: 'Output matched one of the attached reference/previous images. Please retry generation.',
+            code: 'OUTPUT_MATCHED_INPUT_IMAGE',
+          });
+        }
+
+        return res.status(200).json({
+          model: resolvedModel,
+          text: responseText,
+          mimeType: normalizeText(imagePart.inlineData?.mimeType) || 'image/png',
+          imageBase64: imagePart.inlineData.data,
+        });
+      } catch (geminiError) {
+        console.error('Gemini design generation proxy error:', geminiError.response?.data || geminiError.message);
+        return res.status(500).json({
+          error: 'Gemini request failed',
+          message: normalizeText(geminiError?.response?.data?.error?.message) || normalizeText(geminiError?.message) || 'Gemini request failed',
+          details: geminiError.response?.data || geminiError.message,
+          attemptedModels: geminiError?.details?.attemptedModels || modelCandidates,
+          discoveredModels: discoveredModelCandidates,
+          upstream: geminiError?.details?.upstream || '',
+        });
+      }
+    } catch (error) {
+      console.error('generateDesignWithGemini server error:', error);
+      return res.status(500).json({ error: 'Internal server error', message: error.message });
+    }
+  });
+});
+
 /**
  * Generate simulated leadership data for fallback purposes
  */
@@ -2145,4 +3183,226 @@ exports.planningCenterProxy = functions.https.onRequest(async (req, res) => {
       status: error.response?.status
     });
   }
+});
+
+const normalizeValue = (value) => {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+};
+
+const sanitizeFieldSegment = (value) => {
+  const normalized = normalizeValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, '')
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || 'unknown';
+};
+
+const detectDeviceType = (userAgentValue) => {
+  const ua = normalizeValue(userAgentValue).toLowerCase();
+  if (!ua) return 'unknown';
+  if (/ipad|tablet|playbook|silk/.test(ua)) return 'tablet';
+  if (/mobi|iphone|ipod|android/.test(ua)) return 'mobile';
+  return 'desktop';
+};
+
+const isPublicIp = (ipValue) => {
+  const ip = normalizeValue(ipValue);
+  if (!ip) return false;
+  if (ip === '127.0.0.1' || ip === '::1') return false;
+  if (ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.16.')) return false;
+  return true;
+};
+
+exports.logEzLinkHit = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ success: false, error: 'Only GET and POST methods are allowed' });
+  }
+
+  try {
+    let body = req.method === 'GET' ? (req.query || {}) : (req.body || {});
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (parseError) {
+        body = {};
+      }
+    }
+
+    const churchId = normalizeValue(body.churchId);
+    const slug = normalizeValue(body.slug);
+
+    if (!churchId || !slug) {
+      return res.status(400).json({ success: false, error: 'Missing churchId or slug' });
+    }
+
+    const firestore = admin.firestore();
+    const ezLinkRef = firestore.doc(`churches/${churchId}/ezlinks/${slug}`);
+    const ezLinkSnap = await ezLinkRef.get();
+
+    if (!ezLinkSnap.exists) {
+      return res.status(404).json({ success: false, error: 'EZLink not found' });
+    }
+
+    const userAgent = normalizeValue(req.headers['user-agent'] || body.userAgent);
+    const forwardedFor = normalizeValue(req.headers['x-forwarded-for']);
+    const ipAddress = normalizeValue(forwardedFor.split(',')[0]);
+
+    let city = normalizeValue(req.headers['x-appengine-city'] || body.city);
+    let region = normalizeValue(req.headers['x-appengine-region'] || body.region);
+    let country = normalizeValue(req.headers['x-appengine-country'] || body.country);
+
+    // Fallback to IP lookup when geo headers are unavailable.
+    if (!city && isPublicIp(ipAddress)) {
+      try {
+        const geoResponse = await axios.get(`https://ipwho.is/${encodeURIComponent(ipAddress)}`, { timeout: 1200 });
+        const geoData = geoResponse?.data || {};
+        if (geoData.success !== false) {
+          city = normalizeValue(geoData.city);
+          region = normalizeValue(geoData.region || geoData.region_name);
+          country = normalizeValue(geoData.country || geoData.country_code);
+        }
+      } catch (geoError) {
+        console.warn('EZLink geo lookup failed:', geoError.message || geoError);
+      }
+    }
+
+    const clientHourRaw = Number(body.clientHour);
+    const hourBucket = Number.isFinite(clientHourRaw) && clientHourRaw >= 0 && clientHourRaw <= 23
+      ? String(clientHourRaw).padStart(2, '0')
+      : 'unknown';
+    const deviceType = sanitizeFieldSegment(body.deviceType || detectDeviceType(userAgent));
+    const cityKey = sanitizeFieldSegment(city || 'unknown');
+
+    const hitLog = {
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      clientTimestamp: normalizeValue(body.clientTimestamp),
+      clientHour: Number.isFinite(clientHourRaw) ? clientHourRaw : null,
+      timezone: normalizeValue(body.timezone),
+      language: normalizeValue(body.language),
+      platform: normalizeValue(body.platform),
+      referrer: normalizeValue(body.referrer),
+      userAgent,
+      deviceType,
+      city: city || null,
+      region: region || null,
+      country: country || null,
+      ipAddress: ipAddress || null,
+      screen: {
+        width: Number.isFinite(Number(body?.screen?.width)) ? Number(body.screen.width) : null,
+        height: Number.isFinite(Number(body?.screen?.height)) ? Number(body.screen.height) : null,
+      },
+    };
+
+    await ezLinkRef.collection('hitLogs').add(hitLog);
+
+    // NOTE: update() is required here — dot-notation nested paths only work with update(),
+    // NOT with set(..., { merge: true }), which treats them as literal key names.
+    const analyticsUpdate = {
+      'analytics.totalHits': admin.firestore.FieldValue.increment(1),
+      'analytics.lastHitAt': admin.firestore.FieldValue.serverTimestamp(),
+      [`analytics.deviceCounts.${deviceType}`]: admin.firestore.FieldValue.increment(1),
+      [`analytics.cityCounts.${cityKey}`]: admin.firestore.FieldValue.increment(1),
+      [`analytics.hourCounts.${hourBucket}`]: admin.firestore.FieldValue.increment(1),
+      'analytics.lastSeenCity': city || null,
+      'analytics.lastSeenRegion': region || null,
+      'analytics.lastSeenCountry': country || null,
+    };
+
+    await ezLinkRef.update(analyticsUpdate);
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Failed to log EZLink hit:', error);
+    return res.status(500).json({ success: false, error: error.message || 'Unexpected error' });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Gemini text proofreader — corrects grammar, missing words, and typos in copy
+// while preserving the original intent and church marketing tone.
+// ──────────────────────────────────────────────────────────────────────────────
+exports.correctTextWithGemini = functions.https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const authHeader = normalizeText(req.headers.authorization);
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const idToken = tokenMatch ? normalizeText(tokenMatch[1]) : '';
+
+      if (!idToken) {
+        return res.status(401).json({ error: 'Missing Authorization Bearer token.' });
+      }
+
+      try {
+        await admin.auth().verifyIdToken(idToken);
+      } catch (authError) {
+        return res.status(401).json({ error: 'Invalid auth token.' });
+      }
+
+      const rawText = normalizeText(req.body?.text);
+      if (!rawText) {
+        return res.status(400).json({ error: 'Missing `text` in request body.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      const systemPrompt = `You are a professional church marketing copywriter and proofreader.
+Your job is to correct the user's text: fix missing words, spelling mistakes, grammar errors, and awkward phrasing.
+RULES:
+- Preserve the original meaning and intent EXACTLY.
+- Preserve proper nouns, names, scripture references, and capitalization choices.
+    - Preserve all diacritics and special characters exactly (á, é, í, ó, ú, ñ, ü, ¿, ¡, apostrophes, punctuation).
+    - NEVER strip accents or replace accented letters with non-accented versions.
+    - If the text contains a location/address, preserve address components and ordering exactly; do not abbreviate or rewrite addresses.
+- Keep the tone appropriate for church marketing (warm, inviting, faith-based).
+- Return ONLY the corrected text — no explanation, no quotation marks, no preamble.
+- If the text is already correct, return it unchanged.`;
+
+      const geminiRequestBody = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: `${systemPrompt}\n\nText to correct:\n${rawText}` },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          topP: 0.9,
+          maxOutputTokens: 512,
+        },
+      };
+
+      const textModel = 'gemini-2.0-flash';
+      const geminiResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(textModel)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        geminiRequestBody,
+        { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
+      );
+
+      const candidates = geminiResponse.data?.candidates || [];
+      const correctedText = normalizeText(
+        candidates[0]?.content?.parts?.find((part) => part.text)?.text || rawText
+      );
+
+      return res.status(200).json({ correctedText });
+    } catch (error) {
+      console.error('correctTextWithGemini error:', error?.response?.data || error.message);
+      return res.status(500).json({ error: error.message || 'Unexpected error in correctTextWithGemini.' });
+    }
+  });
 });

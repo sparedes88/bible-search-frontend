@@ -7,26 +7,50 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasGlobalAdminRole(userDoc) {
+      return userDoc.data.role in ['global_admin', 'system_global_admin'] ||
+        userDoc.data.baseRole in ['global_admin', 'system_global_admin'] ||
+        userDoc.data.basedOn in ['global_admin', 'system_global_admin'] ||
+        userDoc.data.systemRole in ['global_admin', 'system_global_admin'];
+    }
+
+    function hasChurchAdminRole(userDoc) {
+      return userDoc.data.role in ['admin', 'system_admin'] ||
+        userDoc.data.baseRole in ['admin', 'system_admin'] ||
+        userDoc.data.basedOn in ['admin', 'system_admin'] ||
+        userDoc.data.systemRole in ['admin', 'system_admin'];
+    }
+
     function isOwner(userId) {
       return request.auth.uid == userId;
     }
 
     function isGlobalAdmin() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['global_admin', 'system_global_admin'];
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isAuthenticated() && hasGlobalAdminRole(userDoc);
+    }
+
+    function userBelongsToChurch(churchId) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return userDoc.data.churchId == churchId ||
+        string(userDoc.data.churchId) == churchId ||
+        userDoc.data.churchID == churchId ||
+        string(userDoc.data.churchID) == churchId ||
+        userDoc.data.organizationId == churchId ||
+        string(userDoc.data.organizationId) == churchId ||
+        exists(/databases/$(database)/documents/churches/$(churchId)/members/$(request.auth.uid));
     }
 
     function isChurchAdmin(churchId) {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return isAuthenticated() && (
-        userDoc.data.role in ['global_admin', 'system_global_admin'] ||
-        (userDoc.data.role in ['admin', 'system_admin'] && userDoc.data.churchId == churchId)
+        hasGlobalAdminRole(userDoc) ||
+        (hasChurchAdminRole(userDoc) && userBelongsToChurch(churchId))
       );
     }
 
     function isUserInChurch(churchId) {
-      return request.auth.uid != null &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == churchId;
+      return request.auth.uid != null && userBelongsToChurch(churchId);
     }
 
     // ✅ Users
@@ -45,8 +69,7 @@ service cloud.firestore {
       // Allow querying users by churchId for admin connections
       allow list: if isAuthenticated() && 
                   ('churchId' in request.query.filters) &&
-                  (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId == request.query.filters.churchId[0] || 
-                   isGlobalAdmin());
+                  (userBelongsToChurch(request.query.filters.churchId[0]) || isGlobalAdmin());
 
       // Allow querying users by phone or email for lookup purposes (event check-in, login, etc)
       allow list: if isAuthenticated() && 
@@ -151,6 +174,11 @@ service cloud.firestore {
         allow write: if isChurchAdmin(churchId);
       }
 
+      match /brands/{brandId} {
+        allow read: if true;
+        allow write: if isChurchAdmin(churchId);
+      }
+
       match /categories/{categoryId} {
         allow read: if isAuthenticated();
         allow write: if isChurchAdmin(churchId);
@@ -228,6 +256,19 @@ service cloud.firestore {
           );
       }
 
+      // TimeRotate edit/audit logs - church users can read, church users can append, admins can manage all.
+      match /timeRotateEditLogs/{logId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create: if isAuthenticated() &&
+          (
+            request.resource.data.editedBy == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name ||
+            request.resource.data.editedBy == request.auth.token.email ||
+            isUserInChurch(churchId) ||
+            isChurchAdmin(churchId)
+          );
+        allow update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
       // TimeRotate active timers - church users can read active timers, owners/admins can write
       match /timeRotateActiveTimers/{timerId} {
         allow read: if isAuthenticated();
@@ -259,6 +300,12 @@ service cloud.firestore {
             resource.data.ownerKey == request.auth.token.email ||
             isChurchAdmin(churchId)
           );
+      }
+
+      // TimeRotate floor planner docs (state, cardBudgets) - church users can read, admins can edit
+      match /timeRotateFloorPlanner/{docId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
       }
 
       // Employee Expenses - Users can read their own, admins see all
@@ -355,13 +402,20 @@ service cloud.firestore {
       
       // Brands (BIM Tracker) - Authenticated users can read and write
       match /brands/{brandId} {
-        allow read, write, create, update, delete: if isAuthenticated();
+        allow read: if true;
+        allow write, create, update, delete: if isAuthenticated();
       }
 
       // BIM Projects - Authenticated users can read and write
       match /bimProjects/{projectId} {
         allow read: if true;
         allow write, create, update, delete: if isAuthenticated();
+
+        // Agile dashboard reads and updates issue docs from this subcollection.
+        match /issues/{issueId} {
+          allow read: if true;
+          allow write, create, update, delete: if isAuthenticated();
+        }
 
         match /uploadLogs/{logId} {
           allow read: if true;
@@ -395,6 +449,43 @@ service cloud.firestore {
       // Evangelism Outreach contacts: public page where anyone can view and add contacts.
       match /evangelismOutreachContacts/{contactId} {
         allow read, write, create, update, delete: if true;
+      }
+
+      // Project Lists & Issues module — public read, auth required to write
+      match /projectListIssueProjects/{projectId} {
+        allow read: if true;
+        allow create, update, delete: if isAuthenticated();
+
+        // Current module structure uses direct subcollections under each project.
+        match /issues/{issueId} {
+          allow read: if true;
+          allow create, update, delete: if isAuthenticated();
+        }
+
+        match /buckets/{bucketId} {
+          allow read: if true;
+          allow create, update, delete: if isAuthenticated();
+        }
+
+        match /dayCountLogs/{logId} {
+          allow read: if true;
+          allow create, update, delete: if isAuthenticated();
+        }
+
+        match /lists/{listId} {
+          allow read: if true;
+          allow create, update, delete: if isAuthenticated();
+
+          match /issues/{issueId} {
+            allow read: if true;
+            allow create, update, delete: if isAuthenticated();
+          }
+        }
+      }
+
+      match /projectListIssueBuckets/{bucketId} {
+        allow read: if true;
+        allow create, update, delete: if isAuthenticated();
       }
     }
 

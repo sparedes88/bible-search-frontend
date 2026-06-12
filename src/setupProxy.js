@@ -27,4 +27,16 @@ module.exports = function(app) {
       }
     })
   );
+
+  // Proxy Firebase Storage reads in local dev to avoid browser CORS issues
+  app.use(
+    '/storage-api',
+    createProxyMiddleware({
+      target: 'https://firebasestorage.googleapis.com',
+      changeOrigin: true,
+      pathRewrite: {
+        '^/storage-api': ''
+      }
+    })
+  );
 };

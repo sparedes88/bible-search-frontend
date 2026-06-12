@@ -6,6 +6,27 @@ const ProtectedRoute = ({ children, requireGlobalAdmin }) => {
   const { user, loading, isGlobalAdmin } = useAuth();
   const location = useLocation();
 
+  const resolveHomePath = () => {
+    const pathParts = String(location?.pathname || "").split("/").filter(Boolean);
+    const routeType = pathParts[0];
+    const routeOrganizationId = pathParts[1];
+    const fallbackOrganizationId = String(user?.churchId || "").trim();
+
+    if (routeType === "church" && routeOrganizationId) {
+      return `/church/${routeOrganizationId}/mi-organizacion`;
+    }
+
+    if (routeType === "organization" && routeOrganizationId) {
+      return `/organization/${routeOrganizationId}/mi-organizacion`;
+    }
+
+    if (fallbackOrganizationId) {
+      return `/organization/${fallbackOrganizationId}/mi-organizacion`;
+    }
+
+    return "/";
+  };
+
   if (loading) {
     return (
       <div style={{
@@ -78,7 +99,9 @@ const ProtectedRoute = ({ children, requireGlobalAdmin }) => {
             You need global admin permissions to access this page.
           </p>
           <button
-            onClick={() => window.location.href = '/'}
+            onClick={() => {
+              window.location.href = resolveHomePath();
+            }}
             style={{
               backgroundColor: '#4F46E5',
               color: 'white',

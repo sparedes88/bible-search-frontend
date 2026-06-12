@@ -85,21 +85,37 @@ const FormBuilder = ({ churchId, form, onSave, onCancel }) => {
   };
 
   const handleSaveField = () => {
-    if (!newField.name || !newField.label) {
-      toast.error('Field name and label are required');
+    const trimmedLabel = (newField.label || '').trim();
+    const trimmedName = (newField.name || '').trim();
+    const resolvedName = trimmedName || trimmedLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+    if (!trimmedLabel) {
+      toast.error('Field label is required');
       return;
     }
 
-    // Generate field name from label if not provided
-    if (!newField.name) {
-      setNewField(prev => ({
-        ...prev,
-        name: newField.label.toLowerCase().replace(/[^a-z0-9]/g, '_')
-      }));
+    if (!resolvedName) {
+      toast.error('Field name could not be generated. Please enter a valid field name.');
+      return;
+    }
+
+    const duplicateName = formData.fields.some((field, index) => {
+      if (editingField !== 'new' && index === editingField) {
+        return false;
+      }
+
+      return String(field.name || '').trim().toLowerCase() === resolvedName.toLowerCase();
+    });
+
+    if (duplicateName) {
+      toast.error('A field with this name already exists. Please use a unique field name.');
+      return;
     }
 
     const fieldData = {
       ...newField,
+      name: resolvedName,
+      label: trimmedLabel,
       id: newField.id || `field_${Date.now()}`
     };
 

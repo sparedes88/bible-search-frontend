@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 import commonStyles from "../pages/commonStyles";
 import { useAuth } from "../contexts/AuthContext";
+import TimeRotateTopLogo from "./TimeRotateTopLogo";
 
 const formatDuration = (milliseconds) => {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -32,6 +33,17 @@ const toDateValue = (value) => {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+};
+
+const toDateTimeLocalValue = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
 const toStartOfDayTimestamp = (dateValue) => {
@@ -282,6 +294,20 @@ const getTagPalette = (tag, { muted = false } = {}) => {
   };
 };
 
+const matchesActiveTimerOwner = ({ entry, userId, userEmail, ownerKey, registeredBy }) => {
+  const entryUserId = normalizeValue(entry?.userId);
+  const entryUserEmail = normalizeValue(entry?.userEmail);
+  const entryOwnerKey = normalizeValue(entry?.ownerKey);
+  const entryRegisteredBy = normalizeValue(entry?.registeredBy);
+
+  if (userId && entryUserId === userId) return true;
+  if (userEmail && entryUserEmail === userEmail) return true;
+  if (ownerKey && entryOwnerKey === ownerKey) return true;
+  if (registeredBy && entryRegisteredBy === registeredBy) return true;
+
+  return false;
+};
+
 const TagChip = ({ tag, onRemove = null, muted = false }) => {
   const palette = getTagPalette(tag, { muted });
 
@@ -349,6 +375,7 @@ const tabStyle = (active) => ({
 const TimeRotate = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("board");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [productionCards, setProductionCards] = useState([]);
@@ -391,11 +418,24 @@ const TimeRotate = () => {
   const [editingTaskTags, setEditingTaskTags] = useState([]);
   const [editingTaskTagInput, setEditingTaskTagInput] = useState("");
   const [showEditingLogTagInput, setShowEditingLogTagInput] = useState(false);
+  const [hasLoadedActiveTimers, setHasLoadedActiveTimers] = useState(false);
+  const [suppressTimerAutoRestore, setSuppressTimerAutoRestore] = useState(false);
   const [logViewMode, setLogViewMode] = useState("mine");
   const [selectedAllLogsUser, setSelectedAllLogsUser] = useState("");
   const [selectedAllLogsStartDate, setSelectedAllLogsStartDate] = useState("");
   const [selectedAllLogsEndDate, setSelectedAllLogsEndDate] = useState("");
   const [organizationUsers, setOrganizationUsers] = useState([]);
+  const [inProgressNoteInputs, setInProgressNoteInputs] = useState({});
+  const [savingInProgressNoteByDocId, setSavingInProgressNoteByDocId] = useState({});
+  const [inProgressNoteErrorByDocId, setInProgressNoteErrorByDocId] = useState({});
+  const [manualSelectedUserId, setManualSelectedUserId] = useState("");
+  const [manualSelectedTaskIdentity, setManualSelectedTaskIdentity] = useState("");
+  const [manualStartAt, setManualStartAt] = useState("");
+  const [manualEndAt, setManualEndAt] = useState("");
+  const [manualTotalHours, setManualTotalHours] = useState("1");
+  const [manualEntrySaving, setManualEntrySaving] = useState(false);
+  const [manualEntryError, setManualEntryError] = useState("");
+  const [manualEntrySuccess, setManualEntrySuccess] = useState("");
 
   const resolvedUserId = useMemo(() => {
     return normalizeValue(user?.uid || user?.id || user?.userId);
@@ -408,6 +448,10 @@ const TimeRotate = () => {
   const activeTimerOwnerKey = useMemo(() => {
     return normalizeValue(resolvedUserId || resolvedUserEmail);
   }, [resolvedUserEmail, resolvedUserId]);
+
+  const normalizedUserRole = useMemo(() => normalizeValue(user?.role).toLowerCase(), [user?.role]);
+  const canModerateInProgressNotes =
+    normalizedUserRole === "admin" || normalizedUserRole === "global_admin";
 
   const activeTimerStorageKey = useMemo(() => {
     const userKey = activeTimerOwnerKey || "anonymous";
@@ -430,16 +474,18 @@ const TimeRotate = () => {
 
     const unsubscribe = onSnapshot(
       projectsRef,
-      (snapshot) => {
+      async (snapshot) => {
         const nextCards = [];
 
-        snapshot.forEach((projectDoc) => {
+        for (const projectDoc of snapshot.docs) {
           const projectData = projectDoc.data() || {};
           const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
-          const rows = Array.isArray(projectData.rows) ? projectData.rows : [];
 
-          rows.forEach((row, rowIndex) => {
-            const rowData = row?.rowData || {};
+          const issuesRef = collection(db, "churches", id, "bimProjects", projectDoc.id, "issues");
+          const issuesSnap = await getDocs(issuesRef);
+
+          issuesSnap.docs.forEach((issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
 
             const dataStageField = findFieldByAliases(fields, rowData, DATA_STAGE_ALIASES) || "Data Stage";
             const dataStage = normalizeValue(rowData[dataStageField]);
@@ -458,11 +504,11 @@ const TimeRotate = () => {
               findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_ALIASES) || "Technical Direction";
             const taskDescriptionField = findFieldByAliases(fields, rowData, TASK_DESCRIPTION_ALIASES);
 
-            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(row?.rowNumber || rowIndex + 1);
+            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(rowIndex + 1);
             const taskIdentity = buildTaskIdentity(projectDoc.id, issueId);
 
             nextCards.push({
-              key: `${projectDoc.id}-${row?.rowNumber ?? "row"}-${rowIndex}`,
+              key: `${projectDoc.id}-${issueDoc.id}`,
               projectDocId: projectDoc.id,
               taskIdentity,
               issueId,
@@ -470,15 +516,15 @@ const TimeRotate = () => {
               projectName: normalizeValue(projectNameField ? rowData[projectNameField] : ""),
               statusAgile: normalizeValue(statusField ? rowData[statusField] : ""),
               leadDetailer: normalizeValue(detailerField ? rowData[detailerField] : ""),
-              supportTeam: Array.isArray(supportTeamField ? rowData[supportTeamField] : "")
-                ? (rowData[supportTeamField] || []).map((item) => normalizeValue(item)).filter(Boolean).join(", ")
+              supportTeam: Array.isArray(rowData[supportTeamField])
+                ? rowData[supportTeamField].map((item) => normalizeValue(item)).filter(Boolean).join(", ")
                 : normalizeValue(supportTeamField ? rowData[supportTeamField] : ""),
               technicalDirection: normalizeValue(technicalDirectionField ? rowData[technicalDirectionField] : ""),
               taskTags: parseTagsFromValue(taskDescriptionField ? rowData[taskDescriptionField] : ""),
               dataStage,
             });
           });
-        });
+        }
 
         nextCards.sort((left, right) => left.issueId.localeCompare(right.issueId));
         setProductionCards(nextCards);
@@ -577,6 +623,7 @@ const TimeRotate = () => {
             return {
               value: snapshotDoc.id,
               label,
+              email,
               aliases,
             };
           })
@@ -607,6 +654,7 @@ const TimeRotate = () => {
               docId: snapshotDoc.id,
               cardKey: normalizeValue(data.cardKey),
               startedAt: Number(data.startedAt) || 0,
+              updatedAt: Number(data.updatedAt) || 0,
               issueId: normalizeValue(data.issueId),
               projectName: normalizeValue(data.projectName),
               statusAgile: normalizeValue(data.statusAgile),
@@ -630,9 +678,11 @@ const TimeRotate = () => {
           .sort((left, right) => right.startedAt - left.startedAt);
 
         setAllActiveTimers(nextActiveTimers);
+        setHasLoadedActiveTimers(true);
       },
       (snapshotError) => {
         console.error("Error loading active TimeRotate timers:", snapshotError);
+        setHasLoadedActiveTimers(true);
       }
     );
 
@@ -752,16 +802,149 @@ const TimeRotate = () => {
   }, [activeTimer, activeTimerStorageKey]);
 
   useEffect(() => {
+    const currentUserId = normalizeValue(resolvedUserId);
+    const currentUserEmail = normalizeValue(resolvedUserEmail);
+    const currentOwnerKey = normalizeValue(activeTimerOwnerKey);
+    const currentRegisteredBy = normalizeValue(user?.name || user?.displayName || user?.email);
+
+    const matchedTimer = allActiveTimers
+      .filter((entry) => {
+        const entryUserId = normalizeValue(entry?.userId);
+        const entryUserEmail = normalizeValue(entry?.userEmail);
+        const entryOwnerKey = normalizeValue(entry?.ownerKey);
+        const entryRegisteredBy = normalizeValue(entry?.registeredBy);
+
+        if (currentUserId && entryUserId === currentUserId) return true;
+        if (currentUserEmail && entryUserEmail === currentUserEmail) return true;
+        if (currentOwnerKey && entryOwnerKey === currentOwnerKey) return true;
+        if (currentRegisteredBy && entryRegisteredBy === currentRegisteredBy) return true;
+
+        return false;
+      })
+      .sort((left, right) => {
+        const rightStartedAt = Number(right.startedAt) || 0;
+        const leftStartedAt = Number(left.startedAt) || 0;
+        if (rightStartedAt !== leftStartedAt) {
+          return rightStartedAt - leftStartedAt;
+        }
+        return (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0);
+      })[0];
+
+    if (!matchedTimer) {
+      if (activeTimer?.source === "remote") {
+        setActiveTimer(null);
+        setCurrentTick(Date.now());
+      }
+
+      if (suppressTimerAutoRestore) {
+        setSuppressTimerAutoRestore(false);
+      }
+
+      return;
+    }
+
+    if (suppressTimerAutoRestore) {
+      return;
+    }
+
+    const mappedRemoteTimer = {
+      cardKey: normalizeValue(matchedTimer.cardKey),
+      startedAt: Number(matchedTimer.startedAt) || Date.now(),
+      issueId: normalizeValue(matchedTimer.issueId),
+      projectName: normalizeValue(matchedTimer.projectName),
+      statusAgile: normalizeValue(matchedTimer.statusAgile),
+      technicalDirection: normalizeValue(matchedTimer.technicalDirection),
+      taskTags: parseTagsFromValue(matchedTimer.taskTags),
+      notes: Array.isArray(matchedTimer.notes)
+        ? matchedTimer.notes
+            .map((note) => ({
+              text: normalizeValue(note?.text),
+              timestamp: Number(note?.timestamp) || Date.now(),
+            }))
+            .filter((note) => note.text)
+        : [],
+      updatedAt: Number(matchedTimer.updatedAt) || Date.now(),
+      source: "remote",
+    };
+
+    const hasSameRemoteSnapshot =
+      activeTimer &&
+      activeTimer.source === "remote" &&
+      Number(activeTimer.updatedAt || 0) === Number(mappedRemoteTimer.updatedAt || 0) &&
+      normalizeValue(activeTimer.issueId) === normalizeValue(mappedRemoteTimer.issueId) &&
+      Number(activeTimer.startedAt || 0) === Number(mappedRemoteTimer.startedAt || 0) &&
+      (Array.isArray(activeTimer.notes) ? activeTimer.notes.length : 0) ===
+        (Array.isArray(mappedRemoteTimer.notes) ? mappedRemoteTimer.notes.length : 0);
+
+    const shouldReplaceLocal =
+      !activeTimer ||
+      activeTimer.source === "remote" ||
+      Number(mappedRemoteTimer.updatedAt) >= Number(activeTimer.updatedAt || 0);
+
+    if (shouldReplaceLocal && !hasSameRemoteSnapshot) {
+      setActiveTimer(mappedRemoteTimer);
+      setCurrentTick(Date.now());
+    }
+  }, [activeTimer, activeTimerOwnerKey, allActiveTimers, resolvedUserEmail, resolvedUserId, suppressTimerAutoRestore, user?.displayName, user?.email, user?.name]);
+
+  useEffect(() => {
     if (!id || !activeTimerOwnerKey) {
       return;
     }
 
     const activeTimerDocRef = doc(db, "churches", id, ACTIVE_TIMER_COLLECTION, normalizeKey(activeTimerOwnerKey) || activeTimerOwnerKey);
+    const currentUserId = normalizeValue(resolvedUserId);
+    const currentUserEmail = normalizeValue(resolvedUserEmail);
+    const currentOwnerKey = normalizeValue(activeTimerOwnerKey);
+    const currentRegisteredBy = normalizeValue(user?.name || user?.displayName || user?.email);
 
     if (!activeTimer) {
+      if (!hasLoadedActiveTimers) {
+        return;
+      }
+
+      // Only clear remote timers after an explicit stop action.
+      if (!suppressTimerAutoRestore) {
+        return;
+      }
+
+      const matchingRemoteTimerDocIds = Array.from(
+        new Set(
+          allActiveTimers
+            .filter((entry) =>
+              matchesActiveTimerOwner({
+                entry,
+                userId: currentUserId,
+                userEmail: currentUserEmail,
+                ownerKey: currentOwnerKey,
+                registeredBy: currentRegisteredBy,
+              })
+            )
+            .map((entry) => normalizeValue(entry.docId))
+            .filter(Boolean)
+        )
+      );
+
+      if (matchingRemoteTimerDocIds.length > 0) {
+        Promise.allSettled(
+          matchingRemoteTimerDocIds.map((docId) =>
+            deleteDoc(doc(db, "churches", id, ACTIVE_TIMER_COLLECTION, docId))
+          )
+        ).then((results) => {
+          if (results.some((result) => result.status === "rejected")) {
+            console.error("Error clearing matched TimeRotate timers:", results);
+          }
+        });
+        return;
+      }
+
       deleteDoc(activeTimerDocRef).catch((deleteError) => {
         console.error("Error clearing active TimeRotate timer:", deleteError);
       });
+      return;
+    }
+
+    if (normalizeValue(activeTimer.source) === "remote") {
       return;
     }
 
@@ -782,13 +965,13 @@ const TimeRotate = () => {
         taskTags: parseTagsFromValue(activeTimer.taskTags),
         taskDescription: parseTagsFromValue(activeTimer.taskTags).join(", "),
         notes: Array.isArray(activeTimer.notes) ? activeTimer.notes : [],
-        updatedAt: Date.now(),
+        updatedAt: Number(activeTimer.updatedAt) || Date.now(),
       },
       { merge: true }
     ).catch((saveError) => {
       console.error("Error syncing active TimeRotate timer:", saveError);
     });
-  }, [activeTimer, activeTimerOwnerKey, id, resolvedUserEmail, resolvedUserId, user?.displayName, user?.email, user?.name]);
+  }, [activeTimer, activeTimerOwnerKey, allActiveTimers, hasLoadedActiveTimers, id, resolvedUserEmail, resolvedUserId, suppressTimerAutoRestore, user?.displayName, user?.email, user?.name]);
 
   useEffect(() => {
     if (!activeTimer) {
@@ -801,6 +984,22 @@ const TimeRotate = () => {
 
     return () => window.clearInterval(intervalId);
   }, [activeTimer]);
+
+  useEffect(() => {
+    if (activeWorkspaceTab !== "manual") {
+      return;
+    }
+
+    const now = Date.now();
+
+    if (!manualStartAt) {
+      setManualStartAt(toDateTimeLocalValue(now - (60 * 60 * 1000)));
+    }
+
+    if (!manualEndAt) {
+      setManualEndAt(toDateTimeLocalValue(now));
+    }
+  }, [activeWorkspaceTab, manualEndAt, manualStartAt]);
 
   const activeDuration = activeTimer ? currentTick - activeTimer.startedAt : 0;
 
@@ -845,7 +1044,7 @@ const TimeRotate = () => {
     return Array.from(new Set(productionCards.map((card) => card.issueId).filter(Boolean))).sort((left, right) => left.localeCompare(right));
   }, [productionCards]);
 
-  const getResolvedProjectName = (card) => {
+  const getResolvedProjectName = useCallback((card) => {
     const taskIdentity = card?.taskIdentity;
     if (!taskIdentity) {
       return normalizeValue(card?.projectName);
@@ -856,7 +1055,7 @@ const TimeRotate = () => {
     }
 
     return normalizeValue(card?.projectName);
-  };
+  }, [taskProjectNameByIdentity]);
 
   const handleOpenProjectNameQuickUpdate = (card) => {
     setProjectNameQuickUpdate({
@@ -939,7 +1138,28 @@ const TimeRotate = () => {
           .filter(Boolean)
       )
     ).sort((left, right) => left.localeCompare(right));
-  }, [productionCards, taskProjectNameByIdentity]);
+  }, [getResolvedProjectName, productionCards]);
+
+  const manualUserOptions = useMemo(() => {
+    const options = [...organizationUsers];
+    const fallbackValue = normalizeValue(resolvedUserId || resolvedUserEmail);
+    const fallbackLabel = normalizeValue(user?.name || user?.displayName || user?.email);
+
+    if (
+      fallbackValue &&
+      fallbackLabel &&
+      !options.some((option) => normalizeValue(option.value) === fallbackValue)
+    ) {
+      options.push({
+        value: fallbackValue,
+        label: fallbackLabel,
+        email: normalizeValue(user?.email),
+        aliases: [fallbackValue, fallbackLabel].filter(Boolean),
+      });
+    }
+
+    return options.sort((left, right) => left.label.localeCompare(right.label));
+  }, [organizationUsers, resolvedUserEmail, resolvedUserId, user?.displayName, user?.email, user?.name]);
 
   const statusOptions = useMemo(() => {
     return Array.from(new Set(productionCards.map((card) => card.statusAgile).filter(Boolean))).sort((left, right) => left.localeCompare(right));
@@ -997,6 +1217,7 @@ const TimeRotate = () => {
       return true;
     });
   }, [
+    getResolvedProjectName,
     productionCards,
     taskSearch,
     selectedIssueId,
@@ -1005,10 +1226,9 @@ const TimeRotate = () => {
     selectedTechnicalDirection,
     selectedDataStage,
     taskTagsByIdentity,
-    taskProjectNameByIdentity,
   ]);
 
-  const getResolvedTaskTags = (card) => {
+  const getResolvedTaskTags = useCallback((card) => {
     const taskIdentity = card?.taskIdentity;
     if (!taskIdentity) {
       return Array.isArray(card?.taskTags) ? card.taskTags : [];
@@ -1019,7 +1239,23 @@ const TimeRotate = () => {
     }
 
     return Array.isArray(card?.taskTags) ? card.taskTags : [];
-  };
+  }, [taskTagsByIdentity]);
+
+  const manualTaskOptions = useMemo(() => {
+    return productionCards.map((card) => ({
+      value: card.taskIdentity,
+      label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})`,
+      card,
+    }));
+  }, [getResolvedProjectName, productionCards]);
+
+  const selectedManualUser = useMemo(() => {
+    return manualUserOptions.find((option) => option.value === manualSelectedUserId) || null;
+  }, [manualSelectedUserId, manualUserOptions]);
+
+  const selectedManualTask = useMemo(() => {
+    return productionCards.find((card) => card.taskIdentity === manualSelectedTaskIdentity) || null;
+  }, [manualSelectedTaskIdentity, productionCards]);
 
   const getResolvedTaskCompletionStatus = (card) => {
     const taskIdentity = card?.taskIdentity;
@@ -1249,6 +1485,7 @@ const TimeRotate = () => {
     }
 
     const now = Date.now();
+    setSuppressTimerAutoRestore(false);
     setCurrentTick(now);
     setActiveTimer({
       cardKey: card.key,
@@ -1259,15 +1496,19 @@ const TimeRotate = () => {
       technicalDirection: card.technicalDirection,
       taskTags: getResolvedTaskTags(card),
       notes: [],
+      updatedAt: now,
+      source: "local",
     });
     setActiveNoteInput("");
   };
 
   const handleAddActiveNote = () => {
-    const trimmedNote = activeNoteInput.trim();
+    const trimmedNote = normalizeValue(activeNoteInput);
     if (!trimmedNote || !activeTimer) {
       return;
     }
+
+    const noteTimestamp = Date.now();
 
     setActiveTimer((current) => {
       if (!current) return current;
@@ -1277,13 +1518,109 @@ const TimeRotate = () => {
           ...(Array.isArray(current.notes) ? current.notes : []),
           {
             text: trimmedNote,
-            timestamp: Date.now(),
+            timestamp: noteTimestamp,
           },
         ],
+        updatedAt: noteTimestamp,
+        source: "local",
       };
     });
 
     setActiveNoteInput("");
+  };
+
+  const canEditInProgressTimer = (timerEntry) => {
+    if (canModerateInProgressNotes) {
+      return true;
+    }
+
+    const currentUserId = normalizeValue(resolvedUserId);
+    const currentUserEmail = normalizeValue(resolvedUserEmail);
+    const currentOwnerKey = normalizeValue(activeTimerOwnerKey);
+    const currentRegisteredBy = normalizeValue(user?.name || user?.displayName || user?.email);
+
+    const entryUserId = normalizeValue(timerEntry?.userId);
+    const entryUserEmail = normalizeValue(timerEntry?.userEmail);
+    const entryOwnerKey = normalizeValue(timerEntry?.ownerKey);
+    const entryRegisteredBy = normalizeValue(timerEntry?.registeredBy);
+
+    if (currentUserId && entryUserId === currentUserId) return true;
+    if (currentUserEmail && entryUserEmail === currentUserEmail) return true;
+    if (currentOwnerKey && entryOwnerKey === currentOwnerKey) return true;
+    if (currentRegisteredBy && entryRegisteredBy === currentRegisteredBy) return true;
+
+    return false;
+  };
+
+  const handleInProgressNoteInputChange = (docId, value) => {
+    setInProgressNoteInputs((current) => ({
+      ...current,
+      [docId]: value,
+    }));
+
+    setInProgressNoteErrorByDocId((current) => ({
+      ...current,
+      [docId]: "",
+    }));
+  };
+
+  const handleAddInProgressNote = async (timerEntry) => {
+    const docId = normalizeValue(timerEntry?.docId);
+    const trimmedNote = normalizeValue(inProgressNoteInputs[docId]);
+
+    if (!id || !docId || !trimmedNote) {
+      return;
+    }
+
+    if (!canEditInProgressTimer(timerEntry)) {
+      setInProgressNoteErrorByDocId((current) => ({
+        ...current,
+        [docId]: "You can only add notes to your own timer unless you are an admin.",
+      }));
+      return;
+    }
+
+    const noteTimestamp = Date.now();
+    const nextNotes = [
+      ...(Array.isArray(timerEntry?.notes) ? timerEntry.notes : []),
+      {
+        text: trimmedNote,
+        timestamp: noteTimestamp,
+      },
+    ];
+
+    setSavingInProgressNoteByDocId((current) => ({
+      ...current,
+      [docId]: true,
+    }));
+
+    try {
+      await updateDoc(doc(db, "churches", id, ACTIVE_TIMER_COLLECTION, docId), {
+        notes: nextNotes,
+        updatedAt: noteTimestamp,
+      });
+
+      setInProgressNoteInputs((current) => ({
+        ...current,
+        [docId]: "",
+      }));
+
+      setInProgressNoteErrorByDocId((current) => ({
+        ...current,
+        [docId]: "",
+      }));
+    } catch (saveError) {
+      console.error("Error adding in-progress note:", saveError);
+      setInProgressNoteErrorByDocId((current) => ({
+        ...current,
+        [docId]: "Could not add note right now. Try again.",
+      }));
+    } finally {
+      setSavingInProgressNoteByDocId((current) => ({
+        ...current,
+        [docId]: false,
+      }));
+    }
   };
 
   const handleStop = async () => {
@@ -1293,32 +1630,112 @@ const TimeRotate = () => {
 
     const endedAt = Date.now();
     const durationMs = endedAt - activeTimer.startedAt;
+    const stopLogEntry = {
+      churchId: id,
+      logType: "timer",
+      issueId: activeTimer.issueId,
+      projectName: activeTimer.projectName,
+      statusAgile: activeTimer.statusAgile,
+      technicalDirection: activeTimer.technicalDirection,
+      taskTags: parseTagsFromValue(activeTimer.taskTags),
+      taskDescription: parseTagsFromValue(activeTimer.taskTags).join(", "),
+      startedAt: activeTimer.startedAt,
+      endedAt,
+      durationMs,
+      registeredBy: user?.name || user?.displayName || user?.email || "Unknown user",
+      userId: resolvedUserId,
+      userEmail: resolvedUserEmail,
+      ownerKey: activeTimerOwnerKey,
+      notes: Array.isArray(activeTimer.notes) ? activeTimer.notes : [],
+    };
 
     try {
       setLogActionError("");
-      await addDoc(collection(db, "churches", id, "timeRotateLogs"), {
-        churchId: id,
-        issueId: activeTimer.issueId,
-        projectName: activeTimer.projectName,
-        statusAgile: activeTimer.statusAgile,
-        technicalDirection: activeTimer.technicalDirection,
-        taskTags: parseTagsFromValue(activeTimer.taskTags),
-        taskDescription: parseTagsFromValue(activeTimer.taskTags).join(", "),
-        startedAt: activeTimer.startedAt,
-        endedAt,
-        durationMs,
-        registeredBy: user?.name || user?.displayName || user?.email || "Unknown user",
-        userId: user?.uid || "",
-        notes: Array.isArray(activeTimer.notes) ? activeTimer.notes : [],
-      });
+      await addDoc(collection(db, "churches", id, "timeRotateLogs"), stopLogEntry);
+
+      setSuppressTimerAutoRestore(true);
+      setActiveTimer(null);
+      setCurrentTick(Date.now());
+      setActiveNoteInput("");
     } catch (saveError) {
       console.error("Error saving time log:", saveError);
-      setLogActionError("Could not save log entry to Firebase.");
+      setLogActionError("Could not save log entry to Firebase. Timer remains active.");
+    }
+  };
+
+  const handleSaveManualEntry = async () => {
+    const startTimestamp = Date.parse(manualStartAt);
+    const endTimestamp = Date.parse(manualEndAt);
+
+    if (!selectedManualUser) {
+      setManualEntryError("Select a user before saving manual time.");
+      setManualEntrySuccess("");
+      return;
     }
 
-    setActiveTimer(null);
-    setCurrentTick(Date.now());
-    setActiveNoteInput("");
+    if (!selectedManualTask) {
+      setManualEntryError("Select a task before saving manual time.");
+      setManualEntrySuccess("");
+      return;
+    }
+
+    if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) {
+      setManualEntryError("Start and stop times are required.");
+      setManualEntrySuccess("");
+      return;
+    }
+
+    if (endTimestamp <= startTimestamp) {
+      setManualEntryError("Stop time must be after start time.");
+      setManualEntrySuccess("");
+      return;
+    }
+
+    setManualEntrySaving(true);
+    setManualEntryError("");
+    setManualEntrySuccess("");
+
+    try {
+      await addDoc(collection(db, "churches", id, "timeRotateLogs"), {
+        churchId: id,
+        logType: "timer",
+        entrySource: "manual",
+        taskIdentity: selectedManualTask.taskIdentity,
+        projectDocId: selectedManualTask.projectDocId,
+        issueId: selectedManualTask.issueId,
+        title: selectedManualTask.title,
+        projectName: getResolvedProjectName(selectedManualTask),
+        statusAgile: selectedManualTask.statusAgile,
+        technicalDirection: selectedManualTask.technicalDirection,
+        taskTags: getResolvedTaskTags(selectedManualTask),
+        taskDescription: getResolvedTaskTags(selectedManualTask).join(", "),
+        startedAt: startTimestamp,
+        endedAt: endTimestamp,
+        durationMs: endTimestamp - startTimestamp,
+        registeredBy: selectedManualUser.label,
+        userId: selectedManualUser.value,
+        userEmail: normalizeValue(selectedManualUser.email),
+        notes: [
+          {
+            text: "Manual Entry",
+            timestamp: Date.now(),
+          },
+        ],
+        createdBy: user?.name || user?.displayName || user?.email || "Unknown user",
+        createdByUid: user?.uid || "",
+        createdAt: Date.now(),
+      });
+
+      const now = Date.now();
+      setManualEntrySuccess("Manual time entry saved.");
+      setManualStartAt(toDateTimeLocalValue(now - (60 * 60 * 1000)));
+      setManualEndAt(toDateTimeLocalValue(now));
+    } catch (saveError) {
+      console.error("Error saving manual time entry:", saveError);
+      setManualEntryError("Could not save manual time entry.");
+    } finally {
+      setManualEntrySaving(false);
+    }
   };
 
   const handleDeleteLog = async (logId) => {
@@ -1384,7 +1801,9 @@ const TimeRotate = () => {
   };
 
   const handleSaveLogEdit = async (logId) => {
+    const existingLog = timeLog.find((entry) => entry.id === logId) || null;
     const trimmedValue = editingRegisteredBy.trim();
+    const nextTaskTags = parseTagsFromValue(editingTaskTags);
     const parsedStart = toTimestampFromTwelveHourParts({
       date: editingStartDate,
       hour: editingStartHour,
@@ -1413,12 +1832,56 @@ const TimeRotate = () => {
       setLogActionError("");
       await updateDoc(doc(db, "churches", id, "timeRotateLogs", logId), {
         registeredBy: trimmedValue || "Unknown user",
-        taskTags: parseTagsFromValue(editingTaskTags),
-        taskDescription: parseTagsFromValue(editingTaskTags).join(", "),
+        taskTags: nextTaskTags,
+        taskDescription: nextTaskTags.join(", "),
         startedAt: parsedStart,
         endedAt: parsedEnd,
         durationMs: parsedEnd - parsedStart,
       });
+
+      if (existingLog) {
+        const changedFields = [];
+        const previousRegisteredBy = normalizeValue(existingLog.registeredBy) || "Unknown user";
+        const nextRegisteredBy = trimmedValue || "Unknown user";
+        const previousStart = Number(existingLog.startedAt) || 0;
+        const previousEnd = Number(existingLog.endedAt) || 0;
+        const previousDuration = Number(existingLog.durationMs) || 0;
+        const nextDuration = Math.max(0, parsedEnd - parsedStart);
+        const previousTaskTags = parseTagsFromValue(existingLog.taskTags);
+
+        if (previousRegisteredBy !== nextRegisteredBy) changedFields.push("registeredBy");
+        if (previousStart !== parsedStart) changedFields.push("startedAt");
+        if (previousEnd !== parsedEnd) changedFields.push("endedAt");
+        if (previousDuration !== nextDuration) changedFields.push("durationMs");
+        if (JSON.stringify(previousTaskTags) !== JSON.stringify(nextTaskTags)) changedFields.push("taskTags");
+
+        if (changedFields.length > 0) {
+          await addDoc(collection(db, "churches", id, "timeRotateEditLogs"), {
+            issueId: normalizeValue(existingLog.issueId),
+            projectName: normalizeValue(existingLog.projectName),
+            editedAt: Date.now(),
+            editedBy: normalizeValue(user?.name || user?.displayName || user?.email || "Unknown user"),
+            fromRegisteredBy: previousRegisteredBy,
+            toRegisteredBy: nextRegisteredBy,
+            fromStartedAt: previousStart,
+            toStartedAt: parsedStart,
+            fromEndedAt: previousEnd,
+            toEndedAt: parsedEnd,
+            fromDurationMs: previousDuration,
+            toDurationMs: nextDuration,
+            fromTaskTags: previousTaskTags,
+            toTaskTags: nextTaskTags,
+            fromNotes: Array.isArray(existingLog.notes)
+              ? existingLog.notes.map((note) => normalizeValue(note?.text ?? note)).filter(Boolean)
+              : [],
+            toNotes: Array.isArray(existingLog.notes)
+              ? existingLog.notes.map((note) => normalizeValue(note?.text ?? note)).filter(Boolean)
+              : [],
+            changedFields,
+            source: "time-rotate-log-edit",
+          });
+        }
+      }
     } catch (updateError) {
       console.error("Error updating time log:", updateError);
       setEditingError("Could not save changes to Firebase.");
@@ -1651,6 +2114,8 @@ const TimeRotate = () => {
         ← Back to My Organization
       </Link>
 
+      <TimeRotateTopLogo />
+
       <div
         style={{
           backgroundColor: "white",
@@ -1687,227 +2152,512 @@ const TimeRotate = () => {
         <div style={{ marginTop: "14px", color: "#334155", fontWeight: 600 }}>{totalCountLabel}</div>
 
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px", marginBottom: "12px" }}>
+          <Link to={`${routePrefix}/${id}/time-tracking`} style={tabStyle(false)}>
+            ◴ TimeTracking
+          </Link>
           <Link to={`${routePrefix}/${id}/time-rotate`} style={tabStyle(true)}>
-            TimeRotate Board
+            ▤ TimeRotate Board
           </Link>
           <Link to={`${routePrefix}/${id}/time-rotate-progress`} style={tabStyle(false)}>
-            All Users Progress
+            ◷ All Users Progress
+          </Link>
+          <Link to={`${routePrefix}/${id}/time-rotate-tracker`} style={tabStyle(false)}>
+            ✦ Time Tracker
+          </Link>
+          <Link to={`${routePrefix}/${id}/time-rotate-office-status`} style={tabStyle(false)}>
+            ⌂ Office Status
           </Link>
           <Link to={`${routePrefix}/${id}/time-rotate-card-hours`} style={tabStyle(false)}>
-            Card Hours
+            ◶ Card Hours
           </Link>
-          <Link to={`${routePrefix}/${id}/time-rotate-notes`} style={tabStyle(false)}>
-            In Progress Notes
+          <Link to={`${routePrefix}/${id}/time-rotate-notes?view=floor-planner`} style={tabStyle(false)}>
+            ⌖ Floor Planner
+          </Link>
+          <Link to={`${routePrefix}/${id}/e2-agile-board`} style={tabStyle(false)}>
+            ▦ Agile Board
           </Link>
         </div>
 
         <div
           style={{
-            marginTop: "14px",
-            border: "1px solid #E2E8F0",
-            backgroundColor: "#F8FAFC",
-            borderRadius: "12px",
-            padding: "12px",
-            display: "grid",
-            gap: "10px",
+            display: "flex",
+            gap: "8px",
+            flexWrap: "wrap",
+            marginTop: "4px",
+            marginBottom: "12px",
           }}
         >
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <input
-              type="text"
-              value={taskSearch}
-              onChange={(event) => setTaskSearch(event.target.value)}
-              placeholder="Search task by ID, project, status, assignee, tags, technical direction, stage"
-              style={{
-                flex: "1 1 320px",
-                minWidth: "260px",
-                padding: "9px 10px",
-                border: "1px solid #CBD5E1",
-                borderRadius: "8px",
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                setTaskSearch("");
-                setSelectedIssueId("");
-                setSelectedProjectName("");
-                setSelectedStatusAgile("");
-                setSelectedTechnicalDirection("");
-                setSelectedDataStage("");
-              }}
-              style={{
-                backgroundColor: "#334155",
-                color: "#FFFFFF",
-                border: "none",
-                borderRadius: "8px",
-                padding: "9px 12px",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Clear Filters
-            </button>
-          </div>
-          <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-            <select value={selectedIssueId} onChange={(event) => setSelectedIssueId(event.target.value)} style={filterSelectStyle}>
-              <option value="">All Task IDs</option>
-              {issueIdOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <select value={selectedProjectName} onChange={(event) => setSelectedProjectName(event.target.value)} style={filterSelectStyle}>
-              <option value="">All Project Names</option>
-              {projectNameOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <select value={selectedStatusAgile} onChange={(event) => setSelectedStatusAgile(event.target.value)} style={filterSelectStyle}>
-              <option value="">All E2 Status</option>
-              {statusOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedTechnicalDirection}
-              onChange={(event) => setSelectedTechnicalDirection(event.target.value)}
-              style={filterSelectStyle}
-            >
-              <option value="">All Technical Direction</option>
-              {technicalDirectionOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <select value={selectedDataStage} onChange={(event) => setSelectedDataStage(event.target.value)} style={filterSelectStyle}>
-              <option value="">All Data Stage</option>
-              {dataStageOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveWorkspaceTab("board")}
+            style={{
+              ...tabStyle(activeWorkspaceTab === "board"),
+              cursor: "pointer",
+            }}
+          >
+            Board
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveWorkspaceTab("manual")}
+            style={{
+              ...tabStyle(activeWorkspaceTab === "manual"),
+              cursor: "pointer",
+            }}
+          >
+            Manual
+          </button>
         </div>
 
-        {logActionError && (
+        {activeWorkspaceTab === "manual" ? (
           <div
             style={{
-              marginTop: "10px",
-              border: "1px solid #FCA5A5",
-              backgroundColor: "#FEF2F2",
-              color: "#B91C1C",
-              borderRadius: "10px",
-              padding: "10px 12px",
-              fontWeight: 600,
+              marginTop: "14px",
+              border: "1px solid #BFDBFE",
+              background: "linear-gradient(145deg, #F8FBFF 0%, #EFF6FF 100%)",
+              borderRadius: "16px",
+              padding: "16px",
+              display: "grid",
+              gap: "14px",
             }}
           >
-            {logActionError}
-          </div>
-        )}
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.05rem", color: "#0F172A" }}>Manual Time Entry</h2>
+              <p style={{ margin: "6px 0 0", color: "#475569" }}>
+                Add time directly by choosing the user, the task, and the exact start and stop times.
+              </p>
+            </div>
 
-        {activeTimer && (
-          <div
-            style={{
-              marginTop: "12px",
-              border: "1px solid #BBF7D0",
-              backgroundColor: "#F0FDF4",
-              color: "#166534",
-              borderRadius: "10px",
-              padding: "10px 12px",
-              fontWeight: 600,
-            }}
-          >
-            <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-              <span>
-                Active timer: {activeTimer.issueId || "-"} ({activeTimer.projectName || "No project"}) - {formatDuration(activeDuration)}
-              </span>
-              <button
-                type="button"
-                onClick={handleStop}
+            <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+              <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
+                <span>User</span>
+                <select
+                  value={manualSelectedUserId}
+                  onChange={(event) => {
+                    setManualSelectedUserId(event.target.value);
+                    setManualEntryError("");
+                    setManualEntrySuccess("");
+                  }}
+                  style={inputStyle}
+                >
+                  <option value="">Select user...</option>
+                  {manualUserOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
+                <span>Task ID / Title / Project</span>
+                <select
+                  value={manualSelectedTaskIdentity}
+                  onChange={(event) => {
+                    setManualSelectedTaskIdentity(event.target.value);
+                    setManualEntryError("");
+                    setManualEntrySuccess("");
+                  }}
+                  style={inputStyle}
+                >
+                  <option value="">Select task...</option>
+                  {manualTaskOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
+                <span>Start</span>
+                <input
+                  type="datetime-local"
+                  value={manualStartAt}
+                  onChange={(event) => {
+                    const nextStartValue = event.target.value;
+                    setManualStartAt(nextStartValue);
+
+                    const startTimestamp = Date.parse(nextStartValue);
+                    const stopTimestamp = Date.parse(manualEndAt);
+
+                    if (
+                      Number.isFinite(startTimestamp) &&
+                      Number.isFinite(stopTimestamp) &&
+                      stopTimestamp > startTimestamp
+                    ) {
+                      const totalHours = (stopTimestamp - startTimestamp) / (60 * 60 * 1000);
+                      setManualTotalHours(String(Number(totalHours.toFixed(4))));
+                    }
+
+                    setManualEntryError("");
+                    setManualEntrySuccess("");
+                  }}
+                  style={inputStyle}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
+                <span>Total Hrs</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.25"
+                  value={manualTotalHours}
+                  onChange={(event) => {
+                    const nextTotalHoursValue = event.target.value;
+                    setManualTotalHours(nextTotalHoursValue);
+
+                    const parsedHours = Number(nextTotalHoursValue);
+                    const startTimestamp = Date.parse(manualStartAt);
+
+                    if (Number.isFinite(parsedHours) && parsedHours > 0 && Number.isFinite(startTimestamp)) {
+                      const calculatedEndTimestamp = startTimestamp + (parsedHours * 60 * 60 * 1000);
+                      setManualEndAt(toDateTimeLocalValue(calculatedEndTimestamp));
+                    }
+
+                    setManualEntryError("");
+                    setManualEntrySuccess("");
+                  }}
+                  placeholder="e.g. 2 or 1.5"
+                  style={inputStyle}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
+                <span>Stop</span>
+                <input
+                  type="datetime-local"
+                  value={manualEndAt}
+                  onChange={(event) => {
+                    const nextStopValue = event.target.value;
+                    setManualEndAt(nextStopValue);
+
+                    const startTimestamp = Date.parse(manualStartAt);
+                    const stopTimestamp = Date.parse(nextStopValue);
+
+                    if (
+                      Number.isFinite(startTimestamp) &&
+                      Number.isFinite(stopTimestamp) &&
+                      stopTimestamp > startTimestamp
+                    ) {
+                      const totalHours = (stopTimestamp - startTimestamp) / (60 * 60 * 1000);
+                      setManualTotalHours(String(Number(totalHours.toFixed(4))));
+                    }
+
+                    setManualEntryError("");
+                    setManualEntrySuccess("");
+                  }}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+
+            {selectedManualTask ? (
+              <div
                 style={{
-                  backgroundColor: "#DC2626",
-                  color: "#FFFFFF",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  fontWeight: 700,
+                  border: "1px solid #DBEAFE",
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: "12px",
+                  padding: "12px 14px",
+                  display: "grid",
+                  gap: "4px",
                 }}
               >
-                Stop Timer
-              </button>
-            </div>
-          </div>
-        )}
+                <div style={{ color: "#0F172A", fontWeight: 700 }}>
+                  {selectedManualTask.issueId || "-"} - {selectedManualTask.title || "Untitled task"}
+                </div>
+                <div style={{ color: "#475569" }}>{getResolvedProjectName(selectedManualTask) || "No project"}</div>
+                <div style={{ color: "#64748B", fontSize: "0.88rem" }}>
+                  {selectedManualTask.statusAgile || "No status"}
+                  {selectedManualTask.technicalDirection ? ` • ${selectedManualTask.technicalDirection}` : ""}
+                </div>
+              </div>
+            ) : null}
 
-        {activeTimer && (
-          <div
-            style={{
-              marginTop: "10px",
-              border: "1px solid #BFDBFE",
-              backgroundColor: "#EFF6FF",
-              color: "#1E3A8A",
-              borderRadius: "10px",
-              padding: "10px 12px",
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: "8px" }}>Notes while timing</div>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <input
-                type="text"
-                value={activeNoteInput}
-                onChange={(event) => setActiveNoteInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    handleAddActiveNote();
-                  }
-                }}
-                placeholder="Write a note and press Add"
+            {manualEntryError ? (
+              <div
                 style={{
-                  flex: "1 1 320px",
-                  padding: "8px 10px",
-                  border: "1px solid #93C5FD",
-                  borderRadius: "8px",
+                  border: "1px solid #FCA5A5",
+                  backgroundColor: "#FEF2F2",
+                  color: "#B91C1C",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
+                  fontWeight: 600,
                 }}
-              />
+              >
+                {manualEntryError}
+              </div>
+            ) : null}
+
+            {manualEntrySuccess ? (
+              <div
+                style={{
+                  border: "1px solid #86EFAC",
+                  backgroundColor: "#F0FDF4",
+                  color: "#166534",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
+                  fontWeight: 600,
+                }}
+              >
+                {manualEntrySuccess}
+              </div>
+            ) : null}
+
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={handleAddActiveNote}
+                onClick={handleSaveManualEntry}
+                disabled={manualEntrySaving}
                 style={{
                   backgroundColor: "#2563EB",
                   color: "#FFFFFF",
                   border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
+                  borderRadius: "10px",
+                  padding: "10px 14px",
+                  cursor: manualEntrySaving ? "not-allowed" : "pointer",
+                  fontWeight: 700,
+                  opacity: manualEntrySaving ? 0.75 : 1,
+                }}
+              >
+                {manualEntrySaving ? "Saving..." : "Save Manual Time"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = Date.now();
+                  setManualSelectedUserId("");
+                  setManualSelectedTaskIdentity("");
+                  setManualStartAt(toDateTimeLocalValue(now - (60 * 60 * 1000)));
+                  setManualEndAt(toDateTimeLocalValue(now));
+                  setManualTotalHours("1");
+                  setManualEntryError("");
+                  setManualEntrySuccess("");
+                }}
+                style={{
+                  backgroundColor: "#E2E8F0",
+                  color: "#0F172A",
+                  border: "none",
+                  borderRadius: "10px",
+                  padding: "10px 14px",
                   cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div
+              style={{
+                marginTop: "14px",
+                border: "1px solid #E2E8F0",
+                backgroundColor: "#F8FAFC",
+                borderRadius: "12px",
+                padding: "12px",
+                display: "grid",
+                gap: "10px",
+              }}
+            >
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={taskSearch}
+                  onChange={(event) => setTaskSearch(event.target.value)}
+                  placeholder="Search task by ID, project, status, assignee, tags, technical direction, stage"
+                  style={{
+                    flex: "1 1 320px",
+                    minWidth: "260px",
+                    padding: "9px 10px",
+                    border: "1px solid #CBD5E1",
+                    borderRadius: "8px",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTaskSearch("");
+                    setSelectedIssueId("");
+                    setSelectedProjectName("");
+                    setSelectedStatusAgile("");
+                    setSelectedTechnicalDirection("");
+                    setSelectedDataStage("");
+                  }}
+                  style={{
+                    backgroundColor: "#334155",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "9px 12px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  Clear Filters
+                </button>
+              </div>
+              <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <select value={selectedIssueId} onChange={(event) => setSelectedIssueId(event.target.value)} style={filterSelectStyle}>
+                  <option value="">All Task IDs</option>
+                  {issueIdOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select value={selectedProjectName} onChange={(event) => setSelectedProjectName(event.target.value)} style={filterSelectStyle}>
+                  <option value="">All Project Names</option>
+                  {projectNameOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select value={selectedStatusAgile} onChange={(event) => setSelectedStatusAgile(event.target.value)} style={filterSelectStyle}>
+                  <option value="">All E2 Status</option>
+                  {statusOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={selectedTechnicalDirection}
+                  onChange={(event) => setSelectedTechnicalDirection(event.target.value)}
+                  style={filterSelectStyle}
+                >
+                  <option value="">All Technical Direction</option>
+                  {technicalDirectionOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <select value={selectedDataStage} onChange={(event) => setSelectedDataStage(event.target.value)} style={filterSelectStyle}>
+                  <option value="">All Data Stage</option>
+                  {dataStageOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {logActionError && (
+              <div
+                style={{
+                  marginTop: "10px",
+                  border: "1px solid #FCA5A5",
+                  backgroundColor: "#FEF2F2",
+                  color: "#B91C1C",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
                   fontWeight: 600,
                 }}
               >
-                Add Note
-              </button>
-            </div>
-            {Array.isArray(activeTimer.notes) && activeTimer.notes.length > 0 && (
-              <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
-                {activeTimer.notes.map((note, noteIndex) => (
-                  <div key={`${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.9rem", color: "#1E3A8A" }}>
-                    [{formatTimestamp(note.timestamp)}] {note.text}
-                  </div>
-                ))}
+                {logActionError}
               </div>
             )}
-          </div>
-        )}
 
-        {loading ? (
+            {activeTimer && (
+              <div
+                style={{
+                  marginTop: "12px",
+                  border: "1px solid #BBF7D0",
+                  backgroundColor: "#F0FDF4",
+                  color: "#166534",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
+                  fontWeight: 600,
+                }}
+              >
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <span>
+                    Active timer: {activeTimer.issueId || "-"} ({activeTimer.projectName || "No project"}) - {formatDuration(activeDuration)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    style={{
+                      backgroundColor: "#DC2626",
+                      color: "#FFFFFF",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Stop Timer
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeTimer && (
+              <div
+                style={{
+                  marginTop: "10px",
+                  border: "1px solid #BFDBFE",
+                  backgroundColor: "#EFF6FF",
+                  color: "#1E3A8A",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: "8px" }}>Notes while timing</div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <input
+                    type="text"
+                    value={activeNoteInput}
+                    onChange={(event) => setActiveNoteInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleAddActiveNote();
+                      }
+                    }}
+                    placeholder="Write a note and press Add"
+                    style={{
+                      flex: "1 1 320px",
+                      padding: "8px 10px",
+                      border: "1px solid #93C5FD",
+                      borderRadius: "8px",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddActiveNote}
+                    style={{
+                      backgroundColor: "#2563EB",
+                      color: "#FFFFFF",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Add Note
+                  </button>
+                </div>
+                {Array.isArray(activeTimer.notes) && activeTimer.notes.length > 0 && (
+                  <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
+                    {activeTimer.notes.map((note, noteIndex) => (
+                      <div key={`${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.9rem", color: "#1E3A8A" }}>
+                        [{formatTimestamp(note.timestamp)}] {note.text}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {loading ? (
           <p style={{ marginTop: "16px", color: "#64748B" }}>Loading production cards...</p>
         ) : error ? (
           <p style={{ marginTop: "16px", color: "#DC2626" }}>{error}</p>
@@ -2162,6 +2912,7 @@ const TimeRotate = () => {
           </div>
         )}
 
+        {false && (
         <div
           style={{
             marginTop: "24px",
@@ -2693,56 +3444,107 @@ const TimeRotate = () => {
             </div>
           )}
         </div>
+        )}
 
-        <div
-          style={{
-            marginTop: "16px",
-            borderTop: "1px solid #E2E8F0",
-            paddingTop: "14px",
-          }}
-        >
-          <h3 style={{ margin: 0, fontSize: "1rem", color: "#0F172A" }}>In Progress Notes</h3>
+            <div
+              style={{
+                marginTop: "16px",
+                borderTop: "1px solid #E2E8F0",
+                paddingTop: "14px",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1rem", color: "#0F172A" }}>In Progress Notes</h3>
 
-          {visibleInProgressTimers.length === 0 ? (
-            <p style={{ marginTop: "8px", marginBottom: 0, color: "#64748B" }}>
-              {logViewMode === "all"
-                ? "No active timers found for any users right now."
-                : "No active timer. Start a task to capture and view in-progress notes here."}
-            </p>
-          ) : (
-            <div style={{ display: "grid", gap: "10px", marginTop: "10px" }}>
-              {visibleInProgressTimers.map((timerEntry) => (
-                <div
-                  key={timerEntry.docId || `${timerEntry.userId}-${timerEntry.startedAt}`}
-                  style={{
-                    border: "1px solid #BFDBFE",
-                    backgroundColor: "#EFF6FF",
-                    borderRadius: "10px",
-                    padding: "10px 12px",
-                  }}
-                >
-                  <div style={{ fontWeight: 700, color: "#1E3A8A", marginBottom: "6px" }}>
-                    {timerEntry.issueId || "-"} ({timerEntry.projectName || "No project"})
-                  </div>
-                  <div style={{ color: "#334155", fontSize: "0.84rem", marginBottom: "6px" }}>
-                    {timerEntry.registeredBy || "Unknown user"} • Started {formatTimestamp(timerEntry.startedAt)}
-                  </div>
-                  {Array.isArray(timerEntry.notes) && timerEntry.notes.length > 0 ? (
-                    <div style={{ display: "grid", gap: "6px" }}>
-                      {timerEntry.notes.map((note, noteIndex) => (
-                        <div key={`${timerEntry.docId || timerEntry.startedAt}-${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.88rem", color: "#1E3A8A" }}>
-                          [{formatTimestamp(note.timestamp)}] {note.text}
+              {visibleInProgressTimers.length === 0 ? (
+                <p style={{ marginTop: "8px", marginBottom: 0, color: "#64748B" }}>
+                  {logViewMode === "all"
+                    ? "No active timers found for any users right now."
+                    : "No active timer. Start a task to capture and view in-progress notes here."}
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: "10px", marginTop: "10px" }}>
+                  {visibleInProgressTimers.map((timerEntry) => (
+                    <div
+                      key={timerEntry.docId || `${timerEntry.userId}-${timerEntry.startedAt}`}
+                      style={{
+                        border: "1px solid #BFDBFE",
+                        backgroundColor: "#EFF6FF",
+                        borderRadius: "10px",
+                        padding: "10px 12px",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, color: "#1E3A8A", marginBottom: "6px" }}>
+                        {timerEntry.issueId || "-"} ({timerEntry.projectName || "No project"})
+                      </div>
+                      <div style={{ color: "#334155", fontSize: "0.84rem", marginBottom: "6px" }}>
+                        {timerEntry.registeredBy || "Unknown user"} • Started {formatTimestamp(timerEntry.startedAt)}
+                      </div>
+                      {Array.isArray(timerEntry.notes) && timerEntry.notes.length > 0 ? (
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          {timerEntry.notes.map((note, noteIndex) => (
+                            <div key={`${timerEntry.docId || timerEntry.startedAt}-${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.88rem", color: "#1E3A8A" }}>
+                              [{formatTimestamp(note.timestamp)}] {note.text}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : (
+                        <div style={{ color: "#64748B", fontSize: "0.86rem" }}>No notes added yet.</div>
+                      )}
+
+                      {canEditInProgressTimer(timerEntry) ? (
+                        <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <input
+                              type="text"
+                              value={inProgressNoteInputs[timerEntry.docId] || ""}
+                              onChange={(event) => handleInProgressNoteInputChange(timerEntry.docId, event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  handleAddInProgressNote(timerEntry);
+                                }
+                              }}
+                              placeholder="Add a note to this active timer"
+                              style={{
+                                flex: "1 1 280px",
+                                padding: "8px 10px",
+                                border: "1px solid #93C5FD",
+                                borderRadius: "8px",
+                                backgroundColor: "#FFFFFF",
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddInProgressNote(timerEntry)}
+                              disabled={Boolean(savingInProgressNoteByDocId[timerEntry.docId])}
+                              style={{
+                                backgroundColor: "#2563EB",
+                                color: "#FFFFFF",
+                                border: "none",
+                                borderRadius: "8px",
+                                padding: "8px 12px",
+                                cursor: savingInProgressNoteByDocId[timerEntry.docId] ? "not-allowed" : "pointer",
+                                fontWeight: 600,
+                                opacity: savingInProgressNoteByDocId[timerEntry.docId] ? 0.75 : 1,
+                              }}
+                            >
+                              {savingInProgressNoteByDocId[timerEntry.docId] ? "Saving..." : "Add Note"}
+                            </button>
+                          </div>
+                          {inProgressNoteErrorByDocId[timerEntry.docId] ? (
+                            <div style={{ color: "#B91C1C", fontSize: "0.82rem", fontWeight: 600 }}>
+                              {inProgressNoteErrorByDocId[timerEntry.docId]}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : (
-                    <div style={{ color: "#64748B", fontSize: "0.86rem" }}>No notes added yet.</div>
-                  )}
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
 
         {projectNameQuickUpdate.open && (
           <div
@@ -2912,6 +3714,15 @@ const filterSelectStyle = {
   border: "1px solid #CBD5E1",
   borderRadius: "8px",
   backgroundColor: "#FFFFFF",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "10px 12px",
+  border: "1px solid #CBD5E1",
+  borderRadius: "8px",
+  backgroundColor: "#FFFFFF",
+  color: "#0F172A",
 };
 
 export default TimeRotate;
