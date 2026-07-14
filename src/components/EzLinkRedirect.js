@@ -8,8 +8,80 @@ const normalizeValue = (value) => (value === null || value === undefined ? "" : 
 const ensureHttpUrl = (value) => {
   const normalized = normalizeValue(value);
   if (!normalized) return "";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(normalized)) return normalized;
+  if (normalized.startsWith("//") && typeof window !== "undefined") {
+    return `${window.location.protocol}${normalized}`;
+  }
+  if (normalized.startsWith("/") && typeof window !== "undefined") {
+    return `${window.location.origin}${normalized}`;
+  }
   if (/^https?:\/\//i.test(normalized)) return normalized;
   return `https://${normalized}`;
+};
+
+const isSameDestination = (currentUrl, nextUrl) => {
+  try {
+    const current = new URL(currentUrl);
+    const next = new URL(nextUrl, current.origin);
+    return (
+      current.origin === next.origin &&
+      current.pathname === next.pathname &&
+      current.search === next.search
+    );
+  } catch {
+    return false;
+  }
+};
+
+const navigateWithFallback = (nextUrl) => {
+  const destination = String(nextUrl || "").trim();
+  if (!destination || typeof window === "undefined") return;
+
+  // Some mobile scanner webviews ignore replace/assign intermittently.
+  window.location.replace(destination);
+
+  window.setTimeout(() => {
+    window.location.assign(destination);
+  }, 500);
+
+  window.setTimeout(() => {
+    window.open(destination, "_self");
+  }, 1200);
+};
+
+const resolveEzLinkTarget = async ({ churchId, slug }) => {
+  const baseUrl = getCloudFunctionsBaseUrl();
+  const url = `${baseUrl}/logEzLinkHit?${new URLSearchParams({
+    churchId,
+    slug,
+    resolveOnly: "true",
+  }).toString()}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    const message = normalizeValue(payload?.error) || "Could not resolve EZLink destination.";
+    throw new Error(message);
+  }
+
+  const resolved = ensureHttpUrl(payload?.redirectUrl);
+  if (!resolved) {
+    throw new Error("This EZLink has no destination configured.");
+  }
+
+  return resolved;
 };
 
 const getCloudFunctionsBaseUrl = () => {
@@ -97,26 +169,43 @@ const EzLinkRedirect = () => {
       }
 
       try {
-        const linkRef = doc(db, "churches", id, "ezlinks", slug);
-        const linkSnap = await getDoc(linkRef);
+        let nextUrl = "";
 
-        if (!linkSnap.exists()) {
-          setStatus("error");
-          setMessage("This EZLink was not found.");
-          return;
+        // Resolve through Cloud Function first so public scans do not rely on Firestore auth rules.
+        try {
+          nextUrl = await resolveEzLinkTarget({ churchId: id, slug });
+        } catch (resolveError) {
+          console.warn("Cloud resolve failed, attempting Firestore fallback:", resolveError);
+          const linkRef = doc(db, "churches", id, "ezlinks", slug);
+          const linkSnap = await getDoc(linkRef);
+
+          if (!linkSnap.exists()) {
+            setStatus("error");
+            setMessage("This EZLink was not found.");
+            return;
+          }
+
+          const data = linkSnap.data() || {};
+          if (data.isActive === false) {
+            setStatus("error");
+            setMessage("This EZLink is currently disabled.");
+            return;
+          }
+
+          nextUrl = ensureHttpUrl(
+            data.targetUrl || data.url || data.destinationUrl || data.destination
+          );
         }
 
-        const data = linkSnap.data() || {};
-        if (data.isActive === false) {
-          setStatus("error");
-          setMessage("This EZLink is currently disabled.");
-          return;
-        }
-
-        const nextUrl = ensureHttpUrl(data.targetUrl);
         if (!nextUrl) {
           setStatus("error");
           setMessage("This EZLink has no destination configured.");
+          return;
+        }
+
+        if (typeof window !== "undefined" && isSameDestination(window.location.href, nextUrl)) {
+          setStatus("error");
+          setMessage("This EZLink points to itself. Update the destination URL.");
           return;
         }
 
@@ -130,7 +219,7 @@ const EzLinkRedirect = () => {
           console.warn("EZLink analytics log skipped:", analyticsError);
         }
 
-        window.location.replace(nextUrl);
+        navigateWithFallback(nextUrl);
       } catch (error) {
         console.error("Failed to resolve EZLink redirect:", error);
         setStatus("error");

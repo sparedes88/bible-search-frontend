@@ -11,14 +11,57 @@ service cloud.firestore {
       return userDoc.data.role in ['global_admin', 'system_global_admin'] ||
         userDoc.data.baseRole in ['global_admin', 'system_global_admin'] ||
         userDoc.data.basedOn in ['global_admin', 'system_global_admin'] ||
-        userDoc.data.systemRole in ['global_admin', 'system_global_admin'];
+        userDoc.data.systemRole in ['global_admin', 'system_global_admin'] ||
+        hasCustomRoleBase(userDoc, ['global_admin', 'system_global_admin']);
     }
 
     function hasChurchAdminRole(userDoc) {
       return userDoc.data.role in ['admin', 'system_admin'] ||
         userDoc.data.baseRole in ['admin', 'system_admin'] ||
         userDoc.data.basedOn in ['admin', 'system_admin'] ||
-        userDoc.data.systemRole in ['admin', 'system_admin'];
+        userDoc.data.systemRole in ['admin', 'system_admin'] ||
+        hasCustomRoleBase(userDoc, ['admin', 'system_admin', 'global_admin', 'system_global_admin']);
+    }
+
+    function getCustomRoleId(userDoc) {
+      return string(
+        userDoc.data.customRoleId != null
+          ? userDoc.data.customRoleId
+          : (
+              userDoc.data.assignedRoleId != null
+                ? userDoc.data.assignedRoleId
+                : (
+                    userDoc.data.role != null
+                      ? userDoc.data.role
+                      : ''
+                  )
+            )
+      );
+    }
+
+    function hasCustomRoleBase(userDoc, roleList) {
+      let roleId = getCustomRoleId(userDoc);
+      return roleId != '' &&
+        exists(/databases/$(database)/documents/roles/$(roleId)) &&
+        (
+          get(/databases/$(database)/documents/roles/$(roleId)).data.baseRole in roleList ||
+          get(/databases/$(database)/documents/roles/$(roleId)).data.basedOn in roleList ||
+          get(/databases/$(database)/documents/roles/$(roleId)).data.role in roleList ||
+          get(/databases/$(database)/documents/roles/$(roleId)).data.systemRole in roleList
+        );
+    }
+
+    function isSameChurchAsCurrentUser(userData) {
+      let currentUser = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return userData.churchId == currentUser.churchId ||
+        userData.churchID == currentUser.churchId ||
+        userData.organizationId == currentUser.churchId ||
+        userData.churchId == currentUser.churchID ||
+        userData.churchID == currentUser.churchID ||
+        userData.organizationId == currentUser.churchID ||
+        userData.churchId == currentUser.organizationId ||
+        userData.churchID == currentUser.organizationId ||
+        userData.organizationId == currentUser.organizationId;
     }
 
     function isOwner(userId) {
@@ -33,11 +76,8 @@ service cloud.firestore {
     function userBelongsToChurch(churchId) {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return userDoc.data.churchId == churchId ||
-        string(userDoc.data.churchId) == churchId ||
         userDoc.data.churchID == churchId ||
-        string(userDoc.data.churchID) == churchId ||
         userDoc.data.organizationId == churchId ||
-        string(userDoc.data.organizationId) == churchId ||
         exists(/databases/$(database)/documents/churches/$(churchId)/members/$(request.auth.uid));
     }
 
@@ -51,6 +91,70 @@ service cloud.firestore {
 
     function isUserInChurch(churchId) {
       return request.auth.uid != null && userBelongsToChurch(churchId);
+    }
+
+    function normalizeModulePermissionKey(moduleId) {
+      return moduleId == 'conduit-run-counter'
+        ? 'conduitruncounter'
+        : moduleId == 'time-tracker'
+        ? 'timetracker'
+        : moduleId == 'pay-everyone'
+        ? 'payeveryone'
+        : moduleId == 'time-rotate'
+        ? 'timerotate'
+        : moduleId;
+    }
+
+    function roleBelongsToChurch(roleData, churchId) {
+      return roleData.churchId == churchId ||
+        roleData.churchID == churchId ||
+        roleData.organizationId == churchId;
+    }
+
+    function hasCustomRoleModulePermission(churchId, moduleId, action) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      let roleId = getCustomRoleId(userDoc);
+      let normalizedModuleId = normalizeModulePermissionKey(moduleId);
+
+      return isAuthenticated() &&
+        roleId != '' &&
+        exists(/databases/$(database)/documents/roles/$(roleId)) &&
+        roleBelongsToChurch(get(/databases/$(database)/documents/roles/$(roleId)).data, churchId) &&
+        ('permissions' in get(/databases/$(database)/documents/roles/$(roleId)).data) &&
+        (normalizedModuleId in get(/databases/$(database)/documents/roles/$(roleId)).data.permissions) &&
+        (
+          get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId][action] == true ||
+          (
+            action in ['create', 'update', 'delete', 'manage'] &&
+            get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId].manage == true
+          ) ||
+          (
+            action == 'read' &&
+            (
+              get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId].manage == true ||
+              get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId].create == true ||
+              get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId].update == true ||
+              get(/databases/$(database)/documents/roles/$(roleId)).data.permissions[normalizedModuleId].delete == true
+            )
+          )
+        );
+    }
+
+    function canReadModule(churchId, moduleId) {
+      return isAuthenticated() && userBelongsToChurch(churchId) && (
+        isChurchAdmin(churchId) ||
+        hasCustomRoleModulePermission(churchId, moduleId, 'read')
+      );
+    }
+
+    function canManageModule(churchId, moduleId) {
+      return isAuthenticated() && userBelongsToChurch(churchId) && (
+        isChurchAdmin(churchId) ||
+        hasCustomRoleModulePermission(churchId, moduleId, 'manage') ||
+        hasCustomRoleModulePermission(churchId, moduleId, 'create') ||
+        hasCustomRoleModulePermission(churchId, moduleId, 'update') ||
+        hasCustomRoleModulePermission(churchId, moduleId, 'delete')
+      );
     }
 
     // ✅ Users
@@ -87,7 +191,7 @@ service cloud.firestore {
 
       allow read: if isAuthenticated() &&
         (userId == request.auth.uid ||
-         resource.data.churchId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.churchId);
+         isSameChurchAsCurrentUser(resource.data));
 
       // Allow authenticated users to update their own profile (but not role or churchId)
       allow update: if isAuthenticated() &&
@@ -202,6 +306,12 @@ service cloud.firestore {
         allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
         allow write: if isAuthenticated() && isChurchAdmin(churchId);
       }
+
+      // Work Progress sheet type catalog/settings
+      match /workProgressSettings/{settingId} {
+        allow read: if canReadModule(churchId, 'commitments');
+        allow write: if canManageModule(churchId, 'commitments');
+      }
       
       // Social Media permissions - allow admin role to CRUD
       match /socialMedia/{postId} {
@@ -221,6 +331,18 @@ service cloud.firestore {
         // Form entries - COMPLETELY OPEN for submissions
         match /entries/{entryId} {
           allow read, write, create, update, delete: if true;
+        }
+      }
+
+      // EZLink redirects must be publicly readable for QR scans by unauthenticated users.
+      match /ezlinks/{slug} {
+        allow read: if true;
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+
+        // Hit logs should remain internal to authenticated church users/admins.
+        match /hitLogs/{hitId} {
+          allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+          allow write, create, update, delete: if false;
         }
       }
       
@@ -302,10 +424,79 @@ service cloud.firestore {
           );
       }
 
+      // PayEveryone user settings: owners can access their own records, managers/admins can manage all.
+      match /payEveryoneUserSettings/{settingId} {
+        function canReadPayEveryoneModule() {
+          return canReadModule(churchId, 'pay-everyone') || canReadModule(churchId, 'time-tracker');
+        }
+
+        function canManagePayEveryoneModule() {
+          return canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker');
+        }
+
+        function isSettingsOwnerFromResource() {
+          return resource.data.userId == request.auth.uid ||
+            resource.data.userEmail == request.auth.token.email ||
+            resource.data.userKey == request.auth.uid ||
+            resource.data.userKey == request.auth.token.email ||
+            settingId == request.auth.uid;
+        }
+
+        function isSettingsOwnerFromRequest() {
+          return request.resource.data.userId == request.auth.uid ||
+            request.resource.data.userEmail == request.auth.token.email ||
+            request.resource.data.userKey == request.auth.uid ||
+            request.resource.data.userKey == request.auth.token.email ||
+            settingId == request.auth.uid;
+        }
+
+        allow get: if isAuthenticated() && userBelongsToChurch(churchId) &&
+          (isSettingsOwnerFromResource() || canReadPayEveryoneModule());
+
+        // Only users with explicit module read access can query all user settings.
+        allow list: if isAuthenticated() && canReadPayEveryoneModule();
+
+        allow create: if isAuthenticated() && canReadPayEveryoneModule() &&
+          (isSettingsOwnerFromRequest() || canManagePayEveryoneModule());
+
+        allow update: if isAuthenticated() && userBelongsToChurch(churchId) &&
+          (
+            canManagePayEveryoneModule() ||
+            (canReadPayEveryoneModule() &&
+              (isSettingsOwnerFromResource() || isSettingsOwnerFromRequest()))
+          );
+
+        allow delete: if isAuthenticated() && canManagePayEveryoneModule();
+      }
+
+      // PayEveryone global settings contain sensitive values (e.g. lesson limits/PIN): managers/admins only.
+      match /payEveryoneSettings/{docId} {
+        allow read, create, update, delete: if isAuthenticated() &&
+          (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
+      }
+
+      // PayEveryone payments are sensitive payroll data: managers/admins only.
+      match /payEveryonePayments/{paymentId} {
+        allow read, create, update, delete: if isAuthenticated() &&
+          (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
+      }
+
       // TimeRotate floor planner docs (state, cardBudgets) - church users can read, admins can edit
       match /timeRotateFloorPlanner/{docId} {
         allow read: if isAuthenticated() && isUserInChurch(churchId);
         allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Work Progress commitments
+      match /commitments/{taskId} {
+        allow read: if canReadModule(churchId, 'commitments');
+        allow create, update, delete: if canManageModule(churchId, 'commitments');
+      }
+
+      // Work Progress sheet logs
+      match /workProgressSheetLogs/{logId} {
+        allow read: if canReadModule(churchId, 'commitments');
+        allow create, update, delete: if canManageModule(churchId, 'commitments');
       }
 
       // Employee Expenses - Users can read their own, admins see all
@@ -456,18 +647,17 @@ service cloud.firestore {
         allow read: if true;
         allow create, update, delete: if isAuthenticated();
 
-        // Current module structure uses direct subcollections under each project.
-        match /issues/{issueId} {
-          allow read: if true;
-          allow create, update, delete: if isAuthenticated();
-        }
-
         match /buckets/{bucketId} {
           allow read: if true;
           allow create, update, delete: if isAuthenticated();
         }
 
         match /dayCountLogs/{logId} {
+          allow read: if true;
+          allow create, update, delete: if isAuthenticated();
+        }
+
+        match /issues/{issueId} {
           allow read: if true;
           allow create, update, delete: if isAuthenticated();
         }
@@ -486,6 +676,18 @@ service cloud.firestore {
       match /projectListIssueBuckets/{bucketId} {
         allow read: if true;
         allow create, update, delete: if isAuthenticated();
+      }
+
+      // Conduit Run Counter data - church users with module read access can view;
+      // users with manage/create/update/delete permission can modify.
+      match /conduitRunCounterProjects/{projectId} {
+        allow read: if canReadModule(churchId, 'conduit-run-counter');
+        allow create, update, delete: if canManageModule(churchId, 'conduit-run-counter');
+
+        match /rows/{rowId} {
+          allow read: if canReadModule(churchId, 'conduit-run-counter');
+          allow create, update, delete: if canManageModule(churchId, 'conduit-run-counter');
+        }
       }
     }
 

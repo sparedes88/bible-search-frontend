@@ -862,9 +862,38 @@ const Login = () => {
 
   // Check user church access
   const checkUserChurchAccess = async (userId) => {
+    const normalizeValue = (value) => String(value || "").trim().toLowerCase();
+    const isPermissionDenied = (error) =>
+      error?.code === "permission-denied" ||
+      error?.code === "firestore/permission-denied";
+
+    const navigateToAuthorizedArea = () => {
+      localStorage.setItem("userChurchId", String(id || ""));
+      if (returnUrl) {
+        navigate(returnUrl);
+      } else {
+        navigate(`/organization/${id}/mi-organizacion`);
+      }
+    };
+
     try {
       const userRef = doc(db, "users", userId);
-      const userDoc = await getDoc(userRef);
+      let userDoc;
+
+      try {
+        userDoc = await getDoc(userRef);
+      } catch (readError) {
+        if (!isPermissionDenied(readError)) {
+          throw readError;
+        }
+
+        // Force token refresh once before giving up; Firestore auth can lag immediately after sign-in.
+        const authUser = auth.currentUser;
+        if (authUser) {
+          await authUser.getIdToken(true);
+        }
+        userDoc = await getDoc(userRef);
+      }
       
       console.log("User document exists:", userDoc.exists());
       console.log("User ID being checked:", userId);
@@ -897,18 +926,38 @@ const Login = () => {
           return;
         }
 
-        // Check if user is global_admin, admin, or matches church ID
+        const normalizedRole = normalizeValue(
+          userData?.customRoleId ||
+          userData?.customRole ||
+          userData?.assignedRoleId ||
+          userData?.role
+        );
+        const normalizedBaseRole = normalizeValue(
+          userData?.baseRole ||
+          userData?.basedOn ||
+          userData?.roleBase ||
+          userData?.systemRole ||
+          userData?.role
+        );
+
+        const scopedChurchId = String(
+          userData?.churchId ||
+          userData?.churchID ||
+          userData?.organizationId ||
+          userData?.idIglesia ||
+          ""
+        ).trim();
+
+        const hasAdminRole = ["global_admin", "system_global_admin", "admin", "system_admin"].includes(normalizedRole)
+          || ["global_admin", "admin"].includes(normalizedBaseRole);
+        const belongsToChurch = scopedChurchId && String(scopedChurchId) === String(id);
+
+        // Check if user is admin/global admin, or matches organization scope.
         if (
-          userData.role === "global_admin" ||
-          userData.role === "admin" ||
-          String(userData.churchId) === String(id)
+          hasAdminRole ||
+          belongsToChurch
         ) {
-          // Redirect to return URL if it exists, otherwise to profile
-          if (returnUrl) {
-            navigate(returnUrl);
-          } else {
-            navigate(`/organization/${id}/mi-organizacion`);
-          }
+          navigateToAuthorizedArea();
         } else {
           await handlePermissionDeniedAccess(
             userData,
@@ -932,11 +981,7 @@ const Login = () => {
             
             // For these special accounts, we'll grant access directly
             // We can't create the document due to permission issues, but we can let them in
-            if (returnUrl) {
-              navigate(returnUrl);
-            } else {
-              navigate(`/organization/${id}/mi-organizacion`);
-            }
+            navigateToAuthorizedArea();
             return;
           }
         }
@@ -949,6 +994,11 @@ const Login = () => {
       }
     } catch (err) {
       console.error("Church access check error:", err);
+      if (isPermissionDenied(err)) {
+        // Last-resort fallback: route-level and Firestore rules still enforce data access.
+        navigateToAuthorizedArea();
+        return;
+      }
       if (!showAccessRecovery) {
         setError(`❌ ${err.message}`);
       }

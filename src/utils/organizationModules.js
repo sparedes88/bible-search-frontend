@@ -13,6 +13,8 @@ const SYSTEM_ROLE_ALIASES = {
 };
 
 const LEGACY_MODULE_ID_ALIASES = {
+  conduitruncounter: "conduit-run-counter",
+  timetracker: "time-tracker",
   timerotate: "time-rotate",
   timeRotate: "time-rotate",
   time_rotate: "time-rotate",
@@ -291,7 +293,15 @@ const organizationModuleDefinitions = [
         description: "Create projects, lists, and issue # entries with full CRUD",
         icon: "🗂️",
         buildPath: (organizationId) => `/organization/${organizationId}/project-lists-issues`,
-        openInNewTab: true,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
+        id: "commitments",
+        title: "Work Progress",
+        description: "Add quick commitments and link each task to an IglesiaTech project",
+        icon: "✅",
+        buildPath: (organizationId) => `/organization/${organizationId}/work-progress`,
+        defaultVisibilityByRole: { member: false },
       }),
       createModule({
         id: "e2-agile-board",
@@ -355,6 +365,14 @@ const organizationModuleDefinitions = [
         description: "Track time and manage tasks with daily progress",
         icon: "⏱️",
         buildPath: (organizationId) => `/organization/${organizationId}/time-tracker`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
+        id: "conduit-run-counter",
+        title: "Conduit Run Counter",
+        description: "Import Excel, review all columns, and update status per line item",
+        icon: "🧮",
+        buildPath: (organizationId) => `/organization/${organizationId}/conduit-run-counter`,
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
@@ -623,6 +641,7 @@ export const normalizeModuleVisibilityRole = (role) => {
 };
 
 export const isModuleVisibleForRole = (moduleId, role, settings) => {
+  const normalizedModuleId = normalizeStoredModuleId(moduleId);
   const normalizedRole = normalizeModuleVisibilityRole(role);
   const mergedSettings = mergeModuleVisibilitySettings(settings);
   const fallbackRole = mergedSettings[normalizedRole]
@@ -631,7 +650,7 @@ export const isModuleVisibleForRole = (moduleId, role, settings) => {
     ? "global_admin"
     : "member";
 
-  return mergedSettings[fallbackRole]?.[moduleId] !== false;
+  return mergedSettings[fallbackRole]?.[normalizedModuleId] !== false;
 };
 
 export const getResolvedOrganizationModuleSections = (

@@ -18,6 +18,7 @@ const ChurchHeader = ({
   id,
   applyShadow = true,
   allowEditBannerLogo = false,
+  showOrganizationName = true,
 }) => {
   const [church, setChurch] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -409,13 +410,15 @@ const ChurchHeader = ({
           </div>
         )}
       </div>
-      {loading ? (
-        <div style={{ textAlign: "center", margin:"30px" }}>
-          <Skeleton width={300} height={30} />
-        </div>
-      ) : (
-        <h2 className="church-name">{church?.nombre || ""}</h2>
-      )}
+      {showOrganizationName ? (
+        loading ? (
+          <div style={{ textAlign: "center", margin:"30px" }}>
+            <Skeleton width={300} height={30} />
+          </div>
+        ) : (
+          <h2 className="church-name">{church?.nombre || ""}</h2>
+        )
+      ) : null}
     </div>
   );
 };

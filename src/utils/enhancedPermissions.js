@@ -1,6 +1,16 @@
 import { db } from '../firebase';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
+const LEGACY_MODULE_ID_ALIASES = {
+  'conduit-run-counter': 'conduitruncounter',
+  'time-tracker': 'timetracker',
+};
+
+const normalizePermissionModuleId = (module) => {
+  const normalizedModule = String(module || '').trim();
+  return LEGACY_MODULE_ID_ALIASES[normalizedModule] || normalizedModule;
+};
+
 const normalizeSystemRole = (role) => {
   switch (role) {
     case 'system_global_admin':
@@ -30,6 +40,118 @@ const getEffectiveBaseRole = (userData = {}) => {
     : 'member';
 };
 
+const getRoleCandidates = (userData = {}) => {
+  const values = [
+    userData?.customRoleId,
+    userData?.customRole,
+    userData?.assignedRoleId,
+    userData?.role,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(values));
+};
+
+const normalizeRoleLookupValue = (value) => String(value || '').trim().toLowerCase();
+
+const roleBelongsToChurch = (roleData = {}, churchId) => {
+  const targetChurchId = String(churchId || '').trim();
+  if (!targetChurchId) return true;
+
+  const scopedChurchId = String(
+    roleData?.churchId
+    || roleData?.churchID
+    || roleData?.organizationId
+    || roleData?.idIglesia
+    || ''
+  ).trim();
+
+  if (!scopedChurchId) return true;
+  return scopedChurchId === targetChurchId;
+};
+
+const resolveBaseRoleFromRoleData = (roleData = {}) => {
+  const normalizedRole = getEffectiveBaseRole(roleData);
+  return ['global_admin', 'admin', 'member'].includes(normalizedRole)
+    ? normalizedRole
+    : null;
+};
+
+const resolveEffectiveBaseRole = async (userData = {}, churchId = '') => {
+  const directBaseRole = getEffectiveBaseRole(userData);
+  if (directBaseRole !== 'member') {
+    return directBaseRole;
+  }
+
+  const roleCandidates = getRoleCandidates(userData);
+  if (roleCandidates.length === 0) {
+    return directBaseRole;
+  }
+
+  // First try direct role document IDs.
+  for (const candidate of roleCandidates) {
+    try {
+      const roleDoc = await getDoc(doc(db, 'roles', candidate));
+      if (!roleDoc.exists()) continue;
+
+      const roleData = roleDoc.data() || {};
+      if (!roleBelongsToChurch(roleData, churchId)) continue;
+
+      const resolvedBaseRole = resolveBaseRoleFromRoleData(roleData);
+      if (resolvedBaseRole) {
+        return resolvedBaseRole;
+      }
+    } catch (error) {
+      console.warn('Error reading role document for permission resolution:', error);
+    }
+  }
+
+  // Fallback: scan role docs scoped to this church and match by id/name aliases.
+  try {
+    const [byChurchIdSnapshot, byChurchIDSnapshot, byOrganizationIdSnapshot] = await Promise.all([
+      getDocs(query(collection(db, 'roles'), where('churchId', '==', churchId))),
+      getDocs(query(collection(db, 'roles'), where('churchID', '==', churchId))),
+      getDocs(query(collection(db, 'roles'), where('organizationId', '==', churchId))),
+    ]);
+
+    const roleMap = new Map();
+    [...byChurchIdSnapshot.docs, ...byChurchIDSnapshot.docs, ...byOrganizationIdSnapshot.docs].forEach((roleDoc) => {
+      if (!roleMap.has(roleDoc.id)) {
+        roleMap.set(roleDoc.id, roleDoc);
+      }
+    });
+
+    const normalizedCandidates = new Set(roleCandidates.map((value) => normalizeRoleLookupValue(value)));
+
+    for (const roleDoc of roleMap.values()) {
+      const roleData = roleDoc.data() || {};
+
+      const lookupValues = [
+        roleDoc.id,
+        roleData.name,
+        roleData.roleName,
+        roleData.title,
+        roleData.displayName,
+      ]
+        .map((value) => normalizeRoleLookupValue(value))
+        .filter(Boolean);
+
+      const matchesCandidate = lookupValues.some((value) => normalizedCandidates.has(value));
+      if (!matchesCandidate) continue;
+
+      const resolvedBaseRole = resolveBaseRoleFromRoleData(roleData);
+      if (resolvedBaseRole) {
+        return resolvedBaseRole;
+      }
+    }
+  } catch (error) {
+    console.warn('Error resolving role base permissions from scoped role documents:', error);
+  }
+
+  return directBaseRole;
+};
+
 /**
  * Enhanced permission system with granular access control
  * Supports both module-level, role-based, and user-specific permissions
@@ -49,7 +171,9 @@ const getEffectiveBaseRole = (userData = {}) => {
 export const hasPermission = async (user, churchId, module, action, resourceId = null, resourceType = null) => {
   if (!user) return false;
 
-  const effectiveBaseRole = getEffectiveBaseRole(user);
+  const normalizedModule = normalizePermissionModuleId(module);
+
+  const effectiveBaseRole = await resolveEffectiveBaseRole(user, churchId);
 
   // Global admins have access to everything
   if (effectiveBaseRole === 'global_admin') return true;
@@ -60,7 +184,7 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
   try {
     // First check user-specific permissions if checking a specific resource
     if (resourceId && resourceType) {
-      const userSpecificPermission = await checkUserSpecificPermission(user, churchId, module, action, resourceId, resourceType);
+      const userSpecificPermission = await checkUserSpecificPermission(user, churchId, normalizedModule, action, resourceId, resourceType);
       if (userSpecificPermission !== null) {
         return userSpecificPermission;
       }
@@ -71,11 +195,11 @@ export const hasPermission = async (user, churchId, module, action, resourceId =
     // Check if it's a system role
     if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
       // Use system role logic
-      const hasModulePermission = await checkSystemRolePermission(normalizedRole, module, action);
+      const hasModulePermission = await checkSystemRolePermission(normalizedRole, normalizedModule, action);
       
       // If user has module permission but we're checking specific resource
       if (hasModulePermission && resourceId && resourceType) {
-        return await checkResourceSpecificPermission(user, churchId, module, action, resourceId, resourceType);
+        return await checkResourceSpecificPermission(user, churchId, normalizedModule, action, resourceId, resourceType);
       }
       
       return hasModulePermission;
@@ -146,7 +270,7 @@ const checkResourceSpecificPermission = async (user, churchId, module, action, r
   try {
     // If no role data provided, fetch it
     if (!roleData) {
-      const normalizedRole = getEffectiveBaseRole(user);
+      const normalizedRole = await resolveEffectiveBaseRole(user, churchId);
       if (normalizedRole === 'member' || normalizedRole === 'admin' || normalizedRole === 'global_admin') {
         return true;
       }
@@ -224,7 +348,7 @@ const checkSystemRolePermission = async (role, module, action) => {
     
     const memberLimitedModules = [
       'eventregistration', 'membermessaging', 'userresponselog', 
-      'usercourseprogresss', 'miperfil', 'profile', 'timetracker'
+      'usercourseprogresss', 'miperfil', 'profile', 'timetracker', 'conduitruncounter'
     ];
     
     const memberDeniedModules = [
@@ -383,6 +507,11 @@ export const canAccessModule = async (user, churchId, module) => {
 };
 
 export const canManageModule = async (user, churchId, module) => {
+  const hasExplicitManage = await hasPermission(user, churchId, module, 'manage');
+  if (hasExplicitManage) {
+    return true;
+  }
+
   const canCreate = await hasPermission(user, churchId, module, 'create');
   const canUpdate = await hasPermission(user, churchId, module, 'update');
   const canDelete = await hasPermission(user, churchId, module, 'delete');
@@ -395,7 +524,7 @@ export const getUserAccessibleModules = async (user, churchId) => {
     'admin', 'rolemanager', 'userassignment', 'miorganizacion',
     'forms', 'courses', 'allevents', 'events', 'members', 'chat',
     'directory', 'gallery', 'media', 'groups', 'balance', 'budget', 'finances',
-    'inventory', 'coursecategories', 'timetracker'
+    'inventory', 'coursecategories', 'timetracker', 'conduitruncounter'
   ];
 
   const accessibleModules = [];

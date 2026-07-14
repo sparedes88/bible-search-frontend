@@ -95,6 +95,8 @@ const createEmptyInvoiceForm = () => ({
 const sortByName = (items, key = 'name') =>
   [...items].sort((a, b) => String(a?.[key] || '').localeCompare(String(b?.[key] || '')));
 
+const normalizeNameKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
 const normalizeInvoiceCategoryName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
 const normalizePdfText = (value) => {
@@ -2265,6 +2267,48 @@ const BudgetPage = () => {
       setSearchParams(nextParams, { replace: true });
     }
   }, [activeTab, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (activeTab !== 'invoice-create') return;
+    if (editingInvoiceId) return;
+
+    const source = String(searchParams.get('source') || '').trim().toLowerCase();
+    if (source !== 'invoice-manager') return;
+    if (!Array.isArray(projects) || projects.length === 0) return;
+
+    const requestedProjectId = String(searchParams.get('projectId') || '').trim();
+    const requestedProjectName = normalizeNameKey(searchParams.get('projectName'));
+
+    let matchedProject = requestedProjectId
+      ? projects.find((project) => String(project?.id || '') === requestedProjectId)
+      : null;
+
+    if (!matchedProject && requestedProjectName) {
+      matchedProject = projects.find((project) => normalizeNameKey(project?.name) === requestedProjectName)
+        || projects.find((project) => normalizeNameKey(project?.name).includes(requestedProjectName));
+    }
+
+    if (!matchedProject) return;
+
+    const matchedProjectId = String(matchedProject.id || '').trim();
+    const matchedCompanyId = String(matchedProject.companyId || '').trim();
+    const defaultProjectContractId = String((contractsByProjectId[matchedProjectId] || [])[0]?.id || '').trim();
+
+    setInvoiceForm((current) => ({
+      ...current,
+      companyId: matchedCompanyId || current.companyId,
+      projectId: matchedProjectId || current.projectId,
+      contractId: defaultProjectContractId || current.contractId,
+    }));
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('source');
+    nextParams.delete('projectId');
+    nextParams.delete('projectName');
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [activeTab, contractsByProjectId, editingInvoiceId, projects, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (moduleAccessLoading || !hasBudgetModuleAccess) {

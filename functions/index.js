@@ -3248,6 +3248,25 @@ exports.logEzLinkHit = functions.https.onRequest(async (req, res) => {
       return res.status(404).json({ success: false, error: 'EZLink not found' });
     }
 
+    const ezLinkData = ezLinkSnap.data() || {};
+    if (ezLinkData.isActive === false) {
+      return res.status(410).json({ success: false, error: 'EZLink is disabled' });
+    }
+
+    const redirectUrl = normalizeValue(
+      ezLinkData.targetUrl || ezLinkData.url || ezLinkData.destinationUrl || ezLinkData.destination
+    );
+
+    if (!redirectUrl) {
+      return res.status(400).json({ success: false, error: 'EZLink has no destination configured' });
+    }
+
+    const resolveOnlyRaw = normalizeValue(body.resolveOnly).toLowerCase();
+    const resolveOnly = resolveOnlyRaw === '1' || resolveOnlyRaw === 'true' || resolveOnlyRaw === 'yes';
+    if (resolveOnly) {
+      return res.status(200).json({ success: true, redirectUrl, slug, churchId });
+    }
+
     const userAgent = normalizeValue(req.headers['user-agent'] || body.userAgent);
     const forwardedFor = normalizeValue(req.headers['x-forwarded-for']);
     const ipAddress = normalizeValue(forwardedFor.split(',')[0]);
@@ -3315,7 +3334,7 @@ exports.logEzLinkHit = functions.https.onRequest(async (req, res) => {
 
     await ezLinkRef.update(analyticsUpdate);
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ success: true, redirectUrl, slug, churchId });
   } catch (error) {
     console.error('Failed to log EZLink hit:', error);
     return res.status(500).json({ success: false, error: error.message || 'Unexpected error' });

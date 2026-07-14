@@ -474,6 +474,17 @@ const ModuleVisibilitySettings = () => {
       });
   }, [activeRoleModules, hiddenActiveRoleSections]);
 
+  const getReassignTargetSections = (moduleData) => {
+    const currentSectionId = moduleData?.sectionId;
+    const options = activeRoleSections.filter((section) => section.isVisible !== false || section.id === currentSectionId);
+
+    if (options.length > 0) {
+      return options;
+    }
+
+    return activeRoleSections;
+  };
+
   const activeRoleSectionsWithModules = useMemo(() => {
     return visibleActiveRoleSections.map((section) => ({
       ...section,
@@ -890,6 +901,32 @@ const ModuleVisibilitySettings = () => {
     }));
   };
 
+  const handleHiddenModuleReassign = (role, moduleData, targetSectionId) => {
+    if (!moduleData?.id || !targetSectionId) {
+      return;
+    }
+
+    if (moduleData.sectionId === targetSectionId) {
+      toast.info("This module is already assigned to that section.");
+      return;
+    }
+
+    const moduleLabel = moduleData.customTitle || moduleData.title || moduleData.id;
+    const currentSectionLabel = activeRoleSectionTitleMap[moduleData.sectionId] || moduleData.sectionId;
+    const targetSectionLabel = activeRoleSectionTitleMap[targetSectionId] || targetSectionId;
+
+    const confirmMessage = moduleData.hiddenByModuleToggle
+      ? `Reassign "${moduleLabel}" from "${currentSectionLabel}" to "${targetSectionLabel}"? The module is still hidden by the Show toggle until you enable Show.`
+      : `Reassign "${moduleLabel}" from "${currentSectionLabel}" to "${targetSectionLabel}"?`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    handleModuleChange(role, moduleData.id, "sectionId", targetSectionId, moduleData.order);
+    toast.success(`Reassigned "${moduleLabel}" to "${targetSectionLabel}".`);
+  };
+
   const handleMoveModule = (role, moduleId, direction) => {
     const targetModule = activeRoleModules.find((module) => module.id === moduleId);
     if (!targetModule) {
@@ -1062,6 +1099,28 @@ const ModuleVisibilitySettings = () => {
     navigate(`${routePrefix}/${id}/mi-organizacion`);
   };
 
+  const handleSaveNow = async () => {
+    if (saving) {
+      toast.info("Saving in progress. Please wait a moment...");
+      return;
+    }
+
+    if (saveState !== "dirty") {
+      toast.info("No pending changes to save.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await persistSettings({ successMessage: "Changes saved." });
+    } catch (error) {
+      console.error("Error saving module settings:", error);
+      toast.error("Failed to save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!canManageSettings || !id || saveState !== "dirty" || saving || loading) {
       return;
@@ -1192,6 +1251,23 @@ const ModuleVisibilitySettings = () => {
             </div>
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "flex-start", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={handleSaveNow}
+              disabled={saving || loading}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "10px",
+                border: "none",
+                backgroundColor: saving || loading ? "#94A3B8" : "#0F766E",
+                cursor: saving || loading ? "not-allowed" : "pointer",
+                color: "white",
+                fontWeight: 700,
+                opacity: saving || loading ? 0.8 : 1,
+              }}
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
             <button
               type="button"
               onClick={() => loadSettings({ showToast: true })}
@@ -1780,10 +1856,12 @@ const ModuleVisibilitySettings = () => {
                       <th style={{ textAlign: "left", padding: "12px 14px", color: "#9A3412", minWidth: "190px" }}>Current Section</th>
                       <th style={{ textAlign: "left", padding: "12px 14px", color: "#9A3412", minWidth: "200px" }}>Reassign To</th>
                       <th style={{ textAlign: "center", padding: "12px 14px", color: "#9A3412", minWidth: "120px" }}>Show</th>
+                      <th style={{ textAlign: "center", padding: "12px 14px", color: "#9A3412", minWidth: "140px" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {hiddenModules.map((module, index) => {
+                      const reassignTargetSections = getReassignTargetSections(module);
                       const hiddenReasons = [
                         module.hiddenBySection ? "Section hidden" : "",
                         module.hiddenByModuleToggle ? "Module hidden" : "",
@@ -1809,15 +1887,15 @@ const ModuleVisibilitySettings = () => {
                           <td style={{ padding: "14px" }}>
                             <select
                               value={module.sectionId}
-                              disabled={visibleActiveRoleSections.length === 0}
+                              disabled={reassignTargetSections.length <= 1}
                               onChange={(event) =>
-                                handleModuleChange(activeRole, module.id, "sectionId", event.target.value, module.order)
+                                handleHiddenModuleReassign(activeRole, module, event.target.value)
                               }
                               style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #FDBA74", backgroundColor: "white" }}
                             >
-                              {visibleActiveRoleSections.map((targetSection) => (
+                              {reassignTargetSections.map((targetSection) => (
                                 <option key={targetSection.id} value={targetSection.id}>
-                                  {targetSection.title}
+                                  {targetSection.title}{targetSection.isVisible === false ? " (hidden)" : ""}
                                 </option>
                               ))}
                             </select>
@@ -1829,6 +1907,26 @@ const ModuleVisibilitySettings = () => {
                               onChange={() => handleVisibilityChange(activeRole, module.id)}
                               style={{ width: "18px", height: "18px", cursor: "pointer" }}
                             />
+                          </td>
+                          <td style={{ padding: "14px", textAlign: "center" }}>
+                            <button
+                              type="button"
+                              onClick={handleSaveNow}
+                              disabled={saving || loading}
+                              style={{
+                                padding: "8px 12px",
+                                borderRadius: "8px",
+                                border: "none",
+                                backgroundColor: saving || loading ? "#94A3B8" : "#0F766E",
+                                color: "white",
+                                fontWeight: 700,
+                                cursor: saving || loading ? "not-allowed" : "pointer",
+                                opacity: saving || loading ? 0.8 : 1,
+                              }}
+                              title={saveState !== "dirty" ? "No pending changes" : "Save now"}
+                            >
+                              {saving ? "Saving..." : "Apply"}
+                            </button>
                           </td>
                         </tr>
                       );

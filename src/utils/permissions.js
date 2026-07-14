@@ -11,6 +11,16 @@ const isPermissionDeniedError = (error) =>
   error?.code === 'permission-denied' ||
   error?.code === 'firestore/permission-denied';
 
+const LEGACY_MODULE_ID_ALIASES = {
+  'conduit-run-counter': 'conduitruncounter',
+  'time-tracker': 'timetracker',
+};
+
+const normalizePermissionModuleId = (module) => {
+  const normalizedModule = String(module || '').trim();
+  return LEGACY_MODULE_ID_ALIASES[normalizedModule] || normalizedModule;
+};
+
 const isGenericCustomRoleValue = (value) => {
   const normalizedValue = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   return ['custom role', 'custom', 'role'].includes(normalizedValue);
@@ -105,6 +115,8 @@ const normalizeSystemRole = (role) => {
 export const hasPermission = async (user, churchId, module, action) => {
   if (!user) return false;
 
+  const normalizedModule = normalizePermissionModuleId(module);
+
   const effectiveBaseRole = getEffectiveBaseRole(user);
 
   // Global admins have access to everything
@@ -115,11 +127,11 @@ export const hasPermission = async (user, churchId, module, action) => {
 
   // For member-level access, use built-in base role permissions.
   try {
-    return await checkSystemRolePermission(effectiveBaseRole, module, action);
+    return await checkSystemRolePermission(effectiveBaseRole, normalizedModule, action);
 
   } catch (error) {
     if (isPermissionDeniedError(error)) {
-      return await canAccessViaModuleVisibilityFallback(user, churchId, module, action);
+      return await canAccessViaModuleVisibilityFallback(user, churchId, normalizedModule, action);
     }
 
     console.error('Error checking permissions:', error);
@@ -153,7 +165,7 @@ const checkSystemRolePermission = async (role, module, action) => {
     
     const memberLimitedModules = [
       'eventregistration', 'membermessaging', 'userresponselog', 
-      'usercourseprogresss', 'miperfil', 'profile', 'timetracker'
+      'usercourseprogresss', 'miperfil', 'profile', 'timetracker', 'conduitruncounter'
     ];
     
     const memberDeniedModules = [
@@ -208,6 +220,11 @@ export const canAccessModule = async (user, churchId, module) => {
  * @returns {Promise<boolean>} - Whether the user can manage the module
  */
 export const canManageModule = async (user, churchId, module) => {
+  const hasExplicitManage = await hasPermission(user, churchId, module, 'manage');
+  if (hasExplicitManage) {
+    return true;
+  }
+
   const canCreate = await hasPermission(user, churchId, module, 'create');
   const canUpdate = await hasPermission(user, churchId, module, 'update');
   const canDelete = await hasPermission(user, churchId, module, 'delete');
@@ -226,7 +243,7 @@ export const getUserAccessibleModules = async (user, churchId) => {
     'admin', 'rolemanager', 'userassignment', 'miorganizacion',
     'forms', 'courses', 'allevents', 'events', 'members', 'chat',
     'directory', 'gallery', 'media', 'groups', 'balance', 'budget', 'finances',
-    'timetracker'
+    'timetracker', 'conduitruncounter'
     // Add all your modules here
   ];
 

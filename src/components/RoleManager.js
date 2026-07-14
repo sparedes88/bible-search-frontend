@@ -197,6 +197,8 @@ const RoleManager = () => {
       color: "#343a40",
       modules: [
         { id: "timetracker", name: "Time Tracker", description: "Time tracking and productivity management" },
+        { id: "commitments", name: "Work Progress", description: "Add quick commitments linked to IglesiaTech projects" },
+        { id: "conduitruncounter", name: "Conduit Run Counter", description: "Import Excel and update line-item statuses" },
         { id: "buildmychurch", name: "Build My Church", description: "Church building and improvement projects" },
         { id: "assistentepastoral", name: "AI Pastoral Assistant", description: "AI assistance for pastoral tasks" },
         { id: "leadershipdevelopment", name: "Leadership Development", description: "Leadership training and development" },
@@ -325,7 +327,7 @@ const RoleManager = () => {
     // Modules members can CREATE/UPDATE (limited functionality)
     const memberLimitedModules = [
       'eventregistration', 'membermessaging', 'userresponselog', 
-      'usercourseprogresss', 'miperfil', 'profile', 'timetracker'
+      'usercourseprogresss', 'miperfil', 'profile', 'timetracker', 'conduitruncounter'
     ];
     
     // Modules explicitly DENIED to members

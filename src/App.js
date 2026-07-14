@@ -17,6 +17,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import { SafeToastContainer } from "./utils/toastUtils";
 import "react-toastify/dist/ReactToastify.css";
 import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
+const PayEveryone = React.lazy(() => import("./components/PayEveryone"));
 // ...existing code...
 
 // Loading fallback component
@@ -157,6 +158,7 @@ const TimeRotateInProgressNotes = React.lazy(() => import("./components/TimeRota
 const TimeRotateTracker = React.lazy(() => import("./components/TimeRotateTracker"));
 const TimeRotateOfficeStatus = React.lazy(() => import("./components/TimeRotateOfficeStatus"));
 const TimerPage = React.lazy(() => import("./components/TimerPage"));
+const ConduitRunCounter = React.lazy(() => import("./components/ConduitRunCounter"));
 const MyDesignTeam = React.lazy(() => import("./components/MyDesignTeam"));
 const MyEZLink = React.lazy(() => import("./components/MyEZLink"));
 const EzLinkRedirect = React.lazy(() => import("./components/EzLinkRedirect"));
@@ -172,6 +174,7 @@ const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
 const ProjectListsIssuesModule = React.lazy(() => import("./components/ProjectListsIssuesModule"));
+const WorkProgressModule = React.lazy(() => import("./components/WorkProgressModule"));
 const LiveIssueTracker = React.lazy(() => import("./components/live-issue-tracker"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const E2StatusUpdate = React.lazy(() => import("./components/E2StatusUpdate"));
@@ -247,9 +250,9 @@ const App = () => {
           <Route
             path="/admin/:id"
             element={
-              <RequireAuth>
+              <PrivateRoute roles={["admin", "global_admin", "member"]} moduleId="user-management">
                 <Admin />
-              </RequireAuth>
+              </PrivateRoute>
             }
           />
           <Route path="/organization/:id/chatv2" element={<ChatV2 />} />
@@ -378,7 +381,11 @@ const App = () => {
           />
           <Route
             path="/organization/:id/mi-organizacion"
-            element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>}
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary><MiOrganizacion /></ErrorBoundary>
+              </PrivateRoute>
+            }
           />
           <Route
             path="/organization/:id/quick-links"
@@ -387,7 +394,7 @@ const App = () => {
           <Route
             path="/organization/:id/module-visibility-settings"
             element={
-              <PrivateRoute roles={["admin", "global_admin"]}>
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary>
               </PrivateRoute>
             }
@@ -679,7 +686,7 @@ const App = () => {
           <Route 
             path="/organization/:id/invoices" 
             element={
-              <PrivateRoute roles={["admin", "global_admin"]}>
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <InvoiceManager />
               </PrivateRoute>
             } 
@@ -789,7 +796,14 @@ const App = () => {
             element={<FormEmbed />}
           />
           
-          <Route path="/organization/:id/leica" element={<LeicaModule />} />
+          <Route
+            path="/organization/:id/leica"
+            element={
+              <PrivateRoute>
+                <LeicaModule />
+              </PrivateRoute>
+            }
+          />
           <Route
             path="/organization/:id/project-issue-dashboard"
             element={
@@ -808,15 +822,35 @@ const App = () => {
           />
           <Route
             path="/organization/:id/project-lists-issues"
-            element={<ProjectListsIssuesModule />}
+            element={
+              <PrivateRoute>
+                <ProjectListsIssuesModule />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/work-progress"
+            element={
+              <PrivateRoute>
+                <WorkProgressModule />
+              </PrivateRoute>
+            }
           />
           <Route
             path="/organization/:id/my-design-team"
-            element={<MyDesignTeam />}
+            element={
+              <PrivateRoute>
+                <MyDesignTeam />
+              </PrivateRoute>
+            }
           />
           <Route
             path="/organization/:id/my-ezlink"
-            element={<ErrorBoundary><MyEZLink /></ErrorBoundary>}
+            element={
+              <PrivateRoute>
+                <ErrorBoundary><MyEZLink /></ErrorBoundary>
+              </PrivateRoute>
+            }
           />
           <Route
             path="/organization/:id/ezlink/:slug"
@@ -887,12 +921,33 @@ const App = () => {
           <Route path="/church/:id/bible" element={<ErrorBoundary><BiblePage /></ErrorBoundary>} />
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
-          <Route path="/church/:id/mi-organizacion" element={<ErrorBoundary><MiOrganizacion /></ErrorBoundary>} />
+          <Route
+            path="/church/:id/mi-organizacion"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary><MiOrganizacion /></ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           <Route path="/church/:id/quick-links" element={<ErrorBoundary><QuickLinksPage /></ErrorBoundary>} />
-          <Route path="/church/:id/my-design-team" element={<MyDesignTeam />} />
-          <Route path="/church/:id/my-ezlink" element={<ErrorBoundary><MyEZLink /></ErrorBoundary>} />
+          <Route
+            path="/church/:id/my-design-team"
+            element={
+              <PrivateRoute>
+                <MyDesignTeam />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/my-ezlink"
+            element={
+              <PrivateRoute>
+                <ErrorBoundary><MyEZLink /></ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           <Route path="/church/:id/ezlink/:slug" element={<ErrorBoundary><EzLinkRedirect /></ErrorBoundary>} />
-          <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
+          <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin", "member"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
           <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
@@ -926,6 +981,16 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary>
                   <AgileBoardPage />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/pay-everyone"
+            element={
+              <PrivateRoute roles={["admin", "global_admin"]}>
+                <ErrorBoundary>
+                  <PayEveryone />
                 </ErrorBoundary>
               </PrivateRoute>
             }
@@ -1011,6 +1076,16 @@ const App = () => {
             }
           />
           <Route
+            path="/organization/:id/conduit-run-counter"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <ConduitRunCounter />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/church/:id/time-tracking"
             element={
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
@@ -1056,6 +1131,16 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin", "member"]}>
                 <ErrorBoundary>
                   <TimeRotateOfficeStatus />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/church/:id/conduit-run-counter"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <ConduitRunCounter />
                 </ErrorBoundary>
               </PrivateRoute>
             }

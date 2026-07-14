@@ -224,6 +224,34 @@ service firebase.storage {
       allow delete: if isAuthenticated() && isChurchMember(churchId);
     }
 
+    // TimeRotate note attachments (documents, images, and other files)
+    match /churches/{churchId}/timeRotateNoteAttachments/{timerDocId}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 50 * 1024 * 1024;
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
+    // Work Progress note attachments (documents, images, and other files)
+    match /churches/{churchId}/workProgressNoteAttachments/{taskId}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 50 * 1024 * 1024;
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
+    // Project lists issue note attachments
+    match /churches/{churchId}/projectListIssueProjects/{projectId}/issues/{issueId}/notes/{fileName} {
+      // This module's Firestore rules allow any authenticated user to write.
+      // Keep storage aligned so note attachments do not fail with 403 while note docs succeed.
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isAuthenticated();
+    }
+
     // Finance attachments - allow authenticated church members to manage finance files
     match /churches/{churchId}/finances/{financeId}/attachments/{fileName} {
       allow read: if isAuthenticated() && isChurchMember(churchId);

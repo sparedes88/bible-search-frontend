@@ -1501,7 +1501,7 @@ const MyDesignTeam = () => {
 
   return (
     <div className="my-design-team-page" style={commonStyles.fullWidthContainer}>
-      <ChurchHeader churchId={id} />
+      <ChurchHeader id={id} />
 
       <div className="my-design-team-shell">
         <div className="my-design-team-hero">

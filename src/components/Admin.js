@@ -77,7 +77,7 @@ const secondaryAuth = getAuth(
 
 const Admin = () => {
   const { id } = useParams();
-  const { user } = useAuth(); // *New*Get user from useAuth
+  const { user, loading: authLoading } = useAuth(); // *New*Get user from useAuth
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -279,20 +279,17 @@ const Admin = () => {
 
   useEffect(() => {
     const checkAuth = async () => {
+      if (authLoading) {
+        return;
+      }
+
       if (!user) {
-        navigate("/not-authorized");
+        // PrivateRoute handles unauthenticated/not-authorized transitions.
         return;
       }
 
       // Store admin user info
       setAdminUser(user);
-
-      // Check if user role is global_admin or admin
-      const currentUserRole = normalizeRoleValue(user?.role, { preserveCustom: false });
-      if (currentUserRole !== "global_admin" && currentUserRole !== "admin") {
-        navigate("/not-authorized");
-        return;
-      }
 
       // Fetch users only for the current church
       const fetchUsers = async () => {
@@ -401,7 +398,7 @@ const Admin = () => {
     };
 
     checkAuth();
-  }, [user, navigate, id]);
+  }, [authLoading, user, navigate, id]);
 
   useEffect(() => {
     const checkProcessAccess = async () => {

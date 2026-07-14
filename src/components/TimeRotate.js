@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
-import { db } from "../firebase";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { db, storage } from "../firebase";
 import commonStyles from "../pages/commonStyles";
 import { useAuth } from "../contexts/AuthContext";
 import TimeRotateTopLogo from "./TimeRotateTopLogo";
@@ -105,6 +106,71 @@ const normalizeValue = (value) => {
   return String(value).trim();
 };
 
+const isPermissionDeniedError = (error) => {
+  const code = normalizeValue(error?.code).toLowerCase();
+  return code === "permission-denied" || code === "firestore/permission-denied";
+};
+
+const sanitizeFileName = (value) => {
+  const normalizedName = normalizeValue(value);
+  if (!normalizedName) return "attachment";
+  return normalizedName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+};
+
+const normalizeNoteAttachment = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const url = normalizeValue(value.url);
+  if (!url) return null;
+
+  return {
+    name: normalizeValue(value.name) || "Attachment",
+    url,
+    path: normalizeValue(value.path),
+    contentType: normalizeValue(value.contentType),
+    size: Number(value.size) || 0,
+  };
+};
+
+const normalizeNoteEntry = (noteValue) => {
+  const attachment = normalizeNoteAttachment(noteValue?.attachment);
+  return {
+    text: normalizeValue(noteValue?.text),
+    timestamp: Number(noteValue?.timestamp) || 0,
+    attachment,
+  };
+};
+
+const normalizeNotesArray = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((noteValue) => normalizeNoteEntry(noteValue))
+    .filter((note) => note.text || note.attachment?.url);
+};
+
+const formatFileSize = (value) => {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return "";
+
+  if (size < 1024) return `${size} B`;
+  const kb = size / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+};
+
+const isImageAttachment = (attachment) => {
+  const contentType = normalizeValue(attachment?.contentType).toLowerCase();
+  if (contentType.startsWith("image/")) return true;
+
+  const url = normalizeValue(attachment?.url).toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/.test(url);
+};
+
 const normalizeTagValue = (value) => normalizeValue(value).replace(/\s+/g, " ");
 
 const hasTechnicalDetailTitle = (title) => normalizeValue(title).toLowerCase().includes("technical detail");
@@ -176,6 +242,28 @@ const DATA_STAGE_ALIASES = ["data stage", "datastage"];
 const TASK_DESCRIPTION_ALIASES = ["task description", "description", "task desc", "details", "scope"];
 const ACTIVE_TIMER_STORAGE_PREFIX = "timeRotateActiveTimer";
 const ACTIVE_TIMER_COLLECTION = "timeRotateActiveTimers";
+const PAY_EVERYONE_SETTINGS_COLLECTION = "payEveryoneUserSettings";
+const PAY_EVERYONE_GLOBAL_SETTINGS_COLLECTION = "payEveryoneSettings";
+const NOTE_ATTACHMENT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+
+const DEFAULT_LESSON_LIMIT_CONFIG = {
+  enabled: false,
+  period: "month",
+  maxCount: 0,
+  lessonName: "",
+  supervisorPin: "",
+};
+
+const normalizeLessonLimitConfig = (value = {}) => {
+  const normalizedPeriod = normalizeValue(value?.period).toLowerCase();
+  return {
+    enabled: value?.enabled === true,
+    period: ["week", "month", "year"].includes(normalizedPeriod) ? normalizedPeriod : "month",
+    maxCount: Math.max(0, Math.floor(Number(value?.maxCount) || 0)),
+    lessonName: normalizeValue(value?.lessonName),
+    supervisorPin: normalizeValue(value?.supervisorPin),
+  };
+};
 
 const buildTaskIdentity = (projectDocId, issueId) => {
   const normalizedProjectDocId = normalizeValue(projectDocId) || "unknown-project";
@@ -294,6 +382,110 @@ const getTagPalette = (tag, { muted = false } = {}) => {
   };
 };
 
+const normalizeLessonsLearned = (value = []) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => {
+      if (typeof entry === "string") {
+        const text = normalizeValue(entry);
+        if (!text) return null;
+        return {
+          text,
+          name: "",
+          minimumRequired: "",
+          createdAt: 0,
+          createdBy: "",
+          source: "",
+          autoKey: "",
+        };
+      }
+
+      const text = normalizeValue(entry?.text);
+      if (!text) return null;
+      return {
+        text,
+        name: normalizeValue(entry?.name),
+        minimumRequired: normalizeValue(entry?.minimumRequired),
+        createdAt: Number(entry?.createdAt) || 0,
+        createdBy: normalizeValue(entry?.createdBy),
+        source: normalizeValue(entry?.source),
+        autoKey: normalizeValue(entry?.autoKey),
+        questions: normalizeLessonQuestions(entry?.questions),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (Number(right.createdAt) || 0) - (Number(left.createdAt) || 0));
+};
+
+const normalizeLessonQuestions = (value = []) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => {
+      const options = Array.isArray(entry?.options) && entry.options.length > 0 
+        ? entry.options.map(o => normalizeValue(o)).filter(o => o)
+        : ["Yes", "No"];
+      return {
+        question: normalizeValue(entry?.question),
+        answer: normalizeValue(entry?.answer),
+        options,
+      };
+    })
+    .filter((entry) => entry.question);
+};
+
+const normalizeLessonsAcknowledgements = (value = []) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => {
+      const lessonKey = normalizeValue(entry?.lessonKey);
+      const lessonText = normalizeValue(entry?.lessonText);
+      if (!lessonKey && !lessonText) return null;
+
+      return {
+        lessonKey,
+        lessonText,
+        lessonCreatedAt: Number(entry?.lessonCreatedAt) || 0,
+        acknowledgedAt: Number(entry?.acknowledgedAt) || 0,
+        acknowledgedByUserId: normalizeValue(entry?.acknowledgedByUserId),
+        acknowledgedByEmail: normalizeValue(entry?.acknowledgedByEmail),
+        acknowledgedByName: normalizeValue(entry?.acknowledgedByName),
+        signature: normalizeValue(entry?.signature),
+        dateKey: normalizeValue(entry?.dateKey),
+        scheduleTimezone: normalizeValue(entry?.scheduleTimezone),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (Number(right.acknowledgedAt) || 0) - (Number(left.acknowledgedAt) || 0));
+};
+
+const getZonedDateKey = (timestamp, timeZone = "America/New_York") => {
+  const safeTimestamp = Number(timestamp);
+  if (!Number.isFinite(safeTimestamp) || safeTimestamp <= 0) return "";
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: normalizeValue(timeZone) || "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+
+    const parts = formatter.formatToParts(new Date(safeTimestamp));
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const year = Number(lookup.year) || 0;
+    const month = Number(lookup.month) || 0;
+    const day = Number(lookup.day) || 0;
+
+    if (!year || !month || !day) return "";
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  } catch (error) {
+    return "";
+  }
+};
+
 const matchesActiveTimerOwner = ({ entry, userId, userEmail, ownerKey, registeredBy }) => {
   const entryUserId = normalizeValue(entry?.userId);
   const entryUserEmail = normalizeValue(entry?.userEmail);
@@ -395,7 +587,11 @@ const TimeRotate = () => {
   const [editingEndMeridiem, setEditingEndMeridiem] = useState("AM");
   const [editingError, setEditingError] = useState("");
   const [logActionError, setLogActionError] = useState("");
+  const [isStoppingTimer, setIsStoppingTimer] = useState(false);
   const [activeNoteInput, setActiveNoteInput] = useState("");
+  const [activeNoteFile, setActiveNoteFile] = useState(null);
+  const [activeNoteError, setActiveNoteError] = useState("");
+  const [savingActiveNote, setSavingActiveNote] = useState(false);
   const [taskSearch, setTaskSearch] = useState("");
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [selectedProjectName, setSelectedProjectName] = useState("");
@@ -426,6 +622,7 @@ const TimeRotate = () => {
   const [selectedAllLogsEndDate, setSelectedAllLogsEndDate] = useState("");
   const [organizationUsers, setOrganizationUsers] = useState([]);
   const [inProgressNoteInputs, setInProgressNoteInputs] = useState({});
+  const [inProgressNoteFilesByDocId, setInProgressNoteFilesByDocId] = useState({});
   const [savingInProgressNoteByDocId, setSavingInProgressNoteByDocId] = useState({});
   const [inProgressNoteErrorByDocId, setInProgressNoteErrorByDocId] = useState({});
   const [manualSelectedUserId, setManualSelectedUserId] = useState("");
@@ -436,6 +633,85 @@ const TimeRotate = () => {
   const [manualEntrySaving, setManualEntrySaving] = useState(false);
   const [manualEntryError, setManualEntryError] = useState("");
   const [manualEntrySuccess, setManualEntrySuccess] = useState("");
+  const [currentUserSettingsDoc, setCurrentUserSettingsDoc] = useState(null);
+  const [pendingLessonItems, setPendingLessonItems] = useState([]);
+  const [lessonAcknowledgeChecked, setLessonAcknowledgeChecked] = useState(false);
+  const [lessonSignature, setLessonSignature] = useState("");
+  const [lessonAckSaving, setLessonAckSaving] = useState(false);
+  const [lessonAckError, setLessonAckError] = useState("");
+  const [lessonLimitConfig, setLessonLimitConfig] = useState(DEFAULT_LESSON_LIMIT_CONFIG);
+  const [lessonFeaturesUnavailable, setLessonFeaturesUnavailable] = useState(false);
+  const [lessonSupervisorPinInput, setLessonSupervisorPinInput] = useState("");
+  const [lessonQuestionAnswers, setLessonQuestionAnswers] = useState({});
+  const [imagePreviewAttachment, setImagePreviewAttachment] = useState(null);
+  const signatureCanvasRef = React.useRef(null);
+  const signatureDrawingRef = React.useRef({ isDrawing: false, hasDrawn: false });
+
+  const handleOpenImagePreview = useCallback((attachment, event) => {
+    if (!isImageAttachment(attachment)) return;
+    if (event) event.preventDefault();
+    setImagePreviewAttachment(attachment);
+  }, []);
+
+  const handleCloseImagePreview = useCallback(() => {
+    setImagePreviewAttachment(null);
+  }, []);
+
+  const clearSignatureCanvas = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    signatureDrawingRef.current.hasDrawn = false;
+    setLessonSignature("");
+    setLessonAckError("");
+  };
+
+  const getSignatureDataUrl = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas || !signatureDrawingRef.current.hasDrawn) return "";
+    return canvas.toDataURL("image/png");
+  };
+
+  const handleSignaturePointerDown = (event) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = ((event.touches ? event.touches[0].clientX : event.clientX) - rect.left) * scaleX;
+    const y = ((event.touches ? event.touches[0].clientY : event.clientY) - rect.top) * scaleY;
+    const ctx = canvas.getContext("2d");
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    signatureDrawingRef.current.isDrawing = true;
+  };
+
+  const handleSignaturePointerMove = (event) => {
+    if (!signatureDrawingRef.current.isDrawing) return;
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = ((event.touches ? event.touches[0].clientX : event.clientX) - rect.left) * scaleX;
+    const y = ((event.touches ? event.touches[0].clientY : event.clientY) - rect.top) * scaleY;
+    const ctx = canvas.getContext("2d");
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#1E293B";
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    signatureDrawingRef.current.hasDrawn = true;
+    setLessonSignature("drawn");
+    setLessonAckError("");
+  };
+
+  const handleSignaturePointerUp = () => {
+    signatureDrawingRef.current.isDrawing = false;
+  };
 
   const resolvedUserId = useMemo(() => {
     return normalizeValue(user?.uid || user?.id || user?.userId);
@@ -449,9 +725,42 @@ const TimeRotate = () => {
     return normalizeValue(resolvedUserId || resolvedUserEmail);
   }, [resolvedUserEmail, resolvedUserId]);
 
+  const uploadNoteAttachment = useCallback(async ({ file, targetDocId }) => {
+    if (!file) return null;
+
+    if (!storage) {
+      throw new Error("Firebase Storage is not available right now.");
+    }
+
+    if (file.size > NOTE_ATTACHMENT_MAX_SIZE_BYTES) {
+      throw new Error("File is too large. Max size is 50 MB.");
+    }
+
+    const safeDocId = normalizeKey(targetDocId) || "active";
+    const safeName = sanitizeFileName(file.name);
+    const filePath = `churches/${id}/timeRotateNoteAttachments/${safeDocId}/${Date.now()}-${safeName}`;
+    const fileRef = storageRef(storage, filePath);
+
+    await uploadBytes(fileRef, file, {
+      contentType: normalizeValue(file.type) || "application/octet-stream",
+    });
+
+    const url = await getDownloadURL(fileRef);
+
+    return {
+      name: safeName,
+      url,
+      path: filePath,
+      contentType: normalizeValue(file.type),
+      size: Number(file.size) || 0,
+    };
+  }, [id]);
+
   const normalizedUserRole = useMemo(() => normalizeValue(user?.role).toLowerCase(), [user?.role]);
-  const canModerateInProgressNotes =
-    normalizedUserRole === "admin" || normalizedUserRole === "global_admin";
+  const normalizedBaseRole = useMemo(() => normalizeValue(user?.baseRole).toLowerCase(), [user?.baseRole]);
+  const canModerateInProgressNotes = [normalizedUserRole, normalizedBaseRole].some(
+    (role) => role === "admin" || role === "global_admin"
+  );
 
   const activeTimerStorageKey = useMemo(() => {
     const userKey = activeTimerOwnerKey || "anonymous";
@@ -462,6 +771,430 @@ const TimeRotate = () => {
     typeof window !== "undefined" && window.location?.pathname?.includes("/church/")
       ? "/church"
       : "/organization";
+
+  const resolvedUserName = useMemo(() => {
+    return normalizeValue(user?.displayName || user?.name || user?.fullName || user?.email || "User");
+  }, [user?.displayName, user?.email, user?.fullName, user?.name]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadLessonSettings = async () => {
+      if (!id || !activeTimerOwnerKey) {
+        if (!active) return;
+        setCurrentUserSettingsDoc(null);
+        setPendingLessonItems([]);
+        setLessonFeaturesUnavailable(false);
+        return;
+      }
+
+      const candidateDocIds = Array.from(
+        new Set(
+          [resolvedUserId, activeTimerOwnerKey, resolvedUserEmail]
+            .map((value) => normalizeValue(value))
+            .filter(Boolean)
+        )
+      );
+
+      let matchedDoc = null;
+      let sawPermissionDenied = false;
+
+      for (const docIdCandidate of candidateDocIds) {
+        try {
+          const settingsDocRef = doc(db, "churches", id, PAY_EVERYONE_SETTINGS_COLLECTION, docIdCandidate);
+          const settingsSnapshot = await getDoc(settingsDocRef);
+          if (!settingsSnapshot.exists()) continue;
+
+          const data = settingsSnapshot.data() || {};
+          matchedDoc = {
+            docId: settingsSnapshot.id,
+            userKey: normalizeValue(data.userKey || settingsSnapshot.id),
+            userId: normalizeValue(data.userId),
+            userEmail: normalizeValue(data.userEmail),
+            userLabel: normalizeValue(data.userLabel),
+            scheduleTimezone: normalizeValue(data.scheduleTimezone) || "America/New_York",
+            lessonsLearned: normalizeLessonsLearned(data.lessonsLearned),
+            lessonsAcknowledgements: normalizeLessonsAcknowledgements(data.lessonsAcknowledgements),
+          };
+          break;
+        } catch (settingsError) {
+          if (isPermissionDeniedError(settingsError)) {
+            sawPermissionDenied = true;
+            continue;
+          }
+          console.error("Error loading lesson acknowledgement settings:", settingsError);
+          break;
+        }
+      }
+
+      if (!active) return;
+
+      setCurrentUserSettingsDoc(matchedDoc);
+      setLessonFeaturesUnavailable(sawPermissionDenied);
+
+      if (!matchedDoc) {
+        setPendingLessonItems([]);
+        return;
+      }
+
+      const acknowledgedKeys = new Set(
+        matchedDoc.lessonsAcknowledgements
+          .map((ack) => normalizeValue(ack.lessonKey))
+          .filter(Boolean)
+      );
+
+      const nextPendingLessons = matchedDoc.lessonsLearned.filter((lesson) => {
+        const lessonKey = `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`;
+        return !acknowledgedKeys.has(lessonKey);
+      });
+
+      setPendingLessonItems(nextPendingLessons);
+    };
+
+    loadLessonSettings();
+
+    return () => {
+      active = false;
+    };
+  }, [activeTimerOwnerKey, id, resolvedUserEmail, resolvedUserId]);
+
+  useEffect(() => {
+    setLessonQuestionAnswers({});
+  }, [pendingLessonItems]);
+
+  useEffect(() => {
+    if (!id) {
+      setLessonLimitConfig(DEFAULT_LESSON_LIMIT_CONFIG);
+      return () => {};
+    }
+
+    const unsubscribe = onSnapshot(
+      doc(db, "churches", id, PAY_EVERYONE_GLOBAL_SETTINGS_COLLECTION, "lessonLimits"),
+      (snapshotDoc) => {
+        if (!snapshotDoc.exists()) {
+          setLessonLimitConfig(DEFAULT_LESSON_LIMIT_CONFIG);
+          return;
+        }
+
+        const data = snapshotDoc.data() || {};
+        setLessonLimitConfig(normalizeLessonLimitConfig(data));
+      },
+      (snapshotError) => {
+        if (!isPermissionDeniedError(snapshotError)) {
+          console.error("Error loading lesson limit config:", snapshotError);
+        }
+        setLessonLimitConfig(DEFAULT_LESSON_LIMIT_CONFIG);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [id]);
+
+  const todayPerformanceContext = useMemo(() => {
+    if (!currentUserSettingsDoc) return null;
+
+    const tz = normalizeValue(currentUserSettingsDoc.scheduleTimezone) || "America/New_York";
+    const now = Date.now();
+    const todayKey = getZonedDateKey(now, tz);
+    if (!todayKey) return null;
+
+    const expectedSchedule = currentUserSettingsDoc.expectedSchedule || {};
+    const dayFormatter = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" });
+    const weekday = dayFormatter.format(new Date(now));
+    const expectedTimeStr = expectedSchedule[weekday] || "07:00";
+    const [expH, expM] = expectedTimeStr.split(":").map(Number);
+    const expectedMinutes = (expH || 7) * 60 + (expM || 0);
+
+    const myLogs = timeLog.filter((entry) => {
+      const ts = Number(entry.startedAt) || Number(entry.endedAt) || 0;
+      if (!ts) return false;
+      if (normalizeValue(entry.logType) === "completion") return false;
+      if (getZonedDateKey(ts, tz) !== todayKey) return false;
+
+      const uid = normalizeValue(entry.userId);
+      const email = normalizeValue(entry.userEmail);
+      const byName = normalizeValue(entry.registeredBy);
+      return (
+        (resolvedUserId && uid === resolvedUserId) ||
+        (resolvedUserEmail && (email === resolvedUserEmail || byName === resolvedUserEmail)) ||
+        (resolvedUserName && byName === resolvedUserName)
+      );
+    });
+
+    let firstStartMs = 0;
+    let totalNotesCount = 0;
+    myLogs.forEach((entry) => {
+      const ts = Number(entry.startedAt) || 0;
+      if (ts && (!firstStartMs || ts < firstStartMs)) firstStartMs = ts;
+      if (Array.isArray(entry.notes)) totalNotesCount += entry.notes.length;
+    });
+
+    let lateMinutes = 0;
+    let actualTimeLabel = "No sign-in recorded today";
+    if (firstStartMs) {
+      const zonedParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }).formatToParts(new Date(firstStartMs));
+      const pLookup = Object.fromEntries(zonedParts.map((p) => [p.type, p.value]));
+      const actualH = Number(pLookup.hour) || 0;
+      const actualM = Number(pLookup.minute) || 0;
+      const meridiem = normalizeValue(pLookup.dayPeriod || pLookup.ampm || "").toUpperCase() || "AM";
+      actualTimeLabel = `${actualH}:${String(actualM).padStart(2, "0")} ${meridiem} (${tz})`;
+
+      const actualTotalMinutes = (() => {
+        const zonedHourParts = new Intl.DateTimeFormat("en-US", {
+          timeZone: tz,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).formatToParts(new Date(firstStartMs));
+        const hLookup = Object.fromEntries(zonedHourParts.map((p) => [p.type, p.value]));
+        return (Number(hLookup.hour) || 0) * 60 + (Number(hLookup.minute) || 0);
+      })();
+
+      lateMinutes = actualTotalMinutes - expectedMinutes;
+    }
+
+    const allOtherUserNotes = {};
+    timeLog.forEach((entry) => {
+      if (getZonedDateKey(Number(entry.startedAt) || 0, tz) !== todayKey) return;
+      if (normalizeValue(entry.logType) === "completion") return;
+      const key = normalizeValue(entry.userId || entry.userEmail || entry.registeredBy);
+      if (!key) return;
+      if (!allOtherUserNotes[key]) allOtherUserNotes[key] = { label: normalizeValue(entry.registeredBy || entry.userEmail || entry.userId), count: 0 };
+      if (Array.isArray(entry.notes)) allOtherUserNotes[key].count += entry.notes.length;
+    });
+
+    const topPeer = Object.values(allOtherUserNotes)
+      .filter((peer) => peer.count > totalNotesCount)
+      .sort((a, b) => b.count - a.count)[0] || null;
+
+    const expH12 = expH % 12 || 12;
+    const expSuffix = expH >= 12 ? "PM" : "AM";
+    const expectedTimeLabel = `${expH12}:${String(expM || 0).padStart(2, "0")} ${expSuffix} (${tz})`;
+
+    const dateDisplayFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    return {
+      todayKey,
+      dateLabel: dateDisplayFormatter.format(new Date(now)),
+      expectedTimeLabel,
+      actualTimeLabel,
+      lateMinutes,
+      isLate: lateMinutes > 1,
+      isAbsent: !firstStartMs,
+      totalNotesCount,
+      topPeer,
+      weekday,
+      tz,
+    };
+  }, [currentUserSettingsDoc, resolvedUserEmail, resolvedUserId, resolvedUserName, timeLog]);
+
+  const pendingLessonLimitInfo = useMemo(() => {
+    const normalizedConfig = normalizeLessonLimitConfig(lessonLimitConfig);
+    const configuredLessonName = normalizeValue(normalizedConfig.lessonName).toLowerCase();
+    const infoByLessonKey = {};
+
+    if (!currentUserSettingsDoc || pendingLessonItems.length === 0) {
+      return {
+        byLessonKey: infoByLessonKey,
+        requiresSupervisorPin: false,
+      };
+    }
+
+    const allLessons = normalizeLessonsLearned(currentUserSettingsDoc.lessonsLearned);
+    const now = Date.now();
+    const boundaryDate = new Date(now);
+    boundaryDate.setHours(0, 0, 0, 0);
+
+    if (normalizedConfig.period === "week") {
+      const mondayOffset = (boundaryDate.getDay() + 6) % 7;
+      boundaryDate.setDate(boundaryDate.getDate() - mondayOffset);
+    } else if (normalizedConfig.period === "month") {
+      boundaryDate.setDate(1);
+    } else if (normalizedConfig.period === "year") {
+      boundaryDate.setMonth(0, 1);
+    }
+
+    const startBoundaryMs = boundaryDate.getTime();
+    let requiresSupervisorPin = false;
+
+    pendingLessonItems.forEach((lesson) => {
+      const lessonKey = `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`;
+      const lessonName = normalizeValue(lesson.name).toLowerCase();
+      const appliesToLesson =
+        normalizedConfig.enabled
+        && Number(normalizedConfig.maxCount) > 0
+        && Boolean(configuredLessonName)
+        && lessonName === configuredLessonName;
+
+      if (!appliesToLesson) {
+        infoByLessonKey[lessonKey] = {
+          applies: false,
+          remainingCount: null,
+          countInPeriod: 0,
+          maxCount: Number(normalizedConfig.maxCount) || 0,
+          period: normalizedConfig.period,
+        };
+        return;
+      }
+
+      const countInPeriod = allLessons.filter((savedLesson) => {
+        const createdAtMs = Number(savedLesson?.createdAt) || 0;
+        const savedLessonName = normalizeValue(savedLesson?.name).toLowerCase();
+        return createdAtMs >= startBoundaryMs && createdAtMs <= now && savedLessonName === configuredLessonName;
+      }).length;
+
+      const remainingCount = Math.max(0, Number(normalizedConfig.maxCount) - countInPeriod);
+      const requiresPinForLesson = countInPeriod >= Number(normalizedConfig.maxCount);
+      if (requiresPinForLesson) requiresSupervisorPin = true;
+
+      infoByLessonKey[lessonKey] = {
+        applies: true,
+        remainingCount,
+        countInPeriod,
+        maxCount: Number(normalizedConfig.maxCount),
+        period: normalizedConfig.period,
+        requiresPinForLesson,
+      };
+    });
+
+    return {
+      byLessonKey: infoByLessonKey,
+      requiresSupervisorPin,
+    };
+  }, [currentUserSettingsDoc, lessonLimitConfig, pendingLessonItems]);
+
+  const lessonQuestionValidation = useMemo(() => {
+    let totalRequired = 0;
+    let correctCount = 0;
+
+    pendingLessonItems.forEach((lesson) => {
+      const lessonKey = `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`;
+      const questions = lesson.questions || [];
+
+      questions.forEach((entry, questionIndex) => {
+        totalRequired += 1;
+        const answerKey = `${lessonKey}::q${questionIndex}`;
+        const typedAnswer = normalizeValue(lessonQuestionAnswers[answerKey]).toLowerCase();
+        const expectedAnswer = normalizeValue(entry.answer).toLowerCase();
+        if (typedAnswer && typedAnswer === expectedAnswer) correctCount += 1;
+      });
+    });
+
+    return {
+      totalRequired,
+      correctCount,
+      allCorrect: totalRequired === 0 ? true : correctCount === totalRequired,
+    };
+  }, [lessonQuestionAnswers, pendingLessonItems]);
+
+  const handleAcknowledgePendingLessons = useCallback(async () => {
+    if (!id || !currentUserSettingsDoc || pendingLessonItems.length === 0) return;
+
+    if (!lessonAcknowledgeChecked) {
+      setLessonAckError("Please acknowledge the lessons before signing.");
+      return;
+    }
+
+    if (lessonQuestionValidation.totalRequired > 0 && !lessonQuestionValidation.allCorrect) {
+      setLessonAckError(`Please answer all lesson questions correctly before continuing (${lessonQuestionValidation.correctCount}/${lessonQuestionValidation.totalRequired} correct).`);
+      return;
+    }
+
+    if (pendingLessonLimitInfo.requiresSupervisorPin) {
+      const normalizedConfig = normalizeLessonLimitConfig(lessonLimitConfig);
+      if (!normalizedConfig.supervisorPin) {
+        setLessonAckError("Supervisor PIN is required, but no PIN is configured. Ask a supervisor to set it in PayEveryone -> Lessons Submitted.");
+        return;
+      }
+
+      const enteredPin = normalizeValue(lessonSupervisorPinInput);
+      if (!enteredPin) {
+        setLessonAckError("Supervisor PIN is required because lesson limit was exceeded.");
+        return;
+      }
+
+      if (enteredPin !== normalizedConfig.supervisorPin) {
+        setLessonAckError("Invalid supervisor PIN.");
+        return;
+      }
+    }
+
+    const signatureDataUrl = getSignatureDataUrl();
+    if (!signatureDrawingRef.current.hasDrawn || !signatureDataUrl) {
+      setLessonAckError("Please draw your signature to continue.");
+      return;
+    }
+    const normalizedSignature = signatureDataUrl;
+
+    const now = Date.now();
+    const dateKey = getZonedDateKey(now, currentUserSettingsDoc.scheduleTimezone || "America/New_York");
+    const existingAcknowledgements = normalizeLessonsAcknowledgements(currentUserSettingsDoc.lessonsAcknowledgements);
+    const newAcknowledgements = pendingLessonItems.map((lesson) => ({
+      lessonKey: `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`,
+      lessonText: normalizeValue(lesson.text),
+      lessonCreatedAt: Number(lesson.createdAt) || 0,
+      acknowledgedAt: now,
+      acknowledgedByUserId: normalizeValue(resolvedUserId),
+      acknowledgedByEmail: normalizeValue(resolvedUserEmail),
+      acknowledgedByName: normalizeValue(resolvedUserName),
+      signature: normalizedSignature,
+      dateKey,
+      scheduleTimezone: normalizeValue(currentUserSettingsDoc.scheduleTimezone) || "America/New_York",
+    }));
+
+    setLessonAckSaving(true);
+    setLessonAckError("");
+
+    try {
+      await setDoc(
+        doc(db, "churches", id, PAY_EVERYONE_SETTINGS_COLLECTION, currentUserSettingsDoc.docId || currentUserSettingsDoc.userKey),
+        {
+          userKey: normalizeValue(currentUserSettingsDoc.userKey || currentUserSettingsDoc.docId),
+          userId: normalizeValue(currentUserSettingsDoc.userId || resolvedUserId),
+          userEmail: normalizeValue(currentUserSettingsDoc.userEmail || resolvedUserEmail),
+          userLabel: normalizeValue(currentUserSettingsDoc.userLabel || resolvedUserName),
+          lessonsAcknowledgements: [...newAcknowledgements, ...existingAcknowledgements],
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+
+      setLessonAcknowledgeChecked(false);
+      setLessonSignature("");
+      setLessonAckError("");
+      setLessonSupervisorPinInput("");
+      clearSignatureCanvas();
+    } catch (ackError) {
+      console.error("Error saving lesson acknowledgement receipt:", ackError);
+      setLessonAckError("Could not save lesson acknowledgement. Please try again.");
+    } finally {
+      setLessonAckSaving(false);
+    }
+  }, [
+    currentUserSettingsDoc,
+    id,
+    lessonAcknowledgeChecked,
+    lessonQuestionValidation,
+    lessonLimitConfig,
+    lessonSignature,
+    lessonSupervisorPinInput,
+    pendingLessonLimitInfo,
+    pendingLessonItems,
+    resolvedUserEmail,
+    resolvedUserId,
+    resolvedUserName,
+  ]);
 
   useEffect(() => {
     if (!id) {
@@ -664,14 +1397,7 @@ const TimeRotate = () => {
               userId: normalizeValue(data.userId),
               userEmail: normalizeValue(data.userEmail),
               ownerKey: normalizeValue(data.ownerKey),
-              notes: Array.isArray(data.notes)
-                ? data.notes
-                    .map((note) => ({
-                      text: normalizeValue(note?.text),
-                      timestamp: Number(note?.timestamp) || 0,
-                    }))
-                    .filter((note) => note.text)
-                : [],
+              notes: normalizeNotesArray(data.notes),
             };
           })
           .filter((entry) => Number.isFinite(entry.startedAt) && entry.startedAt > 0)
@@ -718,14 +1444,7 @@ const TimeRotate = () => {
             durationMs: Number(data.durationMs) || 0,
             registeredBy: normalizeValue(data.registeredBy),
             userId: normalizeValue(data.userId),
-            notes: Array.isArray(data.notes)
-              ? data.notes
-                  .map((note) => ({
-                    text: normalizeValue(note?.text),
-                    timestamp: Number(note?.timestamp) || 0,
-                  }))
-                  .filter((note) => note.text)
-              : [],
+            notes: normalizeNotesArray(data.notes),
           };
         });
 
@@ -768,14 +1487,10 @@ const TimeRotate = () => {
         statusAgile: normalizeValue(parsedValue.statusAgile),
         technicalDirection: normalizeValue(parsedValue.technicalDirection),
         taskTags: parseTagsFromValue(parsedValue.taskTags ?? parsedValue.taskDescription),
-        notes: Array.isArray(parsedValue.notes)
-          ? parsedValue.notes
-              .map((note) => ({
-                text: normalizeValue(note?.text),
-                timestamp: Number(note?.timestamp) || Date.now(),
-              }))
-              .filter((note) => note.text)
-          : [],
+        notes: normalizeNotesArray(parsedValue.notes).map((note) => ({
+          ...note,
+          timestamp: Number(note.timestamp) || Date.now(),
+        })),
       });
       setCurrentTick(Date.now());
     } catch (restoreError) {
@@ -855,14 +1570,10 @@ const TimeRotate = () => {
       statusAgile: normalizeValue(matchedTimer.statusAgile),
       technicalDirection: normalizeValue(matchedTimer.technicalDirection),
       taskTags: parseTagsFromValue(matchedTimer.taskTags),
-      notes: Array.isArray(matchedTimer.notes)
-        ? matchedTimer.notes
-            .map((note) => ({
-              text: normalizeValue(note?.text),
-              timestamp: Number(note?.timestamp) || Date.now(),
-            }))
-            .filter((note) => note.text)
-        : [],
+      notes: normalizeNotesArray(matchedTimer.notes).map((note) => ({
+        ...note,
+        timestamp: Number(note.timestamp) || Date.now(),
+      })),
       updatedAt: Number(matchedTimer.updatedAt) || Date.now(),
       source: "remote",
     };
@@ -1502,31 +2213,49 @@ const TimeRotate = () => {
     setActiveNoteInput("");
   };
 
-  const handleAddActiveNote = () => {
+  const handleAddActiveNote = async () => {
     const trimmedNote = normalizeValue(activeNoteInput);
-    if (!trimmedNote || !activeTimer) {
+    if ((!trimmedNote && !activeNoteFile) || !activeTimer || savingActiveNote) {
       return;
     }
 
-    const noteTimestamp = Date.now();
+    try {
+      setSavingActiveNote(true);
+      setActiveNoteError("");
 
-    setActiveTimer((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        notes: [
-          ...(Array.isArray(current.notes) ? current.notes : []),
-          {
-            text: trimmedNote,
-            timestamp: noteTimestamp,
-          },
-        ],
-        updatedAt: noteTimestamp,
-        source: "local",
-      };
-    });
+      const noteTimestamp = Date.now();
+      const attachment = activeNoteFile
+        ? await uploadNoteAttachment({
+            file: activeNoteFile,
+            targetDocId: normalizeKey(activeTimerOwnerKey) || "active",
+          })
+        : null;
 
-    setActiveNoteInput("");
+      setActiveTimer((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          notes: [
+            ...(Array.isArray(current.notes) ? current.notes : []),
+            {
+              text: trimmedNote,
+              timestamp: noteTimestamp,
+              attachment,
+            },
+          ],
+          updatedAt: noteTimestamp,
+          source: "local",
+        };
+      });
+
+      setActiveNoteInput("");
+      setActiveNoteFile(null);
+    } catch (saveError) {
+      console.error("Error adding active note:", saveError);
+      setActiveNoteError(normalizeValue(saveError?.message) || "Could not add note right now. Try again.");
+    } finally {
+      setSavingActiveNote(false);
+    }
   };
 
   const canEditInProgressTimer = (timerEntry) => {
@@ -1564,11 +2293,24 @@ const TimeRotate = () => {
     }));
   };
 
+  const handleInProgressNoteFileChange = (docId, file) => {
+    setInProgressNoteFilesByDocId((current) => ({
+      ...current,
+      [docId]: file || null,
+    }));
+
+    setInProgressNoteErrorByDocId((current) => ({
+      ...current,
+      [docId]: "",
+    }));
+  };
+
   const handleAddInProgressNote = async (timerEntry) => {
     const docId = normalizeValue(timerEntry?.docId);
     const trimmedNote = normalizeValue(inProgressNoteInputs[docId]);
+    const selectedFile = inProgressNoteFilesByDocId[docId] || null;
 
-    if (!id || !docId || !trimmedNote) {
+    if (!id || !docId || (!trimmedNote && !selectedFile)) {
       return;
     }
 
@@ -1580,21 +2322,29 @@ const TimeRotate = () => {
       return;
     }
 
-    const noteTimestamp = Date.now();
-    const nextNotes = [
-      ...(Array.isArray(timerEntry?.notes) ? timerEntry.notes : []),
-      {
-        text: trimmedNote,
-        timestamp: noteTimestamp,
-      },
-    ];
-
     setSavingInProgressNoteByDocId((current) => ({
       ...current,
       [docId]: true,
     }));
 
     try {
+      const noteTimestamp = Date.now();
+      const attachment = selectedFile
+        ? await uploadNoteAttachment({
+            file: selectedFile,
+            targetDocId: docId,
+          })
+        : null;
+
+      const nextNotes = [
+        ...(Array.isArray(timerEntry?.notes) ? timerEntry.notes : []),
+        {
+          text: trimmedNote,
+          timestamp: noteTimestamp,
+          attachment,
+        },
+      ];
+
       await updateDoc(doc(db, "churches", id, ACTIVE_TIMER_COLLECTION, docId), {
         notes: nextNotes,
         updatedAt: noteTimestamp,
@@ -1603,6 +2353,11 @@ const TimeRotate = () => {
       setInProgressNoteInputs((current) => ({
         ...current,
         [docId]: "",
+      }));
+
+      setInProgressNoteFilesByDocId((current) => ({
+        ...current,
+        [docId]: null,
       }));
 
       setInProgressNoteErrorByDocId((current) => ({
@@ -1624,7 +2379,7 @@ const TimeRotate = () => {
   };
 
   const handleStop = async () => {
-    if (!activeTimer) {
+    if (!activeTimer || isStoppingTimer) {
       return;
     }
 
@@ -1650,6 +2405,7 @@ const TimeRotate = () => {
     };
 
     try {
+      setIsStoppingTimer(true);
       setLogActionError("");
       await addDoc(collection(db, "churches", id, "timeRotateLogs"), stopLogEntry);
 
@@ -1660,6 +2416,8 @@ const TimeRotate = () => {
     } catch (saveError) {
       console.error("Error saving time log:", saveError);
       setLogActionError("Could not save log entry to Firebase. Timer remains active.");
+    } finally {
+      setIsStoppingTimer(false);
     }
   };
 
@@ -1801,9 +2559,7 @@ const TimeRotate = () => {
   };
 
   const handleSaveLogEdit = async (logId) => {
-    const existingLog = timeLog.find((entry) => entry.id === logId) || null;
     const trimmedValue = editingRegisteredBy.trim();
-    const nextTaskTags = parseTagsFromValue(editingTaskTags);
     const parsedStart = toTimestampFromTwelveHourParts({
       date: editingStartDate,
       hour: editingStartHour,
@@ -1832,56 +2588,12 @@ const TimeRotate = () => {
       setLogActionError("");
       await updateDoc(doc(db, "churches", id, "timeRotateLogs", logId), {
         registeredBy: trimmedValue || "Unknown user",
-        taskTags: nextTaskTags,
-        taskDescription: nextTaskTags.join(", "),
+        taskTags: parseTagsFromValue(editingTaskTags),
+        taskDescription: parseTagsFromValue(editingTaskTags).join(", "),
         startedAt: parsedStart,
         endedAt: parsedEnd,
         durationMs: parsedEnd - parsedStart,
       });
-
-      if (existingLog) {
-        const changedFields = [];
-        const previousRegisteredBy = normalizeValue(existingLog.registeredBy) || "Unknown user";
-        const nextRegisteredBy = trimmedValue || "Unknown user";
-        const previousStart = Number(existingLog.startedAt) || 0;
-        const previousEnd = Number(existingLog.endedAt) || 0;
-        const previousDuration = Number(existingLog.durationMs) || 0;
-        const nextDuration = Math.max(0, parsedEnd - parsedStart);
-        const previousTaskTags = parseTagsFromValue(existingLog.taskTags);
-
-        if (previousRegisteredBy !== nextRegisteredBy) changedFields.push("registeredBy");
-        if (previousStart !== parsedStart) changedFields.push("startedAt");
-        if (previousEnd !== parsedEnd) changedFields.push("endedAt");
-        if (previousDuration !== nextDuration) changedFields.push("durationMs");
-        if (JSON.stringify(previousTaskTags) !== JSON.stringify(nextTaskTags)) changedFields.push("taskTags");
-
-        if (changedFields.length > 0) {
-          await addDoc(collection(db, "churches", id, "timeRotateEditLogs"), {
-            issueId: normalizeValue(existingLog.issueId),
-            projectName: normalizeValue(existingLog.projectName),
-            editedAt: Date.now(),
-            editedBy: normalizeValue(user?.name || user?.displayName || user?.email || "Unknown user"),
-            fromRegisteredBy: previousRegisteredBy,
-            toRegisteredBy: nextRegisteredBy,
-            fromStartedAt: previousStart,
-            toStartedAt: parsedStart,
-            fromEndedAt: previousEnd,
-            toEndedAt: parsedEnd,
-            fromDurationMs: previousDuration,
-            toDurationMs: nextDuration,
-            fromTaskTags: previousTaskTags,
-            toTaskTags: nextTaskTags,
-            fromNotes: Array.isArray(existingLog.notes)
-              ? existingLog.notes.map((note) => normalizeValue(note?.text ?? note)).filter(Boolean)
-              : [],
-            toNotes: Array.isArray(existingLog.notes)
-              ? existingLog.notes.map((note) => normalizeValue(note?.text ?? note)).filter(Boolean)
-              : [],
-            changedFields,
-            source: "time-rotate-log-edit",
-          });
-        }
-      }
     } catch (updateError) {
       console.error("Error updating time log:", updateError);
       setEditingError("Could not save changes to Firebase.");
@@ -2116,6 +2828,327 @@ const TimeRotate = () => {
 
       <TimeRotateTopLogo />
 
+      {pendingLessonItems.length > 0 ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(2, 6, 23, 0.72)",
+            zIndex: 3000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "18px",
+          }}
+        >
+          <div
+            style={{
+              width: "min(860px, 100%)",
+              maxHeight: "88vh",
+              overflowY: "auto",
+              backgroundColor: "#FFFFFF",
+              borderRadius: "16px",
+              border: "1px solid #E2E8F0",
+              boxShadow: "0 24px 60px rgba(2, 6, 23, 0.28)",
+              padding: "18px",
+            }}
+          >
+            <div style={{ color: "#7C2D12", fontWeight: 800, fontSize: "1.05rem", marginBottom: "6px" }}>
+              Action Required: Lessons Learned Acknowledgement
+            </div>
+            <div style={{ color: "#334155", marginBottom: "10px" }}>
+              You must read, acknowledge, and sign these lessons before continuing in TimeRotate.
+            </div>
+
+            {todayPerformanceContext ? (
+              <div style={{ display: "grid", gap: "10px", marginBottom: "16px" }}>
+                {/* Date + timezone header */}
+                <div style={{ backgroundColor: "#F8FAFC", borderRadius: "10px", padding: "10px 14px", border: "1px solid #E2E8F0" }}>
+                  <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#64748B" }}>Today</div>
+                  <div style={{ fontWeight: 800, color: "#0F172A", fontSize: "1rem" }}>{todayPerformanceContext.dateLabel}</div>
+                </div>
+
+                {/* Punctuality block */}
+                {todayPerformanceContext.isAbsent ? (
+                  <div style={{ backgroundColor: "#FEF2F2", borderRadius: "12px", padding: "16px", border: "2px solid #FCA5A5" }}>
+                    <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#991B1B" }}>⚠ No sign-in recorded today</div>
+                    <div style={{ marginTop: "6px", color: "#7F1D1D", fontWeight: 700 }}>
+                      You were expected at <strong>{todayPerformanceContext.expectedTimeLabel}</strong> but no time entry was found.
+                    </div>
+                  </div>
+                ) : todayPerformanceContext.isLate ? (
+                  <div style={{ backgroundColor: "#FEF2F2", borderRadius: "12px", padding: "16px", border: "2px solid #F87171" }}>
+                    <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748B", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Punctuality</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#9CA3AF" }}>Expected to start</div>
+                        <div style={{ fontWeight: 800, color: "#0F172A", fontSize: "1.05rem" }}>{todayPerformanceContext.expectedTimeLabel}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#9CA3AF" }}>You started at</div>
+                        <div style={{ fontWeight: 800, color: "#991B1B", fontSize: "1.05rem" }}>{todayPerformanceContext.actualTimeLabel}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "2rem", fontWeight: 900, color: "#991B1B", lineHeight: 1.1 }}>
+                      ⚠ You were {Math.round(todayPerformanceContext.lateMinutes)} min late
+                    </div>
+                    <div style={{ marginTop: "6px", color: "#7F1D1D", fontWeight: 700, fontSize: "0.9rem" }}>
+                      Next time, be ready to work at your expected start time — not just logging in at that time.
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Notes block — only shown when below minimum */}
+                {todayPerformanceContext.totalNotesCount < 8 ? (
+                  <div style={{ backgroundColor: "#FEF2F2", borderRadius: "12px", padding: "16px", border: "2px solid #FCA5A5" }}>
+                    <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748B", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Notes</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#9CA3AF" }}>Minimum required</div>
+                        <div style={{ fontWeight: 800, color: "#0F172A", fontSize: "1.05rem" }}>8 notes</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#9CA3AF" }}>You submitted</div>
+                        <div style={{ fontWeight: 900, color: "#991B1B", fontSize: "2rem", lineHeight: 1 }}>{todayPerformanceContext.totalNotesCount}</div>
+                      </div>
+                    </div>
+                    <div style={{ color: "#7F1D1D", fontWeight: 700, fontSize: "0.9rem" }}>
+                      You need {8 - todayPerformanceContext.totalNotesCount} more note{8 - todayPerformanceContext.totalNotesCount === 1 ? "" : "s"} to meet the minimum.
+                      Add notes throughout your shift — not only at the end.
+                    </div>
+                    {todayPerformanceContext.topPeer ? (
+                      <div style={{ marginTop: "10px", backgroundColor: "#FFF7ED", borderRadius: "8px", padding: "8px 10px", border: "1px solid #FED7AA" }}>
+                        <span style={{ fontWeight: 700, color: "#92400E" }}>
+                          Example: {normalizeValue(todayPerformanceContext.topPeer.label) || "A teammate"} submitted{" "}
+                          <strong>{todayPerformanceContext.topPeer.count} notes</strong> today. Aim for that.
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div style={{ display: "grid", gap: "10px" }}>
+              {pendingLessonItems.map((lesson, index) => (
+                <div
+                  key={`pending-lesson-${index}-${normalizeValue(lesson.text)}`}
+                  style={{
+                    backgroundColor: "#FEF2F2",
+                    borderRadius: "12px",
+                    padding: "16px",
+                    border: "2px solid #FCA5A5",
+                  }}
+                >
+                  {(() => {
+                    const lessonKey = `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`;
+                    const limitInfo = pendingLessonLimitInfo.byLessonKey?.[lessonKey];
+                    if (!limitInfo?.applies) return null;
+
+                    if (limitInfo.requiresPinForLesson) {
+                      return (
+                        <div style={{ marginBottom: "8px", backgroundColor: "#FEE2E2", border: "1px solid #FCA5A5", borderRadius: "8px", padding: "8px 10px", color: "#991B1B", fontWeight: 800, fontSize: "0.84rem" }}>
+                          You reached the limit for this lesson this {limitInfo.period}. Supervisor PIN is required to continue.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div style={{ marginBottom: "8px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "8px", padding: "8px 10px", color: "#065F46", fontWeight: 800, fontSize: "0.84rem" }}>
+                        You can still receive this lesson {limitInfo.remainingCount} more time{limitInfo.remainingCount === 1 ? "" : "s"} this {limitInfo.period}.
+                      </div>
+                    );
+                  })()}
+
+                  {(() => {
+                    const lessonKey = `${Number(lesson.createdAt) || 0}::${normalizeValue(lesson.text)}`;
+                    const questions = lesson.questions || [];
+                    if (questions.length === 0) return null;
+
+                    return (
+                      <div style={{ marginBottom: "10px", border: "1px solid #E2E8F0", borderRadius: "10px", padding: "10px", backgroundColor: "#FFFFFF" }}>
+                        <div style={{ color: "#334155", fontWeight: 800, fontSize: "0.8rem", marginBottom: "6px" }}>
+                          Knowledge Check (Answer all correctly)
+                        </div>
+                        <div style={{ display: "grid", gap: "8px" }}>
+                          {questions.map((entry, questionIndex) => {
+                            const answerKey = `${lessonKey}::q${questionIndex}`;
+                            return (
+                              <div key={`lesson-question-${lessonKey}-${questionIndex}`}>
+                                <div style={{ fontSize: "0.78rem", color: "#334155", fontWeight: 700, marginBottom: "4px" }}>
+                                  {questionIndex + 1}. {entry.question}
+                                </div>
+                                <select
+                                  value={lessonQuestionAnswers[answerKey] || ""}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    setLessonQuestionAnswers((current) => ({
+                                      ...current,
+                                      [answerKey]: nextValue,
+                                    }));
+                                    setLessonAckError("");
+                                  }}
+                                  style={{ width: "100%", padding: "8px 10px", border: "1px solid #CBD5E1", borderRadius: "8px", fontFamily: "inherit" }}
+                                >
+                                  <option value="">-- select answer --</option>
+                                  {(entry.options || ["Yes", "No"]).map((opt, optIndex) => (
+                                    <option key={`answer-opt-${lessonKey}-${questionIndex}-${optIndex}`} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Lesson Name if available */}
+                  {normalizeValue(lesson.name) ? (
+                    <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748B", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      {normalizeValue(lesson.name)}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748B", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Lesson {index + 1}
+                    </div>
+                  )}
+
+                  {/* Minimum Required if available */}
+                  {normalizeValue(lesson.minimumRequired) ? (
+                    <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#9CA3AF", marginBottom: "8px" }}>
+                      Minimum required: <strong>{normalizeValue(lesson.minimumRequired)}</strong>
+                    </div>
+                  ) : null}
+
+                  {/* Lesson Text - large bold */}
+                  <div style={{ fontSize: "1rem", fontWeight: 800, color: "#991B1B", whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: "6px" }}>
+                    {normalizeValue(lesson.text)}
+                  </div>
+
+                  {/* Creator info if available */}
+                  {normalizeValue(lesson.createdBy) ? (
+                    <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#7F1D1D" }}>
+                      Added by {normalizeValue(lesson.createdBy)}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            {lessonQuestionValidation.totalRequired > 0 ? (
+              <div style={{ marginTop: "10px", border: "1px solid #E2E8F0", borderRadius: "8px", backgroundColor: "#F8FAFC", padding: "8px 10px", color: "#334155", fontWeight: 700, fontSize: "0.82rem" }}>
+                Question score: {lessonQuestionValidation.correctCount}/{lessonQuestionValidation.totalRequired} correct
+              </div>
+            ) : null}
+
+            {pendingLessonLimitInfo.requiresSupervisorPin ? (
+              <div style={{ marginTop: "12px", backgroundColor: "#FEF2F2", borderRadius: "10px", border: "2px solid #FCA5A5", padding: "10px 12px" }}>
+                <div style={{ color: "#991B1B", fontWeight: 800, marginBottom: "6px" }}>
+                  Supervisor PIN Required
+                </div>
+                <div style={{ color: "#7F1D1D", fontSize: "0.82rem", marginBottom: "8px" }}>
+                  Lesson limit exceeded. Enter supervisor PIN to acknowledge and continue.
+                </div>
+                <input
+                  type="password"
+                  value={lessonSupervisorPinInput}
+                  onChange={(event) => {
+                    setLessonSupervisorPinInput(event.target.value);
+                    setLessonAckError("");
+                  }}
+                  placeholder="Supervisor PIN"
+                  style={{ width: "100%", padding: "9px 10px", border: "1px solid #F87171", borderRadius: "8px", fontFamily: "inherit" }}
+                />
+              </div>
+            ) : null}
+
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginTop: "12px", color: "#0F172A", fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={lessonAcknowledgeChecked}
+                onChange={(event) => {
+                  setLessonAcknowledgeChecked(event.target.checked);
+                  setLessonAckError("");
+                }}
+                style={{ marginTop: "2px" }}
+              />
+              I acknowledge I read and understood these lessons and agree to apply them.
+            </label>
+
+            <div style={{ marginTop: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <label style={{ color: "#334155", fontWeight: 700 }}>Draw your signature</label>
+                <button
+                  type="button"
+                  onClick={clearSignatureCanvas}
+                  style={{ border: "1px solid #CBD5E1", backgroundColor: "#F8FAFC", color: "#475569", borderRadius: "8px", padding: "4px 10px", fontWeight: 700, cursor: "pointer", fontSize: "0.8rem" }}
+                >
+                  Clear
+                </button>
+              </div>
+              <canvas
+                ref={signatureCanvasRef}
+                width={800}
+                height={160}
+                onMouseDown={handleSignaturePointerDown}
+                onMouseMove={handleSignaturePointerMove}
+                onMouseUp={handleSignaturePointerUp}
+                onMouseLeave={handleSignaturePointerUp}
+                onTouchStart={handleSignaturePointerDown}
+                onTouchMove={handleSignaturePointerMove}
+                onTouchEnd={handleSignaturePointerUp}
+                style={{
+                  width: "100%",
+                  height: "120px",
+                  border: lessonSignature ? "2px solid #1D4ED8" : "2px dashed #CBD5E1",
+                  borderRadius: "10px",
+                  backgroundColor: "#F8FAFC",
+                  cursor: "crosshair",
+                  touchAction: "none",
+                  display: "block",
+                }}
+              />
+              {!lessonSignature ? (
+                <div style={{ textAlign: "center", color: "#94A3B8", fontSize: "0.8rem", marginTop: "4px", pointerEvents: "none" }}>
+                  Sign above with your mouse or finger
+                </div>
+              ) : null}
+            </div>
+
+            {lessonAckError ? (
+              <div style={{ marginTop: "10px", border: "1px solid #FCA5A5", backgroundColor: "#FEF2F2", color: "#B91C1C", borderRadius: "10px", padding: "10px 12px", fontWeight: 700 }}>
+                {lessonAckError}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={handleAcknowledgePendingLessons}
+                disabled={lessonAckSaving}
+                style={{
+                  border: "none",
+                  backgroundColor: "#1D4ED8",
+                  color: "#FFFFFF",
+                  borderRadius: "10px",
+                  padding: "10px 14px",
+                  fontWeight: 800,
+                  cursor: lessonAckSaving ? "not-allowed" : "pointer",
+                  opacity: lessonAckSaving ? 0.75 : 1,
+                }}
+              >
+                {lessonAckSaving ? "Saving Receipt..." : "Acknowledge and Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div
         style={{
           backgroundColor: "white",
@@ -2132,6 +3165,11 @@ const TimeRotate = () => {
             <p style={{ margin: 0, color: "#475569" }}>
               Live list of all E2 Agile Board cards where Data Stage is set to Production.
             </p>
+            {lessonFeaturesUnavailable ? (
+              <p style={{ margin: "6px 0 0", color: "#B45309", fontWeight: 600, fontSize: "0.84rem" }}>
+                Lessons acknowledgement settings are unavailable for your account right now. TimeRotate remains usable.
+              </p>
+            ) : null}
           </div>
           <Link
             to={`${routePrefix}/${id}/e2-agile-board`}
@@ -2582,17 +3620,19 @@ const TimeRotate = () => {
                   <button
                     type="button"
                     onClick={handleStop}
+                    disabled={isStoppingTimer}
                     style={{
                       backgroundColor: "#DC2626",
                       color: "#FFFFFF",
                       border: "none",
                       borderRadius: "8px",
                       padding: "8px 12px",
-                      cursor: "pointer",
+                      cursor: isStoppingTimer ? "not-allowed" : "pointer",
                       fontWeight: 700,
+                      opacity: isStoppingTimer ? 0.75 : 1,
                     }}
                   >
-                    Stop Timer
+                    {isStoppingTimer ? "Stopping..." : "Stop Timer"}
                   </button>
                 </div>
               </div>
@@ -2614,14 +3654,17 @@ const TimeRotate = () => {
                   <input
                     type="text"
                     value={activeNoteInput}
-                    onChange={(event) => setActiveNoteInput(event.target.value)}
+                    onChange={(event) => {
+                      setActiveNoteInput(event.target.value);
+                      setActiveNoteError("");
+                    }}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") {
+                      if (event.key === "Enter" && !savingActiveNote) {
                         event.preventDefault();
                         handleAddActiveNote();
                       }
                     }}
-                    placeholder="Write a note and press Add"
+                    placeholder="Write a note (optional if attaching a file)"
                     style={{
                       flex: "1 1 320px",
                       padding: "8px 10px",
@@ -2629,27 +3672,81 @@ const TimeRotate = () => {
                       borderRadius: "8px",
                     }}
                   />
+                  <input
+                    type="file"
+                    onChange={(event) => {
+                      setActiveNoteFile(event.target.files?.[0] || null);
+                      setActiveNoteError("");
+                    }}
+                    style={{
+                      flex: "0 1 260px",
+                      padding: "8px 10px",
+                      border: "1px solid #93C5FD",
+                      borderRadius: "8px",
+                      backgroundColor: "#FFFFFF",
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={handleAddActiveNote}
+                    disabled={savingActiveNote}
                     style={{
                       backgroundColor: "#2563EB",
                       color: "#FFFFFF",
                       border: "none",
                       borderRadius: "8px",
                       padding: "8px 12px",
-                      cursor: "pointer",
+                      cursor: savingActiveNote ? "not-allowed" : "pointer",
                       fontWeight: 600,
+                      opacity: savingActiveNote ? 0.75 : 1,
                     }}
                   >
-                    Add Note
+                    {savingActiveNote ? "Saving..." : "Add Note"}
                   </button>
                 </div>
+                {activeNoteFile ? (
+                  <div style={{ marginTop: "6px", fontSize: "0.82rem", color: "#1E3A8A" }}>
+                    Attachment ready: {activeNoteFile.name}{formatFileSize(activeNoteFile.size) ? ` (${formatFileSize(activeNoteFile.size)})` : ""}
+                  </div>
+                ) : null}
+                {activeNoteError ? (
+                  <div style={{ marginTop: "6px", fontSize: "0.82rem", color: "#B91C1C", fontWeight: 600 }}>
+                    {activeNoteError}
+                  </div>
+                ) : null}
                 {Array.isArray(activeTimer.notes) && activeTimer.notes.length > 0 && (
                   <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
                     {activeTimer.notes.map((note, noteIndex) => (
-                      <div key={`${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.9rem", color: "#1E3A8A" }}>
-                        [{formatTimestamp(note.timestamp)}] {note.text}
+                      <div key={`${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.9rem", color: "#1E3A8A", display: "grid", gap: "2px" }}>
+                        <div>[{formatTimestamp(note.timestamp)}] {note.text || "File attachment"}</div>
+                        {note.attachment?.url ? (
+                          <div style={{ display: "grid", gap: "4px" }}>
+                            {isImageAttachment(note.attachment) ? (
+                              <a
+                                href={note.attachment.url}
+                                onClick={(event) => handleOpenImagePreview(note.attachment, event)}
+                                style={{ display: "inline-block", width: "fit-content" }}
+                              >
+                                <img
+                                  src={note.attachment.url}
+                                  alt={note.attachment.name || "Attachment preview"}
+                                  style={{ width: "86px", height: "86px", objectFit: "cover", borderRadius: "8px", border: "1px solid #93C5FD", backgroundColor: "#FFFFFF" }}
+                                />
+                              </a>
+                            ) : null}
+                            <a
+                              href={note.attachment.url}
+                              onClick={isImageAttachment(note.attachment)
+                                ? (event) => handleOpenImagePreview(note.attachment, event)
+                                : undefined}
+                              target={isImageAttachment(note.attachment) ? undefined : "_blank"}
+                              rel={isImageAttachment(note.attachment) ? undefined : "noopener noreferrer"}
+                              style={{ color: "#1D4ED8", textDecoration: "underline", fontSize: "0.82rem", fontWeight: 600 }}
+                            >
+                              Open file: {note.attachment.name || "Attachment"}
+                            </a>
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -2874,17 +3971,19 @@ const TimeRotate = () => {
                         <button
                           type="button"
                           onClick={handleStop}
+                          disabled={isStoppingTimer}
                           style={{
                             backgroundColor: "#DC2626",
                             color: "#FFFFFF",
                             border: "none",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            cursor: "pointer",
+                            cursor: isStoppingTimer ? "not-allowed" : "pointer",
                             fontWeight: 600,
+                            opacity: isStoppingTimer ? 0.75 : 1,
                           }}
                         >
-                          Stop
+                          {isStoppingTimer ? "Stopping..." : "Stop"}
                         </button>
                       ) : (
                         <button
@@ -3338,8 +4437,36 @@ const TimeRotate = () => {
                         {Array.isArray(entry.notes) && entry.notes.length > 0 ? (
                           <div style={{ display: "grid", gap: "6px", minWidth: "240px" }}>
                             {entry.notes.map((note, noteIndex) => (
-                              <div key={`${entry.id}-note-${noteIndex}`} style={{ fontSize: "0.85rem", color: "#334155" }}>
-                                [{formatTimestamp(note.timestamp)}] {note.text}
+                              <div key={`${entry.id}-note-${noteIndex}`} style={{ fontSize: "0.85rem", color: "#334155", display: "grid", gap: "2px" }}>
+                                <div>[{formatTimestamp(note.timestamp)}] {note.text || "File attachment"}</div>
+                                {note.attachment?.url ? (
+                                  <div style={{ display: "grid", gap: "4px" }}>
+                                    {isImageAttachment(note.attachment) ? (
+                                      <a
+                                        href={note.attachment.url}
+                                        onClick={(event) => handleOpenImagePreview(note.attachment, event)}
+                                        style={{ display: "inline-block", width: "fit-content" }}
+                                      >
+                                        <img
+                                          src={note.attachment.url}
+                                          alt={note.attachment.name || "Attachment preview"}
+                                          style={{ width: "78px", height: "78px", objectFit: "cover", borderRadius: "8px", border: "1px solid #CBD5E1", backgroundColor: "#FFFFFF" }}
+                                        />
+                                      </a>
+                                    ) : null}
+                                    <a
+                                      href={note.attachment.url}
+                                      onClick={isImageAttachment(note.attachment)
+                                        ? (event) => handleOpenImagePreview(note.attachment, event)
+                                        : undefined}
+                                      target={isImageAttachment(note.attachment) ? undefined : "_blank"}
+                                      rel={isImageAttachment(note.attachment) ? undefined : "noopener noreferrer"}
+                                      style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 600 }}
+                                    >
+                                      Open file: {note.attachment.name || "Attachment"}
+                                    </a>
+                                  </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -3482,8 +4609,36 @@ const TimeRotate = () => {
                       {Array.isArray(timerEntry.notes) && timerEntry.notes.length > 0 ? (
                         <div style={{ display: "grid", gap: "6px" }}>
                           {timerEntry.notes.map((note, noteIndex) => (
-                            <div key={`${timerEntry.docId || timerEntry.startedAt}-${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.88rem", color: "#1E3A8A" }}>
-                              [{formatTimestamp(note.timestamp)}] {note.text}
+                            <div key={`${timerEntry.docId || timerEntry.startedAt}-${note.timestamp}-${noteIndex}`} style={{ fontSize: "0.88rem", color: "#1E3A8A", display: "grid", gap: "2px" }}>
+                              <div>[{formatTimestamp(note.timestamp)}] {note.text || "File attachment"}</div>
+                              {note.attachment?.url ? (
+                                <div style={{ display: "grid", gap: "4px" }}>
+                                  {isImageAttachment(note.attachment) ? (
+                                    <a
+                                      href={note.attachment.url}
+                                      onClick={(event) => handleOpenImagePreview(note.attachment, event)}
+                                      style={{ display: "inline-block", width: "fit-content" }}
+                                    >
+                                      <img
+                                        src={note.attachment.url}
+                                        alt={note.attachment.name || "Attachment preview"}
+                                        style={{ width: "74px", height: "74px", objectFit: "cover", borderRadius: "8px", border: "1px solid #93C5FD", backgroundColor: "#FFFFFF" }}
+                                      />
+                                    </a>
+                                  ) : null}
+                                  <a
+                                    href={note.attachment.url}
+                                    onClick={isImageAttachment(note.attachment)
+                                      ? (event) => handleOpenImagePreview(note.attachment, event)
+                                      : undefined}
+                                    target={isImageAttachment(note.attachment) ? undefined : "_blank"}
+                                    rel={isImageAttachment(note.attachment) ? undefined : "noopener noreferrer"}
+                                    style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 600, fontSize: "0.8rem" }}
+                                  >
+                                    Open file: {note.attachment.name || "Attachment"}
+                                  </a>
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -3513,6 +4668,17 @@ const TimeRotate = () => {
                                 backgroundColor: "#FFFFFF",
                               }}
                             />
+                            <input
+                              type="file"
+                              onChange={(event) => handleInProgressNoteFileChange(timerEntry.docId, event.target.files?.[0] || null)}
+                              style={{
+                                flex: "0 1 260px",
+                                padding: "8px 10px",
+                                border: "1px solid #93C5FD",
+                                borderRadius: "8px",
+                                backgroundColor: "#FFFFFF",
+                              }}
+                            />
                             <button
                               type="button"
                               onClick={() => handleAddInProgressNote(timerEntry)}
@@ -3531,6 +4697,14 @@ const TimeRotate = () => {
                               {savingInProgressNoteByDocId[timerEntry.docId] ? "Saving..." : "Add Note"}
                             </button>
                           </div>
+                          {inProgressNoteFilesByDocId[timerEntry.docId] ? (
+                            <div style={{ color: "#1E3A8A", fontSize: "0.8rem", fontWeight: 600 }}>
+                              Attachment ready: {inProgressNoteFilesByDocId[timerEntry.docId].name}
+                              {formatFileSize(inProgressNoteFilesByDocId[timerEntry.docId].size)
+                                ? ` (${formatFileSize(inProgressNoteFilesByDocId[timerEntry.docId].size)})`
+                                : ""}
+                            </div>
+                          ) : null}
                           {inProgressNoteErrorByDocId[timerEntry.docId] ? (
                             <div style={{ color: "#B91C1C", fontSize: "0.82rem", fontWeight: 600 }}>
                               {inProgressNoteErrorByDocId[timerEntry.docId]}
@@ -3682,6 +4856,87 @@ const TimeRotate = () => {
             </div>
           </div>
         )}
+
+        {imagePreviewAttachment?.url && isImageAttachment(imagePreviewAttachment) ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={handleCloseImagePreview}
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(15, 23, 42, 0.68)",
+              zIndex: 1400,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "16px",
+            }}
+          >
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(560px, 100%)",
+                backgroundColor: "#FFFFFF",
+                borderRadius: "14px",
+                border: "1px solid #E2E8F0",
+                boxShadow: "0 26px 64px rgba(15, 23, 42, 0.35)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "12px 14px",
+                  borderBottom: "1px solid #E2E8F0",
+                }}
+              >
+                <div style={{ color: "#0F172A", fontWeight: 700, fontSize: "0.92rem" }}>
+                  {imagePreviewAttachment.name || "Image attachment"}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseImagePreview}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    color: "#64748B",
+                    fontSize: "1.4rem",
+                    lineHeight: 1,
+                  }}
+                  aria-label="Close image preview"
+                >
+                  ×
+                </button>
+              </div>
+              <div style={{ padding: "14px", display: "grid", gap: "10px" }}>
+                <img
+                  src={imagePreviewAttachment.url}
+                  alt={imagePreviewAttachment.name || "Image attachment"}
+                  style={{
+                    width: "100%",
+                    maxHeight: "62vh",
+                    objectFit: "contain",
+                    borderRadius: "10px",
+                    border: "1px solid #CBD5E1",
+                    backgroundColor: "#F8FAFC",
+                  }}
+                />
+                <a
+                  href={imagePreviewAttachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 600, fontSize: "0.84rem" }}
+                >
+                  Open original image
+                </a>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <datalist id="task-tag-suggestions">
           {tagSuggestionOptions.map((option) => (

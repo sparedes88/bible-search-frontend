@@ -52,3 +52,15 @@ body {
 .Toastify__close-button {
   display: none !important;
 }
+
+@keyframes issue-note-warning-blink {
+  0% { opacity: 1; }
+  97% { opacity: 1; }
+  98% { opacity: 0.2; }
+  99% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.issue-note-warning-blink {
+  animation: issue-note-warning-blink 45s linear infinite;
+}

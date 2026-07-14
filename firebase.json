@@ -24,6 +24,7 @@
     }
   },
   "hosting": {
+    "site": "igletechv1",
     "public": "build",
     "ignore": [
       "firebase.json",

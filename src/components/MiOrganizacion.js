@@ -227,6 +227,7 @@ const MiOrganizacion = () => {
   const [resolvedModuleRole, setResolvedModuleRole] = useState("member");
   const [activeModuleRole, setActiveModuleRole] = useState("member");
   const [resolvedRoleLabel, setResolvedRoleLabel] = useState("member");
+  const [resolvedRoleBaseKey, setResolvedRoleBaseKey] = useState("member");
   const [resolvedRoleBaseLabel, setResolvedRoleBaseLabel] = useState("Member");
   const [loading, setLoading] = useState(true);
   const [organizationData, setOrganizationData] = useState(null);
@@ -250,6 +251,7 @@ const MiOrganizacion = () => {
   const [availableOrganizations, setAvailableOrganizations] = useState([]);
   const [isOrganizationDropdownOpen, setIsOrganizationDropdownOpen] = useState(false);
   const [organizationSearchQuery, setOrganizationSearchQuery] = useState("");
+  const [modulesReady, setModulesReady] = useState(false);
   const organizationDropdownRef = useRef(null);
 
   const moduleRole = resolvedModuleRole;
@@ -271,6 +273,7 @@ const MiOrganizacion = () => {
         const moduleRoleKey = mappedSystemRole === "admin" ? "global_admin" : mappedSystemRole;
         setResolvedModuleRole(moduleRoleKey);
         setResolvedRoleLabel(mappedSystemRole.replace(/_/g, " "));
+        setResolvedRoleBaseKey(mappedSystemRole);
         setResolvedRoleBaseLabel(formatBaseRoleLabel(mappedSystemRole));
         return;
       }
@@ -279,6 +282,7 @@ const MiOrganizacion = () => {
         setResolvedModuleRole("member");
         setActiveModuleRole("member");
         setResolvedRoleLabel("member");
+        setResolvedRoleBaseKey("member");
         setResolvedRoleBaseLabel("Member");
         return;
       }
@@ -298,7 +302,9 @@ const MiOrganizacion = () => {
         );
       setResolvedModuleRole(fallbackRoleKey);
       setResolvedRoleLabel(fallbackRoleLabel);
-      setResolvedRoleBaseLabel(formatBaseRoleLabel(user?.baseRole || user?.role));
+      const fallbackBaseRole = String(user?.baseRole || user?.role || "member").trim().toLowerCase();
+      setResolvedRoleBaseKey(fallbackBaseRole);
+      setResolvedRoleBaseLabel(formatBaseRoleLabel(fallbackBaseRole));
     };
 
     resolveRoleForModules();
@@ -319,15 +325,19 @@ const MiOrganizacion = () => {
   }, [activeModuleRole, id, moduleLayoutSettings, moduleVisibilitySettings]);
 
   useEffect(() => {
+    setModulesReady(false);
+
     const fetchOrganizationData = async () => {
       if (!id) {
         setError("Organization ID is missing.");
         setLoading(false);
+        setModulesReady(true);
         return;
       }
 
       if (!user) {
         setLoading(false);
+        setModulesReady(true);
         // Don't set error - let PrivateRoute handle authentication
         return;
       }
@@ -341,6 +351,7 @@ const MiOrganizacion = () => {
       if (!isGlobalAdminUser && user.churchId && String(user.churchId) !== String(id)) {
         setError("Access Denied: You don't have permission to access this organization.");
         setLoading(false);
+        setModulesReady(true);
         return;
       }
 
@@ -462,6 +473,7 @@ const MiOrganizacion = () => {
           if (metadataResolvedRoleName) {
             setResolvedRoleLabel(metadataResolvedRoleName);
           }
+          setResolvedRoleBaseKey(metadataResolvedBaseRole);
           setResolvedRoleBaseLabel(formatBaseRoleLabel(metadataResolvedBaseRole));
 
           setActiveModuleRole(resolvedActiveRole);
@@ -483,12 +495,15 @@ const MiOrganizacion = () => {
           setActiveModuleRole(moduleRole);
           setModuleVisibilitySettings(mergeModuleVisibilitySettings({}));
           setModuleLayoutSettings(mergeModuleLayoutSettings({}));
+          setModulesReady(true);
         }
       } catch (err) {
         console.error("Error fetching data:", err);
         setError("Error loading data");
+        setModulesReady(true);
       } finally {
         setLoading(false);
+        setModulesReady(true);
       }
     };
 
@@ -683,6 +698,11 @@ const MiOrganizacion = () => {
   const currentOrganization = availableOrganizations.find(
     (organization) => String(organization?.id) === String(id)
   );
+
+  const canManageOrganizationControls =
+    Boolean(user) &&
+    (isGlobalAdminUser || ["global_admin", "admin"].includes(String(resolvedRoleBaseKey || "").toLowerCase())) &&
+    (isGlobalAdminUser || (!user?.churchId || sameOrganization));
 
   // Filter navigation cards based on user permissions
   const getFilteredNavigationSections = () => {
@@ -977,7 +997,7 @@ const MiOrganizacion = () => {
             </button>
           </div>
         </div>
-        {(user && (isGlobalAdminUser || (isAdminUser && (!user?.churchId || sameOrganization)))) && (
+        {canManageOrganizationControls && (
           <div
             style={{
               display: "flex",
@@ -1226,7 +1246,11 @@ const MiOrganizacion = () => {
 
       {/* Navigation Cards */}
       <div style={{ marginTop: "2rem" }}>
-        {getFilteredNavigationSections().map((section, sectionIndex) => (
+        {!modulesReady ? (
+          <div className="p-4">
+            <Skeleton count={6} className="mb-2" />
+          </div>
+        ) : getFilteredNavigationSections().map((section, sectionIndex) => (
           <div key={sectionIndex} style={{ marginBottom: "2rem" }}>
             <h2 style={{ marginBottom: "1rem", fontSize: "1.5rem", fontWeight: "bold" }}>{section.title}</h2>
             <div style={{ 
