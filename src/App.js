@@ -139,6 +139,7 @@ const UserBIDashboard = React.lazy(() => import("./components/UserBIDashboard"))
 const MyPlan = React.lazy(() => import("./components/MyPlan"));
 const ProductManager = React.lazy(() => import("./components/ProductManager"));
 const InvoiceManager = React.lazy(() => import("./components/InvoiceManager"));
+const BillableInvoicePreviewPage = React.lazy(() => import("./components/BillableInvoicePreviewPage"));
 const SocialMedia = React.lazy(() => import("./components/SocialMedia"));
 const SocialMediaAccounts = React.lazy(() => import("./components/SocialMediaAccounts"));
 const LeicaModule = React.lazy(() => import("./components/LeicaModule"));
@@ -175,6 +176,7 @@ const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssue
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
 const ProjectListsIssuesModule = React.lazy(() => import("./components/ProjectListsIssuesModule"));
 const WorkProgressModule = React.lazy(() => import("./components/WorkProgressModule"));
+const WorkProgressTaskDetailPage = React.lazy(() => import("./components/WorkProgressTaskDetailPage"));
 const LiveIssueTracker = React.lazy(() => import("./components/live-issue-tracker"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
 const E2StatusUpdate = React.lazy(() => import("./components/E2StatusUpdate"));
@@ -691,6 +693,14 @@ const App = () => {
               </PrivateRoute>
             } 
           />
+          <Route
+            path="/organization/:id/invoices/billable-preview"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <BillableInvoicePreviewPage />
+              </PrivateRoute>
+            }
+          />
           
           {/* SocialMedia Route */}
           <Route 
@@ -833,6 +843,14 @@ const App = () => {
             element={
               <PrivateRoute>
                 <WorkProgressModule />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/work-progress/task/:taskId"
+            element={
+              <PrivateRoute>
+                <WorkProgressTaskDetailPage />
               </PrivateRoute>
             }
           />

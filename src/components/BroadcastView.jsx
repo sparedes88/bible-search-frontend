@@ -150,35 +150,6 @@ const BroadcastView = () => {
     return () => unsubscribe();
   }, [id, broadcastId]);
 
-  // Add connection monitoring
-  useEffect(() => {
-    if (!id || !broadcastId) return;
-
-    // Use a more efficient listener that only gets required fields
-    const broadcastRef = doc(db, `churches/${id}/broadcasts`, broadcastId);
-    const unsubscribe = onSnapshot(
-      broadcastRef,
-      { includeMetadataChanges: false }, // Optimize network usage
-      async (docSnapshot) => {
-        if (docSnapshot.exists()) {
-          const data = docSnapshot.data();
-          // Only update what's needed
-          setBroadcast(prev => ({
-            ...(prev || {}),
-            backgroundColor: data.backgroundColor,
-            fontColor: data.fontColor,
-            fontSize: data.fontSize,
-            micEnabled: data.micEnabled,
-            currentLyricIndex: data.currentLyricIndex,
-            songId: data.songId
-          }));
-        }
-      }
-    );
-
-    return () => unsubscribe();
-  }, [id, broadcastId]);
-
   // Replace the viewer count effect with this updated version
   useEffect(() => {
     if (!id || !broadcastId) return;
@@ -352,37 +323,6 @@ const BroadcastView = () => {
         console.error('Error adding offer ICE candidate:', err);
       });
   }, [peerConnection, broadcast?.iceCandidate]);
-
-  useEffect(() => {
-    if (!id || !broadcastId) return;
-
-    const broadcastRef = doc(db, `churches/${id}/broadcasts`, broadcastId);
-    
-    const unsubscribe = onSnapshot(broadcastRef, (docSnapshot) => {
-      if (docSnapshot.exists()) {
-        const data = docSnapshot.data();
-        setBroadcast(data);
-        
-        // Update settings with all broadcast data
-        setSettings({
-          fontFamily: data.fontFamily || "Arial",
-          fontSize: data.fontSize || "48",
-          fontColor: data.fontColor || "#FFFFFF",
-          isBold: data.isBold || false,
-          isItalic: data.isItalic || false,
-          isUpperCase: data.isUpperCase || false,
-          textShadow: data.textShadow || "none",
-          textBlur: data.textBlur || 0,
-          backgroundColor: data.backgroundColor || "#1e3a8a", // Changed default
-          backgroundType: data.backgroundType || "solid",
-          gradientColors: data.gradientColors || ["#1e3a8a", "#3b82f6"], // Changed default
-          gradientAngle: data.gradientAngle || 45,
-        });
-      }
-    });
-
-    return () => unsubscribe();
-  }, [id, broadcastId]);
 
   if (loading) {
     return (

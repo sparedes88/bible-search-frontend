@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   addDoc,
   collection,
@@ -299,8 +299,10 @@ const formatPercent = (value) => {
 
 const BASE_HOURLY_RATE = 90;
 const OVERTIME_MULTIPLIER = 1.5;
-const OVERTIME_THRESHOLD_HOURS = 60;
+const OVERTIME_THRESHOLD_HOURS = 40;
 const OVERTIME_THRESHOLD_MILLISECONDS = OVERTIME_THRESHOLD_HOURS * 60 * 60 * 1000;
+const OVERTIME_RATE = BASE_HOURLY_RATE * OVERTIME_MULTIPLIER;
+const OVERTIME_POLICY_LABEL = `OT after ${OVERTIME_THRESHOLD_HOURS}h/user/week @ $${OVERTIME_RATE}/h`;
 
 const convertMillisecondsToHours = (milliseconds) => {
   const safeMilliseconds = Number(milliseconds);
@@ -379,6 +381,59 @@ const findColumnByAliases = (row = {}, aliases = []) => {
     const normalizedKey = normalizeHeaderKey(key);
     return aliases.some((alias) => normalizedKey.includes(normalizeHeaderKey(alias)));
   }) || "";
+};
+
+const toIdentityKey = (value) => String(value || "").trim().toLowerCase();
+
+const collectIdentityKeys = (values = []) => {
+  const set = new Set();
+  values.forEach((value) => {
+    const key = toIdentityKey(value);
+    if (key) set.add(key);
+  });
+  return set;
+};
+
+const normalizeProjectIssueNotes = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((note) => {
+      if (!note || typeof note !== "object") {
+        const text = String(note || "").trim();
+        return { text, timestamp: 0, createdByUid: "", createdByEmail: "", createdByName: "" };
+      }
+
+      const createdAtIso = String(note.createdAtIso || "").trim();
+      const parsedTimestamp = createdAtIso ? Date.parse(createdAtIso) : Number.NaN;
+
+      return {
+        text: String(note.text || "").trim(),
+        timestamp: Number(note.timestamp) || (Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0),
+        createdByUid: String(note.createdByUid || "").trim(),
+        createdByEmail: String(note.createdByEmail || "").trim(),
+        createdByName: String(note.createdByName || "").trim(),
+      };
+    })
+    .filter((note) => note.text);
+};
+
+const doesProjectIssueNoteMatchUserIdentity = (note = {}, userIdentityKeys = new Set()) => {
+  if (!(userIdentityKeys instanceof Set) || userIdentityKeys.size === 0) return false;
+
+  const noteIdentityKeys = collectIdentityKeys([
+    note.createdByUid,
+    note.createdByEmail,
+    note.createdByName,
+  ]);
+
+  if (noteIdentityKeys.size === 0) return false;
+
+  for (const key of noteIdentityKeys) {
+    if (userIdentityKeys.has(key)) return true;
+  }
+
+  return false;
 };
 
 const MAX_RECONCILIATION_DETAIL_ROWS = 500;
@@ -716,6 +771,7 @@ const getNextWeekSuggestion = (invoiceRows = []) => {
 
 const InvoiceManager = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
 
   const routePrefix =
@@ -787,6 +843,9 @@ const InvoiceManager = () => {
   const [loadingSavedReconciliationReport, setLoadingSavedReconciliationReport] = useState(false);
   const [invoiceLogModalInvoice, setInvoiceLogModalInvoice] = useState(null);
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
+  const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
+  const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
+  const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
 
   const handleInvoicesTabChange = (tabKey, { replace = false } = {}) => {
     const normalizedTab = normalizeInvoiceTabKey(tabKey);
@@ -936,6 +995,7 @@ const InvoiceManager = () => {
             projectDocId: derivedProjectDocId,
             issueId: derivedIssueId,
             title: String(data.title || "").trim(),
+            description: String(data.description || data.details || data.issueDescription || data.issueDetails || "").trim(),
             taskIdentity,
             associatedProjectName: String(data.projectName || "").trim(),
             notes: rawNotes
@@ -1038,6 +1098,197 @@ const InvoiceManager = () => {
       });
   }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs]);
 
+  useEffect(() => {
+    let active = true;
+
+    if (!id) {
+      setIssueTitleByIdentity({});
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadIssueTitles = async () => {
+      try {
+        const projectsSnapshot = await getDocs(collection(db, "churches", id, "bimProjects"));
+
+        const snapshots = await Promise.all(
+          projectsSnapshot.docs.map(async (projectDoc) => {
+            const projectDocId = String(projectDoc.id || "").trim();
+            const issuesRef = collection(db, "churches", id, "bimProjects", projectDocId, "issues");
+            const issuesSnapshot = await getDocs(issuesRef);
+            return { projectDocId, issuesSnapshot };
+          })
+        );
+
+        if (!active) return;
+
+        const nextIssueTitleByIdentity = {};
+        const titlesByIssueIdSet = {};
+
+        snapshots.forEach(({ projectDocId, issuesSnapshot }) => {
+          issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
+
+            const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
+            const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
+
+            const issueId = String(
+              (issueIdColumn ? rowData[issueIdColumn] : "")
+              || rowData.issueId
+              || rowData.id
+              || String(rowIndex + 1)
+            ).trim();
+
+            const issueTitle = String(
+              (titleColumn ? rowData[titleColumn] : "")
+              || rowData.title
+              || ""
+            ).trim();
+
+            if (!issueId || !issueTitle) return;
+
+            nextIssueTitleByIdentity[`${projectDocId}::${issueId}`] = issueTitle;
+
+            if (!titlesByIssueIdSet[issueId]) {
+              titlesByIssueIdSet[issueId] = new Set();
+            }
+            titlesByIssueIdSet[issueId].add(issueTitle);
+          });
+        });
+
+        const nextIssueTitleByIssueId = Object.fromEntries(
+          Object.entries(titlesByIssueIdSet)
+            .filter(([, titleSet]) => titleSet.size === 1)
+            .map(([issueId, titleSet]) => [issueId, Array.from(titleSet)[0]])
+        );
+
+        setIssueTitleByIdentity(nextIssueTitleByIdentity);
+        setIssueTitleByIssueId(nextIssueTitleByIssueId);
+      } catch (error) {
+        console.error("Error loading issue titles for billable invoices:", error);
+        if (active) {
+          setIssueTitleByIdentity({});
+          setIssueTitleByIssueId({});
+        }
+      }
+    };
+
+    loadIssueTitles();
+
+    return () => {
+      active = false;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!id) {
+      setProjectIssuesByProjectNameKey({});
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadProjectListIssues = async () => {
+      try {
+        const projectsSnapshot = await getDocs(collection(db, "churches", id, "projectListIssueProjects"));
+
+        const projectEntries = await Promise.all(
+          projectsSnapshot.docs.map(async (projectDoc) => {
+            const projectData = projectDoc.data() || {};
+            const projectName = String(projectData.name || projectData.projectName || "").trim();
+            const projectNameKey = normalizeProjectNameKey(projectName);
+            if (!projectNameKey) return null;
+
+            const issuesSnapshot = await getDocs(
+              collection(db, "churches", id, "projectListIssueProjects", projectDoc.id, "issues")
+            );
+
+            const issues = issuesSnapshot.docs.map((issueDoc, rowIndex) => {
+              const rowData = issueDoc.data() || {};
+              const issueIdColumn = findColumnByAliases(rowData, [
+                "issue id",
+                "id",
+                "task id",
+                "card id",
+                "row id",
+                "issue number",
+                "issue #",
+                "number",
+              ]);
+              const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
+              const descriptionColumn = findColumnByAliases(rowData, [
+                "description",
+                "issue description",
+                "details",
+                "issue details",
+              ]);
+
+              const issueId = String(
+                (issueIdColumn ? rowData[issueIdColumn] : "")
+                || rowData.issueNumber
+                || rowData.issueId
+                || rowData.id
+                || String(rowIndex + 1)
+              ).trim();
+
+              const issueTitle = String(
+                (titleColumn ? rowData[titleColumn] : "")
+                || rowData.title
+                || ""
+              ).trim();
+
+              const issueDescription = String(
+                (descriptionColumn ? rowData[descriptionColumn] : "")
+                || rowData.description
+                || ""
+              ).trim();
+
+              return {
+                projectName,
+                issueId,
+                title: issueTitle,
+                description: issueDescription,
+                notes: normalizeProjectIssueNotes(rowData.notes),
+              };
+            });
+
+            return {
+              projectNameKey,
+              issues,
+            };
+          })
+        );
+
+        if (!active) return;
+
+        const nextIssuesByProjectNameKey = {};
+        projectEntries.forEach((entry) => {
+          if (!entry || !entry.projectNameKey || !Array.isArray(entry.issues) || entry.issues.length === 0) return;
+          if (!nextIssuesByProjectNameKey[entry.projectNameKey]) {
+            nextIssuesByProjectNameKey[entry.projectNameKey] = [];
+          }
+          nextIssuesByProjectNameKey[entry.projectNameKey].push(...entry.issues);
+        });
+
+        setProjectIssuesByProjectNameKey(nextIssuesByProjectNameKey);
+      } catch (error) {
+        console.error("Error loading project list issues for billable invoices:", error);
+        if (active) {
+          setProjectIssuesByProjectNameKey({});
+        }
+      }
+    };
+
+    loadProjectListIssues();
+
+    return () => {
+      active = false;
+    };
+  }, [id]);
+
   const weeklyOvertimeAllocationByLogId = useMemo(() => {
     if (billableTimeRotateLogs.length === 0) return {};
 
@@ -1121,23 +1372,41 @@ const InvoiceManager = () => {
               overtimeMilliseconds: 0,
               cardsByKey: new Map(),
               notes: [],
+              identityKeys: new Set(),
             });
           }
 
           const userAggregation = userAggregationByLabel.get(userLabel);
+          userAggregation.identityKeys = collectIdentityKeys([
+            ...Array.from(userAggregation.identityKeys || []),
+            userLabel,
+            log.registeredBy,
+            log.userEmail,
+            log.userId,
+          ]);
           userAggregation.milliseconds += log.safeDuration;
           userAggregation.regularMilliseconds += allocation.regularMilliseconds;
           userAggregation.overtimeMilliseconds += allocation.overtimeMilliseconds;
 
-          const cardLabel = String(log.issueId || log.title || log.taskIdentity || "Unspecified Card").trim();
-          const cardKey = String(log.taskIdentity || `${String(log.projectDocId || "").trim()}::${String(log.issueId || "").trim()}::${cardLabel}`).trim();
+          const resolvedProjectDocId = String(log.projectDocId || "").trim();
+          const resolvedIssueId = String(log.issueId || "").trim();
+          const resolvedTaskIdentity = String(log.taskIdentity || "").trim();
+          const titleFromLookup = issueTitleByIdentity[`${resolvedProjectDocId}::${resolvedIssueId}`]
+            || issueTitleByIdentity[resolvedTaskIdentity]
+            || issueTitleByIssueId[resolvedIssueId]
+            || "";
+          const resolvedCardTitle = String(log.title || titleFromLookup || "").trim();
+          const cardLabel = String(log.issueId || resolvedCardTitle || log.taskIdentity || "Unspecified Card").trim();
+          const cardKey = String(log.taskIdentity || `${resolvedProjectDocId}::${resolvedIssueId}::${cardLabel}`).trim();
           const existingCard = userAggregation.cardsByKey.get(cardKey) || {
             key: cardKey,
             label: cardLabel,
             milliseconds: 0,
-            projectDocId: String(log.projectDocId || "").trim(),
-            issueId: String(log.issueId || "").trim(),
-            taskIdentity: String(log.taskIdentity || "").trim(),
+            projectDocId: resolvedProjectDocId,
+            issueId: resolvedIssueId,
+            title: resolvedCardTitle,
+            description: String(log.description || "").trim(),
+            taskIdentity: resolvedTaskIdentity,
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
           };
           existingCard.milliseconds += log.safeDuration;
@@ -1146,6 +1415,12 @@ const InvoiceManager = () => {
           }
           if (!existingCard.issueId) {
             existingCard.issueId = String(log.issueId || "").trim();
+          }
+          if (!existingCard.title) {
+            existingCard.title = resolvedCardTitle;
+          }
+          if (!existingCard.description) {
+            existingCard.description = String(log.description || "").trim();
           }
           if (!existingCard.taskIdentity) {
             existingCard.taskIdentity = String(log.taskIdentity || "").trim();
@@ -1158,6 +1433,7 @@ const InvoiceManager = () => {
                 text: String(note.text || "").trim(),
                 timestamp: Number(note.timestamp) || 0,
                 cardLabel,
+                title: resolvedCardTitle,
                 projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
                 projectDocId: String(log.projectDocId || "").trim(),
                 issueId: String(log.issueId || "").trim(),
@@ -1165,6 +1441,35 @@ const InvoiceManager = () => {
               });
             });
           }
+        });
+
+        const projectIssuesForInvoice = Array.from(selectedTimeRotateProjectNameKeys)
+          .flatMap((projectNameKey) => projectIssuesByProjectNameKey[projectNameKey] || []);
+
+        userAggregationByLabel.forEach((userAggregation) => {
+          if (!Array.isArray(projectIssuesForInvoice) || projectIssuesForInvoice.length === 0) return;
+
+          const userIdentityKeys = userAggregation.identityKeys || new Set();
+          projectIssuesForInvoice.forEach((issue) => {
+            const issueNotes = Array.isArray(issue.notes) ? issue.notes : [];
+            issueNotes.forEach((note) => {
+              if (!Number.isFinite(note.timestamp) || note.timestamp <= 0) return;
+              if (note.timestamp < rangeStart || note.timestamp > rangeEnd) return;
+              if (!doesProjectIssueNoteMatchUserIdentity(note, userIdentityKeys)) return;
+
+              const cardLabel = String(issue.issueId || issue.title || "Unspecified Card").trim() || "Unspecified Card";
+              userAggregation.notes.push({
+                text: String(note.text || "").trim(),
+                timestamp: Number(note.timestamp) || 0,
+                cardLabel,
+                title: String(issue.title || "").trim(),
+                projectName: String(issue.projectName || "").trim() || "Unknown Project",
+                projectDocId: "",
+                issueId: String(issue.issueId || "").trim(),
+                taskIdentity: "",
+              });
+            });
+          });
         });
 
         const users = Array.from(userAggregationByLabel.entries())
@@ -1200,7 +1505,15 @@ const InvoiceManager = () => {
         }];
       })
     );
-  }, [billableTimeRotateLogs, invoices, selectedTimeRotateProjectNameKeys, weeklyOvertimeAllocationByLogId]);
+  }, [
+    billableTimeRotateLogs,
+    invoices,
+    issueTitleByIdentity,
+    issueTitleByIssueId,
+    projectIssuesByProjectNameKey,
+    selectedTimeRotateProjectNameKeys,
+    weeklyOvertimeAllocationByLogId,
+  ]);
 
   const allProjectsTotal = useMemo(() => {
     return (allProjectInvoices || []).reduce((sum, invoice) => {
@@ -2809,6 +3122,266 @@ const InvoiceManager = () => {
     }
   };
 
+  const handleExportBillableInvoice = (invoice, rowHoursData) => {
+    const users = Array.isArray(rowHoursData?.users) ? rowHoursData.users : [];
+    if (!invoice || users.length === 0) {
+      toast.error("No user hours are available to generate a billable invoice.");
+      return;
+    }
+
+    const invoiceNumber = String(invoice.invoiceNumber || `W${String(invoice.weekNumber || "").padStart(2, "0")}`).trim();
+    const mondayDate = toDateInputValue(invoice.mondayDate);
+    const weekEndDate = shiftDateInputValue(mondayDate, 6);
+    const dueDate = toDateInputValue(invoice.dueDate);
+    const projectName = String(selectedInvoiceProject?.name || "Unknown Project").trim();
+
+    const sortedUsers = users
+      .map((userEntry) => {
+        const cost = getLaborCostFromSplit(
+          userEntry.regularMilliseconds,
+          userEntry.overtimeMilliseconds
+        );
+
+        const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+        const notes = Array.isArray(userEntry.notes) ? userEntry.notes : [];
+
+        const issueSummary = cards
+          .map((card) => {
+            const cardLabel = String(card.label || "Unspecified Card").trim();
+            const cardHours = formatHoursUsed(card.milliseconds);
+            return `${cardLabel} (${cardHours})`;
+          })
+          .join(" | ");
+
+        const notesSummary = notes
+          .map((note) => String(note.text || "").trim())
+          .filter(Boolean)
+          .join(" | ");
+
+        return {
+          name: String(userEntry.name || "Unknown User").trim() || "Unknown User",
+          regularHours: Number(cost.regularHours || 0),
+          overtimeHours: Number(cost.overtimeHours || 0),
+          totalHours: Number(cost.totalHours || 0),
+          regularRate: BASE_HOURLY_RATE,
+          overtimeRate: BASE_HOURLY_RATE * OVERTIME_MULTIPLIER,
+          regularCost: Number(cost.regularCost || 0),
+          overtimeCost: Number(cost.overtimeCost || 0),
+          lineTotal: Number(cost.totalCost || 0),
+          cards,
+          notes,
+          issueSummary,
+          notesSummary,
+        };
+      })
+      .sort((left, right) => right.lineTotal - left.lineTotal);
+
+    const totalRegularHours = sortedUsers.reduce((sum, item) => sum + item.regularHours, 0);
+    const totalOvertimeHours = sortedUsers.reduce((sum, item) => sum + item.overtimeHours, 0);
+    const totalHours = sortedUsers.reduce((sum, item) => sum + item.totalHours, 0);
+    const totalAmount = sortedUsers.reduce((sum, item) => sum + item.lineTotal, 0);
+
+    const worksheetRows = [
+      ["Billable Invoice"],
+      ["Project", projectName],
+      ["Invoice #", invoiceNumber],
+      ["Week", `Week ${invoice.weekNumber || "-"}`],
+      ["Start of Week", mondayDate || "-"],
+      ["End of Week", weekEndDate || "-"],
+      ["Due Date", dueDate || "-"],
+      ["Payment Terms", getPaymentTermLabel(invoice.paymentTerms, invoice.netDays)],
+      ["Overtime Policy", OVERTIME_POLICY_LABEL],
+      [],
+      [
+        "Person",
+        `Regular Hours (<= ${OVERTIME_THRESHOLD_HOURS}/wk)`,
+        `Overtime Hours (> ${OVERTIME_THRESHOLD_HOURS}/wk)`,
+        "Total Hours",
+        "Regular Rate",
+        "Overtime Rate",
+        "Regular Cost",
+        "Overtime Cost",
+        "Line Total",
+        "Issues Worked",
+        "Notes",
+      ],
+      ...sortedUsers.map((item) => ([
+        item.name,
+        Number(item.regularHours.toFixed(2)),
+        Number(item.overtimeHours.toFixed(2)),
+        Number(item.totalHours.toFixed(2)),
+        Number(item.regularRate.toFixed(2)),
+        Number(item.overtimeRate.toFixed(2)),
+        Number(item.regularCost.toFixed(2)),
+        Number(item.overtimeCost.toFixed(2)),
+        Number(item.lineTotal.toFixed(2)),
+        item.issueSummary,
+        item.notesSummary,
+      ])),
+      [],
+      ["Totals", Number(totalRegularHours.toFixed(2)), Number(totalOvertimeHours.toFixed(2)), Number(totalHours.toFixed(2)), "", "", "", "", Number(totalAmount.toFixed(2))],
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetRows);
+    worksheet["!cols"] = [
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 13 },
+      { wch: 13 },
+      { wch: 12 },
+      { wch: 56 },
+      { wch: 56 },
+    ];
+
+    const issueAndNoteRows = [
+      ["Invoice Issues and Notes"],
+      ["Project", projectName],
+      ["Invoice #", invoiceNumber],
+      ["Week", `Week ${invoice.weekNumber || "-"}`],
+      ["Start of Week", mondayDate || "-"],
+      ["End of Week", weekEndDate || "-"],
+      [],
+      [
+        "Person",
+        "Issue/Card",
+        "Project",
+        "Issue ID",
+        "Issue Title",
+        "Issue Details",
+        "Note",
+      ],
+    ];
+
+    sortedUsers.forEach((userEntry) => {
+      const userCards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+      const userNotes = Array.isArray(userEntry.notes) ? userEntry.notes : [];
+
+      if (userCards.length === 0 && userNotes.length === 0) {
+        issueAndNoteRows.push([
+          userEntry.name,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ]);
+        return;
+      }
+
+      if (userCards.length > 0) {
+        userCards.forEach((card) => {
+          issueAndNoteRows.push([
+            userEntry.name,
+            String(card.label || "Unspecified Card").trim(),
+            String(card.projectName || "Unknown Project").trim(),
+            String(card.issueId || "").trim(),
+            String(card.title || "").trim(),
+            String(card.description || card.title || card.taskIdentity || "").trim(),
+            "",
+          ]);
+        });
+      }
+
+      if (userNotes.length > 0) {
+        userNotes.forEach((note) => {
+          issueAndNoteRows.push([
+            userEntry.name,
+            String(note.cardLabel || "").trim(),
+            String(note.projectName || "").trim(),
+            String(note.issueId || "").trim(),
+            String(note.title || "").trim(),
+            String(note.taskIdentity || "").trim(),
+            String(note.text || "").trim(),
+          ]);
+        });
+      }
+
+      issueAndNoteRows.push(["", "", "", "", "", "", ""]);
+    });
+
+    const issueAndNotesWorksheet = XLSX.utils.aoa_to_sheet(issueAndNoteRows);
+    issueAndNotesWorksheet["!cols"] = [
+      { wch: 24 },
+      { wch: 34 },
+      { wch: 24 },
+      { wch: 14 },
+      { wch: 30 },
+      { wch: 40 },
+      { wch: 64 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Billable Invoice");
+    XLSX.utils.book_append_sheet(workbook, issueAndNotesWorksheet, "Issues & Notes");
+
+    const safeInvoiceNumber = invoiceNumber.replace(/[^A-Z0-9_-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "invoice";
+    const safeProjectName = projectName.replace(/[^A-Z0-9_-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "project";
+    const fileName = `${safeProjectName}-${safeInvoiceNumber}-billable-invoice.xlsx`;
+    const draftStorageKey = `billable-invoice-preview:${id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const previewPayload = {
+      fileName,
+      generatedAt: Date.now(),
+      projectName,
+      invoiceNumber,
+      weekNumber: invoice.weekNumber || "-",
+      mondayDate,
+      weekEndDate,
+      dueDate,
+      paymentTermsLabel: getPaymentTermLabel(invoice.paymentTerms, invoice.netDays),
+      overtimePolicy: {
+        thresholdHours: OVERTIME_THRESHOLD_HOURS,
+        baseRate: BASE_HOURLY_RATE,
+        overtimeMultiplier: OVERTIME_MULTIPLIER,
+        overtimeRate: OVERTIME_RATE,
+        label: OVERTIME_POLICY_LABEL,
+      },
+      totals: {
+        totalRegularHours: Number(totalRegularHours.toFixed(2)),
+        totalOvertimeHours: Number(totalOvertimeHours.toFixed(2)),
+        totalHours: Number(totalHours.toFixed(2)),
+        totalAmount: Number(totalAmount.toFixed(2)),
+      },
+      users: sortedUsers.map((userEntry) => ({
+        name: userEntry.name,
+        regularHours: Number(userEntry.regularHours.toFixed(2)),
+        overtimeHours: Number(userEntry.overtimeHours.toFixed(2)),
+        totalHours: Number(userEntry.totalHours.toFixed(2)),
+        regularRate: Number(userEntry.regularRate.toFixed(2)),
+        overtimeRate: Number(userEntry.overtimeRate.toFixed(2)),
+        lineTotal: Number(userEntry.lineTotal.toFixed(2)),
+        issueSummary: userEntry.issueSummary,
+        notesSummary: userEntry.notesSummary,
+        cards: (Array.isArray(userEntry.cards) ? userEntry.cards : []).map((card) => ({
+          label: String(card.label || "Unspecified Card").trim(),
+          projectName: String(card.projectName || "Unknown Project").trim(),
+          issueId: String(card.issueId || "").trim(),
+          title: String(card.title || "").trim(),
+          description: String(card.description || "").trim(),
+          taskIdentity: String(card.taskIdentity || "").trim(),
+          projectDocId: String(card.projectDocId || "").trim(),
+        })),
+        notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({
+          cardLabel: String(note.cardLabel || "").trim(),
+          projectName: String(note.projectName || "").trim(),
+          issueId: String(note.issueId || "").trim(),
+          title: String(note.title || "").trim(),
+          taskIdentity: String(note.taskIdentity || "").trim(),
+          projectDocId: String(note.projectDocId || "").trim(),
+          text: String(note.text || "").trim(),
+        })),
+      })),
+    };
+
+    sessionStorage.setItem(draftStorageKey, JSON.stringify(previewPayload));
+    const previewUrl = `/organization/${id}/invoices/billable-preview?draft=${encodeURIComponent(draftStorageKey)}`;
+    navigate(previewUrl);
+  };
+
   const handleCatchUpToPreviousWeek = async () => {
     if (!canManageInvoices) {
       toast.error("You do not have permission to create invoices.");
@@ -3937,14 +4510,6 @@ const InvoiceManager = () => {
             <div style={{ marginTop: "4px" }}>
               All Projects Total Due: {formatCurrency(allProjectsDueTotal)}
             </div>
-            <div style={{ marginTop: "8px" }}>
-              <Link
-                to={getBudgetInvoiceCreateHref()}
-                style={{ color: "#1D4ED8", fontSize: "0.82rem", fontWeight: 700, textDecoration: "underline" }}
-              >
-                Create Invoice in Budget Module
-              </Link>
-            </div>
           </div>
 
           <form onSubmit={handleCreateProject} style={{ display: "grid", gap: "8px", marginBottom: "14px" }}>
@@ -4353,6 +4918,9 @@ const InvoiceManager = () => {
                 <small style={{ color: "#6B7280" }}>
                   Add Invoice defaults to the next week. If you add Week 10, missing weeks before it are auto-created with shifted Monday and due dates.
                 </small>
+                <small style={{ color: "#0C4A6E", fontWeight: 700 }}>
+                  Billable labor policy: {OVERTIME_POLICY_LABEL}
+                </small>
               </form>
 
               <div
@@ -4409,7 +4977,7 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>Start of Week</th>
                         <th style={tableHeaderCellStyle}>End of Week</th>
                         <th style={tableHeaderCellStyle}>Total</th>
-                        <th style={tableHeaderCellStyle}>Hours Used</th>
+                        <th style={tableHeaderCellStyle}>Hours &amp; Labor (OT &gt; {OVERTIME_THRESHOLD_HOURS}h)</th>
                         <th style={tableHeaderCellStyle}>Invoice #</th>
                         <th style={tableHeaderCellStyle}>Due Date</th>
                         <th style={tableHeaderCellStyle}>Due Day</th>
@@ -4529,7 +5097,10 @@ const InvoiceManager = () => {
                                 </span>
                                 <div style={{ marginTop: "4px", fontSize: "0.74rem", color: "#0C4A6E", fontWeight: 700 }}>
                                   Cost: {formatCurrency(rowLaborCost.totalCost)}
-                                  {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${BASE_HOURLY_RATE * OVERTIME_MULTIPLIER}/h)` : ""}
+                                  {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${OVERTIME_RATE}/h)` : ""}
+                                </div>
+                                <div style={{ marginTop: "2px", fontSize: "0.72rem", color: "#0F766E", fontWeight: 700 }}>
+                                  {OVERTIME_POLICY_LABEL}
                                 </div>
                                 <div style={{ marginTop: "6px", display: "grid", gap: "2px" }}>
                                   {rowUsersHours.length === 0 ? (
@@ -4542,8 +5113,7 @@ const InvoiceManager = () => {
                                       );
                                       return (
                                         <div key={`edit-hours-${invoice.id}-${userEntry.name}`} style={{ fontSize: "0.74rem", color: "#334155" }}>
-                                          {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} | {formatCurrency(userLaborCost.totalCost)}
-                                          {userLaborCost.overtimeHours > 0 ? ` (OT ${userLaborCost.overtimeHours.toFixed(2)}h)` : ""}
+                                          {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} (Reg {userLaborCost.regularHours.toFixed(2)}h / OT {userLaborCost.overtimeHours.toFixed(2)}h) | {formatCurrency(userLaborCost.totalCost)}
                                         </div>
                                       );
                                     })
@@ -4750,7 +5320,10 @@ const InvoiceManager = () => {
                               </span>
                               <div style={{ marginTop: "4px", fontSize: "0.74rem", color: "#0C4A6E", fontWeight: 700 }}>
                                 Cost: {formatCurrency(rowLaborCost.totalCost)}
-                                {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${BASE_HOURLY_RATE * OVERTIME_MULTIPLIER}/h)` : ""}
+                                {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${OVERTIME_RATE}/h)` : ""}
+                              </div>
+                              <div style={{ marginTop: "2px", fontSize: "0.72rem", color: "#0F766E", fontWeight: 700 }}>
+                                {OVERTIME_POLICY_LABEL}
                               </div>
                               <div style={{ marginTop: "6px", display: "grid", gap: "2px" }}>
                                 {rowUsersHours.length === 0 ? (
@@ -4763,8 +5336,7 @@ const InvoiceManager = () => {
                                     );
                                     return (
                                       <div key={`view-hours-${invoice.id}-${userEntry.name}`} style={{ fontSize: "0.74rem", color: "#334155" }}>
-                                        {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} | {formatCurrency(userLaborCost.totalCost)}
-                                        {userLaborCost.overtimeHours > 0 ? ` (OT ${userLaborCost.overtimeHours.toFixed(2)}h)` : ""}
+                                        {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} (Reg {userLaborCost.regularHours.toFixed(2)}h / OT {userLaborCost.overtimeHours.toFixed(2)}h) | {formatCurrency(userLaborCost.totalCost)}
                                       </div>
                                     );
                                   })
@@ -4841,6 +5413,15 @@ const InvoiceManager = () => {
                                 >
                                   Log
                                 </button>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonStyle, background: "#1D4ED8" }}
+                                  onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
+                                  disabled={rowUsersHours.length === 0}
+                                  title={rowUsersHours.length === 0 ? "No user hours available" : "Download per-person billable invoice"}
+                                >
+                                  Billable Invoice
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -4864,6 +5445,9 @@ const InvoiceManager = () => {
                           <div style={{ marginTop: "2px", fontSize: "0.78rem" }}>
                             Cost Total: {formatCurrency(invoiceTableTotals.totalLaborCost)}
                             {invoiceTableTotals.totalOvertimeHours > 0 ? ` (OT ${invoiceTableTotals.totalOvertimeHours.toFixed(2)}h)` : ""}
+                          </div>
+                          <div style={{ marginTop: "2px", fontSize: "0.74rem", color: "#0F766E" }}>
+                            {OVERTIME_POLICY_LABEL}
                           </div>
                         </td>
                         <td style={tableBodyCellStyle} colSpan={8} />

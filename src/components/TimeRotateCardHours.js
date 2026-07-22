@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 import commonStyles from "../pages/commonStyles";
 import TimeRotateTopLogo from "./TimeRotateTopLogo";
@@ -17,6 +17,8 @@ const normalizeKey = (value) =>
   normalizeValue(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
+
+const normalizeProjectMatchKey = (value) => normalizeKey(value);
 
 const findFieldByAliases = (rowData = {}, aliases = []) => {
   const keys = Object.keys(rowData || {});
@@ -97,6 +99,53 @@ const parseNotes = (value) => {
     .filter((note) => note.text);
 };
 
+const parseProjectIssueNotes = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((note) => {
+      const attachmentCount = Array.isArray(note?.attachments) ? note.attachments.length : 0;
+      const rawText = normalizeValue(note?.text);
+      const text = rawText || (attachmentCount > 0
+        ? `Attachment update (${attachmentCount} file${attachmentCount === 1 ? "" : "s"})`
+        : "");
+
+      const createdAtMs =
+        toTimestampMs(note?.createdAt) ||
+        toTimestampMs(note?.timestamp) ||
+        (() => {
+          const parsed = Date.parse(normalizeValue(note?.createdAtIso));
+          return Number.isFinite(parsed) ? parsed : 0;
+        })();
+
+      const activityType = /^progress update:/i.test(rawText)
+        ? "Progress Added"
+        : "Note Added";
+      const completionPercentMatch = rawText.match(/^progress update:\s*\d+\s*%\s*->\s*(\d+)\s*%/i);
+      const completionPercent = completionPercentMatch ? Number(completionPercentMatch[1]) : null;
+
+      return {
+        text,
+        activityType,
+        completionPercent: Number.isFinite(completionPercent) ? completionPercent : null,
+        createdAtMs,
+        createdByUid: normalizeValue(note?.createdByUid),
+        createdByEmail: normalizeValue(note?.createdByEmail),
+        createdByName: normalizeValue(note?.createdByName),
+      };
+    })
+    .filter((note) => note.text);
+};
+
+const normalizeIssueIdentifier = (value) =>
+  normalizeValue(value)
+    .replace(/^#+/, "")
+    .toLowerCase();
+
+const getProjectIssueProgressCompletionState = (note = {}) => {
+  return Number(note?.completionPercent) >= 100 ? "completed" : "incomplete";
+};
+
 const getEntryTimestamp = (entry) => {
   const directTimestamp =
     toTimestampMs(entry?.endedAt) ||
@@ -121,6 +170,44 @@ const formatTimestamp = (value) => {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+};
+
+const getDayKeyFromTimestamp = (value) => {
+  const timestamp = Number(value) || 0;
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const formatDayHeaderLabel = (value) => {
+  const timestamp = Number(value) || 0;
+  if (!timestamp) return "Date unavailable";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+};
+
+const getDateBlockPalette = (dayKey) => {
+  const palettes = [
+    { blockBg: "#EFF6FF", headerBg: "#1E3A8A", border: "#60A5FA" },
+    { blockBg: "#ECFDF5", headerBg: "#065F46", border: "#34D399" },
+    { blockBg: "#FEF3C7", headerBg: "#92400E", border: "#F59E0B" },
+    { blockBg: "#F5F3FF", headerBg: "#5B21B6", border: "#A78BFA" },
+  ];
+
+  const normalizedDayKey = String(dayKey || "");
+  const hashValue = normalizedDayKey
+    .split("")
+    .reduce((sum, character) => sum + character.charCodeAt(0), 0);
+
+  return palettes[hashValue % palettes.length];
 };
 
 const toDatetimeLocalValue = (ms) => {
@@ -169,6 +256,34 @@ const addDays = (value, days) => {
   return date;
 };
 
+const getWeekStartDateFromTimestamp = (timestamp) => {
+  const parsed = new Date(Number(timestamp) || 0);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const baseDate = startOfDay(parsed);
+  const mondayOffset = (baseDate.getDay() + 6) % 7;
+  baseDate.setDate(baseDate.getDate() - mondayOffset);
+  return baseDate;
+};
+
+const buildWeekLabel = (weekStartDate, weekEndDate) => {
+  if (!(weekStartDate instanceof Date) || Number.isNaN(weekStartDate.getTime())) return "Unknown week";
+  if (!(weekEndDate instanceof Date) || Number.isNaN(weekEndDate.getTime())) return "Unknown week";
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  return `${formatter.format(weekStartDate)} - ${formatter.format(weekEndDate)}`;
+};
+
+const buildWeeklyApprovalDocId = (userKey, weekKey) => {
+  const safeUserKey = encodeURIComponent(normalizeValue(userKey) || "unknown-user");
+  const safeWeekKey = normalizeValue(weekKey) || "unknown-week";
+  return `${safeUserKey}__${safeWeekKey}`;
+};
+
 const getDateRangeForPreset = (presetValue) => {
   const today = startOfDay(new Date());
 
@@ -190,6 +305,15 @@ const getDateRangeForPreset = (presetValue) => {
       return {
         startDate: formatDateInputValue(weekStart),
         endDate: formatDateInputValue(today),
+      };
+    }
+    case "lastWeek": {
+      const currentWeekStart = addDays(today, -today.getDay());
+      const previousWeekStart = addDays(currentWeekStart, -7);
+      const previousWeekEnd = addDays(currentWeekStart, -1);
+      return {
+        startDate: formatDateInputValue(previousWeekStart),
+        endDate: formatDateInputValue(previousWeekEnd),
       };
     }
     case "last7Days": {
@@ -229,6 +353,7 @@ const DATE_RANGE_PRESET_OPTIONS = [
   { value: "today", label: "Today" },
   { value: "yesterday", label: "Yesterday" },
   { value: "thisWeek", label: "This Week" },
+  { value: "lastWeek", label: "Last Week" },
   { value: "last7Days", label: "Last 7 Days" },
   { value: "thisMonth", label: "This Month" },
   { value: "lastMonth", label: "Last Month" },
@@ -654,6 +779,8 @@ const TimeRotateCardHours = () => {
   const [hasInitializedSelectedUser, setHasInitializedSelectedUser] = useState(false);
   const [userSearchText, setUserSearchText] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
+  const [selectedRowStatus, setSelectedRowStatus] = useState("both");
+  const [projectIssueProgressStatusFilter, setProjectIssueProgressStatusFilter] = useState("both");
   const [dateRangePreset, setDateRangePreset] = useState("today");
   const [startDate, setStartDate] = useState(() => formatDateInputValue(startOfDay(new Date())));
   const [endDate, setEndDate] = useState(() => formatDateInputValue(startOfDay(new Date())));
@@ -686,6 +813,34 @@ const TimeRotateCardHours = () => {
   const [editingEntryEndMs, setEditingEntryEndMs] = useState(0);
   const [editingEntrySaving, setEditingEntrySaving] = useState(false);
   const [editingEntryError, setEditingEntryError] = useState("");
+  const [editingNoteKey, setEditingNoteKey] = useState("");
+  const [editingNoteText, setEditingNoteText] = useState("");
+  const [editingNoteSaving, setEditingNoteSaving] = useState(false);
+  const [editingNoteError, setEditingNoteError] = useState("");
+  const [addingNoteKey, setAddingNoteKey] = useState("");
+  const [addingNoteText, setAddingNoteText] = useState("");
+  const [addingNoteSaving, setAddingNoteSaving] = useState(false);
+  const [addingNoteError, setAddingNoteError] = useState("");
+  const [weeklyApprovalsByKey, setWeeklyApprovalsByKey] = useState({});
+  const [selectedReviewWeekKey, setSelectedReviewWeekKey] = useState("");
+  const [approvingWeekKey, setApprovingWeekKey] = useState("");
+  const [weeklyApprovalError, setWeeklyApprovalError] = useState("");
+  const [weeklyApprovalNotice, setWeeklyApprovalNotice] = useState("");
+  const [isWeeklyApprovalDialogOpen, setIsWeeklyApprovalDialogOpen] = useState(false);
+  const [weeklyApprovalAiLoading, setWeeklyApprovalAiLoading] = useState(false);
+  const [weeklyApprovalAiReady, setWeeklyApprovalAiReady] = useState(false);
+  const [weeklyApprovalAiSummary, setWeeklyApprovalAiSummary] = useState("");
+  const [weeklyApprovalAiAdjustments, setWeeklyApprovalAiAdjustments] = useState([]);
+  const [weeklyApprovalAiRawFeedback, setWeeklyApprovalAiRawFeedback] = useState("");
+  const [weeklyApprovalConfirmedByUser, setWeeklyApprovalConfirmedByUser] = useState(false);
+  const [weeklyApprovalActionItems, setWeeklyApprovalActionItems] = useState([]);
+  const [weeklyApprovalDraftByKey, setWeeklyApprovalDraftByKey] = useState({});
+  const [weeklyApprovalSavingKey, setWeeklyApprovalSavingKey] = useState("");
+  const [weeklyApprovalDraftError, setWeeklyApprovalDraftError] = useState("");
+  const [weeklyApprovalDraftNotice, setWeeklyApprovalDraftNotice] = useState("");
+  const [projectIssueProgressNotes, setProjectIssueProgressNotes] = useState([]);
+  const [projectIssueProgressLoading, setProjectIssueProgressLoading] = useState(false);
+  const [projectIssueProgressError, setProjectIssueProgressError] = useState("");
 
   const routePrefix =
     typeof window !== "undefined" && window.location?.pathname?.includes("/church/")
@@ -737,6 +892,111 @@ const TimeRotateCardHours = () => {
     });
 
     return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setWeeklyApprovalsByKey({});
+      return () => {};
+    }
+
+    const unsubscribe = onSnapshot(collection(db, "churches", id, "timeRotateWeeklyApprovals"), (snapshot) => {
+      const nextMap = {};
+
+      snapshot.docs.forEach((approvalDoc) => {
+        const approvalData = approvalDoc.data() || {};
+        const userKey = normalizeValue(approvalData.userKey);
+        const weekKey = normalizeValue(approvalData.weekKey);
+        if (!userKey || !weekKey) return;
+
+        nextMap[`${userKey}::${weekKey}`] = {
+          id: approvalDoc.id,
+          approvedAt: Number(approvalData.approvedAt) || 0,
+          approvedByLabel: normalizeValue(approvalData.approvedByLabel),
+        };
+      });
+
+      setWeeklyApprovalsByKey(nextMap);
+    });
+
+    return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setProjectIssueProgressNotes([]);
+      setProjectIssueProgressLoading(false);
+      setProjectIssueProgressError("");
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadProjectIssueProgressNotes = async () => {
+      setProjectIssueProgressLoading(true);
+      setProjectIssueProgressError("");
+
+      try {
+        const projectsSnapshot = await getDocs(collection(db, "churches", id, "projectListIssueProjects"));
+        const projectRows = await Promise.all(
+          projectsSnapshot.docs.map(async (projectDoc) => {
+            const projectData = projectDoc.data() || {};
+            const projectId = projectDoc.id;
+            const projectName = normalizeValue(projectData.name) || "Untitled Project";
+            const issuesSnapshot = await getDocs(collection(db, "churches", id, "projectListIssueProjects", projectId, "issues"));
+
+            const issueRows = [];
+
+            issuesSnapshot.docs.forEach((issueDoc) => {
+              const issueData = issueDoc.data() || {};
+              const issueIdentifier = normalizeValue(issueData.issueNumber || issueDoc.id);
+              const issueTitle = normalizeValue(issueData.title);
+
+              parseProjectIssueNotes(issueData.notes).forEach((note, noteIndex) => {
+                issueRows.push({
+                  id: `${projectId}::${issueDoc.id}::${noteIndex}::${note.createdAtMs || 0}`,
+                  projectId,
+                  projectName,
+                  issueId: issueIdentifier,
+                  issueTitle,
+                  activityType: note.activityType,
+                  completionPercent: note.completionPercent,
+                  noteText: note.text,
+                  createdAtMs: note.createdAtMs,
+                  createdByUid: note.createdByUid,
+                  createdByEmail: note.createdByEmail,
+                  createdByName: note.createdByName,
+                });
+              });
+            });
+
+            return issueRows;
+          })
+        );
+
+        if (isCancelled) return;
+
+        setProjectIssueProgressNotes(
+          projectRows
+            .flat()
+            .sort((left, right) => (right.createdAtMs || 0) - (left.createdAtMs || 0))
+        );
+      } catch (loadError) {
+        if (isCancelled) return;
+        setProjectIssueProgressNotes([]);
+        setProjectIssueProgressError(normalizeValue(loadError?.message) || "Could not load project progress notes.");
+      } finally {
+        if (!isCancelled) {
+          setProjectIssueProgressLoading(false);
+        }
+      }
+    };
+
+    loadProjectIssueProgressNotes();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -848,7 +1108,7 @@ const TimeRotateCardHours = () => {
     return () => unsubscribe();
   }, [id]);
 
-  const getOrganizationUserMatch = (entry) => {
+  const getOrganizationUserMatch = useCallback((entry) => {
     const entryUserId = normalizeComparable(entry?.userId);
     const byUserId = organizationUsers.find((userEntry) => normalizeComparable(userEntry.userId) === entryUserId);
     if (byUserId) return byUserId;
@@ -867,7 +1127,7 @@ const TimeRotateCardHours = () => {
           : false
       ) || null
     );
-  };
+  }, [organizationUsers]);
 
   const productionCardMapByIssueId = useMemo(() => {
     const map = {};
@@ -935,6 +1195,247 @@ const TimeRotateCardHours = () => {
 
     return userOptions.filter((option) => normalizeComparable(option.label).includes(userSearch));
   }, [userOptions, userSearchText]);
+
+  const selectedReviewUser = useMemo(() => {
+    const selectedComparable = normalizeComparable(selectedUser);
+    if (!selectedComparable) return null;
+    return allUsers.find((entry) => normalizeComparable(entry.userId) === selectedComparable) || null;
+  }, [allUsers, selectedUser]);
+
+  const selectedReviewUserKey = useMemo(() => {
+    return normalizeValue(selectedReviewUser?.userId || selectedUser);
+  }, [selectedReviewUser, selectedUser]);
+
+  const selectedReviewUserAliases = useMemo(() => {
+    const aliases = [
+      selectedReviewUser?.userId,
+      selectedReviewUser?.email,
+      selectedReviewUser?.label,
+      ...(Array.isArray(selectedReviewUser?.aliases) ? selectedReviewUser.aliases : []),
+    ]
+      .map((value) => normalizeComparable(value))
+      .filter(Boolean);
+
+    return new Set(aliases);
+  }, [selectedReviewUser]);
+
+  const selectedFilterUserAliases = useMemo(() => {
+    if (!selectedUser) return new Set();
+
+    const selectedComparable = normalizeComparable(selectedUser);
+    const selectedUserEntry = allUsers.find((entry) => {
+      const entryAliases = [
+        entry?.userId,
+        entry?.email,
+        entry?.label,
+        ...(Array.isArray(entry?.aliases) ? entry.aliases : []),
+      ]
+        .map((value) => normalizeComparable(value))
+        .filter(Boolean);
+
+      return entryAliases.includes(selectedComparable);
+    });
+
+    return new Set(
+      [
+        selectedUser,
+        selectedUserEntry?.userId,
+        selectedUserEntry?.email,
+        selectedUserEntry?.label,
+        ...(Array.isArray(selectedUserEntry?.aliases) ? selectedUserEntry.aliases : []),
+      ]
+        .map((value) => normalizeComparable(value))
+        .filter(Boolean)
+    );
+  }, [allUsers, selectedUser]);
+
+  const weeklyReviewRows = useMemo(() => {
+    if (!selectedReviewUser || selectedReviewUserAliases.size === 0) return [];
+
+    const weekMap = {};
+
+    timeLog
+      .filter((entry) => Number(entry.durationMs) > 0)
+      .forEach((entry) => {
+        const matchedUser = getOrganizationUserMatch(entry);
+        const entryAliases = [
+          entry.userId,
+          entry.userEmail,
+          entry.registeredBy,
+          matchedUser?.userId,
+          matchedUser?.email,
+          matchedUser?.label,
+          ...(Array.isArray(matchedUser?.aliases) ? matchedUser.aliases : []),
+        ]
+          .map((value) => normalizeComparable(value))
+          .filter(Boolean);
+
+        const matchesSelectedUser = entryAliases.some((alias) => selectedReviewUserAliases.has(alias));
+        if (!matchesSelectedUser) return;
+
+        const eventTimestamp = getEntryTimestamp(entry);
+        const weekStartDate = getWeekStartDateFromTimestamp(eventTimestamp);
+        if (!weekStartDate) return;
+
+        const weekStartKey = formatDateInputValue(weekStartDate);
+        const weekEndDate = addDays(weekStartDate, 6);
+        const weekEndKey = formatDateInputValue(weekEndDate);
+        const weekMapKey = weekStartKey;
+
+        if (!weekMap[weekMapKey]) {
+          weekMap[weekMapKey] = {
+            weekKey: weekStartKey,
+            weekStartDate,
+            weekEndDate,
+            startDate: weekStartKey,
+            endDate: weekEndKey,
+            label: buildWeekLabel(weekStartDate, weekEndDate),
+            totalLogs: 0,
+            totalDurationMs: 0,
+            missingNoteLogs: 0,
+          };
+        }
+
+        weekMap[weekMapKey].totalLogs += 1;
+        weekMap[weekMapKey].totalDurationMs += Math.max(0, Number(entry.durationMs) || 0);
+
+        const hasAnyNote = Array.isArray(entry.notes)
+          && entry.notes.some((note) => normalizeValue(note?.text));
+        if (!hasAnyNote) {
+          weekMap[weekMapKey].missingNoteLogs += 1;
+        }
+      });
+
+    return Object.values(weekMap)
+      .map((weekRow) => {
+        const approvalKey = `${selectedReviewUserKey}::${weekRow.weekKey}`;
+        const approval = weeklyApprovalsByKey[approvalKey] || null;
+        return {
+          ...weekRow,
+          isApproved: Boolean(approval),
+          approvedAt: approval?.approvedAt || 0,
+          approvedByLabel: approval?.approvedByLabel || "",
+        };
+      })
+      .sort((left, right) => {
+        if (left.isApproved !== right.isApproved) {
+          return left.isApproved ? 1 : -1;
+        }
+        return right.weekKey.localeCompare(left.weekKey);
+      });
+  }, [getOrganizationUserMatch, selectedReviewUser, selectedReviewUserAliases, selectedReviewUserKey, timeLog, weeklyApprovalsByKey]);
+
+  const selectedWeeklyReviewRow = useMemo(() => {
+    if (!selectedReviewWeekKey) return null;
+    return weeklyReviewRows.find((row) => row.weekKey === selectedReviewWeekKey) || null;
+  }, [selectedReviewWeekKey, weeklyReviewRows]);
+
+  const selectedWeeklyReviewEntries = useMemo(() => {
+    if (!selectedWeeklyReviewRow || selectedReviewUserAliases.size === 0) return [];
+
+    return timeLog
+      .filter((entry) => Number(entry.durationMs) > 0)
+      .filter((entry) => {
+        const matchedUser = getOrganizationUserMatch(entry);
+        const entryAliases = [
+          entry.userId,
+          entry.userEmail,
+          entry.registeredBy,
+          matchedUser?.userId,
+          matchedUser?.email,
+          matchedUser?.label,
+          ...(Array.isArray(matchedUser?.aliases) ? matchedUser.aliases : []),
+        ]
+          .map((value) => normalizeComparable(value))
+          .filter(Boolean);
+
+        return entryAliases.some((alias) => selectedReviewUserAliases.has(alias));
+      })
+      .filter((entry) => {
+        const eventTimestamp = getEntryTimestamp(entry);
+        const weekStartDate = getWeekStartDateFromTimestamp(eventTimestamp);
+        if (!weekStartDate) return false;
+        return formatDateInputValue(weekStartDate) === selectedWeeklyReviewRow.weekKey;
+      })
+      .map((entry) => ({
+        ...entry,
+        eventTimestamp: getEntryTimestamp(entry),
+      }))
+      .sort((left, right) => (left.eventTimestamp || 0) - (right.eventTimestamp || 0));
+  }, [getOrganizationUserMatch, selectedReviewUserAliases, selectedWeeklyReviewRow, timeLog]);
+
+  const selectedWeeklyProgressNotes = useMemo(() => {
+    if (!selectedWeeklyReviewRow || selectedReviewUserAliases.size === 0) return [];
+
+    const weekStartTimestamp = toStartOfDayTimestamp(selectedWeeklyReviewRow.startDate);
+    const weekEndTimestamp = toEndOfDayTimestamp(selectedWeeklyReviewRow.endDate);
+
+    return projectIssueProgressNotes
+      .filter((note) => {
+        const noteTimestamp = Number(note.createdAtMs) || 0;
+        if (!noteTimestamp) return false;
+        if (!Number.isNaN(weekStartTimestamp) && noteTimestamp < weekStartTimestamp) return false;
+        if (!Number.isNaN(weekEndTimestamp) && noteTimestamp > weekEndTimestamp) return false;
+
+        const noteUserAliases = [note.createdByUid, note.createdByEmail, note.createdByName]
+          .map((value) => normalizeComparable(value))
+          .filter(Boolean);
+
+        return noteUserAliases.some((alias) => selectedReviewUserAliases.has(alias));
+      })
+      .sort((left, right) => (right.createdAtMs || 0) - (left.createdAtMs || 0));
+  }, [projectIssueProgressNotes, selectedReviewUserAliases, selectedWeeklyReviewRow]);
+
+  const selectedWeeklyProgressSummary = useMemo(() => {
+    const issueIds = new Set();
+    const projectNames = new Set();
+    const completedIssueIds = new Set();
+
+    selectedWeeklyProgressNotes.forEach((note) => {
+      const issueId = normalizeValue(note.issueId);
+      const projectName = normalizeValue(note.projectName);
+      if (issueId) issueIds.add(issueId);
+      if (projectName) projectNames.add(projectName);
+      if (issueId && Number(note.completionPercent) >= 100) {
+        completedIssueIds.add(issueId);
+      }
+    });
+
+    return {
+      noteCount: selectedWeeklyProgressNotes.length,
+      issueCount: issueIds.size,
+      projectCount: projectNames.size,
+      completedIssueCount: completedIssueIds.size,
+    };
+  }, [selectedWeeklyProgressNotes]);
+
+  useEffect(() => {
+    setIsWeeklyApprovalDialogOpen(false);
+    setWeeklyApprovalAiLoading(false);
+    setWeeklyApprovalAiReady(false);
+    setWeeklyApprovalAiSummary("");
+    setWeeklyApprovalAiAdjustments([]);
+    setWeeklyApprovalAiRawFeedback("");
+    setWeeklyApprovalConfirmedByUser(false);
+    setWeeklyApprovalActionItems([]);
+    setWeeklyApprovalDraftByKey({});
+    setWeeklyApprovalSavingKey("");
+    setWeeklyApprovalDraftError("");
+    setWeeklyApprovalDraftNotice("");
+  }, [selectedReviewUserKey, selectedReviewWeekKey]);
+
+  useEffect(() => {
+    if (weeklyReviewRows.length === 0) {
+      setSelectedReviewWeekKey("");
+      return;
+    }
+
+    const hasCurrentSelection = weeklyReviewRows.some((row) => row.weekKey === selectedReviewWeekKey);
+    if (hasCurrentSelection) return;
+
+    const firstUnapproved = weeklyReviewRows.find((row) => !row.isApproved);
+    setSelectedReviewWeekKey((firstUnapproved || weeklyReviewRows[0]).weekKey);
+  }, [selectedReviewWeekKey, weeklyReviewRows]);
 
   const getDefaultSelectedUser = () => {
     const authUid = normalizeComparable(user?.uid);
@@ -1013,6 +1514,7 @@ const TimeRotateCardHours = () => {
       ...productionCards.map((card) => normalizeValue(card.projectName)),
       ...timeLog.map((entry) => normalizeValue(entry.projectName)),
       ...activeTimers.map((entry) => normalizeValue(entry.projectName)),
+      ...projectIssueProgressNotes.map((entry) => normalizeValue(entry.projectName)),
     ];
 
     return names
@@ -1023,7 +1525,7 @@ const TimeRotateCardHours = () => {
       })
       .sort((left, right) => left.localeCompare(right))
       .map((projectName) => ({ value: projectName, label: projectName }));
-  }, [productionCards, timeLog, activeTimers]);
+  }, [activeTimers, productionCards, projectIssueProgressNotes, timeLog]);
 
   const filteredTimerLogs = useMemo(() => {
     const normalizedSearch = normalizeValue(searchText).toLowerCase();
@@ -1103,6 +1605,125 @@ const TimeRotateCardHours = () => {
       });
   }, [allTimerEntries, allUsers, endDate, productionCardMapByIssueId, searchText, selectedCard, selectedProject, selectedUser, startDate]);
 
+  const importedProjectIssueProgressNotes = useMemo(() => {
+    if (projectIssueProgressNotes.length === 0) return [];
+
+    const startTimestamp = toStartOfDayTimestamp(startDate);
+    const endTimestamp = toEndOfDayTimestamp(endDate);
+    const selectedUserAliasSet = new Set(Array.from(selectedFilterUserAliases || []));
+    const selectedProjectMatchKey = normalizeProjectMatchKey(selectedProject);
+
+    return projectIssueProgressNotes
+      .filter((note) => {
+        const noteTimestamp = Number(note.createdAtMs) || 0;
+        if (!noteTimestamp) return false;
+        if (!Number.isNaN(startTimestamp) && noteTimestamp < startTimestamp) return false;
+        if (!Number.isNaN(endTimestamp) && noteTimestamp > endTimestamp) return false;
+
+        const projectKey = normalizeProjectMatchKey(note.projectName);
+        if (selectedProjectMatchKey) {
+          if (projectKey !== selectedProjectMatchKey) return false;
+        }
+
+        if (selectedUserAliasSet.size > 0) {
+          const noteUserAliases = [note.createdByUid, note.createdByEmail, note.createdByName]
+            .map((value) => normalizeComparable(value))
+            .filter(Boolean);
+          if (!noteUserAliases.some((alias) => selectedUserAliasSet.has(alias))) return false;
+        }
+
+        return true;
+      })
+      .sort((left, right) => (right.createdAtMs || 0) - (left.createdAtMs || 0));
+  }, [endDate, projectIssueProgressNotes, selectedFilterUserAliases, selectedProject, startDate]);
+
+  const visibleImportedProjectIssueProgressNotes = useMemo(() => {
+    if (projectIssueProgressStatusFilter === "both") {
+      return importedProjectIssueProgressNotes;
+    }
+
+    return importedProjectIssueProgressNotes.filter((note) => {
+      return getProjectIssueProgressCompletionState(note) === projectIssueProgressStatusFilter;
+    });
+  }, [importedProjectIssueProgressNotes, projectIssueProgressStatusFilter]);
+
+  const importedProjectIssueProgressSummary = useMemo(() => {
+    const issueIds = new Set();
+    const completedIssueIds = new Set();
+    const projectNames = new Set();
+    let progressUpdateCount = 0;
+    let noteCount = 0;
+
+    visibleImportedProjectIssueProgressNotes.forEach((note) => {
+      const issueId = normalizeValue(note.issueId);
+      const projectName = normalizeValue(note.projectName);
+      if (issueId) issueIds.add(issueId);
+      if (projectName) projectNames.add(projectName);
+      if (note.activityType === "Progress Added") {
+        progressUpdateCount += 1;
+      } else {
+        noteCount += 1;
+      }
+      if (issueId && Number(note.completionPercent) >= 100) {
+        completedIssueIds.add(issueId);
+      }
+    });
+
+    return {
+      issueCount: issueIds.size,
+      completedIssueCount: completedIssueIds.size,
+      projectCount: projectNames.size,
+      progressUpdateCount,
+      noteCount,
+    };
+  }, [visibleImportedProjectIssueProgressNotes]);
+
+  const selectedWeeklyImportedProgressNotes = useMemo(() => {
+    if (!selectedWeeklyReviewRow) return [];
+
+    const weekStartTimestamp = toStartOfDayTimestamp(selectedWeeklyReviewRow.startDate);
+    const weekEndTimestamp = toEndOfDayTimestamp(selectedWeeklyReviewRow.endDate);
+
+    return importedProjectIssueProgressNotes.filter((note) => {
+      const noteTimestamp = Number(note.createdAtMs) || 0;
+      if (!noteTimestamp) return false;
+      if (!Number.isNaN(weekStartTimestamp) && noteTimestamp < weekStartTimestamp) return false;
+      if (!Number.isNaN(weekEndTimestamp) && noteTimestamp > weekEndTimestamp) return false;
+      return true;
+    });
+  }, [importedProjectIssueProgressNotes, selectedWeeklyReviewRow]);
+
+  const selectedWeeklyImportedProgressSummary = useMemo(() => {
+    const issueIds = new Set();
+    const completedIssueIds = new Set();
+    const projectNames = new Set();
+    let progressUpdateCount = 0;
+    let noteCount = 0;
+
+    selectedWeeklyImportedProgressNotes.forEach((note) => {
+      const issueId = normalizeValue(note.issueId);
+      const projectName = normalizeValue(note.projectName);
+      if (issueId) issueIds.add(issueId);
+      if (projectName) projectNames.add(projectName);
+      if (note.activityType === "Progress Added") {
+        progressUpdateCount += 1;
+      } else {
+        noteCount += 1;
+      }
+      if (issueId && Number(note.completionPercent) >= 100) {
+        completedIssueIds.add(issueId);
+      }
+    });
+
+    return {
+      issueCount: issueIds.size,
+      completedIssueCount: completedIssueIds.size,
+      projectCount: projectNames.size,
+      progressUpdateCount,
+      noteCount,
+    };
+  }, [selectedWeeklyImportedProgressNotes]);
+
   const cardUserRollup = useMemo(() => {
     const rollupMap = {};
 
@@ -1113,7 +1734,6 @@ const TimeRotateCardHours = () => {
       const userKey = normalizeValue(matchedUser?.userId) || normalizeValue(entry.userId) || normalizeValue(entry.registeredBy) || "unknown-user";
       const userLabel = normalizeValue(matchedUser?.label) || normalizeValue(entry.registeredBy) || "Unknown user";
       const userEmail = normalizeValue(matchedUser?.email) || normalizeValue(entry.userEmail);
-      const rollupKey = `${issueId}::${userKey}`;
       const entryStartTimestamp = toTimestampMs(entry?.startedAt) || getEntryTimestamp(entry);
       const entryEndTimestamp =
         toTimestampMs(entry?.endedAt) ||
@@ -1121,6 +1741,8 @@ const TimeRotateCardHours = () => {
         (entryStartTimestamp > 0
           ? entryStartTimestamp + Math.max(0, Number(entry?.durationMs) || 0)
           : getEntryTimestamp(entry));
+      const entryDayKey = getDayKeyFromTimestamp(entryStartTimestamp || entryEndTimestamp || getEntryTimestamp(entry)) || "unknown-day";
+      const rollupKey = `${issueId}::${userKey}::${entryDayKey}`;
 
       if (!rollupMap[rollupKey]) {
         rollupMap[rollupKey] = {
@@ -1206,8 +1828,8 @@ const TimeRotateCardHours = () => {
       .map((row) => {
         const entries = Array.isArray(row.entries)
           ? [...row.entries].sort((left, right) => {
-              if ((right.startedAt || 0) !== (left.startedAt || 0)) {
-                return (right.startedAt || 0) - (left.startedAt || 0);
+              if ((left.startedAt || 0) !== (right.startedAt || 0)) {
+                return (left.startedAt || 0) - (right.startedAt || 0);
               }
               return String(left.id || "").localeCompare(String(right.id || ""));
             })
@@ -1227,24 +1849,78 @@ const TimeRotateCardHours = () => {
         };
       })
       .sort((left, right) => {
-      if (right.totalDurationMs !== left.totalDurationMs) {
-        return right.totalDurationMs - left.totalDurationMs;
+      if ((left.firstAt || 0) !== (right.firstAt || 0)) {
+        return (left.firstAt || 0) - (right.firstAt || 0);
       }
       if (left.issueId !== right.issueId) {
         return left.issueId.localeCompare(right.issueId);
       }
-      return left.userLabel.localeCompare(right.userLabel);
+      if (left.userLabel !== right.userLabel) {
+        return left.userLabel.localeCompare(right.userLabel);
+      }
+      return String(left.rollupKey || "").localeCompare(String(right.rollupKey || ""));
       });
   }, [filteredTimerLogs, productionCardMapByIssueId, organizationUsers]);
 
+  const visibleCardUserRollup = useMemo(() => {
+    if (selectedRowStatus === "both") {
+      return cardUserRollup;
+    }
+
+    return cardUserRollup.filter((row) => {
+      const hasActiveTimer = Array.isArray(row.entries) && row.entries.some((entry) => entry.logType === "active");
+      const rowStatus = hasActiveTimer ? "open" : "closed";
+      return rowStatus === selectedRowStatus;
+    });
+  }, [cardUserRollup, selectedRowStatus]);
+
+  const projectIssueProgressByRollupKey = useMemo(() => {
+    if (visibleCardUserRollup.length === 0 || importedProjectIssueProgressNotes.length === 0) return {};
+
+    const rowsByKey = {};
+
+    visibleCardUserRollup.forEach((row) => {
+      const rowProjectKey = normalizeComparable(row.projectName);
+      const rowIssueKey = normalizeIssueIdentifier(row.issueId);
+      const rowDayKey = getDayKeyFromTimestamp(row.firstAt || row.lastAt);
+      const rowUserAliases = new Set(
+        [row.userKey, row.userEmail, row.userLabel]
+          .map((value) => normalizeComparable(value))
+          .filter(Boolean)
+      );
+
+      if (!rowProjectKey || rowUserAliases.size === 0) {
+        rowsByKey[row.rollupKey] = [];
+        return;
+      }
+
+      const matchingNotes = importedProjectIssueProgressNotes.filter((note) => {
+        if (normalizeComparable(note.projectName) !== rowProjectKey) return false;
+
+        const noteUserAliases = [note.createdByUid, note.createdByEmail, note.createdByName]
+          .map((value) => normalizeComparable(value))
+          .filter(Boolean);
+        if (!noteUserAliases.some((alias) => rowUserAliases.has(alias))) return false;
+
+        const sameDay = getDayKeyFromTimestamp(note.createdAtMs) === rowDayKey;
+
+        return sameDay;
+      });
+
+      rowsByKey[row.rollupKey] = matchingNotes.slice(0, 6);
+    });
+
+    return rowsByKey;
+  }, [importedProjectIssueProgressNotes, visibleCardUserRollup]);
+
   const totalDurationAllRows = useMemo(() => {
-    return cardUserRollup.reduce((sum, row) => sum + (Number(row.totalDurationMs) || 0), 0);
-  }, [cardUserRollup]);
+    return visibleCardUserRollup.reduce((sum, row) => sum + (Number(row.totalDurationMs) || 0), 0);
+  }, [visibleCardUserRollup]);
 
   const filteredProjectRollup = useMemo(() => {
     const projectMap = {};
 
-    cardUserRollup.forEach((row) => {
+    visibleCardUserRollup.forEach((row) => {
       const projectName = normalizeValue(row.projectName) || "Unassigned Project";
       if (!projectMap[projectName]) {
         projectMap[projectName] = {
@@ -1344,7 +2020,7 @@ const TimeRotateCardHours = () => {
         }
         return left.projectName.localeCompare(right.projectName);
       });
-  }, [cardUserRollup]);
+  }, [visibleCardUserRollup]);
 
   const employeeReportingInsights = useMemo(() => {
     const employeeMap = {};
@@ -1914,6 +2590,436 @@ const TimeRotateCardHours = () => {
     setEndDate(nextRange.endDate);
   };
 
+  const handleSelectWeeklyReviewRow = (weekRow) => {
+    if (!weekRow) return;
+    setSelectedReviewWeekKey(weekRow.weekKey);
+    setDateRangePreset("custom");
+    setStartDate(weekRow.startDate);
+    setEndDate(weekRow.endDate);
+    setWeeklyApprovalError("");
+    setWeeklyApprovalNotice("");
+  };
+
+  const buildWeeklyApprovalActionItems = (entries = []) => {
+    const actionItems = [];
+
+    entries.forEach((entry) => {
+      const notes = Array.isArray(entry.notes) ? entry.notes : [];
+      const entryKeyBase = `${normalizeValue(entry.id)}::${normalizeValue(entry.issueId)}`;
+
+      if (notes.length === 0) {
+        actionItems.push({
+          key: `${entryKeyBase}::missing`,
+          entryId: normalizeValue(entry.id),
+          issueId: normalizeValue(entry.issueId),
+          projectName: normalizeValue(entry.projectName),
+          startedAt: Number(entry.startedAt) || 0,
+          noteIndex: -1,
+          currentText: "",
+          reason: "This log has no note. Add a specific task, scope, and outcome.",
+        });
+        return;
+      }
+
+      notes.forEach((note, noteIndex) => {
+        const noteText = normalizeValue(note?.text);
+        const normalizedNote = normalizeComparable(noteText);
+        const reasons = [];
+
+        if (!normalizedNote || normalizedNote.length < 45) {
+          reasons.push("This note is too short to justify billed work.");
+        }
+
+        if (/\b(meeting|worked|misc|general|coordination|comments?)\b/.test(normalizedNote) && normalizedNote.length < 80) {
+          reasons.push("This note is too generic and needs specific task details.");
+        }
+
+        if (/\b(create|creating|add|adding|put|placing)\s+text\s+(on|to)\s+racks?\b/i.test(noteText)) {
+          reasons.push("Clarify this wording. Text cannot be placed on a rack directly. If you mean annotation for racks, say that explicitly.");
+        }
+
+        if (reasons.length === 0) return;
+
+        actionItems.push({
+          key: `${entryKeyBase}::${noteIndex}`,
+          entryId: normalizeValue(entry.id),
+          issueId: normalizeValue(entry.issueId),
+          projectName: normalizeValue(entry.projectName),
+          startedAt: Number(entry.startedAt) || 0,
+          noteIndex,
+          currentText: noteText,
+          reason: reasons.join(" "),
+        });
+      });
+    });
+
+    return actionItems;
+  };
+
+  const canEditWeeklyApprovalEntryNote = (entry) => {
+    if (!user || !entry) return false;
+    if (isGlobalAdmin()) return true;
+    if (isAdmin()) return true;
+
+    const currentUserKeys = new Set(
+      [user?.uid, user?.email, user?.displayName, user?.name]
+        .map((value) => normalizeComparable(value))
+        .filter(Boolean)
+    );
+    const entryUserKeys = [entry.userId, entry.userEmail, entry.registeredBy]
+      .map((value) => normalizeComparable(value))
+      .filter(Boolean);
+
+    return entryUserKeys.some((value) => currentUserKeys.has(value));
+  };
+
+  const handleWeeklyApprovalDraftChange = (itemKey, nextValue) => {
+    setWeeklyApprovalDraftByKey((current) => ({
+      ...current,
+      [itemKey]: nextValue,
+    }));
+    setWeeklyApprovalDraftError("");
+    setWeeklyApprovalDraftNotice("");
+  };
+
+  const handleSaveWeeklyApprovalActionItem = async (item) => {
+    if (!item?.entryId) {
+      setWeeklyApprovalDraftError("No log entry found for this note.");
+      return;
+    }
+
+    const sourceEntry = selectedWeeklyReviewEntries.find((entry) => normalizeValue(entry.id) === normalizeValue(item.entryId));
+    if (!sourceEntry) {
+      setWeeklyApprovalDraftError("Could not find the latest log entry. Close and reopen the review.");
+      return;
+    }
+
+    if (!canEditWeeklyApprovalEntryNote(sourceEntry)) {
+      setWeeklyApprovalDraftError("You do not have permission to edit this note.");
+      return;
+    }
+
+    const draftText = normalizeValue(weeklyApprovalDraftByKey[item.key]);
+    if (!draftText) {
+      setWeeklyApprovalDraftError("Note text cannot be empty.");
+      return;
+    }
+
+    const existingNotes = Array.isArray(sourceEntry.notes)
+      ? sourceEntry.notes.map((noteItem) => ({
+          text: normalizeValue(noteItem?.text),
+          timestamp: Number(noteItem?.timestamp) || Date.now(),
+        }))
+      : [];
+
+    const nextNotes = item.noteIndex >= 0
+      ? existingNotes.map((noteItem, index) => (
+          index === item.noteIndex
+            ? { text: draftText, timestamp: Number(noteItem?.timestamp) || Date.now() }
+            : noteItem
+        ))
+      : [
+          ...existingNotes,
+          {
+            text: draftText,
+            timestamp: Date.now(),
+          },
+        ];
+
+    setWeeklyApprovalSavingKey(item.key);
+    setWeeklyApprovalDraftError("");
+    setWeeklyApprovalDraftNotice("");
+    try {
+      await updateDoc(doc(db, "churches", id, "timeRotateLogs", item.entryId), {
+        notes: nextNotes,
+      });
+
+      setWeeklyApprovalDraftNotice(`Saved note for issue ${item.issueId || "-"}. Re-run review to refresh approval status.`);
+      setWeeklyApprovalActionItems((current) => current.filter((entry) => entry.key !== item.key));
+    } catch (saveError) {
+      setWeeklyApprovalDraftError(normalizeValue(saveError?.message) || "Could not save note.");
+    } finally {
+      setWeeklyApprovalSavingKey("");
+    }
+  };
+
+  const handleApproveSelectedWeek = async () => {
+    if (!id || !user) return;
+    if (!selectedReviewUserKey) {
+      setWeeklyApprovalError("Select a user to review weekly logs.");
+      return;
+    }
+
+    if (!selectedWeeklyReviewRow) {
+      setWeeklyApprovalError("Select a week to approve.");
+      return;
+    }
+
+    setWeeklyApprovalError("");
+    setWeeklyApprovalNotice("");
+    setWeeklyApprovalAiSummary("");
+    setWeeklyApprovalAiAdjustments([]);
+    setWeeklyApprovalAiRawFeedback("");
+    setWeeklyApprovalAiReady(false);
+    setWeeklyApprovalConfirmedByUser(false);
+    setWeeklyApprovalActionItems([]);
+    setWeeklyApprovalDraftByKey({});
+    setWeeklyApprovalSavingKey("");
+    setWeeklyApprovalDraftError("");
+    setWeeklyApprovalDraftNotice("");
+    setIsWeeklyApprovalDialogOpen(false);
+    setWeeklyApprovalAiLoading(true);
+
+    try {
+      const nextActionItems = buildWeeklyApprovalActionItems(selectedWeeklyReviewEntries);
+      setWeeklyApprovalActionItems(nextActionItems);
+      setWeeklyApprovalDraftByKey(
+        Object.fromEntries(nextActionItems.map((item) => [item.key, item.currentText]))
+      );
+
+      const compactLogEntries = selectedWeeklyReviewEntries.slice(0, 120).map((entry) => ({
+        issueId: normalizeValue(entry.issueId),
+        projectName: normalizeValue(entry.projectName),
+        startedAt: formatTimestamp(entry.startedAt),
+        endedAt: formatTimestamp(entry.endedAt),
+        duration: formatDurationHoursMinutes(entry.durationMs),
+        notes: (Array.isArray(entry.notes) ? entry.notes : []).map((note) => normalizeValue(note?.text)).filter(Boolean),
+      }));
+
+      const compactProjectIssueNotes = selectedWeeklyProgressNotes.slice(0, 120).map((note) => ({
+        issueId: normalizeValue(note.issueId),
+        issueTitle: normalizeValue(note.issueTitle),
+        projectName: normalizeValue(note.projectName),
+        addedBy: normalizeValue(note.createdByEmail || note.createdByName || note.createdByUid),
+        addedAt: formatTimestamp(note.createdAtMs),
+        note: truncateText(note.noteText, 280),
+      }));
+
+      const compactImportedPanelNotes = selectedWeeklyImportedProgressNotes.slice(0, 120).map((note) => ({
+        issueId: normalizeValue(note.issueId),
+        issueTitle: normalizeValue(note.issueTitle),
+        projectName: normalizeValue(note.projectName),
+        activityType: normalizeValue(note.activityType),
+        addedBy: normalizeValue(note.createdByEmail || note.createdByName || note.createdByUid),
+        addedAt: formatTimestamp(note.createdAtMs),
+        completionPercent: Number(note.completionPercent) || null,
+        note: truncateText(note.noteText, 280),
+      }));
+
+      const prompt = [
+        "You are reviewing employee time log notes that will be sent to a client for billing.",
+        "Determine if notes are specific enough to justify billed hours.",
+        "Reject vague notes like 'meeting with team' unless supported by specific scope and outcomes.",
+        "If a note describes an impossible or incorrect operation, require clarification instead of approving it.",
+        "Example: 'creating text on racks' is not a valid rack task. Ask the user to clarify whether they mean annotation for racks or another specific action.",
+        "Use the imported Project Lists section as supporting evidence.",
+        "If Project Lists notes and progress updates for the same user, project, and week provide specific task, scope, and outcome detail, they can justify the work even when some time-log notes are brief or missing.",
+        "Provide strict feedback for revision when needed.",
+        "",
+        "Return ONLY valid JSON with this shape:",
+        "{",
+        '  "approveReady": boolean,',
+        '  "summary": string,',
+        '  "requiredAdjustments": string[]',
+        "}",
+        "",
+        `User: ${normalizeValue(selectedReviewUser?.label)}`,
+        `Week: ${selectedWeeklyReviewRow.label}`,
+        `Total logs: ${selectedWeeklyReviewRow.totalLogs}`,
+        `Total duration: ${formatDurationHoursMinutes(selectedWeeklyReviewRow.totalDurationMs)}`,
+        `Missing notes count: ${selectedWeeklyReviewRow.missingNoteLogs}`,
+        `Project progress notes matched to this user/week: ${compactProjectIssueNotes.length}`,
+        `Imported Project Lists notes in top section: ${compactImportedPanelNotes.length}`,
+        `Imported Project Lists completed issues: ${selectedWeeklyImportedProgressSummary.completedIssueCount}`,
+        `Imported Project Lists issues touched: ${selectedWeeklyImportedProgressSummary.issueCount}`,
+        `Imported Project Lists progress updates: ${selectedWeeklyImportedProgressSummary.progressUpdateCount}`,
+        `Imported Project Lists note entries: ${selectedWeeklyImportedProgressSummary.noteCount}`,
+        "",
+        "Time logs and notes:",
+        JSON.stringify(compactLogEntries, null, 2),
+        "",
+        "Related Project Lists progress notes:",
+        JSON.stringify(compactProjectIssueNotes, null, 2),
+        "",
+        "Imported Project Lists section shown on the page:",
+        JSON.stringify(compactImportedPanelNotes, null, 2),
+      ].join("\n");
+
+      const response = await fetch(`${FIREBASE_FUNCTIONS_BASE_URL}/generateTimeRotateInvoiceReview`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: AI_REVIEW_MODEL,
+          prompt,
+          maxOutputTokens: 1200,
+          temperature: 0.2,
+        }),
+      });
+
+      const responseContentType = normalizeValue(response.headers.get("content-type") || "");
+      if (responseContentType.includes("text/html")) {
+        throw new Error("Feedback endpoint returned HTML. Verify function deployment and route settings.");
+      }
+
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (parseError) {
+        throw new Error("Feedback endpoint returned invalid JSON.");
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          normalizeValue(payload?.error)
+          || normalizeValue(payload?.message)
+          || "Could not evaluate notes for approval."
+        );
+      }
+
+      const feedbackText = normalizeValue(payload?.text);
+      if (!feedbackText) {
+        throw new Error("Feedback response did not include content.");
+      }
+
+      setWeeklyApprovalAiRawFeedback(feedbackText);
+
+      let parsedFeedback = null;
+      try {
+        parsedFeedback = JSON.parse(feedbackText);
+      } catch (jsonError) {
+        const jsonSnippetMatch = feedbackText.match(/\{[\s\S]*\}/);
+        if (jsonSnippetMatch) {
+          parsedFeedback = JSON.parse(jsonSnippetMatch[0]);
+        }
+      }
+
+      const fallbackAdjustments = [
+        "Notes must clearly explain the exact task, location/scope, and measurable outcome for billed time.",
+        "Replace generic phrases with specific deliverables completed during each time block.",
+      ];
+
+      const heuristicWeakNotes = nextActionItems.filter((item) => item.noteIndex >= 0);
+
+      const impossibleRackTextNotes = compactLogEntries.flatMap((entry) => {
+        const notes = Array.isArray(entry.notes) ? entry.notes : [];
+        return notes
+          .filter((noteText) => /\b(create|creating|add|adding|put|placing)\s+text\s+(on|to)\s+racks?\b/i.test(String(noteText || "")))
+          .map((noteText) => ({
+            issueId: normalizeValue(entry.issueId),
+            noteText: normalizeValue(noteText),
+          }));
+      });
+
+      const hasStrongImportedSupport =
+        Number(selectedWeeklyImportedProgressSummary.completedIssueCount) > 0
+        && (
+          Number(selectedWeeklyImportedProgressSummary.progressUpdateCount) >= 3
+          || Number(selectedWeeklyImportedProgressSummary.noteCount) >= 3
+          || Number(selectedWeeklyImportedProgressSummary.issueCount) >= 3
+        );
+
+      const parsedApproveReady = Boolean(parsedFeedback?.approveReady);
+      const hasImpossibleRackTextNotes = impossibleRackTextNotes.length > 0;
+      const isHeuristicallyReady = (heuristicWeakNotes.length === 0 || hasStrongImportedSupport) && !hasImpossibleRackTextNotes;
+      const hasNoMissingNotes = Number(selectedWeeklyReviewRow.missingNoteLogs) === 0 || hasStrongImportedSupport;
+      const finalApproveReady = parsedApproveReady && isHeuristicallyReady && hasNoMissingNotes;
+
+      const parsedSummary = normalizeValue(parsedFeedback?.summary)
+        || (finalApproveReady
+          ? (hasStrongImportedSupport
+            ? "Imported Project Lists notes add enough supporting detail to justify this week's work for billing approval."
+            : "Notes look detailed enough for client-facing billing support.")
+          : "Some notes still need revision before this week can be approved for client billing.");
+
+      const parsedAdjustments = Array.isArray(parsedFeedback?.requiredAdjustments)
+        ? parsedFeedback.requiredAdjustments.map((item) => normalizeValue(item)).filter(Boolean)
+        : [];
+
+      const heuristicAdjustments = heuristicWeakNotes.length > 0
+        && !hasStrongImportedSupport
+        ? [
+            `Detected ${heuristicWeakNotes.length} log(s) with potentially vague notes. Add concrete task details, scope, and outcome.`,
+          ]
+        : [];
+
+      const missingNoteAdjustments = Number(selectedWeeklyReviewRow.missingNoteLogs) > 0
+        && !hasStrongImportedSupport
+        ? [
+            `Add notes to ${selectedWeeklyReviewRow.missingNoteLogs} log(s) that currently have no note. Approval requires notes on every log.`,
+          ]
+        : [];
+
+      const impossibleRackTextAdjustments = hasImpossibleRackTextNotes
+        ? [
+            `Clarify ${impossibleRackTextNotes.length} note(s) that describe 'text on racks'. Text cannot be placed on a rack directly. If the intent was annotation for racks, rewrite the note to say that explicitly.`,
+          ]
+        : [];
+
+      const nextAdjustments = [...parsedAdjustments, ...missingNoteAdjustments, ...heuristicAdjustments, ...impossibleRackTextAdjustments];
+
+      setWeeklyApprovalAiReady(finalApproveReady);
+      setWeeklyApprovalAiSummary(parsedSummary);
+      setWeeklyApprovalAiAdjustments(nextAdjustments.length > 0 ? nextAdjustments : fallbackAdjustments);
+      setIsWeeklyApprovalDialogOpen(true);
+    } catch (feedbackError) {
+      setWeeklyApprovalAiReady(false);
+      setWeeklyApprovalAiSummary("Could not validate notes with Gemini feedback. Resolve this before approval.");
+      setWeeklyApprovalAiAdjustments([
+        normalizeValue(feedbackError?.message) || "Review service unavailable.",
+        "Please improve note detail and retry approval once feedback is available.",
+      ]);
+      setIsWeeklyApprovalDialogOpen(true);
+    } finally {
+      setWeeklyApprovalAiLoading(false);
+    }
+  };
+
+  const handleConfirmApproveSelectedWeek = async () => {
+    if (!id || !user || !selectedWeeklyReviewRow || !selectedReviewUserKey) return;
+    if (!weeklyApprovalAiReady) {
+      setWeeklyApprovalError("Approval is blocked until note feedback passes.");
+      return;
+    }
+    if (!weeklyApprovalConfirmedByUser) {
+      setWeeklyApprovalError("Please confirm accuracy before final approval.");
+      return;
+    }
+
+    setApprovingWeekKey(selectedWeeklyReviewRow.weekKey);
+    setWeeklyApprovalError("");
+    setWeeklyApprovalNotice("");
+
+    try {
+      const approvalDocId = buildWeeklyApprovalDocId(selectedReviewUserKey, selectedWeeklyReviewRow.weekKey);
+      await setDoc(doc(db, "churches", id, "timeRotateWeeklyApprovals", approvalDocId), {
+        churchId: id,
+        userKey: selectedReviewUserKey,
+        userId: normalizeValue(selectedReviewUser?.userId),
+        userEmail: normalizeValue(selectedReviewUser?.email),
+        userLabel: normalizeValue(selectedReviewUser?.label),
+        weekKey: selectedWeeklyReviewRow.weekKey,
+        weekStartDate: selectedWeeklyReviewRow.startDate,
+        weekEndDate: selectedWeeklyReviewRow.endDate,
+        totalLogs: Number(selectedWeeklyReviewRow.totalLogs) || 0,
+        totalDurationMs: Number(selectedWeeklyReviewRow.totalDurationMs) || 0,
+        missingNoteLogs: Number(selectedWeeklyReviewRow.missingNoteLogs) || 0,
+        approvedAt: Date.now(),
+        approvedByUid: normalizeValue(user?.uid),
+        approvedByLabel: normalizeValue(user?.displayName || user?.name || user?.email || user?.uid),
+        reviewConfirmationText: "I verified that time and notes are accurate for client billing.",
+      });
+
+      setIsWeeklyApprovalDialogOpen(false);
+      setWeeklyApprovalNotice("Week approved successfully.");
+    } catch (approvalError) {
+      setWeeklyApprovalError(normalizeValue(approvalError?.message) || "Could not approve this week.");
+    } finally {
+      setApprovingWeekKey("");
+    }
+  };
+
   const canEditRow = (row) => {
     if (!user) return false;
 
@@ -1937,11 +3043,34 @@ const TimeRotateCardHours = () => {
     return false;
   };
 
+  const canEditRowNotes = (row) => {
+    if (!user || !row) return false;
+    if (canEditRow(row)) return true;
+
+    const currentUserKeys = new Set(
+      [user?.uid, user?.email, user?.displayName, user?.name]
+        .map((value) => normalizeComparable(value))
+        .filter(Boolean)
+    );
+
+    if (currentUserKeys.size === 0) return false;
+
+    const rowUserKeys = [row.userKey, row.userEmail, row.userLabel]
+      .map((value) => normalizeComparable(value))
+      .filter(Boolean);
+
+    return rowUserKeys.some((value) => currentUserKeys.has(value));
+  };
+
   const handleStartEdit = (row) => {
     setAddingRowKey(null);
     setAddError("");
     setEditingEntryKey("");
     setEditingEntryError("");
+    setEditingNoteKey("");
+    setEditingNoteError("");
+    setAddingNoteKey("");
+    setAddingNoteError("");
     setEditingRowKey(row.rollupKey);
     setEditStartMs(row.firstAt || 0);
     setEditEndMs(row.lastAt || 0);
@@ -1954,6 +3083,10 @@ const TimeRotateCardHours = () => {
     setEditError("");
     setEditingEntryKey("");
     setEditingEntryError("");
+    setEditingNoteKey("");
+    setEditingNoteError("");
+    setAddingNoteKey("");
+    setAddingNoteError("");
     setAddingRowKey(row.rollupKey);
     setAddStartMs(baseStart);
     setAddEndMs(baseStart + (30 * 60 * 1000));
@@ -2058,6 +3191,14 @@ const TimeRotateCardHours = () => {
         setEditingEntryKey("");
         setEditingEntryError("");
       }
+      if (editingNoteKey.startsWith(`${row.rollupKey}::${entry.id}::`)) {
+        setEditingNoteKey("");
+        setEditingNoteError("");
+      }
+      if (addingNoteKey === `${row.rollupKey}::${entry.id}`) {
+        setAddingNoteKey("");
+        setAddingNoteError("");
+      }
     } catch (removeError) {
       setDeleteError(normalizeValue(removeError?.message) || "Could not delete time entry.");
     } finally {
@@ -2070,6 +3211,10 @@ const TimeRotateCardHours = () => {
     setEditError("");
     setAddingRowKey(null);
     setAddError("");
+    setEditingNoteKey("");
+    setEditingNoteError("");
+    setAddingNoteKey("");
+    setAddingNoteError("");
     setEditingEntryKey(`${row.rollupKey}::${entry.id}`);
     setEditingEntryStartMs(entry.startedAt || 0);
     setEditingEntryEndMs(entry.endedAt || 0);
@@ -2105,6 +3250,135 @@ const TimeRotateCardHours = () => {
       setEditingEntryError(normalizeValue(saveError?.message) || "Could not save time entry.");
     } finally {
       setEditingEntrySaving(false);
+    }
+  };
+
+  const handleStartNoteEdit = (row, entry, note, noteIndex) => {
+    const nextNoteKey = `${row.rollupKey}::${entry.id}::${noteIndex}`;
+    setEditingRowKey(null);
+    setEditError("");
+    setAddingRowKey(null);
+    setAddError("");
+    setAddingNoteKey("");
+    setAddingNoteError("");
+    setEditingEntryKey("");
+    setEditingEntryError("");
+    setEditingNoteKey(nextNoteKey);
+    setEditingNoteText(normalizeValue(note?.text));
+    setEditingNoteError("");
+  };
+
+  const handleSaveNoteEdit = async (row, entry, noteIndex) => {
+    if (!entry?.id || !entry?.collection) {
+      setEditingNoteError("No entry found for this note.");
+      return;
+    }
+
+    if (!canEditRowNotes(row)) {
+      setEditingNoteError("You do not have permission to edit this note.");
+      return;
+    }
+
+    const trimmedText = normalizeValue(editingNoteText);
+    if (!trimmedText) {
+      setEditingNoteError("Note text cannot be empty.");
+      return;
+    }
+
+    const existingNotes = Array.isArray(entry.notes) ? entry.notes : [];
+    if (noteIndex < 0 || noteIndex >= existingNotes.length) {
+      setEditingNoteError("Could not find this note anymore. Refresh and try again.");
+      return;
+    }
+
+    const nextNotes = existingNotes.map((noteItem, index) => {
+      if (index !== noteIndex) {
+        return {
+          text: normalizeValue(noteItem?.text),
+          timestamp: Number(noteItem?.timestamp) || 0,
+        };
+      }
+
+      return {
+        text: trimmedText,
+        timestamp: Number(noteItem?.timestamp) || Date.now(),
+      };
+    });
+
+    setEditingNoteSaving(true);
+    setEditingNoteError("");
+    try {
+      await updateDoc(doc(db, "churches", id, entry.collection, entry.id), {
+        notes: nextNotes,
+      });
+      setEditingNoteKey("");
+      setEditingNoteText("");
+    } catch (saveError) {
+      setEditingNoteError(normalizeValue(saveError?.message) || "Could not save note.");
+    } finally {
+      setEditingNoteSaving(false);
+    }
+  };
+
+  const handleStartAddNote = (row, entry) => {
+    const nextNoteKey = `${row.rollupKey}::${entry.id}`;
+    setEditingRowKey(null);
+    setEditError("");
+    setAddingRowKey(null);
+    setAddError("");
+    setEditingEntryKey("");
+    setEditingEntryError("");
+    setEditingNoteKey("");
+    setEditingNoteError("");
+    setAddingNoteKey(nextNoteKey);
+    setAddingNoteText("");
+    setAddingNoteError("");
+  };
+
+  const handleSaveAddNote = async (row, entry) => {
+    if (!entry?.id || entry.collection !== "timeRotateLogs") {
+      setAddingNoteError("Only submitted log entries can add notes here.");
+      return;
+    }
+
+    if (!canEditRowNotes(row)) {
+      setAddingNoteError("You do not have permission to add notes here.");
+      return;
+    }
+
+    const trimmedText = normalizeValue(addingNoteText);
+    if (!trimmedText) {
+      setAddingNoteError("Note text is required.");
+      return;
+    }
+
+    const existingNotes = Array.isArray(entry.notes)
+      ? entry.notes.map((noteItem) => ({
+          text: normalizeValue(noteItem?.text),
+          timestamp: Number(noteItem?.timestamp) || Date.now(),
+        }))
+      : [];
+
+    const nextNotes = [
+      ...existingNotes,
+      {
+        text: trimmedText,
+        timestamp: Date.now(),
+      },
+    ];
+
+    setAddingNoteSaving(true);
+    setAddingNoteError("");
+    try {
+      await updateDoc(doc(db, "churches", id, entry.collection, entry.id), {
+        notes: nextNotes,
+      });
+      setAddingNoteKey("");
+      setAddingNoteText("");
+    } catch (saveError) {
+      setAddingNoteError(normalizeValue(saveError?.message) || "Could not add note.");
+    } finally {
+      setAddingNoteSaving(false);
     }
   };
 
@@ -2183,19 +3457,31 @@ const TimeRotateCardHours = () => {
           }}
         >
           <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-            <input
-              type="text"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search by card, title, project, or user"
-              style={{
-                width: "100%",
-                padding: "8px 10px",
-                border: "1px solid #CBD5E1",
-                borderRadius: "8px",
-                backgroundColor: "#FFFFFF",
-              }}
-            />
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                type="text"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search by card, title, project, or user"
+                style={{
+                  flex: "1 1 280px",
+                  minWidth: "220px",
+                  padding: "8px 10px",
+                  border: "1px solid #CBD5E1",
+                  borderRadius: "8px",
+                  backgroundColor: "#FFFFFF",
+                }}
+              />
+              <select
+                value={selectedRowStatus}
+                onChange={(event) => setSelectedRowStatus(event.target.value)}
+                style={{ ...filterControlStyle, flex: "0 0 170px", minWidth: "170px" }}
+              >
+                <option value="both">All rows</option>
+                <option value="closed">Closed only</option>
+                <option value="open">Open only</option>
+              </select>
+            </div>
             <input
               type="text"
               value={userSearchText}
@@ -2246,6 +3532,15 @@ const TimeRotateCardHours = () => {
               ))}
             </select>
             <select
+              value={projectIssueProgressStatusFilter}
+              onChange={(event) => setProjectIssueProgressStatusFilter(event.target.value)}
+              style={filterControlStyle}
+            >
+              <option value="both">All project note status</option>
+              <option value="completed">Completed only</option>
+              <option value="incomplete">Incomplete only</option>
+            </select>
+            <select
               value={dateRangePreset}
               onChange={(event) => handleDateRangePresetChange(event.target.value)}
               style={filterControlStyle}
@@ -2287,6 +3582,8 @@ const TimeRotateCardHours = () => {
                 setSelectedUser(getDefaultSelectedUser());
                 setSelectedCard("");
                 setSelectedProject("");
+                setSelectedRowStatus("both");
+                setProjectIssueProgressStatusFilter("both");
                 setDateRangePreset("today");
                 setStartDate(formatDateInputValue(startOfDay(new Date())));
                 setEndDate(formatDateInputValue(startOfDay(new Date())));
@@ -2304,309 +3601,197 @@ const TimeRotateCardHours = () => {
               Clear Filters
             </button>
             <div style={{ color: "#334155", fontWeight: 600, fontSize: "0.9rem" }}>
-              {cardUserRollup.length} rows • Total {formatDuration(totalDurationAllRows)}
+              {visibleCardUserRollup.length} rows • Total {formatDuration(totalDurationAllRows)}
             </div>
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: "12px",
-            border: "1px solid #DBEAFE",
-            backgroundColor: "#F8FAFF",
-            borderRadius: "12px",
-            padding: "12px",
-            display: "grid",
-            gap: "10px",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "0.95rem" }}>AI Employee Reporting Quality Review</div>
-              <div style={{ color: "#475569", fontSize: "0.86rem", marginTop: "2px" }}>
-                Scores reporting consistency, detail quality, and risk patterns for employees in the current filters.
-              </div>
+        <div style={weeklyReviewLayoutStyle}>
+          <div style={weeklyReviewSidebarStyle}>
+            <div style={weeklyReviewSidebarTitleStyle}>Weekly Time Review</div>
+            <div style={weeklyReviewSidebarHintStyle}>
+              Approve only when every log in the week has notes.
             </div>
 
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={handleGenerateAiReportingReview}
-                disabled={isAiReviewLoading}
-                style={{
-                  backgroundColor: "#1D4ED8",
-                  color: "#FFFFFF",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
-                  cursor: isAiReviewLoading ? "not-allowed" : "pointer",
-                  fontWeight: 700,
-                  opacity: isAiReviewLoading ? 0.8 : 1,
-                }}
-              >
-                {isAiReviewLoading ? "Generating..." : "Generate AI Quality Review"}
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyAiReview}
-                disabled={!aiReviewText}
-                style={{
-                  backgroundColor: aiReviewText ? "#0F766E" : "#94A3B8",
-                  color: "#FFFFFF",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
-                  cursor: aiReviewText ? "pointer" : "not-allowed",
-                  fontWeight: 700,
-                }}
-              >
-                {copiedReport ? "Copied" : "Copy Report"}
-              </button>
-            </div>
+            {!selectedReviewUser ? (
+              <div style={weeklyReviewEmptyStyle}>Select a user above to review weekly logs.</div>
+            ) : weeklyReviewRows.length === 0 ? (
+              <div style={weeklyReviewEmptyStyle}>No submitted logs found for this user.</div>
+            ) : (
+              <div style={{ display: "grid", gap: "8px" }}>
+                {weeklyReviewRows.map((weekRow) => {
+                  const isSelected = selectedReviewWeekKey === weekRow.weekKey;
+                  const isUnapproved = !weekRow.isApproved;
+                  return (
+                    <button
+                      key={weekRow.weekKey}
+                      type="button"
+                      onClick={() => handleSelectWeeklyReviewRow(weekRow)}
+                      style={{
+                        textAlign: "left",
+                        width: "100%",
+                        borderRadius: "10px",
+                        border: isSelected
+                          ? "2px solid #1D4ED8"
+                          : (isUnapproved ? "1px solid #FCA5A5" : "1px solid #CBD5E1"),
+                        backgroundColor: isSelected
+                          ? "#DBEAFE"
+                          : (isUnapproved ? "#FEF2F2" : "#FFFFFF"),
+                        padding: "10px",
+                        cursor: "pointer",
+                        display: "grid",
+                        gap: "4px",
+                      }}
+                    >
+                      <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "0.84rem" }}>
+                        {weekRow.label}
+                      </div>
+                      <div style={{ color: "#334155", fontSize: "0.78rem", fontWeight: 600 }}>
+                        Hours: {formatDurationHoursMinutes(weekRow.totalDurationMs)}
+                      </div>
+                      <div style={{ color: "#334155", fontSize: "0.78rem", fontWeight: 600 }}>
+                        Logs: {weekRow.totalLogs} | Missing notes: {weekRow.missingNoteLogs}
+                      </div>
+                      <div
+                        style={{
+                          color: weekRow.isApproved ? "#065F46" : "#991B1B",
+                          fontSize: "0.76rem",
+                          fontWeight: 800,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        {weekRow.isApproved ? "Approved" : "Needs Approval"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedWeeklyReviewRow ? (
+              <div style={weeklyReviewApprovePanelStyle}>
+                <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "0.82rem" }}>
+                  Selected Week: {selectedWeeklyReviewRow.label}
+                </div>
+                <div style={{ color: "#334155", fontSize: "0.78rem", fontWeight: 600 }}>
+                  Missing notes: {selectedWeeklyReviewRow.missingNoteLogs}
+                </div>
+                <div style={{ color: "#166534", fontSize: "0.78rem", fontWeight: 700 }}>
+                  Project Lists completed: {selectedWeeklyProgressSummary.completedIssueCount} | Issues: {selectedWeeklyProgressSummary.issueCount} | Projects: {selectedWeeklyProgressSummary.projectCount}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleApproveSelectedWeek}
+                  disabled={
+                    weeklyApprovalAiLoading
+                    ||
+                    approvingWeekKey === selectedWeeklyReviewRow.weekKey
+                    || selectedWeeklyReviewRow.isApproved
+                  }
+                  style={{
+                    backgroundColor: selectedWeeklyReviewRow.isApproved
+                      ? "#94A3B8"
+                      : (selectedWeeklyReviewRow.missingNoteLogs > 0 ? "#EF4444" : "#059669"),
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "8px 10px",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    opacity: (weeklyApprovalAiLoading || approvingWeekKey === selectedWeeklyReviewRow.weekKey) ? 0.8 : 1,
+                  }}
+                >
+                  {selectedWeeklyReviewRow.isApproved
+                    ? "Already Approved"
+                    : weeklyApprovalAiLoading
+                      ? "Preparing Report..."
+                    : approvingWeekKey === selectedWeeklyReviewRow.weekKey
+                      ? "Approving..."
+                      : "Approve Week"}
+                </button>
+                {weeklyApprovalAiLoading ? (
+                  <div style={{ display: "grid", gap: "6px", marginTop: "4px" }}>
+                    <div style={{ color: "#1D4ED8", fontSize: "0.78rem", fontWeight: 700 }}>
+                      Gemini is reviewing time logs and imported Project Lists notes before opening the approval report.
+                    </div>
+                    <progress style={{ width: "100%", height: "10px" }} />
+                  </div>
+                ) : null}
+                {weeklyApprovalError ? (
+                  <div style={{ color: "#B91C1C", fontSize: "0.78rem", fontWeight: 700 }}>{weeklyApprovalError}</div>
+                ) : null}
+                {weeklyApprovalNotice ? (
+                  <div style={{ color: "#065F46", fontSize: "0.78rem", fontWeight: 700 }}>{weeklyApprovalNotice}</div>
+                ) : null}
+              </div>
+            ) : null}
+
           </div>
 
-          {aiReviewError ? (
-            <div style={{ color: "#B91C1C", fontWeight: 600, fontSize: "0.87rem" }}>{aiReviewError}</div>
+          <div>
+        <div style={{ marginTop: "4px", border: "1px solid #D1FAE5", borderRadius: "10px", backgroundColor: "#F0FDF4", padding: "10px", display: "grid", gap: "8px" }}>
+          <div style={{ color: "#065F46", fontWeight: 800, fontSize: "0.86rem" }}>
+            Project Lists Progress Notes (Matched by selected user, selected project, and date)
+          </div>
+          {!selectedProject ? (
+            <div style={{ color: "#334155", fontSize: "0.8rem", fontWeight: 600 }}>
+              No project selected. Showing all Project Lists activity for the selected user in the current date range.
+            </div>
           ) : null}
-
-          {aiReviewText ? (
-            <textarea
-              value={aiReviewText}
-              onChange={(event) => setAiReviewText(event.target.value)}
-              rows={16}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                border: "1px solid #CBD5E1",
-                borderRadius: "10px",
-                backgroundColor: "#FFFFFF",
-                color: "#0F172A",
-                fontSize: "0.9rem",
-                lineHeight: 1.5,
-                resize: "vertical",
-              }}
-            />
+          <div style={{ display: "grid", gap: "4px", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+            <div style={{ border: "1px solid #BBF7D0", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "8px" }}>
+              <div style={{ color: "#166534", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Completed</div>
+              <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{importedProjectIssueProgressSummary.completedIssueCount}</div>
+            </div>
+            <div style={{ border: "1px solid #BBF7D0", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "8px" }}>
+              <div style={{ color: "#166534", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Issues</div>
+              <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{importedProjectIssueProgressSummary.issueCount}</div>
+            </div>
+            <div style={{ border: "1px solid #BBF7D0", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "8px" }}>
+              <div style={{ color: "#166534", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Progress Updates</div>
+              <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{importedProjectIssueProgressSummary.progressUpdateCount}</div>
+            </div>
+            <div style={{ border: "1px solid #BBF7D0", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "8px" }}>
+              <div style={{ color: "#166534", fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Notes</div>
+              <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{importedProjectIssueProgressSummary.noteCount}</div>
+            </div>
+          </div>
+          {projectIssueProgressLoading ? (
+            <div style={{ color: "#065F46", fontSize: "0.82rem", fontWeight: 600 }}>
+              Loading related project progress notes...
+            </div>
+          ) : projectIssueProgressError ? (
+            <div style={{ color: "#B91C1C", fontSize: "0.82rem", fontWeight: 600 }}>
+              {projectIssueProgressError}
+            </div>
+          ) : visibleImportedProjectIssueProgressNotes.length === 0 ? (
+            <div style={{ color: "#475569", fontSize: "0.82rem", fontWeight: 600 }}>
+              No related project-list progress notes match the current filters.
+            </div>
           ) : (
-            <div style={{ color: "#475569", fontSize: "0.88rem" }}>
-              Generate a review to evaluate how well each employee reports work, including consistency, detail quality, and coaching actions.
+            <div style={{ display: "grid", gap: "6px", maxHeight: "210px", overflowY: "auto", paddingRight: "4px" }}>
+              {visibleImportedProjectIssueProgressNotes.slice(0, 14).map((note) => (
+                <div key={note.id} style={{ border: "1px solid #BBF7D0", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "8px", display: "grid", gap: "3px" }}>
+                  <div style={{ color: "#166534", fontSize: "0.76rem", fontWeight: 700 }}>
+                    {formatTimestamp(note.createdAtMs)} | {note.projectName} | Issue {note.issueId || "-"}
+                  </div>
+                  <div style={{ color: "#334155", fontSize: "0.75rem", fontWeight: 600 }}>
+                    Added by {note.createdByEmail || note.createdByName || note.createdByUid || "Unknown user"}
+                  </div>
+                  <div style={{ color: "#0F172A", fontSize: "0.82rem", lineHeight: 1.4 }}>
+                    {truncateText(note.noteText, 260)}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-
-          <div
-            style={{
-              border: "1px solid #BFDBFE",
-              backgroundColor: "#EFF6FF",
-              borderRadius: "10px",
-              padding: "12px",
-              display: "grid",
-              gap: "10px",
-            }}
-          >
-            <div>
-              <div style={{ color: "#1E3A8A", fontWeight: 800, fontSize: "0.9rem" }}>AI Reporting Coach Chat</div>
-              <div style={{ color: "#334155", fontSize: "0.82rem", marginTop: "2px" }}>
-                Ask questions about the current report. Responses use this report and your progress history for better coaching.
-              </div>
-            </div>
-
-            {reportingCoachError ? (
-              <div style={{ color: "#B91C1C", fontWeight: 600, fontSize: "0.82rem" }}>{reportingCoachError}</div>
-            ) : null}
-
-            {selectedCoachEmployee ? (
-              <div style={{ color: "#1E293B", fontSize: "0.82rem", fontWeight: 600 }}>
-                Progress Context: {selectedCoachProgressContext.summary}
-              </div>
-            ) : null}
-
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <input
-                type="text"
-                value={reportingCoachQuestion}
-                onChange={(event) => setReportingCoachQuestion(event.target.value)}
-                placeholder="Ask the coach: What should this employee improve this week?"
-                style={{
-                  flex: "1 1 420px",
-                  padding: "8px 10px",
-                  border: "1px solid #93C5FD",
-                  borderRadius: "8px",
-                  backgroundColor: "#FFFFFF",
-                }}
-              />
-              <button
-                type="button"
-                onClick={handleAskReportingCoach}
-                disabled={isReportingCoachLoading}
-                style={{
-                  backgroundColor: "#1D4ED8",
-                  color: "#FFFFFF",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
-                  cursor: isReportingCoachLoading ? "not-allowed" : "pointer",
-                  fontWeight: 700,
-                  opacity: isReportingCoachLoading ? 0.8 : 1,
-                }}
-              >
-                {isReportingCoachLoading ? "Thinking..." : "Ask Coach"}
-              </button>
-            </div>
-
-            {reportingCoachMessages.length > 0 ? (
-              <div style={{ display: "grid", gap: "8px", maxHeight: "260px", overflowY: "auto", paddingRight: "4px" }}>
-                {reportingCoachMessages.slice(-8).map((message, index) => (
-                  <div
-                    key={`${message.role}-${message.timestamp || index}`}
-                    style={{
-                      border: `1px solid ${message.role === "assistant" ? "#BFDBFE" : "#CBD5E1"}`,
-                      backgroundColor: message.role === "assistant" ? "#FFFFFF" : "#F8FAFC",
-                      borderRadius: "8px",
-                      padding: "8px 10px",
-                    }}
-                  >
-                    <div style={{ color: "#475569", fontSize: "0.72rem", fontWeight: 700, marginBottom: "4px" }}>
-                      {message.role === "assistant" ? "Coach" : "You"}
-                    </div>
-                    <div style={{ color: "#0F172A", fontSize: "0.84rem", lineHeight: 1.4, whiteSpace: "pre-wrap" }}>{message.text}</div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div
-            style={{
-              border: "1px solid #D1FAE5",
-              backgroundColor: "#ECFDF5",
-              borderRadius: "10px",
-              padding: "12px",
-              display: "grid",
-              gap: "10px",
-            }}
-          >
-            <div>
-              <div style={{ color: "#064E3B", fontWeight: 800, fontSize: "0.9rem" }}>Interactive ML Note Coach (Beta)</div>
-              <div style={{ color: "#065F46", fontSize: "0.82rem", marginTop: "2px" }}>
-                Simulate note quality impact before submitting. The coach estimates quality score and shows what to add for top scoring notes.
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
-              <select
-                value={coachSelectedUserKey}
-                onChange={(event) => setCoachSelectedUserKey(event.target.value)}
-                style={filterControlStyle}
-              >
-                {employeeReportingInsights.length === 0 ? (
-                  <option value="">No employees in current filters</option>
-                ) : null}
-                {employeeReportingInsights.map((employee) => (
-                  <option key={employee.userKey} value={employee.userKey}>
-                    {employee.userLabel} - Score {employee.qualityScore}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!selectedCoachSampleNote) {
-                    return;
-                  }
-                  setCoachDraftNote(selectedCoachSampleNote);
-                }}
-                disabled={!selectedCoachSampleNote}
-                style={{
-                  backgroundColor: selectedCoachSampleNote ? "#065F46" : "#94A3B8",
-                  color: "#FFFFFF",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "8px 12px",
-                  cursor: selectedCoachSampleNote ? "pointer" : "not-allowed",
-                  fontWeight: 700,
-                }}
-              >
-                Load Report Note
-              </button>
-            </div>
-
-            <textarea
-              value={coachDraftNote}
-              onChange={(event) => setCoachDraftNote(event.target.value)}
-              rows={5}
-              placeholder="Type a draft note here to get real-time coaching..."
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                border: "1px solid #A7F3D0",
-                borderRadius: "10px",
-                backgroundColor: "#FFFFFF",
-                color: "#0F172A",
-                fontSize: "0.9rem",
-                lineHeight: 1.45,
-                resize: "vertical",
-              }}
-            />
-
-            {normalizeValue(coachDraftNote) ? (
-              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
-                <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #A7F3D0", borderRadius: "10px", padding: "10px" }}>
-                  <div style={{ color: "#065F46", fontSize: "0.8rem", fontWeight: 700 }}>Estimated Note Quality</div>
-                  <div style={{ color: "#064E3B", fontSize: "1.4rem", fontWeight: 800 }}>{noteCoachFeedback.noteQualityScore} / 100</div>
-                  <div style={{ color: "#047857", fontSize: "0.8rem" }}>
-                    Projected employee score: {noteCoachFeedback.projectedEmployeeScore} / 100
-                  </div>
-                </div>
-
-                <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #A7F3D0", borderRadius: "10px", padding: "10px" }}>
-                  <div style={{ color: "#065F46", fontSize: "0.8rem", fontWeight: 700, marginBottom: "6px" }}>Signal Coverage</div>
-                  <div style={{ display: "grid", gap: "4px" }}>
-                    {noteCoachFeedback.featureChecks.map((feature) => (
-                      <div key={feature.label} style={{ color: feature.passed ? "#047857" : "#B91C1C", fontSize: "0.8rem", fontWeight: 600 }}>
-                        {feature.passed ? "PASS" : "MISS"} - {feature.label}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #A7F3D0", borderRadius: "10px", padding: "10px" }}>
-                  <div style={{ color: "#065F46", fontSize: "0.8rem", fontWeight: 700, marginBottom: "6px" }}>How To Improve</div>
-                  {noteCoachFeedback.missingElements.length > 0 ? (
-                    <div style={{ display: "grid", gap: "4px" }}>
-                      {noteCoachFeedback.missingElements.slice(0, 6).map((item, index) => (
-                        <div key={`${item}-${index}`} style={{ color: "#0F172A", fontSize: "0.82rem" }}>
-                          {index + 1}. {item}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: "#047857", fontSize: "0.82rem", fontWeight: 600 }}>
-                      Excellent structure. Keep this pattern for consistent high scores.
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {normalizeValue(coachDraftNote) ? (
-              <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #A7F3D0", borderRadius: "10px", padding: "10px", display: "grid", gap: "8px" }}>
-                <div style={{ color: "#065F46", fontSize: "0.8rem", fontWeight: 700 }}>Best-Score Guidance</div>
-                <div style={{ display: "grid", gap: "4px" }}>
-                  {noteCoachFeedback.coachingAdvice.map((tip, index) => (
-                    <div key={`${tip}-${index}`} style={{ color: "#0F172A", fontSize: "0.82rem" }}>
-                      {index + 1}. {tip}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ color: "#065F46", fontSize: "0.78rem", fontWeight: 700, marginTop: "4px" }}>High-score template</div>
-                <div style={{ color: "#0F172A", fontSize: "0.82rem", lineHeight: 1.4 }}>
-                  {noteCoachFeedback.bestScoreTemplate}
-                </div>
-              </div>
-            ) : null}
+          <div style={{ color: "#334155", fontSize: "0.76rem", fontWeight: 600 }}>
+            Total matched project-list notes in range: {visibleImportedProjectIssueProgressNotes.length}
           </div>
         </div>
 
-        {cardUserRollup.length === 0 ? (
+        {visibleCardUserRollup.length === 0 ? (
           <p style={{ marginTop: "12px", color: "#64748B" }}>
             No production card hours found for the current filters.
           </p>
@@ -2639,26 +3824,97 @@ const TimeRotateCardHours = () => {
                 </tr>
               </thead>
               <tbody>
-                {cardUserRollup.map((row, rowIndex) => {
+                {visibleCardUserRollup.map((row, rowIndex) => {
                   const isEditing = editingRowKey === row.rollupKey;
                   const isAdding = addingRowKey === row.rollupKey;
                   const canEdit = canEditRow(row);
+                  const rowReferenceTimestamp = Number(row.firstAt) || Number(row.lastAt) || 0;
+                  const rowDayKey = getDayKeyFromTimestamp(rowReferenceTimestamp) || "unknown-day";
+                  const previousRow = rowIndex > 0 ? visibleCardUserRollup[rowIndex - 1] : null;
+                  const previousRowReferenceTimestamp = previousRow
+                    ? (Number(previousRow.firstAt) || Number(previousRow.lastAt) || 0)
+                    : 0;
+                  const previousRowDayKey = getDayKeyFromTimestamp(previousRowReferenceTimestamp) || "unknown-day";
+                  const isDateBoundary = rowIndex === 0 || rowDayKey !== previousRowDayKey;
+                  const datePalette = getDateBlockPalette(rowDayKey);
+                  const summaryRowCellStyle = {
+                    ...cellStyle,
+                    backgroundColor: datePalette.blockBg,
+                  };
+                  const nextRow = rowIndex < visibleCardUserRollup.length - 1 ? visibleCardUserRollup[rowIndex + 1] : null;
+                  const currentCardLabel = normalizeValue(row?.issueId) || "-";
+                  const currentProjectLabel = normalizeValue(row?.projectName) || "-";
+                  const currentUserLabel = normalizeValue(row?.userLabel) || "-";
+                  const nextCardLabel = normalizeValue(nextRow?.issueId) || "-";
+                  const nextProjectLabel = normalizeValue(nextRow?.projectName) || "-";
+                  const nextUserLabel = normalizeValue(nextRow?.userLabel) || "-";
+                  const rowProjectProgressNotes = projectIssueProgressByRollupKey[row.rollupKey] || [];
                   return (
                   <React.Fragment key={row.rollupKey}>
+                    {isDateBoundary ? (
+                      <>
+                        <tr>
+                          <td colSpan={9} style={{ ...cardBlockTopSpacerStyle, height: rowIndex === 0 ? "26px" : "34px" }}></td>
+                        </tr>
+                        <tr>
+                          <td
+                            style={{
+                              ...cardBlockDividerLabelStyle,
+                              backgroundColor: datePalette.headerBg,
+                              borderTop: `4px solid ${datePalette.border}`,
+                              borderBottom: `4px solid ${datePalette.border}`,
+                            }}
+                          >
+                            Date
+                          </td>
+                          <td
+                            colSpan={8}
+                            style={{
+                              ...cardBlockDividerContentStyle,
+                              background: datePalette.headerBg,
+                              borderLeft: `8px solid ${datePalette.border}`,
+                              borderTop: `4px solid ${datePalette.border}`,
+                              borderBottom: `4px solid ${datePalette.border}`,
+                            }}
+                          >
+                            {formatDayHeaderLabel(rowReferenceTimestamp)}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td colSpan={9} style={{ ...cardBlockBottomSpacerStyle, height: "26px", backgroundColor: datePalette.blockBg }}></td>
+                        </tr>
+                      </>
+                    ) : null}
+                    {rowIndex === 0 ? (
+                      <>
+                        <tr>
+                          <td colSpan={9} style={cardBlockTopSpacerStyle}></td>
+                        </tr>
+                        <tr>
+                          <td style={cardBlockDividerLabelStyle}>Current</td>
+                          <td colSpan={8} style={cardBlockDividerContentStyle}>
+                            CURRENT CARD {currentCardLabel} | PROJECT {currentProjectLabel} | USER {currentUserLabel}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td colSpan={9} style={cardBlockBottomSpacerStyle}></td>
+                        </tr>
+                      </>
+                    ) : null}
                     <tr>
-                      <td style={cellStyle}>{row.issueId || "-"}</td>
-                      <td style={cellStyle}>
+                      <td style={summaryRowCellStyle}>{row.issueId || "-"}</td>
+                      <td style={summaryRowCellStyle}>
                         <div>
                           {hasTechnicalDetailTitle(row.title)
                             ? `⭐ ${row.title || "-"}`
                             : (row.title || "-")}
                         </div>
                       </td>
-                      <td style={cellStyle}>{row.projectName || "-"}</td>
-                      <td style={cellStyle}>{row.userLabel || "Unknown user"}</td>
-                      <td style={cellStyle}>{row.totalEntries}</td>
-                      <td style={cellStyle}>{formatDuration(row.totalDurationMs)}</td>
-                      <td style={cellStyle}>
+                      <td style={summaryRowCellStyle}>{row.projectName || "-"}</td>
+                      <td style={summaryRowCellStyle}>{row.userLabel || "Unknown user"}</td>
+                      <td style={summaryRowCellStyle}>{row.totalEntries}</td>
+                      <td style={summaryRowCellStyle}>{formatDuration(row.totalDurationMs)}</td>
+                      <td style={summaryRowCellStyle}>
                         {isEditing ? (
                           <input
                             type="datetime-local"
@@ -2670,7 +3926,7 @@ const TimeRotateCardHours = () => {
                           formatTimestamp(row.firstAt)
                         )}
                       </td>
-                      <td style={cellStyle}>
+                      <td style={summaryRowCellStyle}>
                         {isEditing ? (
                           <input
                             type="datetime-local"
@@ -2682,7 +3938,7 @@ const TimeRotateCardHours = () => {
                           formatTimestamp(row.lastAt)
                         )}
                       </td>
-                      <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>
+                      <td style={{ ...summaryRowCellStyle, whiteSpace: "nowrap" }}>
                         {isEditing ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                             <button
@@ -2784,6 +4040,45 @@ const TimeRotateCardHours = () => {
                     {Array.isArray(row.entries) && row.entries.length > 0
                       ? row.entries.map((entry, entryIndex) => (
                           <React.Fragment key={`${row.rollupKey}-entry-row-${entry.id}`}>
+                            {(() => {
+                              const currentEntryTimestamp = Number(entry.startedAt) || Number(entry.endedAt) || 0;
+                              const currentDayKey = getDayKeyFromTimestamp(currentEntryTimestamp);
+                              const previousEntry = entryIndex > 0 ? row.entries[entryIndex - 1] : null;
+                              const previousEntryTimestamp = previousEntry
+                                ? (Number(previousEntry.startedAt) || Number(previousEntry.endedAt) || 0)
+                                : 0;
+                              const previousDayKey = getDayKeyFromTimestamp(previousEntryTimestamp);
+                              const shouldShowDayHeader = entryIndex === 0 || currentDayKey !== previousDayKey;
+
+                              if (!shouldShowDayHeader) return null;
+
+                              return (
+                                <tr>
+                                  <td
+                                    style={{
+                                      ...sectionHeaderLabelCellStyle,
+                                      backgroundColor: "#0F172A",
+                                      color: "#FFFFFF",
+                                    }}
+                                  >
+                                    Day
+                                  </td>
+                                  <td
+                                    colSpan={8}
+                                    style={{
+                                      ...sectionHeaderContentCellStyle,
+                                      backgroundColor: "#1E293B",
+                                      borderLeft: "4px solid #38BDF8",
+                                      color: "#FFFFFF",
+                                      fontWeight: 800,
+                                      letterSpacing: "0.02em",
+                                    }}
+                                  >
+                                    {formatDayHeaderLabel(currentEntryTimestamp)}
+                                  </td>
+                                </tr>
+                              );
+                            })()}
                             <tr>
                               <td
                                 style={{
@@ -2947,21 +4242,222 @@ const TimeRotateCardHours = () => {
                                       <span style={noteTimestampStyle}>
                                         {note.timestamp ? formatTimestamp(note.timestamp) : "No timestamp"}
                                       </span>
-                                      <span style={noteTextStyle}>{note.text}</span>
+                                      {editingNoteKey === `${row.rollupKey}::${entry.id}::${noteIndex}` ? (
+                                        <div style={{ display: "grid", gap: "8px" }}>
+                                          <textarea
+                                            value={editingNoteText}
+                                            onChange={(event) => setEditingNoteText(event.target.value)}
+                                            rows={3}
+                                            style={{
+                                              width: "100%",
+                                              border: "1px solid #FCD34D",
+                                              borderRadius: "8px",
+                                              padding: "8px 10px",
+                                              resize: "vertical",
+                                              boxSizing: "border-box",
+                                              backgroundColor: "#FFFFFF",
+                                            }}
+                                          />
+                                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSaveNoteEdit(row, entry, noteIndex)}
+                                              disabled={editingNoteSaving}
+                                              style={{ backgroundColor: "#B45309", color: "#FFF", border: "none", borderRadius: "6px", padding: "6px 10px", cursor: editingNoteSaving ? "not-allowed" : "pointer", fontSize: "0.8rem", fontWeight: 700 }}
+                                            >
+                                              {editingNoteSaving ? "Saving..." : "Save Note"}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => { setEditingNoteKey(""); setEditingNoteError(""); }}
+                                              disabled={editingNoteSaving}
+                                              style={{ backgroundColor: "#64748B", color: "#FFF", border: "none", borderRadius: "6px", padding: "6px 10px", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                          {editingNoteError ? (
+                                            <div style={{ color: "#B91C1C", fontWeight: 600, fontSize: "0.8rem" }}>
+                                              {editingNoteError}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : (
+                                        <div style={{ display: "grid", gap: "6px" }}>
+                                          <span style={noteTextStyle}>{note.text}</span>
+                                          {canEditRowNotes(row) ? (
+                                            <div>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleStartNoteEdit(row, entry, note, noteIndex)}
+                                                style={{ backgroundColor: "transparent", border: "1px solid #FCD34D", borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontSize: "0.8rem", color: "#92400E" }}
+                                              >
+                                                Edit Note
+                                              </button>
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      )}
                                     </td>
                                   </tr>
                                 ))
-                              : null}
+                              : (
+                                <tr>
+                                  <td
+                                    style={{
+                                      ...noteRowLabelCellStyle,
+                                      backgroundColor: "#FEF2F2",
+                                    }}
+                                  >
+                                    Note
+                                  </td>
+                                  <td
+                                    colSpan={8}
+                                    style={{
+                                      ...noteRowContentCellStyle,
+                                      backgroundColor: "#FEF2F2",
+                                      borderLeft: "4px solid #DC2626",
+                                    }}
+                                  >
+                                    {addingNoteKey === `${row.rollupKey}::${entry.id}` ? (
+                                      <div style={{ display: "grid", gap: "8px" }}>
+                                        <textarea
+                                          value={addingNoteText}
+                                          onChange={(event) => setAddingNoteText(event.target.value)}
+                                          rows={3}
+                                          placeholder="Add a note for this submitted time entry"
+                                          style={{
+                                            width: "100%",
+                                            border: "1px solid #FCD34D",
+                                            borderRadius: "8px",
+                                            padding: "8px 10px",
+                                            resize: "vertical",
+                                            boxSizing: "border-box",
+                                            backgroundColor: "#FFFFFF",
+                                          }}
+                                        />
+                                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSaveAddNote(row, entry)}
+                                            disabled={addingNoteSaving}
+                                            style={{ backgroundColor: "#B45309", color: "#FFF", border: "none", borderRadius: "6px", padding: "6px 10px", cursor: addingNoteSaving ? "not-allowed" : "pointer", fontSize: "0.8rem", fontWeight: 700 }}
+                                          >
+                                            {addingNoteSaving ? "Saving..." : "Save Note"}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => { setAddingNoteKey(""); setAddingNoteError(""); }}
+                                            disabled={addingNoteSaving}
+                                            style={{ backgroundColor: "#64748B", color: "#FFF", border: "none", borderRadius: "6px", padding: "6px 10px", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                        {addingNoteError ? (
+                                          <div style={{ color: "#B91C1C", fontWeight: 600, fontSize: "0.8rem" }}>
+                                            {addingNoteError}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : (
+                                      <div style={{ display: "grid", gap: "6px" }}>
+                                        <span style={{ ...noteTextStyle, color: "#991B1B", fontWeight: 700 }}>
+                                          No notes submitted for this time entry yet.
+                                        </span>
+                                        {canEditRowNotes(row) && entry.collection === "timeRotateLogs" ? (
+                                          <div>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleStartAddNote(row, entry)}
+                                              style={{ backgroundColor: "transparent", border: "1px solid #FCA5A5", borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontSize: "0.8rem", color: "#991B1B" }}
+                                            >
+                                              Add Note
+                                            </button>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+
+                            {entryIndex === row.entries.length - 1 && rowProjectProgressNotes.length > 0 ? (
+                              <>
+                                <tr>
+                                  <td
+                                    style={{
+                                      ...sectionHeaderLabelCellStyle,
+                                      backgroundColor: "#D1FAE5",
+                                    }}
+                                  >
+                                    Section
+                                  </td>
+                                  <td
+                                    colSpan={8}
+                                    style={{
+                                      ...sectionHeaderContentCellStyle,
+                                      backgroundColor: "#ECFDF5",
+                                      borderLeft: "4px solid #10B981",
+                                    }}
+                                  >
+                                    PROJECT LISTS ACTIVITY
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td
+                                    style={{
+                                      ...noteRowLabelCellStyle,
+                                      backgroundColor: "#ECFDF5",
+                                    }}
+                                  >
+                                    PLI Notes
+                                  </td>
+                                  <td
+                                    colSpan={8}
+                                    style={{
+                                      ...noteRowContentCellStyle,
+                                      backgroundColor: "#ECFDF5",
+                                      borderLeft: "4px solid #10B981",
+                                    }}
+                                  >
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                      {rowProjectProgressNotes.map((progressNote) => (
+                                        <div key={`${row.rollupKey}-${progressNote.id}`} style={{ display: "grid", gap: "2px" }}>
+                                          <span style={{ color: "#065F46", fontSize: "0.75rem", fontWeight: 700 }}>
+                                            {formatTimestamp(progressNote.createdAtMs)} | {progressNote.activityType || "Note Added"} | Issue {progressNote.issueId || "-"} | {progressNote.projectName}
+                                          </span>
+                                          <span style={{ color: "#334155", fontSize: "0.75rem", fontWeight: 600 }}>
+                                            Added by {progressNote.createdByEmail || progressNote.createdByName || progressNote.createdByUid || "Unknown user"}
+                                          </span>
+                                          <span style={{ color: "#0F172A", fontSize: "0.81rem", lineHeight: 1.38 }}>
+                                            {truncateText(progressNote.noteText, 220)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              </>
+                            ) : null}
                           </React.Fragment>
                         ))
                       : null}
-                    {rowIndex < cardUserRollup.length - 1 ? (
-                      <tr>
-                        <td style={cardBlockDividerLabelStyle}>Card</td>
-                        <td colSpan={8} style={cardBlockDividerContentStyle}>
-                          Next Card/User Block
-                        </td>
-                      </tr>
+                    {rowIndex < visibleCardUserRollup.length - 1 ? (
+                      <>
+                        <tr>
+                          <td colSpan={9} style={cardBlockTopSpacerStyle}></td>
+                        </tr>
+                        <tr>
+                          <td style={cardBlockDividerLabelStyle}>Next</td>
+                          <td colSpan={8} style={cardBlockDividerContentStyle}>
+                            NEXT CARD {nextCardLabel} | PROJECT {nextProjectLabel} | USER {nextUserLabel}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td colSpan={9} style={cardBlockBottomSpacerStyle}></td>
+                        </tr>
+                      </>
                     ) : null}
                   </React.Fragment>
                   );
@@ -2970,6 +4466,197 @@ const TimeRotateCardHours = () => {
             </table>
           </div>
         )}
+          </div>
+        </div>
+
+        {isWeeklyApprovalDialogOpen ? (
+          <div style={weeklyApprovalDialogOverlayStyle}>
+            <div style={weeklyApprovalDialogCardStyle}>
+              <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "1rem" }}>
+                Weekly Approval Verification
+              </div>
+              <div style={{ color: "#334155", fontSize: "0.86rem", lineHeight: 1.45 }}>
+                These notes are used for client billing. Verify that time and notes accurately represent real work completed this week.
+              </div>
+
+              {selectedWeeklyReviewRow ? (
+                <div style={{ color: "#1E293B", fontSize: "0.84rem", fontWeight: 700 }}>
+                  Week: {selectedWeeklyReviewRow.label} | Logs: {selectedWeeklyReviewRow.totalLogs} | Hours: {formatDurationHoursMinutes(selectedWeeklyReviewRow.totalDurationMs)}
+                </div>
+              ) : null}
+
+              {selectedWeeklyReviewRow ? (
+                <div style={{ color: "#334155", fontSize: "0.82rem", fontWeight: 600 }}>
+                  Imported Project Lists notes used in this review: {selectedWeeklyImportedProgressNotes.length}
+                </div>
+              ) : null}
+
+              <div style={weeklyApprovalRequirementPanelStyle}>
+                <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "0.82rem" }}>Required note quality for approval</div>
+                <div style={{ color: "#334155", fontSize: "0.8rem" }}>1. Explain specific task performed.</div>
+                <div style={{ color: "#334155", fontSize: "0.8rem" }}>2. Include location/scope or card-specific context.</div>
+                <div style={{ color: "#334155", fontSize: "0.8rem" }}>3. Include measurable result, output, or decision made.</div>
+                <div style={{ color: "#334155", fontSize: "0.8rem" }}>4. Correct vague entries like "Meeting with the team" before approval.</div>
+              </div>
+
+              {weeklyApprovalAiLoading ? (
+                <div style={{ color: "#1D4ED8", fontSize: "0.84rem", fontWeight: 700 }}>Gemini is reviewing this week's notes...</div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      border: `1px solid ${weeklyApprovalAiReady ? "#86EFAC" : "#FCA5A5"}`,
+                      backgroundColor: weeklyApprovalAiReady ? "#ECFDF5" : "#FEF2F2",
+                      borderRadius: "10px",
+                      padding: "10px",
+                      display: "grid",
+                      gap: "6px",
+                    }}
+                  >
+                    <div style={{ color: weeklyApprovalAiReady ? "#065F46" : "#991B1B", fontWeight: 800, fontSize: "0.84rem" }}>
+                      {weeklyApprovalAiReady ? "Feedback status: Ready to approve" : "Feedback status: Revisions required before approval"}
+                    </div>
+                    <div style={{ color: "#1F2937", fontSize: "0.82rem", lineHeight: 1.4 }}>
+                      {weeklyApprovalAiSummary || "No feedback summary available."}
+                    </div>
+                    {weeklyApprovalAiAdjustments.length > 0 ? (
+                      <div style={{ display: "grid", gap: "4px", marginTop: "2px" }}>
+                        {weeklyApprovalAiAdjustments.slice(0, 6).map((item, index) => (
+                          <div key={`${item}-${index}`} style={{ color: "#1F2937", fontSize: "0.8rem" }}>
+                            {index + 1}. {item}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {weeklyApprovalActionItems.length > 0 ? (
+                    <div
+                      style={{
+                        border: "1px solid #FCD34D",
+                        backgroundColor: "#FFFBEB",
+                        borderRadius: "10px",
+                        padding: "10px",
+                        display: "grid",
+                        gap: "10px",
+                      }}
+                    >
+                      <div style={{ color: "#92400E", fontWeight: 800, fontSize: "0.84rem" }}>
+                        Fix flagged notes here
+                      </div>
+                      <div style={{ color: "#78350F", fontSize: "0.8rem", lineHeight: 1.4 }}>
+                        Update the exact notes Gemini flagged, save them, then click Re-run Review. If the revised notes meet the requirements, approval can pass.
+                      </div>
+                      {weeklyApprovalActionItems.slice(0, 8).map((item) => (
+                        <div key={item.key} style={{ border: "1px solid #FDE68A", borderRadius: "8px", backgroundColor: "#FFFFFF", padding: "10px", display: "grid", gap: "6px" }}>
+                          <div style={{ color: "#0F172A", fontSize: "0.8rem", fontWeight: 800 }}>
+                            Issue {item.issueId || "-"} | {item.projectName || "No project"} | {item.startedAt ? formatTimestamp(item.startedAt) : "No start time"}
+                          </div>
+                          <div style={{ color: "#92400E", fontSize: "0.78rem", fontWeight: 600 }}>
+                            {item.reason}
+                          </div>
+                          <textarea
+                            value={weeklyApprovalDraftByKey[item.key] ?? item.currentText}
+                            onChange={(event) => handleWeeklyApprovalDraftChange(item.key, event.target.value)}
+                            rows={3}
+                            style={{
+                              width: "100%",
+                              border: "1px solid #FCD34D",
+                              borderRadius: "8px",
+                              padding: "8px 10px",
+                              resize: "vertical",
+                              boxSizing: "border-box",
+                              backgroundColor: "#FFFFFF",
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveWeeklyApprovalActionItem(item)}
+                              disabled={weeklyApprovalSavingKey === item.key}
+                              style={{ backgroundColor: "#B45309", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 12px", fontWeight: 700, cursor: weeklyApprovalSavingKey === item.key ? "not-allowed" : "pointer" }}
+                            >
+                              {weeklyApprovalSavingKey === item.key ? "Saving..." : (item.noteIndex >= 0 ? "Save Note" : "Add Note")}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {weeklyApprovalDraftError ? (
+                        <div style={{ color: "#B91C1C", fontSize: "0.8rem", fontWeight: 700 }}>
+                          {weeklyApprovalDraftError}
+                        </div>
+                      ) : null}
+                      {weeklyApprovalDraftNotice ? (
+                        <div style={{ color: "#065F46", fontSize: "0.8rem", fontWeight: 700 }}>
+                          {weeklyApprovalDraftNotice}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", color: "#0F172A", fontSize: "0.82rem", fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={weeklyApprovalConfirmedByUser}
+                      onChange={(event) => setWeeklyApprovalConfirmedByUser(Boolean(event.target.checked))}
+                      disabled={!weeklyApprovalAiReady}
+                      style={{ marginTop: "2px" }}
+                    />
+                    I verify these entries and notes are accurate, client-ready, and reflect actual work performed for billing.
+                  </label>
+                </>
+              )}
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={handleApproveSelectedWeek}
+                  disabled={weeklyApprovalAiLoading || weeklyApprovalSavingKey !== ""}
+                  style={{ backgroundColor: "#1D4ED8", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 12px", fontWeight: 700, cursor: (weeklyApprovalAiLoading || weeklyApprovalSavingKey !== "") ? "not-allowed" : "pointer", opacity: (weeklyApprovalAiLoading || weeklyApprovalSavingKey !== "") ? 0.6 : 1 }}
+                >
+                  Re-run Review
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWeeklyApprovalDialogOpen(false);
+                    setWeeklyApprovalError("");
+                  }}
+                  style={{ backgroundColor: "#64748B", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmApproveSelectedWeek}
+                  disabled={
+                    weeklyApprovalAiLoading
+                    || !weeklyApprovalAiReady
+                    || !weeklyApprovalConfirmedByUser
+                    || (approvingWeekKey === selectedReviewWeekKey)
+                  }
+                  style={{
+                    backgroundColor: "#059669",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "8px 12px",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    opacity: (
+                      weeklyApprovalAiLoading
+                      || !weeklyApprovalAiReady
+                      || !weeklyApprovalConfirmedByUser
+                      || (approvingWeekKey === selectedReviewWeekKey)
+                    ) ? 0.55 : 1,
+                  }}
+                >
+                  {approvingWeekKey === selectedReviewWeekKey ? "Approving..." : "Confirm & Approve Week"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2981,6 +4668,85 @@ const filterControlStyle = {
   border: "1px solid #CBD5E1",
   borderRadius: "8px",
   backgroundColor: "#FFFFFF",
+};
+
+const weeklyReviewLayoutStyle = {
+  marginTop: "12px",
+  display: "grid",
+  gridTemplateColumns: "minmax(240px, 290px) minmax(0, 1fr)",
+  gap: "14px",
+  alignItems: "start",
+};
+
+const weeklyReviewSidebarStyle = {
+  border: "1px solid #BFDBFE",
+  borderRadius: "12px",
+  backgroundColor: "#F8FAFF",
+  padding: "12px",
+  display: "grid",
+  gap: "10px",
+  position: "sticky",
+  top: "12px",
+};
+
+const weeklyReviewSidebarTitleStyle = {
+  color: "#0F172A",
+  fontWeight: 800,
+  fontSize: "0.95rem",
+};
+
+const weeklyReviewSidebarHintStyle = {
+  color: "#475569",
+  fontSize: "0.8rem",
+  lineHeight: 1.35,
+};
+
+const weeklyReviewEmptyStyle = {
+  color: "#64748B",
+  fontSize: "0.82rem",
+  fontWeight: 600,
+};
+
+const weeklyReviewApprovePanelStyle = {
+  border: "1px solid #BFDBFE",
+  borderRadius: "10px",
+  backgroundColor: "#FFFFFF",
+  padding: "10px",
+  display: "grid",
+  gap: "8px",
+};
+
+const weeklyApprovalDialogOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  backgroundColor: "rgba(15, 23, 42, 0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "18px",
+  zIndex: 2000,
+};
+
+const weeklyApprovalDialogCardStyle = {
+  width: "min(760px, 96vw)",
+  maxHeight: "86vh",
+  overflowY: "auto",
+  borderRadius: "14px",
+  border: "1px solid #BFDBFE",
+  backgroundColor: "#FFFFFF",
+  padding: "16px",
+  boxShadow: "0 18px 30px rgba(15, 23, 42, 0.25)",
+  display: "grid",
+  gap: "10px",
+};
+
+const weeklyApprovalRequirementPanelStyle = {
+  border: "1px solid #BFDBFE",
+  borderRadius: "10px",
+  backgroundColor: "#F8FAFF",
+  padding: "10px",
+  display: "grid",
+  gap: "4px",
 };
 
 const cellHeaderStyle = {
@@ -3083,26 +4849,44 @@ const timeLogSpacerContentCellStyle = {
 };
 
 const cardBlockDividerLabelStyle = {
-  padding: "10px 12px",
+  padding: "16px 12px",
   borderBottom: "none",
-  color: "#475569",
-  fontSize: "0.78rem",
+  color: "#FFFFFF",
+  fontSize: "0.86rem",
   fontWeight: 800,
-  backgroundColor: "#E2E8F0",
+  backgroundColor: "#0F172A",
   textTransform: "uppercase",
-  letterSpacing: "0.05em",
+  letterSpacing: "0.08em",
+  borderTop: "3px solid #38BDF8",
+  borderBottom: "3px solid #38BDF8",
 };
 
 const cardBlockDividerContentStyle = {
-  padding: "10px 12px",
+  padding: "16px 14px",
   borderBottom: "none",
-  color: "#334155",
-  fontSize: "0.78rem",
-  fontWeight: 700,
-  backgroundColor: "#E2E8F0",
-  borderLeft: "4px solid #64748B",
+  color: "#FFFFFF",
+  fontSize: "0.9rem",
+  fontWeight: 800,
+  background: "linear-gradient(90deg, #0F172A 0%, #1E3A8A 100%)",
+  borderLeft: "6px solid #38BDF8",
+  borderTop: "3px solid #38BDF8",
+  borderBottom: "3px solid #38BDF8",
   textTransform: "uppercase",
-  letterSpacing: "0.05em",
+  letterSpacing: "0.08em",
+};
+
+const cardBlockTopSpacerStyle = {
+  padding: 0,
+  height: "24px",
+  borderBottom: "none",
+  backgroundColor: "#FFFFFF",
+};
+
+const cardBlockBottomSpacerStyle = {
+  padding: 0,
+  height: "24px",
+  borderBottom: "none",
+  backgroundColor: "#EFF6FF",
 };
 
 const noteTimestampStyle = {

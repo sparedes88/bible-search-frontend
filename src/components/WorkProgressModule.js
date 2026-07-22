@@ -75,6 +75,7 @@ const TASK_DIRECTION_OPTIONS = [
 ];
 
 const NOTE_ATTACHMENT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+const COMMITMENT_TASKS_PER_PAGE = 25;
 
 const normalizeValue = (value) => String(value || "").trim();
 
@@ -143,6 +144,17 @@ const normalizeProgressPercent = (value) => {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return 0;
   return Math.max(0, Math.min(100, Math.round(numericValue)));
+};
+
+const isTaskCompleted = (task) => {
+  if (!task || typeof task !== "object") return false;
+
+  const status = normalizeValue(task.status).toLowerCase();
+  if (status === "done") return true;
+
+  if (task.completedAt) return true;
+
+  return normalizeProgressPercent(task.progressPercent) >= 100;
 };
 
 const normalizeTaskOrder = (value) => {
@@ -287,6 +299,53 @@ const getDueDateCountdownMeta = (value) => {
   };
 };
 
+const getTaskDueDateCountdownMeta = (task) => {
+  if (isTaskCompleted(task)) {
+    return {
+      label: "Completed",
+      bg: "#DCFCE7",
+      text: "#166534",
+    };
+  }
+
+  return getDueDateCountdownMeta(task?.dueDate);
+};
+
+const getTaskHierarchyMeta = (taskDepth) => {
+  const depth = Math.max(0, Number(taskDepth) || 0);
+
+  if (depth === 0) {
+    return {
+      label: "Task",
+      description: "Top level",
+      badgeBackground: "rgba(29, 78, 216, 0.10)",
+      badgeText: "#1D4ED8",
+      markerText: "#1D4ED8",
+      indent: 0,
+    };
+  }
+
+  if (depth === 1) {
+    return {
+      label: "Subtask",
+      description: "Direct child",
+      badgeBackground: "rgba(74, 122, 91, 0.12)",
+      badgeText: "#3F5F4A",
+      markerText: "#DC2626",
+      indent: 1,
+    };
+  }
+
+  return {
+    label: `Nested subtask L${depth}`,
+    description: `Nested under a subtask${depth > 2 ? ` (${depth} levels deep)` : ""}`,
+    badgeBackground: "rgba(124, 58, 237, 0.12)",
+    badgeText: "#5B21B6",
+    markerText: "#7C3AED",
+    indent: Math.min(depth + 1, 8),
+  };
+};
+
 const getDueDateDeltaDays = (value) => {
   const normalized = toDateInputValue(value);
   if (!normalized) return Number.POSITIVE_INFINITY;
@@ -300,7 +359,7 @@ const getDueDateDeltaDays = (value) => {
   return Math.round((dueDate.getTime() - today.getTime()) / millisPerDay);
 };
 
-const buildTaskSearchText = (task, parentTaskTitleById) => {
+const buildTaskSearchText = (task, parentTaskTitleById, categoryName = "") => {
   const taskPriority = normalizeTaskPriority(task?.priority);
   const taskDirection = normalizeTaskDirection(task?.direction);
   const taskPriorityLabel = TASK_PRIORITY_OPTIONS.find((option) => option.value === taskPriority)?.label || "";
@@ -309,7 +368,11 @@ const buildTaskSearchText = (task, parentTaskTitleById) => {
   const parentTaskTitle = parentTaskTitleById.get(normalizeValue(task?.parentTaskId)) || "";
   const dueDateRaw = toDateInputValue(task?.dueDate);
   const dueDateDisplay = formatDateDisplay(task?.dueDate);
-  const dueDateCountdown = getDueDateCountdownMeta(task?.dueDate)?.label || "";
+  const dueDateCountdown = getTaskDueDateCountdownMeta(task)?.label || "";
+  const taskSheetLogIdentifiers = normalizeSheetLogIdentifierArray(task?.sheetLogIdentifiers);
+  const taskSheetLogSearchText = taskSheetLogIdentifiers.length > 0
+    ? taskSheetLogIdentifiers.join(" ")
+    : normalizeValue(task?.sheetLogIdentifier);
   const changeLogText = normalizeTaskChangeLog(task?.changeLog)
     .map((entry) => [entry.message, entry.changedByName, entry.attachment?.name].filter(Boolean).join(" "))
     .join(" ");
@@ -319,6 +382,7 @@ const buildTaskSearchText = (task, parentTaskTitleById) => {
     normalizeValue(task?.description),
     normalizeValue(task?.notes),
     normalizeValue(task?.projectName),
+    normalizeValue(categoryName),
     parentTaskTitle,
     taskPriority,
     taskPriorityLabel,
@@ -328,6 +392,10 @@ const buildTaskSearchText = (task, parentTaskTitleById) => {
     normalizeValue(task?.assignedToName),
     normalizeValue(task?.assignedToEmail),
     normalizeValue(task?.ticketId),
+    normalizeValue(task?.sheetLogSheetName),
+    normalizeValue(task?.sheetLogType),
+    normalizeValue(task?.sheetLogRevisionNumber),
+    taskSheetLogSearchText,
     String(normalizeProgressPercent(task?.progressPercent)),
     dueDateRaw,
     dueDateDisplay,
@@ -338,10 +406,41 @@ const buildTaskSearchText = (task, parentTaskTitleById) => {
     .toLowerCase();
 };
 
+const normalizeCommitmentCategoryEntry = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const name = normalizeValue(value.name);
+  if (!name) return null;
+
+  return {
+    id: normalizeValue(value.id),
+    name,
+    description: normalizeValue(value.description),
+  };
+};
+
+const normalizeCommitmentCategoryCatalog = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  const uniqueEntries = new Map();
+
+  value.forEach((entry) => {
+    const normalized = normalizeCommitmentCategoryEntry(entry);
+    if (!normalized) return;
+
+    const key = normalized.id || normalized.name.toLowerCase();
+    if (uniqueEntries.has(key)) return;
+    uniqueEntries.set(key, normalized);
+  });
+
+  return Array.from(uniqueEntries.values()).sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+  );
+};
+
 const buildSheetLogSearchText = (entry) => {
-  const dueDateRaw = toDateInputValue(entry?.dueDate);
-  const dueDateDisplay = formatDateDisplay(entry?.dueDate);
-  const dueDateCountdown = getDueDateCountdownMeta(entry?.dueDate)?.label || "";
   const identifiers = normalizeSheetLogIdentifierArray(entry?.identifiers);
   const fallbackIdentifier = normalizeValue(entry?.identifier);
   const identifierSearchText = identifiers.length > 0
@@ -354,9 +453,6 @@ const buildSheetLogSearchText = (entry) => {
     identifierSearchText,
     normalizeValue(entry?.type),
     normalizeValue(entry?.revisionNumber),
-    dueDateRaw,
-    dueDateDisplay,
-    dueDateCountdown,
     entry?.shouldCreateSheet ? "yes create sheet" : "no do not create sheet",
   ]
     .join(" ")
@@ -453,7 +549,7 @@ const WorkProgressModule = () => {
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
 
-  const [draft, setDraft] = useState({ title: "", description: "", projectId: "", parentTaskId: "", notes: "", dueDate: "", progressPercent: "0", priority: "medium", direction: "stop_and_start" });
+  const [draft, setDraft] = useState({ title: "", description: "", projectId: "", categoryId: "", parentTaskId: "", sheetLogId: "", notes: "", dueDate: "", progressPercent: "0", priority: "medium", direction: "stop_and_start" });
   const [isQuickTaskOpen, setIsQuickTaskOpen] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [selectedEditTaskId, setSelectedEditTaskId] = useState("");
@@ -468,6 +564,7 @@ const WorkProgressModule = () => {
   const [projectFilter, setProjectFilter] = useState("all");
   const [sheetLogProjectFilter, setSheetLogProjectFilter] = useState("all");
   const [taskSearchTerm, setTaskSearchTerm] = useState("");
+  const [taskStatusFilter, setTaskStatusFilter] = useState("both");
   const [sheetLogSearchTerm, setSheetLogSearchTerm] = useState("");
   const [taskCreatedSortOrder, setTaskCreatedSortOrder] = useState("manual_order");
   const [sheetLogCreatedSortOrder, setSheetLogCreatedSortOrder] = useState("newest_first");
@@ -475,6 +572,16 @@ const WorkProgressModule = () => {
   const [countdownSortOrder, setCountdownSortOrder] = useState("none");
   const [directionSortOrder, setDirectionSortOrder] = useState("none");
   const [activeSectionTab, setActiveSectionTab] = useState("commitments");
+  const [commitmentCategoryFilter, setCommitmentCategoryFilter] = useState("all");
+  const [commitmentsPage, setCommitmentsPage] = useState(1);
+  const [movingTaskId, setMovingTaskId] = useState("");
+  const [hasLoadedPersistedFilters, setHasLoadedPersistedFilters] = useState(false);
+  const [commitmentCategories, setCommitmentCategories] = useState([]);
+  const [loadingCommitmentCategories, setLoadingCommitmentCategories] = useState(true);
+  const [commitmentCategoryDraft, setCommitmentCategoryDraft] = useState({ name: "", description: "" });
+  const [editingCommitmentCategoryId, setEditingCommitmentCategoryId] = useState("");
+  const [editingCommitmentCategoryDraft, setEditingCommitmentCategoryDraft] = useState({ name: "", description: "" });
+  const [savingCommitmentCategory, setSavingCommitmentCategory] = useState(false);
   const [sheetLogs, setSheetLogs] = useState([]);
   const [loadingSheetLogs, setLoadingSheetLogs] = useState(true);
   const [sheetLogTypes, setSheetLogTypes] = useState([]);
@@ -489,18 +596,23 @@ const WorkProgressModule = () => {
     sheetName: "",
     identifier: "",
     type: "",
-    dueDate: "",
     revisionNumber: "",
   });
   const [savingSheetLog, setSavingSheetLog] = useState(false);
   const [editingSheetLogId, setEditingSheetLogId] = useState("");
   const [editingSheetLogDraft, setEditingSheetLogDraft] = useState(null);
+  const [editingSheetLogIdentifiers, setEditingSheetLogIdentifiers] = useState([]);
   const [savingSheetLogEdit, setSavingSheetLogEdit] = useState(false);
 
   const projectsRef = useMemo(() => collection(db, "churches", id, "projectListIssueProjects"), [id]);
   const commitmentsRef = useMemo(() => collection(db, "churches", id, "commitments"), [id]);
+  const commitmentCategoriesRef = useMemo(() => collection(db, "churches", id, "workProgressCommitmentCategories"), [id]);
   const sheetLogsRef = useMemo(() => collection(db, "churches", id, "workProgressSheetLogs"), [id]);
   const sheetLogSettingsRef = useMemo(() => doc(db, "churches", id, "workProgressSettings", "sheetLog"), [id]);
+  const persistedFiltersStorageKey = useMemo(() => {
+    const normalizedId = normalizeValue(id);
+    return normalizedId ? `workProgressFilters:${normalizedId}` : "";
+  }, [id]);
   const selectedLogTask = useMemo(
     () => tasks.find((task) => task.id === selectedLogTaskId) || null,
     [selectedLogTaskId, tasks]
@@ -516,6 +628,10 @@ const WorkProgressModule = () => {
   const selectedSheetLogType = useMemo(
     () => sheetLogTypes.find((entry) => entry.id === editingSheetLogTypeId) || null,
     [editingSheetLogTypeId, sheetLogTypes]
+  );
+  const selectedCommitmentCategory = useMemo(
+    () => commitmentCategories.find((entry) => entry.id === editingCommitmentCategoryId) || null,
+    [commitmentCategories, editingCommitmentCategoryId]
   );
   const childTaskIdsByParentId = useMemo(() => {
     const map = new Map();
@@ -540,14 +656,139 @@ const WorkProgressModule = () => {
     });
     return map;
   }, [tasks]);
-  const parentTaskOptions = useMemo(() => {
-    return [...tasks]
-      .map((task) => ({
+  const commitmentCategoryById = useMemo(() => {
+    const map = new Map();
+    commitmentCategories.forEach((category) => {
+      map.set(category.id, category);
+    });
+    return map;
+  }, [commitmentCategories]);
+  const commitmentCategoryOptions = useMemo(
+    () => commitmentCategories.map((category) => ({ value: category.id, label: category.name, description: category.description })),
+    [commitmentCategories]
+  );
+  const sheetLogById = useMemo(() => {
+    const map = new Map();
+    sheetLogs.forEach((entry) => {
+      const entryId = normalizeValue(entry.id);
+      if (!entryId) return;
+      map.set(entryId, entry);
+    });
+    return map;
+  }, [sheetLogs]);
+  const commitmentSheetLogOptions = useMemo(() => {
+    return sheetLogs
+      .map((entry) => {
+        const entryId = normalizeValue(entry.id);
+        if (!entryId) return null;
+
+        const projectId = normalizeValue(entry.projectId);
+        const sheetName = normalizeValue(entry.sheetName) || "Untitled Sheet";
+        const sheetType = normalizeValue(entry.type);
+        const sheetRevision = normalizeValue(entry.revisionNumber);
+        const identifiers = normalizeSheetLogIdentifierArray(
+          Array.isArray(entry.identifiers) && entry.identifiers.length > 0
+            ? entry.identifiers
+            : entry.identifier
+        );
+        const identifierPreview = identifiers.length > 0 ? identifiers[0] : "";
+
+        return {
+          value: entryId,
+          projectId,
+          label: [
+            sheetName,
+            sheetType ? `Type: ${sheetType}` : "",
+            sheetRevision ? `Rev: ${sheetRevision}` : "",
+            identifierPreview ? `ID: ${identifierPreview}` : "",
+          ].filter(Boolean).join(" | "),
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+  }, [sheetLogs]);
+  const createSheetLogOptions = useMemo(() => {
+    const normalizedProjectId = normalizeValue(draft.projectId);
+    return commitmentSheetLogOptions.filter((option) => normalizeValue(option.projectId) === normalizedProjectId);
+  }, [commitmentSheetLogOptions, draft.projectId]);
+  const editSheetLogOptions = useMemo(() => {
+    const normalizedProjectId = normalizeValue(editTaskDraft?.projectId);
+    return commitmentSheetLogOptions.filter((option) => normalizeValue(option.projectId) === normalizedProjectId);
+  }, [commitmentSheetLogOptions, editTaskDraft?.projectId]);
+  const parentTaskOptionsByProjectId = useMemo(() => {
+    const map = new Map();
+
+    tasks.forEach((task) => {
+      const projectId = normalizeValue(task.projectId);
+      if (!projectId) return;
+
+      if (!map.has(projectId)) {
+        map.set(projectId, []);
+      }
+
+      map.get(projectId).push({
         value: task.id,
         label: normalizeValue(task.title) || "Untitled Task",
-      }))
-      .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+      });
+    });
+
+    map.forEach((entries, projectId) => {
+      map.set(
+        projectId,
+        entries.sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }))
+      );
+    });
+
+    return map;
   }, [tasks]);
+  const createParentTaskOptions = useMemo(() => {
+    const normalizedProjectId = normalizeValue(draft.projectId);
+    if (!normalizedProjectId) return [];
+    return parentTaskOptionsByProjectId.get(normalizedProjectId) || [];
+  }, [draft.projectId, parentTaskOptionsByProjectId]);
+  const editParentTaskOptions = useMemo(() => {
+    const normalizedProjectId = normalizeValue(editTaskDraft?.projectId);
+    if (!normalizedProjectId) return [];
+    return parentTaskOptionsByProjectId.get(normalizedProjectId) || [];
+  }, [editTaskDraft?.projectId, parentTaskOptionsByProjectId]);
+
+  useEffect(() => {
+    if (!persistedFiltersStorageKey) {
+      setHasLoadedPersistedFilters(false);
+      return;
+    }
+
+    try {
+      const rawValue = window.localStorage.getItem(persistedFiltersStorageKey);
+      if (rawValue) {
+        const parsedValue = JSON.parse(rawValue);
+        const persistedProjectFilter = normalizeValue(parsedValue?.projectFilter);
+
+        if (persistedProjectFilter) {
+          setProjectFilter(persistedProjectFilter);
+        }
+      }
+    } catch (error) {
+      console.warn("Could not restore Work Progress filters:", error);
+    } finally {
+      setHasLoadedPersistedFilters(true);
+    }
+  }, [persistedFiltersStorageKey]);
+
+  useEffect(() => {
+    if (!persistedFiltersStorageKey || !hasLoadedPersistedFilters) return;
+
+    try {
+      window.localStorage.setItem(
+        persistedFiltersStorageKey,
+        JSON.stringify({
+          projectFilter: normalizeValue(projectFilter) || "all",
+        })
+      );
+    } catch (error) {
+      console.warn("Could not persist Work Progress filters:", error);
+    }
+  }, [hasLoadedPersistedFilters, persistedFiltersStorageKey, projectFilter]);
   const disallowedEditParentTaskIds = useMemo(() => {
     const disallowed = new Set();
     if (!selectedEditTaskId) return disallowed;
@@ -568,24 +809,91 @@ const WorkProgressModule = () => {
 
     return disallowed;
   }, [childTaskIdsByParentId, selectedEditTaskId]);
+
+  useEffect(() => {
+    const normalizedProjectId = normalizeValue(draft.projectId);
+    if (!normalizedProjectId) {
+      if (normalizeValue(draft.parentTaskId)) {
+        setDraft((previous) => ({ ...previous, parentTaskId: "" }));
+      }
+      return;
+    }
+
+    const allowedParentTaskIds = new Set((parentTaskOptionsByProjectId.get(normalizedProjectId) || []).map((option) => option.value));
+    if (draft.parentTaskId && !allowedParentTaskIds.has(draft.parentTaskId)) {
+      setDraft((previous) => ({ ...previous, parentTaskId: "" }));
+    }
+  }, [draft.parentTaskId, draft.projectId, parentTaskOptionsByProjectId]);
+
+  useEffect(() => {
+    const normalizedProjectId = normalizeValue(draft.projectId);
+    if (!normalizedProjectId) {
+      if (normalizeValue(draft.sheetLogId)) {
+        setDraft((previous) => ({ ...previous, sheetLogId: "" }));
+      }
+      return;
+    }
+
+    const allowedSheetLogIds = new Set(createSheetLogOptions.map((option) => option.value));
+    if (draft.sheetLogId && !allowedSheetLogIds.has(draft.sheetLogId)) {
+      setDraft((previous) => ({ ...previous, sheetLogId: "" }));
+    }
+  }, [createSheetLogOptions, draft.projectId, draft.sheetLogId]);
+
+  useEffect(() => {
+    if (!editTaskDraft) return;
+
+    const normalizedProjectId = normalizeValue(editTaskDraft.projectId);
+    if (!normalizedProjectId) {
+      if (normalizeValue(editTaskDraft.parentTaskId)) {
+        setEditTaskDraft((previous) => (previous ? { ...previous, parentTaskId: "" } : previous));
+      }
+      return;
+    }
+
+    const allowedParentTaskIds = new Set((parentTaskOptionsByProjectId.get(normalizedProjectId) || []).map((option) => option.value));
+    if (editTaskDraft.parentTaskId && !allowedParentTaskIds.has(editTaskDraft.parentTaskId)) {
+      setEditTaskDraft((previous) => (previous ? { ...previous, parentTaskId: "" } : previous));
+    }
+  }, [editTaskDraft, parentTaskOptionsByProjectId]);
+
+  useEffect(() => {
+    if (!editTaskDraft) return;
+
+    const normalizedProjectId = normalizeValue(editTaskDraft.projectId);
+    if (!normalizedProjectId) {
+      if (normalizeValue(editTaskDraft.sheetLogId)) {
+        setEditTaskDraft((previous) => (previous ? { ...previous, sheetLogId: "" } : previous));
+      }
+      return;
+    }
+
+    const allowedSheetLogIds = new Set(editSheetLogOptions.map((option) => option.value));
+    if (editTaskDraft.sheetLogId && !allowedSheetLogIds.has(editTaskDraft.sheetLogId)) {
+      setEditTaskDraft((previous) => (previous ? { ...previous, sheetLogId: "" } : previous));
+    }
+  }, [editSheetLogOptions, editTaskDraft]);
+
   const isManualTaskOrderEnabled =
     taskCreatedSortOrder === "manual_order"
     && prioritySortOrder === "none"
     && countdownSortOrder === "none"
     && directionSortOrder === "none";
   const siblingMoveMetaByTaskId = useMemo(() => {
-    const byParent = new Map();
+    const byParentAndProject = new Map();
     const moveMeta = new Map();
 
     tasks.forEach((task) => {
       const parentTaskId = normalizeValue(task.parentTaskId);
-      if (!byParent.has(parentTaskId)) {
-        byParent.set(parentTaskId, []);
+      const projectId = normalizeValue(task.projectId);
+      const groupKey = `${parentTaskId}::${projectId}`;
+      if (!byParentAndProject.has(groupKey)) {
+        byParentAndProject.set(groupKey, []);
       }
-      byParent.get(parentTaskId).push(task);
+      byParentAndProject.get(groupKey).push(task);
     });
 
-    byParent.forEach((siblings) => {
+    byParentAndProject.forEach((siblings) => {
       siblings
         .slice()
         .sort((leftTask, rightTask) => {
@@ -606,6 +914,28 @@ const WorkProgressModule = () => {
 
     return moveMeta;
   }, [tasks]);
+  const getDescendantTaskIds = (taskId) => {
+    const normalizedTaskId = normalizeValue(taskId);
+    if (!normalizedTaskId) return [];
+
+    const descendantIds = [];
+    const visitedIds = new Set([normalizedTaskId]);
+    const queue = [normalizedTaskId];
+
+    while (queue.length > 0) {
+      const currentTaskId = queue.shift();
+      const childIds = childTaskIdsByParentId.get(currentTaskId) || [];
+
+      childIds.forEach((childId) => {
+        if (visitedIds.has(childId)) return;
+        visitedIds.add(childId);
+        descendantIds.push(childId);
+        queue.push(childId);
+      });
+    }
+
+    return descendantIds;
+  };
   const taskProjectOptions = useMemo(() => {
     const optionsMap = new Map();
 
@@ -625,6 +955,7 @@ const WorkProgressModule = () => {
       .map(([value, label]) => ({ value, label }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
   }, [projects, tasks]);
+  const commitmentTableColumnCount = 10;
 
   const displayedTasks = useMemo(() => {
     const normalizedSearch = normalizeValue(taskSearchTerm).toLowerCase();
@@ -632,9 +963,14 @@ const WorkProgressModule = () => {
       const matchesProject = projectFilter === "all" || normalizeValue(task.projectId) === projectFilter;
       if (!matchesProject) return false;
 
+      const isDone = isTaskCompleted(task);
+      if (taskStatusFilter === "completed" && !isDone) return false;
+      if (taskStatusFilter === "incomplete" && isDone) return false;
+
       if (!normalizedSearch) return true;
 
-      return buildTaskSearchText(task, parentTaskTitleById).includes(normalizedSearch);
+      const categoryName = normalizeValue(commitmentCategoryById.get(normalizeValue(task.categoryId))?.name || task.categoryName);
+      return buildTaskSearchText(task, parentTaskTitleById, categoryName).includes(normalizedSearch);
     });
 
     if (isManualTaskOrderEnabled) {
@@ -728,7 +1064,205 @@ const WorkProgressModule = () => {
     });
 
     return sortedTasks.map((task) => ({ ...task, __depth: 0 }));
-  }, [countdownSortOrder, directionSortOrder, isManualTaskOrderEnabled, parentTaskTitleById, prioritySortOrder, projectFilter, taskCreatedSortOrder, taskSearchTerm, tasks]);
+  }, [commitmentCategoryById, countdownSortOrder, directionSortOrder, isManualTaskOrderEnabled, parentTaskTitleById, prioritySortOrder, projectFilter, taskCreatedSortOrder, taskSearchTerm, taskStatusFilter, tasks]);
+
+  const categoryFilteredDisplayedTasks = useMemo(() => {
+    const selectedCategoryId = commitmentCategoryFilter === "all" ? "" : commitmentCategoryFilter;
+    if (!selectedCategoryId) return displayedTasks;
+
+    return displayedTasks.filter((task) => {
+      const categoryId = normalizeValue(task.categoryId);
+      const fallbackLabel = normalizeValue(task.categoryName);
+      const sectionKey = categoryId || fallbackLabel || "__uncategorized__";
+      return sectionKey === selectedCategoryId;
+    });
+  }, [commitmentCategoryFilter, displayedTasks]);
+
+  const totalCommitmentPages = useMemo(() => {
+    return Math.max(1, Math.ceil(categoryFilteredDisplayedTasks.length / COMMITMENT_TASKS_PER_PAGE));
+  }, [categoryFilteredDisplayedTasks.length]);
+
+  const paginatedCommitmentTasks = useMemo(() => {
+    const startIndex = (Math.max(commitmentsPage, 1) - 1) * COMMITMENT_TASKS_PER_PAGE;
+    return categoryFilteredDisplayedTasks.slice(startIndex, startIndex + COMMITMENT_TASKS_PER_PAGE);
+  }, [categoryFilteredDisplayedTasks, commitmentsPage]);
+
+  useEffect(() => {
+    setCommitmentsPage((previousPage) => Math.min(Math.max(previousPage, 1), totalCommitmentPages));
+  }, [totalCommitmentPages]);
+
+  useEffect(() => {
+    setCommitmentsPage(1);
+  }, [projectFilter, taskSearchTerm, taskStatusFilter, commitmentCategoryFilter, prioritySortOrder, countdownSortOrder, directionSortOrder, taskCreatedSortOrder]);
+
+  const displayedTaskSections = useMemo(() => {
+    const sectionsByKey = new Map();
+    const selectedCategoryId = commitmentCategoryFilter === "all" ? "" : commitmentCategoryFilter;
+    const shouldFlattenSections =
+      prioritySortOrder !== "none"
+      || countdownSortOrder !== "none"
+      || directionSortOrder !== "none"
+      || taskCreatedSortOrder !== "manual_order";
+
+    const selectedCategoryOption = selectedCategoryId
+      ? commitmentCategoryOptions.find((option) => option.value === selectedCategoryId)
+      : null;
+
+    if (shouldFlattenSections) {
+      if (!paginatedCommitmentTasks.length) {
+        return [];
+      }
+
+      return [
+        {
+          key: selectedCategoryId || "__all_sorted__",
+          categoryId: selectedCategoryId,
+          label: selectedCategoryOption?.label || "All Commitments",
+          description: "Sorted across all categories",
+          tasks: paginatedCommitmentTasks,
+        },
+      ];
+    }
+
+    paginatedCommitmentTasks.forEach((task) => {
+      const categoryId = normalizeValue(task.categoryId);
+      const categoryData = categoryId ? commitmentCategoryById.get(categoryId) : null;
+      const fallbackLabel = normalizeValue(task.categoryName);
+      const sectionKey = categoryId || fallbackLabel || "__uncategorized__";
+      const sectionLabel = categoryData?.name || fallbackLabel || "Uncategorized";
+
+      if (!sectionsByKey.has(sectionKey)) {
+        sectionsByKey.set(sectionKey, {
+          key: sectionKey,
+          categoryId,
+          label: sectionLabel,
+          description: categoryData?.description || "",
+          tasks: [],
+        });
+      }
+
+      sectionsByKey.get(sectionKey).tasks.push(task);
+    });
+
+    const orderedSections = [];
+    commitmentCategoryOptions.forEach((option) => {
+      const section = sectionsByKey.get(option.value);
+      if (section) {
+        orderedSections.push(section);
+        sectionsByKey.delete(option.value);
+      }
+    });
+
+    if (sectionsByKey.has("__uncategorized__")) {
+      orderedSections.push(sectionsByKey.get("__uncategorized__"));
+      sectionsByKey.delete("__uncategorized__");
+    }
+
+    sectionsByKey.forEach((section) => {
+      orderedSections.push(section);
+    });
+
+    return orderedSections;
+  }, [commitmentCategoryById, commitmentCategoryFilter, commitmentCategoryOptions, countdownSortOrder, directionSortOrder, paginatedCommitmentTasks, prioritySortOrder, taskCreatedSortOrder]);
+
+  const displayedTaskCategoryCounts = useMemo(() => {
+    const counts = new Map();
+
+    displayedTasks.forEach((task) => {
+      const categoryId = normalizeValue(task.categoryId);
+      const fallbackLabel = normalizeValue(task.categoryName);
+      const sectionKey = categoryId || fallbackLabel || "__uncategorized__";
+      counts.set(sectionKey, (counts.get(sectionKey) || 0) + 1);
+    });
+
+    return counts;
+  }, [displayedTasks]);
+
+  const getTaskRowColors = (isDone, taskDepth, rowIndex) => {
+    const isEvenRow = (Number(rowIndex) || 0) % 2 === 0;
+
+    if (isDone) {
+      return {
+        rowBackground: isEvenRow ? "#F8FAF9" : "#F2F7F4",
+        accentBackground: "#E2ECE6",
+        accentBorder: "#86A895",
+        subtaskBadgeBackground: "rgba(74, 122, 91, 0.12)",
+        subtaskBadgeText: "#3F5F4A",
+      };
+    }
+
+    const depthMutedAccent = ["#D0D7E2", "#C2CBD8", "#B4BFCE", "#A8B5C5"];
+    const accentBackgroundByDepth = ["#E8EDF4", "#E2E8F0", "#DCE4EE", "#D6DFEA"];
+    const depthIndex = Math.min(taskDepth, depthMutedAccent.length - 1);
+
+    return {
+      rowBackground: isEvenRow ? "#FFFFFF" : "#F7F8FA",
+      accentBackground: accentBackgroundByDepth[depthIndex],
+      accentBorder: depthMutedAccent[depthIndex],
+      subtaskBadgeBackground: accentBackgroundByDepth[depthIndex],
+      subtaskBadgeText: "#475569",
+    };
+  };
+
+  const categoryHeaderThemes = [
+    {
+      cardBackground: "linear-gradient(135deg, #EEF2FF 0%, #FFFFFF 68%)",
+      cardBorder: "#C7D2FE",
+      accentRail: "linear-gradient(180deg, rgba(79, 70, 229, 0.70) 0%, rgba(99, 102, 241, 0.16) 100%)",
+      labelBackground: "rgba(79, 70, 229, 0.08)",
+      labelText: "#312E81",
+      titleText: "#0F172A",
+      lineGradient: "linear-gradient(90deg, rgba(79, 70, 229, 0.46) 0%, rgba(79, 70, 229, 0.18) 100%)",
+      arrowColor: "rgba(79, 70, 229, 0.56)",
+      countText: "#475569",
+    },
+    {
+      cardBackground: "linear-gradient(135deg, #ECFEFF 0%, #FFFFFF 68%)",
+      cardBorder: "#A5F3FC",
+      accentRail: "linear-gradient(180deg, rgba(8, 145, 178, 0.70) 0%, rgba(34, 211, 238, 0.16) 100%)",
+      labelBackground: "rgba(8, 145, 178, 0.08)",
+      labelText: "#164E63",
+      titleText: "#082F49",
+      lineGradient: "linear-gradient(90deg, rgba(8, 145, 178, 0.46) 0%, rgba(8, 145, 178, 0.18) 100%)",
+      arrowColor: "rgba(8, 145, 178, 0.56)",
+      countText: "#0F766E",
+    },
+    {
+      cardBackground: "linear-gradient(135deg, #FFF7ED 0%, #FFFFFF 68%)",
+      cardBorder: "#FED7AA",
+      accentRail: "linear-gradient(180deg, rgba(234, 88, 12, 0.68) 0%, rgba(251, 146, 60, 0.16) 100%)",
+      labelBackground: "rgba(234, 88, 12, 0.08)",
+      labelText: "#7C2D12",
+      titleText: "#1F2937",
+      lineGradient: "linear-gradient(90deg, rgba(234, 88, 12, 0.40) 0%, rgba(234, 88, 12, 0.16) 100%)",
+      arrowColor: "rgba(234, 88, 12, 0.56)",
+      countText: "#9A3412",
+    },
+    {
+      cardBackground: "linear-gradient(135deg, #F5F3FF 0%, #FFFFFF 68%)",
+      cardBorder: "#DDD6FE",
+      accentRail: "linear-gradient(180deg, rgba(124, 58, 237, 0.70) 0%, rgba(167, 139, 250, 0.16) 100%)",
+      labelBackground: "rgba(124, 58, 237, 0.08)",
+      labelText: "#4C1D95",
+      titleText: "#111827",
+      lineGradient: "linear-gradient(90deg, rgba(124, 58, 237, 0.42) 0%, rgba(124, 58, 237, 0.16) 100%)",
+      arrowColor: "rgba(124, 58, 237, 0.56)",
+      countText: "#5B21B6",
+    },
+    {
+      cardBackground: "linear-gradient(135deg, #F0FDF4 0%, #FFFFFF 68%)",
+      cardBorder: "#BBF7D0",
+      accentRail: "linear-gradient(180deg, rgba(22, 163, 74, 0.70) 0%, rgba(74, 222, 128, 0.16) 100%)",
+      labelBackground: "rgba(22, 163, 74, 0.08)",
+      labelText: "#14532D",
+      titleText: "#0F172A",
+      lineGradient: "linear-gradient(90deg, rgba(22, 163, 74, 0.42) 0%, rgba(22, 163, 74, 0.16) 100%)",
+      arrowColor: "rgba(22, 163, 74, 0.56)",
+      countText: "#166534",
+    },
+  ];
+
+  const getCategoryHeaderTheme = (sectionIndex) => categoryHeaderThemes[sectionIndex % categoryHeaderThemes.length];
 
   const sheetLogProjectOptions = useMemo(() => {
     const optionsMap = new Map();
@@ -803,6 +1337,7 @@ const WorkProgressModule = () => {
   useEffect(() => {
     if (!editingSheetLogId) {
       setEditingSheetLogDraft(null);
+      setEditingSheetLogIdentifiers([]);
       setSavingSheetLogEdit(false);
       return;
     }
@@ -819,15 +1354,18 @@ const WorkProgressModule = () => {
       sheetName: normalizeValue(selectedSheetLog.sheetName),
       identifier: (() => {
         const normalizedIdentifiers = normalizeSheetLogIdentifierArray(selectedSheetLog.identifiers);
-        if (normalizedIdentifiers.length > 0) {
-          return normalizedIdentifiers.join("\n");
-        }
-        return normalizeValue(selectedSheetLog.identifier);
+        return normalizedIdentifiers.length > 0 ? normalizedIdentifiers.join("\n") : normalizeValue(selectedSheetLog.identifier);
       })(),
       type: normalizeValue(selectedSheetLog.type),
-      dueDate: toDateInputValue(selectedSheetLog.dueDate),
       revisionNumber: normalizeValue(selectedSheetLog.revisionNumber),
     });
+    setEditingSheetLogIdentifiers(
+      normalizeSheetLogIdentifierArray(
+        Array.isArray(selectedSheetLog.identifiers) && selectedSheetLog.identifiers.length > 0
+          ? selectedSheetLog.identifiers
+          : selectedSheetLog.identifier
+      )
+    );
   }, [editingSheetLogId, sheetLogs]);
 
   useEffect(() => {
@@ -863,6 +1401,59 @@ const WorkProgressModule = () => {
   }, [sheetLogDraft.type, sheetLogTypeOptions]);
 
   useEffect(() => {
+    if (!id) {
+      setCommitmentCategories([]);
+      setLoadingCommitmentCategories(false);
+      return undefined;
+    }
+
+    setLoadingCommitmentCategories(true);
+
+    const unsubscribe = onSnapshot(
+      query(commitmentCategoriesRef, orderBy("createdAt", "desc")),
+      (snapshot) => {
+        const nextCategories = normalizeCommitmentCategoryCatalog(
+          snapshot.docs.map((categoryDoc) => ({
+            id: categoryDoc.id,
+            ...categoryDoc.data(),
+          }))
+        );
+
+        setCommitmentCategories(nextCategories);
+        setLoadingCommitmentCategories(false);
+      },
+      (error) => {
+        console.error("Failed to load commitment categories:", error);
+        toast.error("Could not load commitment categories.");
+        setCommitmentCategories([]);
+        setLoadingCommitmentCategories(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [commitmentCategoriesRef, id]);
+
+  useEffect(() => {
+    if (!selectedCommitmentCategory) {
+      setEditingCommitmentCategoryDraft({ name: "", description: "" });
+      return;
+    }
+
+    setEditingCommitmentCategoryDraft({
+      name: normalizeValue(selectedCommitmentCategory.name),
+      description: normalizeValue(selectedCommitmentCategory.description),
+    });
+  }, [selectedCommitmentCategory]);
+
+  useEffect(() => {
+    if (commitmentCategoryFilter === "all") return;
+
+    if (!commitmentCategories.some((entry) => entry.id === commitmentCategoryFilter)) {
+      setCommitmentCategoryFilter("all");
+    }
+  }, [commitmentCategories, commitmentCategoryFilter]);
+
+  useEffect(() => {
     if (!selectedSheetLogType) {
       setEditingSheetLogTypeDraft({ name: "", description: "" });
       return;
@@ -885,7 +1476,9 @@ const WorkProgressModule = () => {
       title: normalizeValue(selectedEditTask.title),
       description: normalizeValue(selectedEditTask.description),
       projectId: normalizeValue(selectedEditTask.projectId),
+      categoryId: normalizeValue(selectedEditTask.categoryId),
       parentTaskId: normalizeValue(selectedEditTask.parentTaskId),
+      sheetLogId: normalizeValue(selectedEditTask.sheetLogId),
       notes: normalizeValue(selectedEditTask.notes),
       dueDate: toDateInputValue(selectedEditTask.dueDate),
       progressPercent: String(normalizeProgressPercent(selectedEditTask.progressPercent)),
@@ -944,11 +1537,16 @@ const WorkProgressModule = () => {
     attachment: normalizeLogAttachment(attachment),
   });
 
-  const getNextTaskOrderForParent = (parentTaskId, excludedTaskId = "") => {
+  const getNextTaskOrderForParent = (parentTaskId, excludedTaskId = "", projectId = "") => {
     const normalizedParentTaskId = normalizeValue(parentTaskId);
+    const normalizedProjectId = normalizeValue(projectId);
     const siblingOrders = tasks
       .filter(
-        (task) => normalizeValue(task.parentTaskId) === normalizedParentTaskId && task.id !== excludedTaskId
+        (task) => (
+          normalizeValue(task.parentTaskId) === normalizedParentTaskId
+          && task.id !== excludedTaskId
+          && (!normalizedProjectId || normalizeValue(task.projectId) === normalizedProjectId)
+        )
       )
       .map((task) => normalizeTaskOrder(task.taskOrder));
 
@@ -961,6 +1559,7 @@ const WorkProgressModule = () => {
 
   const handleMoveTask = async (task, direction) => {
     if (!canManageCommitments || !task?.id) return;
+    if (movingTaskId) return;
 
     if (!isManualTaskOrderEnabled) {
       toast.info("Enable Manual order and clear other sort options to reorder tasks.");
@@ -968,8 +1567,12 @@ const WorkProgressModule = () => {
     }
 
     const normalizedParentTaskId = normalizeValue(task.parentTaskId);
+    const normalizedProjectId = normalizeValue(task.projectId);
     const orderedSiblings = tasks
-      .filter((entry) => normalizeValue(entry.parentTaskId) === normalizedParentTaskId)
+      .filter(
+        (entry) => normalizeValue(entry.parentTaskId) === normalizedParentTaskId
+          && normalizeValue(entry.projectId) === normalizedProjectId
+      )
       .sort((leftTask, rightTask) => {
         const orderDifference = normalizeTaskOrder(leftTask.taskOrder) - normalizeTaskOrder(rightTask.taskOrder);
         if (orderDifference !== 0) return orderDifference;
@@ -986,26 +1589,48 @@ const WorkProgressModule = () => {
     const targetIndex = currentIndex + offset;
     if (targetIndex < 0 || targetIndex >= orderedSiblings.length) return;
 
-    const targetTask = orderedSiblings[targetIndex];
-    if (!targetTask?.id) return;
+    const movingTask = orderedSiblings[currentIndex];
+    if (!movingTask?.id) return;
 
-    const currentTaskOrder = normalizeTaskOrder(task.taskOrder) || (currentIndex + 1) * 1000;
-    const targetTaskOrder = normalizeTaskOrder(targetTask.taskOrder) || (targetIndex + 1) * 1000;
+    const reorderedSiblings = [...orderedSiblings];
+    reorderedSiblings.splice(currentIndex, 1);
+    reorderedSiblings.splice(targetIndex, 0, movingTask);
+
+    const orderById = new Map(reorderedSiblings.map((entry, index) => [entry.id, (index + 1) * 1000]));
+    const previousTasksSnapshot = tasks;
+
+    setTasks((previousTasks) => previousTasks.map((entry) => (
+      orderById.has(entry.id)
+        ? { ...entry, taskOrder: orderById.get(entry.id) }
+        : entry
+    )));
 
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, "churches", id, "commitments", task.id), {
-        taskOrder: targetTaskOrder,
-        updatedAt: serverTimestamp(),
-      });
-      batch.update(doc(db, "churches", id, "commitments", targetTask.id), {
-        taskOrder: currentTaskOrder,
-        updatedAt: serverTimestamp(),
-      });
-      await batch.commit();
+      setMovingTaskId(task.id);
+
+      // Keep ordering deterministic on every click to avoid precision/gap issues over repeated moves.
+      const chunkSize = 450;
+      for (let startIndex = 0; startIndex < reorderedSiblings.length; startIndex += chunkSize) {
+        const chunk = reorderedSiblings.slice(startIndex, startIndex + chunkSize);
+        const batch = writeBatch(db);
+
+        chunk.forEach((entry, chunkOffset) => {
+          const absoluteIndex = startIndex + chunkOffset;
+          batch.update(doc(db, "churches", id, "commitments", entry.id), {
+            taskOrder: (absoluteIndex + 1) * 1000,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        await batch.commit();
+      }
+
     } catch (error) {
+      setTasks(previousTasksSnapshot);
       console.error("Failed to reorder task:", error);
       toast.error("Could not reorder task.");
+    } finally {
+      setMovingTaskId("");
     }
   };
 
@@ -1232,7 +1857,9 @@ const WorkProgressModule = () => {
 
     const title = normalizeValue(draft.title);
     const projectId = normalizeValue(draft.projectId);
+    const categoryId = normalizeValue(draft.categoryId);
     const parentTaskId = normalizeValue(draft.parentTaskId);
+    const sheetLogId = normalizeValue(draft.sheetLogId);
 
     if (!title) {
       toast.warning("Task title is required.");
@@ -1244,13 +1871,38 @@ const WorkProgressModule = () => {
       return;
     }
 
-    if (parentTaskId && !tasks.some((task) => task.id === parentTaskId)) {
+    if (categoryId && !commitmentCategoryById.has(categoryId)) {
+      toast.warning("Selected category no longer exists.");
+      return;
+    }
+
+    const allowedParentTaskIds = new Set((parentTaskOptionsByProjectId.get(projectId) || []).map((option) => option.value));
+    if (parentTaskId && !allowedParentTaskIds.has(parentTaskId)) {
       toast.warning("Selected parent task no longer exists.");
+      return;
+    }
+
+    const selectedSheetLog = sheetLogId ? sheetLogById.get(sheetLogId) : null;
+    if (sheetLogId && !selectedSheetLog) {
+      toast.warning("Selected Sheet Log row no longer exists.");
+      return;
+    }
+    if (selectedSheetLog && normalizeValue(selectedSheetLog.projectId) !== projectId) {
+      toast.warning("Selected Sheet Log row must belong to the same project.");
       return;
     }
 
     const selectedProject = projects.find((project) => project.id === projectId);
     const projectName = normalizeValue(selectedProject?.name) || "Untitled Project";
+    const parentTask = parentTaskId ? tasks.find((task) => task.id === parentTaskId) : null;
+    const resolvedCategoryId = categoryId || normalizeValue(parentTask?.categoryId);
+    const selectedCategory = resolvedCategoryId ? commitmentCategoryById.get(resolvedCategoryId) : null;
+    const categoryName = normalizeValue(selectedCategory?.name);
+    const selectedSheetLogIdentifiers = normalizeSheetLogIdentifierArray(
+      Array.isArray(selectedSheetLog?.identifiers) && selectedSheetLog.identifiers.length > 0
+        ? selectedSheetLog.identifiers
+        : selectedSheetLog?.identifier
+    );
 
     setSavingTask(true);
 
@@ -1261,8 +1913,16 @@ const WorkProgressModule = () => {
         notes: normalizeValue(draft.notes),
         projectId,
         projectName,
+        categoryId: resolvedCategoryId,
+        categoryName,
+        sheetLogId,
+        sheetLogSheetName: normalizeValue(selectedSheetLog?.sheetName),
+        sheetLogType: normalizeValue(selectedSheetLog?.type),
+        sheetLogRevisionNumber: normalizeValue(selectedSheetLog?.revisionNumber),
+        sheetLogIdentifiers: selectedSheetLogIdentifiers,
+        sheetLogIdentifier: selectedSheetLogIdentifiers[0] || "",
         parentTaskId,
-        taskOrder: getNextTaskOrderForParent(parentTaskId),
+        taskOrder: getNextTaskOrderForParent(parentTaskId, "", projectId),
         dueDate: toDateInputValue(draft.dueDate),
         progressPercent: normalizeProgressPercent(draft.progressPercent),
         priority: normalizeTaskPriority(draft.priority),
@@ -1279,7 +1939,9 @@ const WorkProgressModule = () => {
         ...previous,
         title: "",
         description: "",
+        categoryId: "",
         parentTaskId: "",
+        sheetLogId: "",
         notes: "",
         dueDate: "",
         progressPercent: "0",
@@ -1339,6 +2001,84 @@ const WorkProgressModule = () => {
     }
   };
 
+  const handleDuplicateTask = async (task) => {
+    if (!canManageCommitments) {
+      toast.error("You do not have permission to manage this module.");
+      return;
+    }
+
+    const sourceTask = task && typeof task === "object" ? task : null;
+    if (!sourceTask) {
+      toast.error("Could not duplicate this task.");
+      return;
+    }
+
+    const sourceParentTaskId = normalizeValue(sourceTask.parentTaskId);
+    const sourceProjectId = normalizeValue(sourceTask.projectId);
+    const copiedTitle = normalizeValue(sourceTask.title) || "Untitled Task";
+
+    try {
+      const nextTaskPayload = {
+        title: `${copiedTitle} (Copy)`,
+        description: normalizeValue(sourceTask.description),
+        notes: normalizeValue(sourceTask.notes),
+        projectId: normalizeValue(sourceTask.projectId),
+        projectName: normalizeValue(sourceTask.projectName) || "Untitled Project",
+        categoryId: normalizeValue(sourceTask.categoryId),
+        categoryName: normalizeValue(sourceTask.categoryName),
+        sheetLogId: normalizeValue(sourceTask.sheetLogId),
+        sheetLogSheetName: normalizeValue(sourceTask.sheetLogSheetName),
+        sheetLogType: normalizeValue(sourceTask.sheetLogType),
+        sheetLogRevisionNumber: normalizeValue(sourceTask.sheetLogRevisionNumber),
+        sheetLogIdentifiers: normalizeSheetLogIdentifierArray(
+          Array.isArray(sourceTask.sheetLogIdentifiers) && sourceTask.sheetLogIdentifiers.length > 0
+            ? sourceTask.sheetLogIdentifiers
+            : sourceTask.sheetLogIdentifier
+        ),
+        sheetLogIdentifier: normalizeValue(sourceTask.sheetLogIdentifier),
+        parentTaskId: sourceParentTaskId,
+        taskOrder: getNextTaskOrderForParent(sourceParentTaskId, "", sourceProjectId),
+        dueDate: toDateInputValue(sourceTask.dueDate),
+        progressPercent: normalizeProgressPercent(sourceTask.progressPercent),
+        priority: normalizeTaskPriority(sourceTask.priority),
+        direction: normalizeTaskDirection(sourceTask.direction),
+        status: normalizeValue(sourceTask.status).toLowerCase() === "done" ? "done" : "open",
+        changeLog: [buildTaskLogEntry(`Task duplicated from ${copiedTitle}`)],
+        createdByUid: user?.uid || "",
+        createdByName: normalizeValue(user?.displayName || user?.name || user?.email),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      const docRef = await addDoc(commitmentsRef, nextTaskPayload);
+
+      setTasks((previousTasks) => {
+        const nextTask = {
+          id: docRef.id,
+          ...nextTaskPayload,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        const nextTasks = [...previousTasks, nextTask];
+        nextTasks.sort((leftTask, rightTask) => {
+          const leftOrder = normalizeTaskOrder(leftTask.taskOrder);
+          const rightOrder = normalizeTaskOrder(rightTask.taskOrder);
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+
+          const leftCreatedAt = getFirestoreDateMillis(leftTask?.createdAt);
+          const rightCreatedAt = getFirestoreDateMillis(rightTask?.createdAt);
+          return leftCreatedAt - rightCreatedAt;
+        });
+        return nextTasks;
+      });
+
+      toast.success("Task duplicated.");
+    } catch (error) {
+      console.error("Failed to duplicate task:", error);
+      toast.error("Could not duplicate task.");
+    }
+  };
+
   const handleUpdateTaskDueDate = async (task, rawDateValue) => {
     if (!canManageCommitments || !task?.id) return;
 
@@ -1352,6 +2092,13 @@ const WorkProgressModule = () => {
       buildTaskLogEntry(`Due date changed: ${currentDueDate || "none"} -> ${nextDueDate || "none"}`),
     ].slice(-200);
 
+    // Optimistic UI update so countdown reflects the new date immediately.
+    setTasks((previousTasks) => previousTasks.map((entry) => (
+      entry.id === task.id
+        ? { ...entry, dueDate: nextDueDate }
+        : entry
+    )));
+
     try {
       await updateDoc(doc(db, "churches", id, "commitments", task.id), {
         dueDate: nextDueDate,
@@ -1359,6 +2106,11 @@ const WorkProgressModule = () => {
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
+      setTasks((previousTasks) => previousTasks.map((entry) => (
+        entry.id === task.id
+          ? { ...entry, dueDate: currentDueDate }
+          : entry
+      )));
       console.error("Failed to update due date:", error);
       toast.error("Could not update due date.");
     }
@@ -1453,7 +2205,9 @@ const WorkProgressModule = () => {
 
     const title = normalizeValue(editTaskDraft.title);
     const projectId = normalizeValue(editTaskDraft.projectId);
+    const nextCategoryId = normalizeValue(editTaskDraft.categoryId);
     const nextParentTaskId = normalizeValue(editTaskDraft.parentTaskId);
+    const nextSheetLogId = normalizeValue(editTaskDraft.sheetLogId);
 
     if (!title) {
       toast.warning("Task title is required.");
@@ -1465,27 +2219,52 @@ const WorkProgressModule = () => {
       return;
     }
 
+    if (nextCategoryId && !commitmentCategoryById.has(nextCategoryId)) {
+      toast.warning("Selected category no longer exists.");
+      return;
+    }
+
     if (disallowedEditParentTaskIds.has(nextParentTaskId)) {
       toast.warning("A task cannot be assigned to itself or one of its subtasks.");
       return;
     }
 
-    if (nextParentTaskId && !tasks.some((task) => task.id === nextParentTaskId)) {
+    const allowedEditParentTaskIds = new Set((parentTaskOptionsByProjectId.get(projectId) || []).map((option) => option.value));
+    if (nextParentTaskId && !allowedEditParentTaskIds.has(nextParentTaskId)) {
       toast.warning("Selected parent task no longer exists.");
+      return;
+    }
+
+    const nextSelectedSheetLog = nextSheetLogId ? sheetLogById.get(nextSheetLogId) : null;
+    if (nextSheetLogId && !nextSelectedSheetLog) {
+      toast.warning("Selected Sheet Log row no longer exists.");
+      return;
+    }
+    if (nextSelectedSheetLog && normalizeValue(nextSelectedSheetLog.projectId) !== projectId) {
+      toast.warning("Selected Sheet Log row must belong to the same project.");
       return;
     }
 
     const selectedProject = projects.find((project) => project.id === projectId);
     const projectName = normalizeValue(selectedProject?.name) || "Untitled Project";
+    const selectedCategory = nextCategoryId ? commitmentCategoryById.get(nextCategoryId) : null;
+    const nextCategoryName = normalizeValue(selectedCategory?.name);
     const nextPriority = normalizeTaskPriority(editTaskDraft.priority);
     const nextDirection = normalizeTaskDirection(editTaskDraft.direction);
     const nextStatus = normalizeValue(editTaskDraft.status).toLowerCase() === "done" ? "done" : "open";
     const nextProgress = nextStatus === "done" ? 100 : normalizeProgressPercent(editTaskDraft.progressPercent);
     const nextDueDate = toDateInputValue(editTaskDraft.dueDate);
+    const nextSheetLogIdentifiers = normalizeSheetLogIdentifierArray(
+      Array.isArray(nextSelectedSheetLog?.identifiers) && nextSelectedSheetLog.identifiers.length > 0
+        ? nextSelectedSheetLog.identifiers
+        : nextSelectedSheetLog?.identifier
+    );
     const currentParentTaskId = normalizeValue(selectedEditTask.parentTaskId);
+    const currentCategoryId = normalizeValue(selectedEditTask.categoryId);
     const hasParentChanged = nextParentTaskId !== currentParentTaskId;
+    const hasCategoryChanged = nextCategoryId !== currentCategoryId;
     const nextTaskOrder = hasParentChanged
-      ? getNextTaskOrderForParent(nextParentTaskId, selectedEditTask.id)
+      ? getNextTaskOrderForParent(nextParentTaskId, selectedEditTask.id, projectId)
       : (normalizeTaskOrder(selectedEditTask.taskOrder) || Date.now());
 
     const existingLog = normalizeTaskChangeLog(selectedEditTask.changeLog);
@@ -1496,11 +2275,17 @@ const WorkProgressModule = () => {
           title !== normalizeValue(selectedEditTask.title) ? `title: ${normalizeValue(selectedEditTask.title) || "Untitled Task"} -> ${title}` : null,
           normalizeValue(editTaskDraft.description) !== normalizeValue(selectedEditTask.description) ? "description" : null,
           projectId !== normalizeValue(selectedEditTask.projectId) ? `project: ${normalizeValue(selectedEditTask.projectName) || "Untitled Project"} -> ${projectName}` : null,
+          hasCategoryChanged
+            ? `category: ${normalizeValue(selectedEditTask.categoryName) || "none"} -> ${nextCategoryName || "none"}`
+            : null,
           normalizeValue(editTaskDraft.notes) !== normalizeValue(selectedEditTask.notes) ? "notes" : null,
           nextPriority !== normalizeTaskPriority(selectedEditTask.priority) ? `priority: ${normalizeTaskPriority(selectedEditTask.priority)} -> ${nextPriority}` : null,
           nextDirection !== normalizeTaskDirection(selectedEditTask.direction) ? `direction: ${normalizeTaskDirection(selectedEditTask.direction)} -> ${nextDirection}` : null,
           hasParentChanged
             ? `parent: ${parentTaskTitleById.get(currentParentTaskId) || "none"} -> ${parentTaskTitleById.get(nextParentTaskId) || "none"}`
+            : null,
+          nextSheetLogId !== normalizeValue(selectedEditTask.sheetLogId)
+            ? `sheet log: ${normalizeValue(selectedEditTask.sheetLogSheetName) || normalizeValue(selectedEditTask.sheetLogId) || "none"} -> ${normalizeValue(nextSelectedSheetLog?.sheetName) || nextSheetLogId || "none"}`
             : null,
           nextDueDate !== toDateInputValue(selectedEditTask.dueDate) ? `due date: ${toDateInputValue(selectedEditTask.dueDate) || "none"} -> ${nextDueDate || "none"}` : null,
           nextStatus !== normalizeValue(selectedEditTask.status).toLowerCase() ? `status: ${normalizeValue(selectedEditTask.status).toLowerCase() || "open"} -> ${nextStatus}` : null,
@@ -1519,6 +2304,14 @@ const WorkProgressModule = () => {
         notes: normalizeValue(editTaskDraft.notes),
         projectId,
         projectName,
+        categoryId: nextCategoryId,
+        categoryName: nextCategoryName,
+        sheetLogId: nextSheetLogId,
+        sheetLogSheetName: normalizeValue(nextSelectedSheetLog?.sheetName),
+        sheetLogType: normalizeValue(nextSelectedSheetLog?.type),
+        sheetLogRevisionNumber: normalizeValue(nextSelectedSheetLog?.revisionNumber),
+        sheetLogIdentifiers: nextSheetLogIdentifiers,
+        sheetLogIdentifier: nextSheetLogIdentifiers[0] || "",
         parentTaskId: nextParentTaskId,
         taskOrder: nextTaskOrder,
         dueDate: nextDueDate,
@@ -1530,6 +2323,20 @@ const WorkProgressModule = () => {
         changeLog: nextLog,
         updatedAt: serverTimestamp(),
       });
+
+      const descendantTaskIds = getDescendantTaskIds(selectedEditTask.id);
+      if (descendantTaskIds.length > 0) {
+        const descendantBatch = writeBatch(db);
+        descendantTaskIds.forEach((descendantTaskId) => {
+          descendantBatch.update(doc(db, "churches", id, "commitments", descendantTaskId), {
+            categoryId: nextCategoryId,
+            categoryName: nextCategoryName,
+            updatedAt: serverTimestamp(),
+          });
+        });
+        await descendantBatch.commit();
+      }
+
       setSelectedEditTaskId("");
       toast.success("Task updated.");
     } catch (error) {
@@ -1704,6 +2511,137 @@ const WorkProgressModule = () => {
     handleUpdateTaskAssignedUsers(task, nextAssignedIds);
   };
 
+  const handleCreateCommitmentCategory = async (event) => {
+    if (event?.preventDefault) event.preventDefault();
+
+    if (!canManageCommitments) {
+      toast.error("You do not have permission to manage this module.");
+      return;
+    }
+
+    const name = normalizeValue(commitmentCategoryDraft.name);
+    const description = normalizeValue(commitmentCategoryDraft.description);
+
+    if (!name) {
+      toast.warning("Enter a category name.");
+      return;
+    }
+
+    if (commitmentCategories.some((entry) => normalizeValue(entry.name).toLowerCase() === name.toLowerCase())) {
+      toast.warning("That category already exists.");
+      return;
+    }
+
+    setSavingCommitmentCategory(true);
+    try {
+      await addDoc(commitmentCategoriesRef, {
+        name,
+        description,
+        createdByUid: user?.uid || "",
+        createdByName: normalizeValue(user?.displayName || user?.name || user?.email),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setCommitmentCategoryDraft({ name: "", description: "" });
+      toast.success("Commitment category created.");
+    } catch (error) {
+      console.error("Failed to create commitment category:", error);
+      toast.error("Could not create category.");
+    } finally {
+      setSavingCommitmentCategory(false);
+    }
+  };
+
+  const handleSaveEditedCommitmentCategory = async (event) => {
+    if (event?.preventDefault) event.preventDefault();
+
+    if (!canManageCommitments || !editingCommitmentCategoryId || !editingCommitmentCategoryDraft) {
+      return;
+    }
+
+    const name = normalizeValue(editingCommitmentCategoryDraft.name);
+    const description = normalizeValue(editingCommitmentCategoryDraft.description);
+
+    if (!name) {
+      toast.warning("Enter a category name.");
+      return;
+    }
+
+    const duplicateCategory = commitmentCategories.find(
+      (entry) => entry.id !== editingCommitmentCategoryId && normalizeValue(entry.name).toLowerCase() === name.toLowerCase()
+    );
+    if (duplicateCategory) {
+      toast.warning("That category already exists.");
+      return;
+    }
+
+    setSavingCommitmentCategory(true);
+    try {
+      await updateDoc(doc(db, "churches", id, "workProgressCommitmentCategories", editingCommitmentCategoryId), {
+        name,
+        description,
+        updatedAt: serverTimestamp(),
+      });
+
+      setEditingCommitmentCategoryId("");
+      toast.success("Commitment category updated.");
+    } catch (error) {
+      console.error("Failed to update commitment category:", error);
+      toast.error("Could not update category.");
+    } finally {
+      setSavingCommitmentCategory(false);
+    }
+  };
+
+  const handleDeleteCommitmentCategory = async (categoryId) => {
+    if (!canManageCommitments) {
+      toast.error("You do not have permission to manage this module.");
+      return;
+    }
+
+    if (!categoryId) return;
+
+    const category = commitmentCategoryById.get(categoryId);
+    const categoryTaskCount = tasks.filter((task) => normalizeValue(task.categoryId) === categoryId).length;
+    const confirmationMessage = categoryTaskCount > 0
+      ? `Delete ${normalizeValue(category?.name) || "this category"}? ${categoryTaskCount} task${categoryTaskCount === 1 ? " is" : "s are"} assigned and will become Uncategorized.`
+      : `Delete ${normalizeValue(category?.name) || "this category"}?`;
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setSavingCommitmentCategory(true);
+    try {
+      const batch = writeBatch(db);
+
+      tasks
+        .filter((task) => normalizeValue(task.categoryId) === categoryId)
+        .forEach((task) => {
+          batch.update(doc(db, "churches", id, "commitments", task.id), {
+            categoryId: "",
+            categoryName: "",
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+      batch.delete(doc(db, "churches", id, "workProgressCommitmentCategories", categoryId));
+      await batch.commit();
+
+      if (editingCommitmentCategoryId === categoryId) {
+        setEditingCommitmentCategoryId("");
+      }
+
+      toast.success("Commitment category deleted.");
+    } catch (error) {
+      console.error("Failed to delete commitment category:", error);
+      toast.error("Could not delete category.");
+    } finally {
+      setSavingCommitmentCategory(false);
+    }
+  };
+
   const handleCreateSheetLog = async (event) => {
     event.preventDefault();
 
@@ -1746,7 +2684,6 @@ const WorkProgressModule = () => {
         identifiers,
         identifier,
         type: sheetType,
-        dueDate: toDateInputValue(sheetLogDraft.dueDate),
         revisionNumber: normalizeValue(sheetLogDraft.revisionNumber),
         createdByUid: user?.uid || "",
         createdByName: normalizeValue(user?.displayName || user?.name || user?.email),
@@ -1760,7 +2697,6 @@ const WorkProgressModule = () => {
         sheetName: "",
         identifier: "",
         type: sheetLogTypeOptions[0] || "",
-        dueDate: "",
         revisionNumber: "",
       }));
 
@@ -1780,7 +2716,9 @@ const WorkProgressModule = () => {
 
     const projectId = normalizeValue(editingSheetLogDraft.projectId);
     const sheetName = normalizeValue(editingSheetLogDraft.sheetName);
-    const identifiers = normalizeSheetLogIdentifierArray(editingSheetLogDraft.identifier);
+    const identifiers = normalizeSheetLogIdentifierArray(
+      editingSheetLogIdentifiers.length > 0 ? editingSheetLogIdentifiers : editingSheetLogDraft.identifier
+    );
     const identifier = identifiers[0] || "";
     const sheetType = normalizeValue(editingSheetLogDraft.type);
 
@@ -1812,12 +2750,12 @@ const WorkProgressModule = () => {
         identifiers,
         identifier,
         type: sheetType,
-        dueDate: toDateInputValue(editingSheetLogDraft.dueDate),
         revisionNumber: normalizeValue(editingSheetLogDraft.revisionNumber),
         updatedAt: serverTimestamp(),
       });
 
       setEditingSheetLogId("");
+      setEditingSheetLogIdentifiers([]);
       toast.success("Sheet Log entry updated.");
     } catch (error) {
       console.error("Failed to update sheet log:", error);
@@ -1828,45 +2766,40 @@ const WorkProgressModule = () => {
   };
 
   const handleUpdateEditingSheetLogIdentifierAt = (index, value) => {
-    setEditingSheetLogDraft((previous) => {
-      if (!previous) return previous;
-      const currentIdentifiers = normalizeSheetLogIdentifierArray(previous.identifier);
-      const nextIdentifiers = currentIdentifiers.length > 0 ? [...currentIdentifiers] : [""];
-      nextIdentifiers[index] = value;
-      return {
-        ...previous,
-        identifier: nextIdentifiers.join("\n"),
-      };
+    setEditingSheetLogIdentifiers((previous) => {
+      const currentIdentifiers = previous.length > 0 ? [...previous] : [""];
+      currentIdentifiers[index] = value;
+      setEditingSheetLogDraft((draftPrevious) => (
+        draftPrevious
+          ? { ...draftPrevious, identifier: currentIdentifiers.join("\n") }
+          : draftPrevious
+      ));
+      return currentIdentifiers;
     });
   };
 
   const handleAddEditingSheetLogIdentifier = () => {
-    setEditingSheetLogDraft((previous) => {
-      if (!previous) return previous;
-      const currentIdentifiers = normalizeSheetLogIdentifierArray(previous.identifier);
-      const nextIdentifiers = [...currentIdentifiers, ""];
-      return {
-        ...previous,
-        identifier: nextIdentifiers.join("\n"),
-      };
+    setEditingSheetLogIdentifiers((previous) => {
+      const nextIdentifiers = [...previous, ""];
+      setEditingSheetLogDraft((draftPrevious) => (
+        draftPrevious
+          ? { ...draftPrevious, identifier: nextIdentifiers.join("\n") }
+          : draftPrevious
+      ));
+      return nextIdentifiers;
     });
   };
 
   const handleRemoveEditingSheetLogIdentifierAt = (index) => {
-    setEditingSheetLogDraft((previous) => {
-      if (!previous) return previous;
-      const currentIdentifiers = normalizeSheetLogIdentifierArray(previous.identifier);
-      if (currentIdentifiers.length <= 1) {
-        return {
-          ...previous,
-          identifier: "",
-        };
-      }
-      const nextIdentifiers = currentIdentifiers.filter((_, currentIndex) => currentIndex !== index);
-      return {
-        ...previous,
-        identifier: nextIdentifiers.join("\n"),
-      };
+    setEditingSheetLogIdentifiers((previous) => {
+      const nextIdentifiers = previous.filter((_, currentIndex) => currentIndex !== index);
+      const normalizedNextIdentifiers = nextIdentifiers.length > 0 ? nextIdentifiers : [""];
+      setEditingSheetLogDraft((draftPrevious) => (
+        draftPrevious
+          ? { ...draftPrevious, identifier: normalizedNextIdentifiers.join("\n") }
+          : draftPrevious
+      ));
+      return normalizedNextIdentifiers;
     });
   };
 
@@ -2035,6 +2968,48 @@ const WorkProgressModule = () => {
     }
   };
 
+  const handleDuplicateSheetLog = async (entry) => {
+    if (!canManageCommitments) {
+      toast.error("You do not have permission to manage this module.");
+      return;
+    }
+
+    const sourceEntry = entry && typeof entry === "object" ? entry : null;
+    if (!sourceEntry) {
+      toast.error("Could not duplicate this Sheet Log entry.");
+      return;
+    }
+
+    const copiedSheetName = normalizeValue(sourceEntry.sheetName);
+    const copiedIdentifiers = normalizeSheetLogIdentifierArray(
+      Array.isArray(sourceEntry.identifiers) && sourceEntry.identifiers.length > 0
+        ? sourceEntry.identifiers
+        : sourceEntry.identifier
+    );
+
+    try {
+      await addDoc(sheetLogsRef, {
+        projectId: normalizeValue(sourceEntry.projectId),
+        projectName: normalizeValue(sourceEntry.projectName) || "Untitled Project",
+        shouldCreateSheet: Boolean(sourceEntry.shouldCreateSheet),
+        sheetName: copiedSheetName ? `${copiedSheetName} (Copy)` : "Copy",
+        identifiers: copiedIdentifiers,
+        identifier: copiedIdentifiers[0] || "",
+        type: normalizeValue(sourceEntry.type),
+        revisionNumber: normalizeValue(sourceEntry.revisionNumber),
+        createdByUid: user?.uid || "",
+        createdByName: normalizeValue(user?.displayName || user?.name || user?.email),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      toast.success("Sheet Log entry duplicated.");
+    } catch (error) {
+      console.error("Failed to duplicate sheet log:", error);
+      toast.error("Could not duplicate Sheet Log entry.");
+    }
+  };
+
   const formatCreatedAt = (value) => {
     const dateValue = value?.toDate?.() || (value ? new Date(value) : null);
     if (!dateValue || Number.isNaN(dateValue.getTime())) return "-";
@@ -2082,6 +3057,17 @@ const WorkProgressModule = () => {
             </button>
             <button
               type="button"
+              onClick={() => setActiveSectionTab("commitment_categories")}
+              style={{
+                ...buttonStyle,
+                background: activeSectionTab === "commitment_categories" ? "#1D4ED8" : "#E2E8F0",
+                color: activeSectionTab === "commitment_categories" ? "#FFFFFF" : "#0F172A",
+              }}
+            >
+              Commitment Categories
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveSectionTab("sheet_log")}
               style={{
                 ...buttonStyle,
@@ -2105,7 +3091,166 @@ const WorkProgressModule = () => {
           </div>
         </div>
 
-        {activeSectionTab === "sheet_log_types" ? (
+        {activeSectionTab === "commitment_categories" ? (
+          <>
+            <div style={{ ...cardStyle, marginBottom: "16px" }}>
+              <div style={{ color: "#0F172A", fontWeight: 800, marginBottom: "10px" }}>New Commitment Category</div>
+              <form onSubmit={handleCreateCommitmentCategory} style={{ display: "grid", gap: "10px" }}>
+                <div>
+                  <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
+                    Category Name
+                  </label>
+                  <input
+                    type="text"
+                    style={inputStyle}
+                    value={commitmentCategoryDraft.name}
+                    onChange={(event) => setCommitmentCategoryDraft((previous) => ({ ...previous, name: event.target.value }))}
+                    placeholder="Category name"
+                    disabled={!canManageCommitments || savingCommitmentCategory}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
+                    Description
+                  </label>
+                  <textarea
+                    style={{ ...inputStyle, minHeight: "92px", resize: "vertical" }}
+                    value={commitmentCategoryDraft.description}
+                    onChange={(event) => setCommitmentCategoryDraft((previous) => ({ ...previous, description: event.target.value }))}
+                    placeholder="Optional description shown under the category header"
+                    disabled={!canManageCommitments || savingCommitmentCategory}
+                  />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <small style={{ color: "#64748B" }}>
+                    Categories become the section headers above grouped commitments.
+                  </small>
+                  <button
+                    type="submit"
+                    style={{ ...buttonStyle, background: canManageCommitments ? "#1D4ED8" : "#94A3B8" }}
+                    disabled={!canManageCommitments || savingCommitmentCategory}
+                  >
+                    {savingCommitmentCategory ? "Saving..." : "Create Category"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {editingCommitmentCategoryId ? (
+              <div style={{ ...cardStyle, marginBottom: "16px" }}>
+                <div style={{ color: "#0F172A", fontWeight: 800, marginBottom: "10px" }}>Edit Commitment Category</div>
+                <form onSubmit={handleSaveEditedCommitmentCategory} style={{ display: "grid", gap: "10px" }}>
+                  <div>
+                    <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
+                      Category Name
+                    </label>
+                    <input
+                      type="text"
+                      style={inputStyle}
+                      value={editingCommitmentCategoryDraft.name}
+                      onChange={(event) => setEditingCommitmentCategoryDraft((previous) => ({ ...previous, name: event.target.value }))}
+                      placeholder="Category name"
+                      disabled={!canManageCommitments || savingCommitmentCategory}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
+                      Description
+                    </label>
+                    <textarea
+                      style={{ ...inputStyle, minHeight: "92px", resize: "vertical" }}
+                      value={editingCommitmentCategoryDraft.description}
+                      onChange={(event) => setEditingCommitmentCategoryDraft((previous) => ({ ...previous, description: event.target.value }))}
+                      placeholder="Optional description shown under the category header"
+                      disabled={!canManageCommitments || savingCommitmentCategory}
+                    />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    <small style={{ color: "#64748B" }}>
+                      Update the header name or description for this category.
+                    </small>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <button
+                        type="submit"
+                        style={{ ...buttonStyle, background: canManageCommitments ? "#2563EB" : "#94A3B8" }}
+                        disabled={!canManageCommitments || savingCommitmentCategory}
+                      >
+                        {savingCommitmentCategory ? "Saving..." : "Save Category"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingCommitmentCategoryId("")}
+                        style={{ ...buttonStyle, background: "#64748B" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+
+            <div style={cardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px", flexWrap: "wrap", gap: "10px" }}>
+                <strong style={{ color: "#0F172A" }}>Commitment Category Catalog</strong>
+                <small style={{ color: "#475569" }}>{commitmentCategories.length} categor{commitmentCategories.length === 1 ? "y" : "ies"}</small>
+              </div>
+
+              {loadingCommitmentCategories ? (
+                <div style={{ textAlign: "left", color: "#64748B" }}>Loading commitment categories...</div>
+              ) : commitmentCategories.length === 0 ? (
+                <div style={{ textAlign: "left", color: "#64748B" }}>No categories yet. Create the first one above.</div>
+              ) : (
+                <div style={{ width: "100%", border: "1px solid #E2E8F0", borderRadius: "10px" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+                    <thead>
+                      <tr style={{ background: "#F8FAFC" }}>
+                        <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Category</th>
+                        <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Description</th>
+                        <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {commitmentCategories.map((categoryEntry) => (
+                        <tr key={categoryEntry.id}>
+                          <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", fontWeight: 700 }}>
+                            {normalizeValue(categoryEntry.name) || "-"}
+                          </td>
+                          <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", whiteSpace: "pre-wrap" }}>
+                            {normalizeValue(categoryEntry.description) || "-"}
+                          </td>
+                          <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
+                            {canManageCommitments ? (
+                              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCommitmentCategoryId(categoryEntry.id)}
+                                  style={{ ...buttonStyle, background: "#0F766E", padding: "6px 10px", fontSize: "0.8rem" }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCommitmentCategory(categoryEntry.id)}
+                                  style={{ ...buttonStyle, background: "#DC2626", padding: "6px 10px", fontSize: "0.8rem" }}
+                                  disabled={savingCommitmentCategory}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            ) : (
+                              <span style={{ color: "#94A3B8", fontSize: "0.78rem", fontWeight: 700 }}>Read-only</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        ) : activeSectionTab === "sheet_log_types" ? (
           <>
             <div style={{ ...cardStyle, marginBottom: "16px" }}>
               <div style={{ color: "#0F172A", fontWeight: 800, marginBottom: "10px" }}>New Sheet Type</div>
@@ -2307,19 +3452,6 @@ const WorkProgressModule = () => {
 
                   <div>
                     <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
-                      Due Date
-                    </label>
-                    <input
-                      type="date"
-                      style={inputStyle}
-                      value={sheetLogDraft.dueDate}
-                      onChange={(event) => setSheetLogDraft((previous) => ({ ...previous, dueDate: event.target.value }))}
-                      disabled={!canManageCommitments || savingSheetLog}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
                       Revision #
                     </label>
                     <input
@@ -2335,7 +3467,7 @@ const WorkProgressModule = () => {
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                   <small style={{ color: "#64748B" }}>
-                    Track whether each project needs a sheet, plus sheet name, identifiers, type, due date, and revision.
+                    Track whether each project needs a sheet, plus sheet name, identifiers, type, and revision.
                   </small>
                   <button
                     type="submit"
@@ -2420,8 +3552,6 @@ const WorkProgressModule = () => {
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Sheet Name</th>
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Identifiers</th>
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Type</th>
-                        <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Due Date</th>
-                        <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Countdown</th>
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Revision #</th>
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Updated</th>
                         <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Actions</th>
@@ -2429,76 +3559,84 @@ const WorkProgressModule = () => {
                     </thead>
                     <tbody>
                       {displayedSheetLogs.map((entry) => {
-                        const dueDateCountdown = getDueDateCountdownMeta(entry.dueDate);
+                        const sheetLogIdentifiers = normalizeSheetLogIdentifierArray(
+                          Array.isArray(entry.identifiers) && entry.identifiers.length > 0
+                            ? entry.identifiers
+                            : entry.identifier
+                        );
+                        const sheetLogIdentifierRows = sheetLogIdentifiers.length > 0 ? sheetLogIdentifiers : [""];
+                        const packageRowCount = Math.max(1, sheetLogIdentifierRows.length);
 
                         return (
-                          <tr key={entry.id}>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", wordBreak: "break-word" }}>
-                              {normalizeValue(entry.projectName) || "Untitled Project"}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {entry.shouldCreateSheet ? (
-                                "Yes"
-                              ) : (
-                                "No"
-                              )}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {normalizeValue(entry.sheetName) || "-"}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {formatSheetLogIdentifiers(entry) || "-"}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {normalizeValue(entry.type) || "-"}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {formatDateDisplay(entry.dueDate)}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                              <span
-                                style={{
-                                  padding: "4px 8px",
-                                  borderRadius: "999px",
-                                  fontSize: "0.74rem",
-                                  fontWeight: 700,
-                                  background: dueDateCountdown.bg,
-                                  color: dueDateCountdown.text,
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {dueDateCountdown.label}
-                              </span>
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                              {normalizeValue(entry.revisionNumber) || "-"}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#64748B", fontSize: "0.8rem" }}>
-                              {formatCreatedAt(entry.updatedAt || entry.createdAt)}
-                            </td>
-                            <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                              {canManageCommitments ? (
-                                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingSheetLogId(entry.id)}
-                                    style={{ ...buttonStyle, background: "#0F766E", padding: "6px 10px", fontSize: "0.8rem" }}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteSheetLog(entry.id)}
-                                    style={{ ...buttonStyle, background: "#DC2626", padding: "6px 10px", fontSize: "0.8rem" }}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              ) : (
-                                <span style={{ color: "#94A3B8", fontSize: "0.78rem", fontWeight: 700 }}>Read-only</span>
-                              )}
-                            </td>
-                          </tr>
+                          <React.Fragment key={entry.id}>
+                            {sheetLogIdentifierRows.map((identifierValue, identifierIndex) => (
+                              <tr key={`${entry.id}-${identifierIndex}`}>
+                                {identifierIndex === 0 ? (
+                                  <>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", wordBreak: "break-word", verticalAlign: "top" }}>
+                                      {normalizeValue(entry.projectName) || "Untitled Project"}
+                                    </td>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
+                                      {entry.shouldCreateSheet ? "Yes" : "No"}
+                                    </td>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
+                                      {normalizeValue(entry.sheetName) || "-"}
+                                    </td>
+                                  </>
+                                ) : null}
+
+                                <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", background: identifierIndex > 0 ? "#F8FAFC" : undefined, borderTop: identifierIndex > 0 ? "1px solid #E2E8F0" : undefined }}>
+                                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "999px", background: identifierIndex === 0 ? "rgba(29, 78, 216, 0.08)" : "rgba(100, 116, 139, 0.10)", color: identifierIndex === 0 ? "#1D4ED8" : "#334155", fontWeight: 700, fontSize: "0.78rem", lineHeight: 1.2 }}>
+                                    <span style={{ width: "7px", height: "7px", borderRadius: "999px", background: identifierIndex === 0 ? "#60A5FA" : "#94A3B8", display: "inline-block" }} />
+                                    {identifierValue || "-"}
+                                  </div>
+                                </td>
+
+                                {identifierIndex === 0 ? (
+                                  <>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
+                                      {normalizeValue(entry.type) || "-"}
+                                    </td>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
+                                      {normalizeValue(entry.revisionNumber) || "-"}
+                                    </td>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#64748B", fontSize: "0.8rem", verticalAlign: "top" }}>
+                                      {formatCreatedAt(entry.updatedAt || entry.createdAt)}
+                                    </td>
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", verticalAlign: "top" }}>
+                                      {canManageCommitments ? (
+                                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDuplicateSheetLog(entry)}
+                                            style={{ ...buttonStyle, background: "#4F46E5", padding: "6px 10px", fontSize: "0.8rem" }}
+                                          >
+                                            Duplicate
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditingSheetLogId(entry.id)}
+                                            style={{ ...buttonStyle, background: "#0F766E", padding: "6px 10px", fontSize: "0.8rem" }}
+                                          >
+                                            Edit
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteSheetLog(entry.id)}
+                                            style={{ ...buttonStyle, background: "#DC2626", padding: "6px 10px", fontSize: "0.8rem" }}
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <span style={{ color: "#94A3B8", fontSize: "0.78rem", fontWeight: 700 }}>Read-only</span>
+                                      )}
+                                    </td>
+                                  </>
+                                ) : null}
+                              </tr>
+                            ))}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
@@ -2539,14 +3677,25 @@ const WorkProgressModule = () => {
               <label htmlFor="task-search" style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 700, display: "block", marginBottom: "4px" }}>
                 Search all tasks
               </label>
-              <input
-                id="task-search"
-                type="text"
-                value={taskSearchTerm}
-                onChange={(event) => setTaskSearchTerm(event.target.value)}
-                placeholder="Search title, notes, status, priority, due date, logs"
-                style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem" }}
-              />
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  id="task-search"
+                  type="text"
+                  value={taskSearchTerm}
+                  onChange={(event) => setTaskSearchTerm(event.target.value)}
+                  placeholder="Search title, notes, status, priority, due date, logs"
+                  style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", flex: "1 1 260px", minWidth: "220px" }}
+                />
+                <select
+                  value={taskStatusFilter}
+                  onChange={(event) => setTaskStatusFilter(event.target.value)}
+                  style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", flex: "0 0 170px", minWidth: "170px" }}
+                >
+                  <option value="both">Both statuses</option>
+                  <option value="completed">Completed only</option>
+                  <option value="incomplete">Incomplete only</option>
+                </select>
+              </div>
             </div>
 
             <div>
@@ -2671,14 +3820,42 @@ const WorkProgressModule = () => {
 
               <select
                 style={inputStyle}
-                value={draft.parentTaskId}
-                onChange={(event) => setDraft((previous) => ({ ...previous, parentTaskId: event.target.value }))}
+                value={draft.categoryId}
+                onChange={(event) => setDraft((previous) => ({ ...previous, categoryId: event.target.value }))}
                 disabled={!canManageCommitments || savingTask}
               >
-                <option value="">Top-level task (no parent)</option>
-                {parentTaskOptions.map((parentTaskOption) => (
+                <option value="">Uncategorized</option>
+                {commitmentCategoryOptions.map((categoryOption) => (
+                  <option key={`task-category-${categoryOption.value}`} value={categoryOption.value}>
+                    {categoryOption.label}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                style={inputStyle}
+                value={draft.parentTaskId}
+                onChange={(event) => setDraft((previous) => ({ ...previous, parentTaskId: event.target.value }))}
+                disabled={!canManageCommitments || savingTask || !normalizeValue(draft.projectId)}
+              >
+                <option value="">{normalizeValue(draft.projectId) ? "Top-level task (no parent)" : "Select a project first"}</option>
+                {createParentTaskOptions.map((parentTaskOption) => (
                   <option key={`task-parent-${parentTaskOption.value}`} value={parentTaskOption.value}>
                     {parentTaskOption.label}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                style={inputStyle}
+                value={draft.sheetLogId}
+                onChange={(event) => setDraft((previous) => ({ ...previous, sheetLogId: event.target.value }))}
+                disabled={!canManageCommitments || savingTask || !normalizeValue(draft.projectId)}
+              >
+                <option value="">{normalizeValue(draft.projectId) ? "No linked Sheet Log row" : "Select a project first"}</option>
+                {createSheetLogOptions.map((sheetLogOption) => (
+                  <option key={`task-sheet-log-${sheetLogOption.value}`} value={sheetLogOption.value}>
+                    {sheetLogOption.label}
                   </option>
                 ))}
               </select>
@@ -2776,18 +3953,111 @@ const WorkProgressModule = () => {
         <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px", flexWrap: "wrap", gap: "10px" }}>
             <strong style={{ color: "#0F172A" }}>Recent Commitments</strong>
-            <small style={{ color: "#475569" }}>{displayedTasks.length} shown of {tasks.length} task{tasks.length === 1 ? "" : "s"}</small>
+            <small style={{ color: "#475569" }}>
+              {categoryFilteredDisplayedTasks.length > 0
+                ? `${Math.min((commitmentsPage - 1) * COMMITMENT_TASKS_PER_PAGE + 1, categoryFilteredDisplayedTasks.length)}-${Math.min(commitmentsPage * COMMITMENT_TASKS_PER_PAGE, categoryFilteredDisplayedTasks.length)}`
+                : "0"} shown of {categoryFilteredDisplayedTasks.length} filtered task{categoryFilteredDisplayedTasks.length === 1 ? "" : "s"} ({tasks.length} total)
+            </small>
           </div>
+
+          <div style={{ marginBottom: "12px" }}>
+            <div style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 700, marginBottom: "6px" }}>
+              Filter categories
+            </div>
+            <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px", flexWrap: "nowrap" }}>
+              <button
+                type="button"
+                onClick={() => setCommitmentCategoryFilter("all")}
+                style={{
+                  ...buttonStyle,
+                  background: commitmentCategoryFilter === "all" ? "#1D4ED8" : "#E2E8F0",
+                  color: commitmentCategoryFilter === "all" ? "#FFFFFF" : "#0F172A",
+                  whiteSpace: "nowrap",
+                  boxShadow: commitmentCategoryFilter === "all" ? "0 8px 18px rgba(29, 78, 216, 0.18)" : "none",
+                }}
+              >
+                All ({displayedTasks.length})
+              </button>
+              {commitmentCategoryOptions.map((categoryOption) => {
+                const isActive = commitmentCategoryFilter === categoryOption.value;
+                const categoryTaskCount = displayedTaskCategoryCounts.get(categoryOption.value) || 0;
+                const isDisabled = categoryTaskCount === 0;
+
+                return (
+                  <button
+                    key={`commitment-filter-${categoryOption.value}`}
+                    type="button"
+                    onClick={() => {
+                      if (isDisabled) return;
+                      setCommitmentCategoryFilter(categoryOption.value);
+                    }}
+                    disabled={isDisabled}
+                    style={{
+                      ...buttonStyle,
+                      background: isDisabled ? "#F8FAFC" : isActive ? "#1D4ED8" : "#F1F5F9",
+                      color: isDisabled ? "#94A3B8" : isActive ? "#FFFFFF" : "#334155",
+                      border: "1px solid #CBD5E1",
+                      whiteSpace: "nowrap",
+                      boxShadow: isActive ? "0 8px 18px rgba(29, 78, 216, 0.18)" : "none",
+                      opacity: isDisabled ? 0.55 : 1,
+                      cursor: isDisabled ? "not-allowed" : "pointer",
+                    }}
+                    title={isDisabled ? `${categoryOption.label} has 0 tasks` : categoryOption.description || categoryOption.label}
+                  >
+                    {categoryOption.label} ({categoryTaskCount})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {!loadingTasks && categoryFilteredDisplayedTasks.length > 0 ? (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "10px" }}>
+              <div style={{ color: "#64748B", fontSize: "0.78rem" }}>
+                Page {Math.min(commitmentsPage, totalCommitmentPages)} of {totalCommitmentPages}
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => setCommitmentsPage((previous) => Math.max(1, previous - 1))}
+                  disabled={commitmentsPage <= 1}
+                  style={{
+                    ...buttonStyle,
+                    background: commitmentsPage <= 1 ? "#CBD5E1" : "#2563EB",
+                    padding: "6px 10px",
+                    fontSize: "0.8rem",
+                    cursor: commitmentsPage <= 1 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCommitmentsPage((previous) => Math.min(totalCommitmentPages, previous + 1))}
+                  disabled={commitmentsPage >= totalCommitmentPages}
+                  style={{
+                    ...buttonStyle,
+                    background: commitmentsPage >= totalCommitmentPages ? "#CBD5E1" : "#2563EB",
+                    padding: "6px 10px",
+                    fontSize: "0.8rem",
+                    cursor: commitmentsPage >= totalCommitmentPages ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {loadingTasks ? (
             <div style={{ textAlign: "left", color: "#64748B" }}>Loading tasks...</div>
           ) : tasks.length === 0 ? (
             <div style={{ textAlign: "left", color: "#64748B" }}>No tasks yet. Add your first quick task above.</div>
-          ) : displayedTasks.length === 0 ? (
+          ) : categoryFilteredDisplayedTasks.length === 0 ? (
             <div style={{ textAlign: "left", color: "#64748B" }}>No tasks match the current filters.</div>
           ) : (
-            <div style={{ width: "100%", border: "1px solid #E2E8F0", borderRadius: "10px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <div style={{ width: "100%", border: "1px solid #E2E8F0", borderRadius: "16px", background: "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", tableLayout: "fixed", padding: "0 10px 10px" }}>
                 <thead>
                   <tr style={{ background: "#F8FAFC" }}>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Project</th>
@@ -2798,291 +4068,458 @@ const WorkProgressModule = () => {
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Countdown</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Progress</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Status</th>
-                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Notes</th>
-                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Latest Log Note</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Unread</th>
-                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Added</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0", color: "#475569", fontSize: "0.76rem", textTransform: "uppercase" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedTasks.map((task) => {
-                    const isDone = normalizeValue(task.status).toLowerCase() === "done";
-                    const progressPercent = normalizeProgressPercent(task.progressPercent);
-                    const taskPriority = normalizeTaskPriority(task.priority);
-                    const taskPriorityMeta = TASK_PRIORITY_OPTIONS.find((option) => option.value === taskPriority) || TASK_PRIORITY_OPTIONS[1];
-                    const taskDirection = normalizeTaskDirection(task.direction);
-                    const taskDirectionMeta = TASK_DIRECTION_OPTIONS.find((option) => option.value === taskDirection) || TASK_DIRECTION_OPTIONS[0];
-                    const dueDateInputValue = toDateInputValue(task.dueDate);
-                    const dueDateCountdown = getDueDateCountdownMeta(task.dueDate);
-                    const latestTaskNote = getLatestTaskNote(task);
-                    const latestTaskNoteMessage = normalizeValue(latestTaskNote?.message);
-                    const unreadNoteCount = getTaskUnreadNoteCount(task);
-                    const taskDepth = Math.max(0, Number(task.__depth) || 0);
-                    const hasParentTask = Boolean(normalizeValue(task.parentTaskId));
-                    const parentTaskLabel = parentTaskTitleById.get(normalizeValue(task.parentTaskId)) || "";
-                    const moveMeta = siblingMoveMetaByTaskId.get(task.id) || { index: 0, total: 1 };
-                    const canMoveUp = canManageCommitments && isManualTaskOrderEnabled && moveMeta.index > 0;
-                    const canMoveDown = canManageCommitments && isManualTaskOrderEnabled && moveMeta.index < moveMeta.total - 1;
+                  {displayedTaskSections.map((section, sectionIndex) => {
+                    const sectionTheme = getCategoryHeaderTheme(sectionIndex);
 
                     return (
-                      <tr key={task.id} style={{ background: isDone ? "#F8FAFC" : "#FFFFFF" }}>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", wordBreak: "break-word" }}>
-                          {normalizeValue(task.projectName) || "Untitled Project"}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", wordBreak: "break-word" }}>
-                          <div style={{ marginLeft: `${Math.min(taskDepth, 6) * 16}px` }}>
-                            {hasParentTask ? (
-                              <div style={{ color: "#64748B", fontSize: "0.74rem", fontWeight: 700, marginBottom: "2px" }}>
-                                Subtask{parentTaskLabel ? ` of ${parentTaskLabel}` : ""}
-                              </div>
-                            ) : null}
-                          <div style={{ fontWeight: 700, color: "#0F172A", textDecoration: isDone ? "line-through" : "none" }}>
-                            {taskDepth > 0 ? "↳ " : ""}
-                            {normalizeValue(task.title) || "Untitled Task"}
-                          </div>
-                          {normalizeValue(task.description) ? (
-                            <div style={{ marginTop: "4px", color: "#475569", fontSize: "0.82rem", textDecoration: isDone ? "line-through" : "none" }}>
-                              {normalizeValue(task.description)}
-                            </div>
-                          ) : null}
-                          </div>
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "6px",
-                              padding: "4px 9px",
-                              borderRadius: "999px",
-                              background: taskPriorityMeta.bg,
-                              color: taskPriorityMeta.text,
-                              fontSize: "0.76rem",
-                              fontWeight: 800,
-                              letterSpacing: "0.01em",
-                            }}
-                            title={`Priority: ${taskPriorityMeta.label}`}
-                          >
-                            <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: taskPriorityMeta.text, display: "inline-block" }} />
-                            {taskPriorityMeta.label}
-                          </span>
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          {canManageCommitments ? (
-                            <select
-                              value={taskDirection}
-                              onChange={(event) => handleUpdateTaskDirection(task, event.target.value)}
-                              style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", width: "100%" }}
-                            >
-                              {TASK_DIRECTION_OPTIONS.map((option) => (
-                                <option key={`${task.id}-direction-${option.value}`} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span
-                              style={{
-                                display: "inline-block",
-                                padding: "4px 8px",
-                                borderRadius: "999px",
-                                background: taskDirectionMeta.bg,
-                                color: taskDirectionMeta.text,
-                                fontSize: "0.74rem",
-                                fontWeight: 700,
-                              }}
-                              title={`Direction: ${taskDirectionMeta.label}`}
-                            >
-                              {taskDirectionMeta.label}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                          {canManageCommitments ? (
-                            <input
-                              type="date"
-                              defaultValue={dueDateInputValue}
-                                style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", width: "100%" }}
-                              onBlur={(event) => handleUpdateTaskDueDate(task, event.target.value)}
-                            />
-                          ) : (
-                            dueDateInputValue || "-"
-                          )}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <span
-                            style={{
-                              padding: "4px 8px",
-                              borderRadius: "999px",
-                              fontSize: "0.74rem",
-                              fontWeight: 700,
-                              background: dueDateCountdown.bg,
-                              color: dueDateCountdown.text,
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {dueDateCountdown.label}
-                          </span>
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                            <span style={{ color: "#0F172A", fontSize: "0.78rem", fontWeight: 700 }}>{progressPercent}%</span>
-                          </div>
-                          <div style={{ height: "8px", width: "100%", borderRadius: "999px", background: "#E2E8F0", overflow: "hidden", marginBottom: "6px" }}>
-                            <div
-                              style={{
-                                height: "100%",
-                                width: `${progressPercent}%`,
-                                background: progressPercent >= 100 ? "#16A34A" : "#2563EB",
-                              }}
-                            />
-                          </div>
-                          {canManageCommitments ? (
+                    <React.Fragment key={section.key}>
+                      <tr>
+                        <td colSpan={commitmentTableColumnCount} style={{ padding: sectionIndex === 0 ? "12px 12px 6px" : "24px 12px 6px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px", flexWrap: "wrap", padding: "16px 16px 14px", borderRadius: "16px", background: sectionTheme.cardBackground, border: `1px solid ${sectionTheme.cardBorder}`, boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.65), 0 10px 24px rgba(15, 23, 42, 0.05)", position: "relative", overflow: "hidden" }}>
+                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "7px", background: sectionTheme.accentRail }} />
+                            <div style={{ position: "absolute", left: "7px", right: 0, top: 0, height: "1px", background: "rgba(255,255,255,0.85)" }} />
                             <div>
-                              <input
-                                type="range"
-                                min="0"
-                                max="100"
-                                step="1"
-                                defaultValue={String(progressPercent)}
-                                style={{ ...inputStyle, padding: "7px 8px", width: "100%" }}
-                                onMouseUp={(event) => handleUpdateTaskProgress(task, event.target.value)}
-                                onTouchEnd={(event) => handleUpdateTaskProgress(task, event.target.value)}
-                                onKeyUp={(event) => {
-                                  if (event.key === "Enter") {
-                                    handleUpdateTaskProgress(task, event.currentTarget.value);
-                                  }
-                                }}
-                              />
-                              <div style={{ color: "#64748B", fontSize: "0.74rem", marginTop: "2px" }}>
-                                Drag to update progress
+                              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", paddingLeft: "8px" }}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "999px", background: sectionTheme.labelBackground, color: sectionTheme.labelText, fontSize: "0.72rem", fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                                  <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: sectionTheme.arrowColor, display: "inline-block" }} />
+                                  Category
+                                </span>
+                                <div style={{ color: sectionTheme.titleText, fontSize: "1.45rem", fontWeight: 950, letterSpacing: "-0.03em", lineHeight: 1.02 }}>
+                                  {section.label}
+                                </div>
+                                <div style={{ flex: "1 1 auto", minWidth: "260px", height: "4px", position: "relative", marginLeft: "6px", marginRight: "6px", marginTop: "2px" }}>
+                                  <div style={{ position: "absolute", inset: 0, borderRadius: "999px", background: sectionTheme.lineGradient }} />
+                                  <div style={{ position: "absolute", right: "-1px", top: "-4px", width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: `10px solid ${sectionTheme.arrowColor}` }} />
+                                </div>
+                                <span style={{ color: sectionTheme.countText, fontSize: "0.8rem", fontWeight: 800, whiteSpace: "nowrap" }}>
+                                  {section.tasks.length} task{section.tasks.length === 1 ? "" : "s"}
+                                </span>
                               </div>
+                              {section.description ? (
+                                <div style={{ marginTop: "6px", color: "#475569", fontSize: "0.84rem", paddingLeft: "8px" }}>{section.description}</div>
+                              ) : null}
                             </div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <span
-                            style={{
-                              padding: "4px 8px",
-                              borderRadius: "999px",
-                              background: isDone ? "#DCFCE7" : "#DBEAFE",
-                              color: isDone ? "#166534" : "#1E40AF",
-                              fontSize: "0.76rem",
-                              fontWeight: 700,
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            {isDone ? "Done" : "Open"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {normalizeValue(task.notes) || "-"}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", fontSize: "0.8rem", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {latestTaskNote ? (
-                            <div>
-                              <div style={{ color: "#0F172A", fontWeight: 600 }}>
-                                {latestTaskNoteMessage || "File attachment added"}
-                              </div>
-                              <div style={{ color: "#64748B", marginTop: "2px" }}>
-                                {formatLogTimestamp(latestTaskNote.changedAtIso)}
-                              </div>
-                            </div>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenTaskLog(task)}
-                            style={{
-                              border: "none",
-                              cursor: "pointer",
-                              display: "inline-block",
-                              minWidth: "34px",
-                              textAlign: "center",
-                              padding: "4px 8px",
-                              borderRadius: "999px",
-                              background: unreadNoteCount > 0 ? "#FEE2E2" : "#E2E8F0",
-                              color: unreadNoteCount > 0 ? "#991B1B" : "#475569",
-                              fontSize: "0.78rem",
-                              fontWeight: 800,
-                              animation: unreadNoteCount > 0 ? "workProgressUnreadBlink 1s ease-in-out infinite" : "none",
-                            }}
-                            title={unreadNoteCount > 0 ? `Open log (${unreadNoteCount} unread note${unreadNoteCount === 1 ? "" : "s"})` : "Open log"}
-                          >
-                            {unreadNoteCount}
-                          </button>
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#64748B", fontSize: "0.8rem", wordBreak: "break-word" }}>
-                          {formatCreatedAt(task.createdAt)}
-                        </td>
-                        <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedEditTaskId(task.id)}
-                              style={{
-                                ...buttonStyle,
-                                background: "#0F766E",
-                                padding: "6px 10px",
-                                fontSize: "0.8rem",
-                              }}
-                            >
-                              Edit
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleOpenTaskLog(task)}
-                              style={{
-                                ...buttonStyle,
-                                background: "#475569",
-                                padding: "6px 10px",
-                                fontSize: "0.8rem",
-                              }}
-                            >
-                              Log
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleMoveTask(task, "up")}
-                              style={{
-                                ...buttonStyle,
-                                background: canMoveUp ? "#1D4ED8" : "#94A3B8",
-                                padding: "6px 10px",
-                                fontSize: "0.8rem",
-                              }}
-                              disabled={!canMoveUp}
-                              title="Move up"
-                            >
-                              Up
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleMoveTask(task, "down")}
-                              style={{
-                                ...buttonStyle,
-                                background: canMoveDown ? "#1D4ED8" : "#94A3B8",
-                                padding: "6px 10px",
-                                fontSize: "0.8rem",
-                              }}
-                              disabled={!canMoveDown}
-                              title="Move down"
-                            >
-                              Down
-                            </button>
                           </div>
                         </td>
                       </tr>
+
+                      {section.tasks.map((task, index) => {
+                        const isDone = isTaskCompleted(task);
+                        const progressPercent = normalizeProgressPercent(task.progressPercent);
+                        const taskPriority = normalizeTaskPriority(task.priority);
+                        const taskPriorityMeta = TASK_PRIORITY_OPTIONS.find((option) => option.value === taskPriority) || TASK_PRIORITY_OPTIONS[1];
+                        const taskDirection = normalizeTaskDirection(task.direction);
+                        const taskDirectionMeta = TASK_DIRECTION_OPTIONS.find((option) => option.value === taskDirection) || TASK_DIRECTION_OPTIONS[0];
+                        const dueDateInputValue = toDateInputValue(task.dueDate);
+                        const dueDateCountdown = getTaskDueDateCountdownMeta(task);
+                        const unreadNoteCount = getTaskUnreadNoteCount(task);
+                        const taskDepth = Math.max(0, Number(task.__depth) || 0);
+                        const hierarchyMeta = getTaskHierarchyMeta(taskDepth);
+                        const hasParentTask = Boolean(normalizeValue(task.parentTaskId));
+                        const parentTaskLabel = parentTaskTitleById.get(normalizeValue(task.parentTaskId)) || "";
+                        const moveMeta = siblingMoveMetaByTaskId.get(task.id) || { index: 0, total: 1 };
+                        const isMoveBusy = Boolean(movingTaskId);
+                        const canMoveUp = canManageCommitments && isManualTaskOrderEnabled && moveMeta.index > 0 && !isMoveBusy;
+                        const canMoveDown = canManageCommitments && isManualTaskOrderEnabled && moveMeta.index < moveMeta.total - 1 && !isMoveBusy;
+                        const taskRowColors = getTaskRowColors(isDone, taskDepth, index);
+                        const linkedSheetLogId = normalizeValue(task.sheetLogId);
+                        const linkedSheetLogEntry = linkedSheetLogId ? sheetLogById.get(linkedSheetLogId) : null;
+                        const linkedSheetLogName = normalizeValue(linkedSheetLogEntry?.sheetName || task.sheetLogSheetName);
+                        const linkedSheetLogType = normalizeValue(linkedSheetLogEntry?.type || task.sheetLogType);
+                        const linkedSheetLogRevision = normalizeValue(linkedSheetLogEntry?.revisionNumber || task.sheetLogRevisionNumber);
+                        const linkedSheetLogIdentifiers = normalizeSheetLogIdentifierArray(
+                          Array.isArray(linkedSheetLogEntry?.identifiers) && linkedSheetLogEntry.identifiers.length > 0
+                            ? linkedSheetLogEntry.identifiers
+                            : (Array.isArray(task.sheetLogIdentifiers) && task.sheetLogIdentifiers.length > 0
+                              ? task.sheetLogIdentifiers
+                              : linkedSheetLogEntry?.identifier || task.sheetLogIdentifier)
+                        );
+                        const hasLinkedSheetLog = Boolean(
+                          linkedSheetLogId
+                          || linkedSheetLogName
+                          || linkedSheetLogType
+                          || linkedSheetLogRevision
+                          || linkedSheetLogIdentifiers.length > 0
+                        );
+
+                        return (
+                          <tr
+                            key={task.id}
+                            onDoubleClick={() => setSelectedEditTaskId(task.id)}
+                            title="Double-click to edit"
+                            style={{
+                              background: taskRowColors.rowBackground,
+                              borderLeft: taskDepth > 0 ? `6px solid ${taskRowColors.accentBorder}` : undefined,
+                              boxShadow: "0 10px 24px rgba(15, 23, 42, 0.06)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <td style={{ padding: "12px 10px", borderTopLeftRadius: "14px", borderBottomLeftRadius: "14px", borderBottom: "1px solid #E2E8F0", borderTop: "1px solid #E2E8F0", borderLeft: "1px solid #E2E8F0", background: taskRowColors.rowBackground, color: "#334155", wordBreak: "break-word" }}>
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "4px 10px", borderRadius: "999px", background: isDone ? "rgba(34, 197, 94, 0.08)" : "rgba(234, 179, 8, 0.09)", color: isDone ? "#4B7F58" : "#8A6C1F", fontSize: "0.76rem", fontWeight: 800, marginBottom: "6px" }}>
+                                <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: isDone ? "#8CCF9A" : "#D2B04A", display: "inline-block" }} />
+                                {isDone ? "Finished" : "Active"}
+                              </div>
+                              <div style={{ fontWeight: 700, color: "#0F172A", fontSize: "0.88rem" }}>
+                                {normalizeValue(task.projectName) || "Untitled Project"}
+                              </div>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground, wordBreak: "break-word" }}>
+                              <div style={{ marginLeft: `${Math.min(hierarchyMeta.indent, 8) * 18}px`, paddingLeft: taskDepth > 0 ? (taskDepth >= 2 ? "14px" : "10px") : "0", position: "relative" }}>
+                                {taskDepth > 0 ? (
+                                  <div style={{ position: "absolute", left: "0", top: "10px", width: taskDepth >= 2 ? "4px" : "2px", height: "calc(100% - 10px)", borderRadius: "999px", background: `linear-gradient(180deg, ${taskDepth >= 2 ? hierarchyMeta.markerText : taskRowColors.accentBorder} 0%, rgba(255,255,255,0.1) 100%)` }} />
+                                ) : null}
+                                {hasParentTask ? (
+                                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: hierarchyMeta.badgeText, background: hierarchyMeta.badgeBackground, fontSize: "0.72rem", fontWeight: 900, marginBottom: "6px", padding: "3px 10px", borderRadius: "999px", boxShadow: taskDepth >= 2 ? "0 6px 12px rgba(91, 33, 182, 0.12)" : "none" }}>
+                                    {hierarchyMeta.label}{parentTaskLabel ? ` of ${parentTaskLabel}` : ""}
+                                  </div>
+                                ) : null}
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
+                                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: "30px", padding: "3px 8px", borderRadius: "999px", background: isDone ? "rgba(34, 197, 94, 0.10)" : taskDepth >= 2 ? "rgba(124, 58, 237, 0.10)" : "rgba(29, 78, 216, 0.10)", color: isDone ? "#4B7F58" : taskDepth >= 2 ? "#5B21B6" : "#1D4ED8", fontSize: "0.76rem", fontWeight: 900, letterSpacing: "0.01em" }}>
+                                    {index + 1}
+                                  </span>
+                                  <div style={{ fontWeight: 900, color: taskDepth >= 2 ? "#4C1D95" : "#0F172A", textDecoration: isDone ? "line-through" : "none", fontSize: taskDepth >= 2 ? "0.92rem" : "0.95rem", letterSpacing: "-0.01em", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                    {taskDepth > 0 ? (
+                                      <span style={{ color: hierarchyMeta.markerText, fontSize: taskDepth >= 2 ? "1.28rem" : "1.18rem", fontWeight: 900, lineHeight: 1, transform: "translateY(-1px)" }}>
+                                        {taskDepth >= 2 ? "⇢" : "↳"}
+                                      </span>
+                                    ) : null}
+                                    {normalizeValue(task.title) || "Untitled Task"}
+                                  </div>
+                                </div>
+                                {normalizeValue(task.description) ? (
+                                  <div style={{ marginTop: "4px", color: taskDepth >= 2 ? "#6B21A8" : "#475569", fontSize: taskDepth >= 2 ? "0.8rem" : "0.82rem", textDecoration: isDone ? "line-through" : "none" }}>
+                                    {normalizeValue(task.description)}
+                                  </div>
+                                ) : null}
+                                {hasLinkedSheetLog ? (
+                                  <div style={{ marginTop: "7px", display: "grid", gap: "4px", padding: "6px 10px", borderRadius: "14px", background: "rgba(79, 70, 229, 0.10)", color: "#4338CA", fontSize: "0.74rem", fontWeight: 700 }}>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+                                      <span style={{ width: "7px", height: "7px", borderRadius: "999px", background: "#6366F1", display: "inline-block" }} />
+                                      <span style={{ color: "#312E81", fontWeight: 900 }}>Sheet Log</span>
+                                      <span style={{ color: "#312E81", fontWeight: 800 }}>
+                                        {linkedSheetLogName || linkedSheetLogId || "Linked row"}
+                                      </span>
+                                      {linkedSheetLogType ? <span style={{ color: "#5B21B6" }}>Type: {linkedSheetLogType}</span> : null}
+                                      {linkedSheetLogRevision ? <span style={{ color: "#5B21B6" }}>Rev: {linkedSheetLogRevision}</span> : null}
+                                      {linkedSheetLogId && !linkedSheetLogEntry ? <span style={{ color: "#B45309" }}>(row not found)</span> : null}
+                                    </div>
+                                    {linkedSheetLogIdentifiers.length > 0 ? (
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", color: "#312E81", fontWeight: 800 }}>
+                                        <span style={{ fontWeight: 900 }}>Identifiers:</span>
+                                        {linkedSheetLogIdentifiers.map((identifierValue, identifierIndex) => (
+                                          <span
+                                            key={`${task.id}-linked-sheet-log-identifier-${identifierIndex}`}
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              padding: "3px 8px",
+                                              borderRadius: "999px",
+                                              background: "rgba(255, 255, 255, 0.90)",
+                                              border: "1px solid rgba(99, 102, 241, 0.24)",
+                                              color: "#312E81",
+                                              fontWeight: 800,
+                                            }}
+                                          >
+                                            {identifierValue}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  padding: "4px 9px",
+                                  borderRadius: "999px",
+                                  background: taskPriorityMeta.bg,
+                                  color: taskPriorityMeta.text,
+                                  fontSize: "0.76rem",
+                                  fontWeight: 800,
+                                  letterSpacing: "0.01em",
+                                }}
+                                title={`Priority: ${taskPriorityMeta.label}`}
+                              >
+                                <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: taskPriorityMeta.text, display: "inline-block" }} />
+                                {taskPriorityMeta.label}
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              {canManageCommitments ? (
+                                <select
+                                  value={taskDirection}
+                                  onChange={(event) => handleUpdateTaskDirection(task, event.target.value)}
+                                  style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", width: "100%" }}
+                                >
+                                  {TASK_DIRECTION_OPTIONS.map((option) => (
+                                    <option key={`${task.id}-direction-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    padding: "4px 8px",
+                                    borderRadius: "999px",
+                                    background: taskDirectionMeta.bg,
+                                    color: taskDirectionMeta.text,
+                                    fontSize: "0.74rem",
+                                    fontWeight: 700,
+                                  }}
+                                  title={`Direction: ${taskDirectionMeta.label}`}
+                                >
+                                  {taskDirectionMeta.label}
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground, color: "#334155" }}>
+                              {canManageCommitments ? (
+                                <input
+                                  type="date"
+                                  value={dueDateInputValue}
+                                  style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem", width: "100%" }}
+                                  onChange={(event) => handleUpdateTaskDueDate(task, event.target.value)}
+                                />
+                              ) : (
+                                dueDateInputValue || "-"
+                              )}
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <span
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: "999px",
+                                  fontSize: "0.74rem",
+                                  fontWeight: 700,
+                                  background: dueDateCountdown.bg,
+                                  color: dueDateCountdown.text,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {dueDateCountdown.label}
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span style={{ color: "#0F172A", fontSize: "0.78rem", fontWeight: 700 }}>{progressPercent}%</span>
+                              </div>
+                              <div style={{ height: "8px", width: "100%", borderRadius: "999px", background: "#E2E8F0", overflow: "hidden", marginBottom: "6px" }}>
+                                <div
+                                  style={{
+                                    height: "100%",
+                                    width: `${progressPercent}%`,
+                                    background: progressPercent >= 100 ? "#16A34A" : "#2563EB",
+                                  }}
+                                />
+                              </div>
+                              {canManageCommitments ? (
+                                <div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    step="1"
+                                    defaultValue={String(progressPercent)}
+                                    style={{ ...inputStyle, padding: "7px 8px", width: "100%" }}
+                                    onMouseUp={(event) => handleUpdateTaskProgress(task, event.target.value)}
+                                    onTouchEnd={(event) => handleUpdateTaskProgress(task, event.target.value)}
+                                    onKeyUp={(event) => {
+                                      if (event.key === "Enter") {
+                                        handleUpdateTaskProgress(task, event.currentTarget.value);
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <span
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: "999px",
+                                  background: isDone ? "#DCFCE7" : "#DBEAFE",
+                                  color: isDone ? "#166534" : "#1E40AF",
+                                  fontSize: "0.76rem",
+                                  fontWeight: 700,
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                {isDone ? "Done" : "Open"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTaskLog(task)}
+                                style={{
+                                  border: "none",
+                                  cursor: "pointer",
+                                  display: "inline-block",
+                                  minWidth: "40px",
+                                  textAlign: "center",
+                                  padding: "5px 10px",
+                                  borderRadius: "999px",
+                                  background: unreadNoteCount > 0 ? "linear-gradient(135deg, #FECACA 0%, #FCA5A5 100%)" : "linear-gradient(135deg, #E2E8F0 0%, #CBD5E1 100%)",
+                                  color: unreadNoteCount > 0 ? "#7F1D1D" : "#334155",
+                                  fontSize: "0.78rem",
+                                  fontWeight: 800,
+                                  animation: unreadNoteCount > 0 ? "workProgressUnreadBlink 1s ease-in-out infinite" : "none",
+                                  boxShadow: "0 6px 14px rgba(15, 23, 42, 0.08)",
+                                }}
+                                title={unreadNoteCount > 0 ? `Open log (${unreadNoteCount} unread note${unreadNoteCount === 1 ? "" : "s"})` : "Open log"}
+                              >
+                                {unreadNoteCount}
+                              </button>
+                            </td>
+                            <td style={{ padding: "12px 10px", borderTopRightRadius: "14px", borderBottomRightRadius: "14px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0", borderRight: "1px solid #E2E8F0", background: taskRowColors.rowBackground }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                <Link
+                                  to={`${routePrefix}/${id}/work-progress/task/${task.id}`}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: "linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                    boxShadow: "0 8px 18px rgba(124, 58, 237, 0.24)",
+                                    textDecoration: "none",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  Details
+                                </Link>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedEditTaskId(task.id)}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: "linear-gradient(135deg, #0F766E 0%, #14B8A6 100%)",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                    boxShadow: "0 8px 18px rgba(15, 118, 110, 0.24)",
+                                  }}
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenTaskLog(task)}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: "linear-gradient(135deg, #475569 0%, #64748B 100%)",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                    boxShadow: "0 8px 18px rgba(71, 85, 105, 0.22)",
+                                  }}
+                                >
+                                  Log
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDuplicateTask(task)}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: "linear-gradient(135deg, #4F46E5 0%, #818CF8 100%)",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                    boxShadow: "0 8px 18px rgba(79, 70, 229, 0.24)",
+                                  }}
+                                >
+                                  Duplicate Row
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveTask(task, "up")}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: canMoveUp ? "linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%)" : "#94A3B8",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                  }}
+                                  disabled={!canMoveUp}
+                                  title="Move up"
+                                >
+                                  Up
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveTask(task, "down")}
+                                  style={{
+                                    ...buttonStyle,
+                                    background: canMoveDown ? "linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%)" : "#94A3B8",
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                  }}
+                                  disabled={!canMoveDown}
+                                  title="Move down"
+                                >
+                                  Down
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
                     );
                   })}
                 </tbody>
               </table>
+
+              {totalCommitmentPages > 1 ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", padding: "10px 12px 14px", borderTop: "1px solid #E2E8F0", background: "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)" }}>
+                  <div style={{ color: "#64748B", fontSize: "0.78rem" }}>
+                    Page {Math.min(commitmentsPage, totalCommitmentPages)} of {totalCommitmentPages}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => setCommitmentsPage((previous) => Math.max(1, previous - 1))}
+                      disabled={commitmentsPage <= 1}
+                      style={{
+                        ...buttonStyle,
+                        background: commitmentsPage <= 1 ? "#CBD5E1" : "#2563EB",
+                        padding: "6px 10px",
+                        fontSize: "0.8rem",
+                        cursor: commitmentsPage <= 1 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCommitmentsPage((previous) => Math.min(totalCommitmentPages, previous + 1))}
+                      disabled={commitmentsPage >= totalCommitmentPages}
+                      style={{
+                        ...buttonStyle,
+                        background: commitmentsPage >= totalCommitmentPages ? "#CBD5E1" : "#2563EB",
+                        padding: "6px 10px",
+                        fontSize: "0.8rem",
+                        cursor: commitmentsPage >= totalCommitmentPages ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -3347,12 +4784,26 @@ const WorkProgressModule = () => {
 
                 <select
                   style={inputStyle}
-                  value={editTaskDraft.parentTaskId}
-                  onChange={(event) => setEditTaskDraft((previous) => ({ ...previous, parentTaskId: event.target.value }))}
+                  value={editTaskDraft.categoryId}
+                  onChange={(event) => setEditTaskDraft((previous) => ({ ...previous, categoryId: event.target.value }))}
                   disabled={!canManageCommitments || savingEditTask}
                 >
-                  <option value="">Top-level task (no parent)</option>
-                  {parentTaskOptions
+                  <option value="">Uncategorized</option>
+                  {commitmentCategoryOptions.map((categoryOption) => (
+                    <option key={`task-edit-category-${categoryOption.value}`} value={categoryOption.value}>
+                      {categoryOption.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  style={inputStyle}
+                  value={editTaskDraft.parentTaskId}
+                  onChange={(event) => setEditTaskDraft((previous) => ({ ...previous, parentTaskId: event.target.value }))}
+                  disabled={!canManageCommitments || savingEditTask || !normalizeValue(editTaskDraft.projectId)}
+                >
+                  <option value="">{normalizeValue(editTaskDraft.projectId) ? "Top-level task (no parent)" : "Select a project first"}</option>
+                  {editParentTaskOptions
                     .filter((parentTaskOption) => !disallowedEditParentTaskIds.has(parentTaskOption.value))
                     .map((parentTaskOption) => (
                       <option key={`task-edit-parent-${parentTaskOption.value}`} value={parentTaskOption.value}>
@@ -3360,6 +4811,62 @@ const WorkProgressModule = () => {
                       </option>
                     ))}
                 </select>
+
+                <select
+                  style={inputStyle}
+                  value={editTaskDraft.sheetLogId}
+                  onChange={(event) => setEditTaskDraft((previous) => ({ ...previous, sheetLogId: event.target.value }))}
+                  disabled={!canManageCommitments || savingEditTask || !normalizeValue(editTaskDraft.projectId)}
+                >
+                  <option value="">{normalizeValue(editTaskDraft.projectId) ? "No linked Sheet Log row" : "Select a project first"}</option>
+                  {editSheetLogOptions.map((sheetLogOption) => (
+                    <option key={`task-edit-sheet-log-${sheetLogOption.value}`} value={sheetLogOption.value}>
+                      {sheetLogOption.label}
+                    </option>
+                  ))}
+                </select>
+                {normalizeValue(editTaskDraft.sheetLogId) && sheetLogById.get(normalizeValue(editTaskDraft.sheetLogId)) ? (
+                  (() => {
+                    const selectedLinkedSheetLog = sheetLogById.get(normalizeValue(editTaskDraft.sheetLogId));
+                    const selectedLinkedIdentifiers = normalizeSheetLogIdentifierArray(
+                      Array.isArray(selectedLinkedSheetLog?.identifiers) && selectedLinkedSheetLog.identifiers.length > 0
+                        ? selectedLinkedSheetLog.identifiers
+                        : selectedLinkedSheetLog?.identifier
+                    );
+
+                    return (
+                      <div style={{ display: "grid", gap: "4px", padding: "8px 10px", borderRadius: "12px", background: "rgba(79, 70, 229, 0.08)", border: "1px solid rgba(99, 102, 241, 0.18)", color: "#4338CA", fontSize: "0.78rem" }}>
+                        <div style={{ fontWeight: 800 }}>
+                          Associated Sheet Log: {normalizeValue(selectedLinkedSheetLog?.sheetName) || normalizeValue(editTaskDraft.sheetLogId)}
+                        </div>
+                        {normalizeValue(selectedLinkedSheetLog?.type) ? <div>Type: {normalizeValue(selectedLinkedSheetLog?.type)}</div> : null}
+                        {normalizeValue(selectedLinkedSheetLog?.revisionNumber) ? <div>Revision: {normalizeValue(selectedLinkedSheetLog?.revisionNumber)}</div> : null}
+                        {selectedLinkedIdentifiers.length > 0 ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", color: "#312E81", fontWeight: 800 }}>
+                            <span>Identifiers:</span>
+                            {selectedLinkedIdentifiers.map((identifierValue, identifierIndex) => (
+                              <span
+                                key={`edit-task-linked-sheet-log-identifier-${identifierIndex}`}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  padding: "3px 8px",
+                                  borderRadius: "999px",
+                                  background: "rgba(255, 255, 255, 0.78)",
+                                  border: "1px solid rgba(99, 102, 241, 0.22)",
+                                  color: "#312E81",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                {identifierValue}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })()
+                ) : null}
 
                 <textarea
                   style={{ ...inputStyle, minHeight: "72px", resize: "vertical" }}
@@ -3515,6 +5022,25 @@ const WorkProgressModule = () => {
                 <div style={{ color: "#64748B", fontSize: "0.86rem" }}>
                   {normalizeValue(selectedSheetLog.sheetName) || normalizeValue(selectedSheetLog.projectName) || "Untitled Sheet Log"}
                 </div>
+                <div style={{ marginTop: "4px" }}>
+                  <div style={{ color: "#475569", fontSize: "0.76rem", fontWeight: 700 }}>
+                    Identifiers
+                  </div>
+                  <div style={{ color: "#475569", fontSize: "0.8rem", whiteSpace: "pre-wrap" }}>
+                    {(normalizeSheetLogIdentifierArray(
+                      Array.isArray(selectedSheetLog.identifiers) && selectedSheetLog.identifiers.length > 0
+                        ? selectedSheetLog.identifiers
+                        : selectedSheetLog.identifier
+                    ).length > 0
+                      ? normalizeSheetLogIdentifierArray(
+                        Array.isArray(selectedSheetLog.identifiers) && selectedSheetLog.identifiers.length > 0
+                          ? selectedSheetLog.identifiers
+                          : selectedSheetLog.identifier
+                      )
+                      : ["-"]
+                    ).join("\n")}
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
@@ -3588,10 +5114,7 @@ const WorkProgressModule = () => {
                       Identifiers
                     </label>
                     <div style={{ display: "grid", gap: "6px" }}>
-                      {(normalizeSheetLogIdentifierArray(editingSheetLogDraft.identifier).length > 0
-                        ? normalizeSheetLogIdentifierArray(editingSheetLogDraft.identifier)
-                        : [""]
-                      ).map((identifierValue, index) => (
+                      {(editingSheetLogIdentifiers.length > 0 ? editingSheetLogIdentifiers : [""]).map((identifierValue, index) => (
                         <div key={`edit-sheet-log-identifier-${index}`} style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                           <input
                             type="text"
@@ -3649,19 +5172,6 @@ const WorkProgressModule = () => {
                         {selectedEditingSheetLogTypeDescription}
                       </div>
                     ) : null}
-                  </div>
-
-                  <div>
-                    <label style={{ display: "block", textAlign: "left", color: "#475569", fontSize: "0.78rem", marginBottom: "4px", fontWeight: 700 }}>
-                      Due Date
-                    </label>
-                    <input
-                      type="date"
-                      style={inputStyle}
-                      value={editingSheetLogDraft.dueDate}
-                      onChange={(event) => setEditingSheetLogDraft((previous) => ({ ...previous, dueDate: event.target.value }))}
-                      disabled={!canManageCommitments || savingSheetLogEdit}
-                    />
                   </div>
 
                   <div>

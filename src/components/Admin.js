@@ -59,6 +59,12 @@ function normalizeRoleValue(roleValue, { preserveCustom = true } = {}) {
   return preserveCustom ? raw : "member";
 }
 
+function isFirestorePermissionDenied(error) {
+  const errorCode = String(error?.code || "").toLowerCase();
+  const errorMessage = String(error?.message || "").toLowerCase();
+  return errorCode.includes("permission-denied") || errorMessage.includes("missing or insufficient permissions");
+}
+
 // Remove the firebaseConfig import and create a secondary auth instance differently
 const secondaryAuth = getAuth(
   initializeApp(
@@ -75,6 +81,12 @@ const secondaryAuth = getAuth(
   )
 );
 
+const BASE_ROLES = [
+  { value: "member", label: "Member", baseRole: "member" },
+  { value: "admin", label: "Admin", baseRole: "admin" },
+  { value: "global_admin", label: "Global Admin", baseRole: "global_admin" },
+];
+
 const Admin = () => {
   const { id } = useParams();
   const { user, loading: authLoading } = useAuth(); // *New*Get user from useAuth
@@ -85,12 +97,15 @@ const Admin = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [savingUsers, setSavingUsers] = useState({});
+  const hasShownRolePermissionWarningRef = useRef(false);
+  const hasShownUsersPermissionWarningRef = useRef(false);
   const autoSaveTimeoutsRef = useRef({});
   const pendingChangesRef = useRef({});
   const [visibleColumns, setVisibleColumns] = useState({
     email: true,
     name: true,
     lastName: true,
+    phone: true,
     role: true,
   });
   const [authChecking, setAuthChecking] = useState(true);
@@ -112,12 +127,7 @@ const Admin = () => {
   });
   const [adminUser, setAdminUser] = useState(null); // Add this state to store admin info
   const navigate = useNavigate();
-  const baseRoles = [
-    { value: "member", label: "Member", baseRole: "member" },
-    { value: "admin", label: "Admin", baseRole: "admin" },
-    { value: "global_admin", label: "Global Admin", baseRole: "global_admin" },
-  ];
-  const [roleOptions, setRoleOptions] = useState(baseRoles);
+  const [roleOptions, setRoleOptions] = useState(BASE_ROLES);
   const isGlobalAdminUser = normalizeRoleValue(adminUser?.role, { preserveCustom: false }) === "global_admin";
 
   const callManageUserAccountFunction = async (action, targetUserId) => {
@@ -230,21 +240,28 @@ const Admin = () => {
 
   useEffect(() => {
     const fetchRoleOptions = async () => {
-      if (!id) return;
+      if (authLoading || !id || !user?.uid) return;
 
       try {
-        const [rolesByChurchIdSnapshot, rolesByChurchIDSnapshot, rolesByOrganizationIdSnapshot] = await Promise.all([
-          getDocs(query(collection(db, "roles"), where("churchId", "==", id))),
-          getDocs(query(collection(db, "roles"), where("churchID", "==", id))),
-          getDocs(query(collection(db, "roles"), where("organizationId", "==", id))),
-        ]);
+        const roleSnapshots = [];
+
+        for (const fieldName of ["churchId", "churchID", "organizationId"]) {
+          try {
+            const snapshot = await getDocs(query(collection(db, "roles"), where(fieldName, "==", id)));
+            roleSnapshots.push(snapshot);
+            if (!snapshot.empty) {
+              break;
+            }
+          } catch (error) {
+            if (isFirestorePermissionDenied(error)) {
+              continue;
+            }
+            throw error;
+          }
+        }
 
         const customRoleMap = new Map();
-        [
-          ...rolesByChurchIdSnapshot.docs,
-          ...rolesByChurchIDSnapshot.docs,
-          ...rolesByOrganizationIdSnapshot.docs,
-        ].forEach((roleDoc) => {
+        roleSnapshots.flatMap((snapshot) => snapshot.docs).forEach((roleDoc) => {
           const roleData = roleDoc.data() || {};
           const roleName = String(
             roleData?.name
@@ -267,15 +284,22 @@ const Admin = () => {
           a.label.localeCompare(b.label)
         );
 
-        setRoleOptions([...baseRoles, ...customRoleOptions]);
+        setRoleOptions([...BASE_ROLES, ...customRoleOptions]);
       } catch (error) {
-        console.error("Error fetching role options:", error);
-        setRoleOptions(baseRoles);
+        if (isFirestorePermissionDenied(error)) {
+          if (!hasShownRolePermissionWarningRef.current) {
+            hasShownRolePermissionWarningRef.current = true;
+            console.warn("Role options are restricted by Firestore permissions for this user.");
+          }
+        } else {
+          console.error("Error fetching role options:", error);
+        }
+        setRoleOptions(BASE_ROLES);
       }
     };
 
     fetchRoleOptions();
-  }, [id]);
+  }, [authLoading, id, user]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -294,25 +318,38 @@ const Admin = () => {
       // Fetch users only for the current church
       const fetchUsers = async () => {
         try {
-          const parsedOrgId = Number(id);
-          const hasNumericOrgId = Number.isFinite(parsedOrgId) && String(parsedOrgId) === String(id);
-          const orgIdValues = hasNumericOrgId ? [id, parsedOrgId] : [id];
+          const userSnapshots = [];
 
-          const userQueryTasks = [];
-          ["churchId", "churchID", "organizationId"].forEach((fieldName) => {
-            orgIdValues.forEach((orgIdValue) => {
-              userQueryTasks.push(
-                getDocs(query(collection(db, "users"), where(fieldName, "==", orgIdValue)))
-              );
-            });
-          });
+          try {
+            userSnapshots.push(
+              await getDocs(query(collection(db, "users"), where("churchId", "==", id)))
+            );
+          } catch (error) {
+            if (isFirestorePermissionDenied(error)) {
+              throw error;
+            }
+            throw error;
+          }
 
-          const userSnapshots = await Promise.all(userQueryTasks);
+          if (userSnapshots[0]?.empty) {
+            for (const fieldName of ["churchID", "organizationId"]) {
+              try {
+                const snapshot = await getDocs(query(collection(db, "users"), where(fieldName, "==", id)));
+                userSnapshots.push(snapshot);
+                if (!snapshot.empty) {
+                  break;
+                }
+              } catch (error) {
+                if (isFirestorePermissionDenied(error)) {
+                  continue;
+                }
+                throw error;
+              }
+            }
+          }
 
           const uniqueUsers = new Map();
-          [
-            ...userSnapshots.flatMap((snapshot) => snapshot.docs),
-          ].forEach((userDoc) => {
+          userSnapshots.flatMap((snapshot) => snapshot.docs).forEach((userDoc) => {
             if (uniqueUsers.has(userDoc.id)) return;
             uniqueUsers.set(userDoc.id, {
               uid: userDoc.id,
@@ -388,7 +425,15 @@ const Admin = () => {
             setUsers(usersWithGroups);
           }
         } catch (error) {
-          console.error("Error fetching users:", error);
+          if (isFirestorePermissionDenied(error)) {
+            if (!hasShownUsersPermissionWarningRef.current) {
+              hasShownUsersPermissionWarningRef.current = true;
+              console.warn("User list is restricted by Firestore permissions for this user.");
+            }
+            setUsers([]);
+          } else {
+            console.error("Error fetching users:", error);
+          }
         } finally {
           setLoading(false);
         }
@@ -828,6 +873,7 @@ const Admin = () => {
         email: true,
         name: true,
         lastName: true,
+        phone: true,
         role: true,
       };
     }
