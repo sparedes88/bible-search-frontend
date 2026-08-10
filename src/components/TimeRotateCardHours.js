@@ -1310,16 +1310,21 @@ const TimeRotateCardHours = () => {
       .map((weekRow) => {
         const approvalKey = `${selectedReviewUserKey}::${weekRow.weekKey}`;
         const approval = weeklyApprovalsByKey[approvalKey] || null;
+        const meetsRequirement = Number(weekRow.missingNoteLogs) === 0;
         return {
           ...weekRow,
           isApproved: Boolean(approval),
+          meetsRequirement,
+          isApprovedOrReady: Boolean(approval) || meetsRequirement,
           approvedAt: approval?.approvedAt || 0,
           approvedByLabel: approval?.approvedByLabel || "",
         };
       })
       .sort((left, right) => {
-        if (left.isApproved !== right.isApproved) {
-          return left.isApproved ? 1 : -1;
+        const leftApproved = left.isApproved || left.meetsRequirement;
+        const rightApproved = right.isApproved || right.meetsRequirement;
+        if (leftApproved !== rightApproved) {
+          return leftApproved ? 1 : -1;
         }
         return right.weekKey.localeCompare(left.weekKey);
       });
@@ -1433,7 +1438,7 @@ const TimeRotateCardHours = () => {
     const hasCurrentSelection = weeklyReviewRows.some((row) => row.weekKey === selectedReviewWeekKey);
     if (hasCurrentSelection) return;
 
-    const firstUnapproved = weeklyReviewRows.find((row) => !row.isApproved);
+    const firstUnapproved = weeklyReviewRows.find((row) => !row.isApprovedOrReady);
     setSelectedReviewWeekKey((firstUnapproved || weeklyReviewRows[0]).weekKey);
   }, [selectedReviewWeekKey, weeklyReviewRows]);
 
@@ -3621,7 +3626,8 @@ const TimeRotateCardHours = () => {
               <div style={{ display: "grid", gap: "8px" }}>
                 {weeklyReviewRows.map((weekRow) => {
                   const isSelected = selectedReviewWeekKey === weekRow.weekKey;
-                  const isUnapproved = !weekRow.isApproved;
+                  const isApprovedState = weekRow.isApproved || weekRow.meetsRequirement;
+                  const isUnapproved = !isApprovedState;
                   return (
                     <button
                       key={weekRow.weekKey}
@@ -3654,14 +3660,14 @@ const TimeRotateCardHours = () => {
                       </div>
                       <div
                         style={{
-                          color: weekRow.isApproved ? "#065F46" : "#991B1B",
+                          color: isApprovedState ? "#065F46" : "#991B1B",
                           fontSize: "0.76rem",
                           fontWeight: 800,
                           textTransform: "uppercase",
                           letterSpacing: "0.04em",
                         }}
                       >
-                        {weekRow.isApproved ? "Approved" : "Needs Approval"}
+                        {isApprovedState ? "Approved" : "Needs Approval"}
                       </div>
                     </button>
                   );
@@ -3677,6 +3683,17 @@ const TimeRotateCardHours = () => {
                 <div style={{ color: "#334155", fontSize: "0.78rem", fontWeight: 600 }}>
                   Missing notes: {selectedWeeklyReviewRow.missingNoteLogs}
                 </div>
+                <div
+                  style={{
+                    color: selectedWeeklyReviewRow.isApproved || selectedWeeklyReviewRow.meetsRequirement ? "#065F46" : "#991B1B",
+                    fontSize: "0.78rem",
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  {selectedWeeklyReviewRow.isApproved || selectedWeeklyReviewRow.meetsRequirement ? "Approved" : "Needs Approval"}
+                </div>
                 <div style={{ color: "#166534", fontSize: "0.78rem", fontWeight: 700 }}>
                   Project Lists completed: {selectedWeeklyProgressSummary.completedIssueCount} | Issues: {selectedWeeklyProgressSummary.issueCount} | Projects: {selectedWeeklyProgressSummary.projectCount}
                 </div>
@@ -3688,9 +3705,10 @@ const TimeRotateCardHours = () => {
                     ||
                     approvingWeekKey === selectedWeeklyReviewRow.weekKey
                     || selectedWeeklyReviewRow.isApproved
+                    || selectedWeeklyReviewRow.meetsRequirement
                   }
                   style={{
-                    backgroundColor: selectedWeeklyReviewRow.isApproved
+                    backgroundColor: selectedWeeklyReviewRow.isApproved || selectedWeeklyReviewRow.meetsRequirement
                       ? "#94A3B8"
                       : (selectedWeeklyReviewRow.missingNoteLogs > 0 ? "#EF4444" : "#059669"),
                     color: "#FFFFFF",
@@ -3702,7 +3720,7 @@ const TimeRotateCardHours = () => {
                     opacity: (weeklyApprovalAiLoading || approvingWeekKey === selectedWeeklyReviewRow.weekKey) ? 0.8 : 1,
                   }}
                 >
-                  {selectedWeeklyReviewRow.isApproved
+                  {selectedWeeklyReviewRow.isApproved || selectedWeeklyReviewRow.meetsRequirement
                     ? "Already Approved"
                     : weeklyApprovalAiLoading
                       ? "Preparing Report..."

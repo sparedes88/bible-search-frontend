@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   addDoc,
   collection,
@@ -562,7 +562,9 @@ const WorkProgressModule = () => {
   const [savingLogNote, setSavingLogNote] = useState(false);
   const [imagePreviewAttachment, setImagePreviewAttachment] = useState(null);
   const [projectFilter, setProjectFilter] = useState("all");
+  const [taskTypeFilter, setTaskTypeFilter] = useState("all");
   const [sheetLogProjectFilter, setSheetLogProjectFilter] = useState("all");
+  const [sheetLogTypeFilter, setSheetLogTypeFilter] = useState("all");
   const [taskSearchTerm, setTaskSearchTerm] = useState("");
   const [taskStatusFilter, setTaskStatusFilter] = useState("both");
   const [sheetLogSearchTerm, setSheetLogSearchTerm] = useState("");
@@ -571,7 +573,20 @@ const WorkProgressModule = () => {
   const [prioritySortOrder, setPrioritySortOrder] = useState("none");
   const [countdownSortOrder, setCountdownSortOrder] = useState("none");
   const [directionSortOrder, setDirectionSortOrder] = useState("none");
-  const [activeSectionTab, setActiveSectionTab] = useState("commitments");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeSectionTab = normalizeValue(searchParams.get("tab")) || "commitments";
+
+  const buildTabLink = (tabValue) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    if (tabValue === "commitments") {
+      nextSearchParams.delete("tab");
+    } else {
+      nextSearchParams.set("tab", tabValue);
+    }
+
+    const queryString = nextSearchParams.toString();
+    return `${routePrefix}/${id}/work-progress${queryString ? `?${queryString}` : ""}`;
+  };
   const [commitmentCategoryFilter, setCommitmentCategoryFilter] = useState("all");
   const [commitmentsPage, setCommitmentsPage] = useState(1);
   const [movingTaskId, setMovingTaskId] = useState("");
@@ -955,6 +970,19 @@ const WorkProgressModule = () => {
       .map(([value, label]) => ({ value, label }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
   }, [projects, tasks]);
+
+  const taskTypeOptions = useMemo(() => {
+    const optionsMap = new Map();
+    tasks.forEach((task) => {
+      const typeValue = normalizeValue(task?.sheetLogType || task.type);
+      if (!typeValue) return;
+      optionsMap.set(typeValue, typeValue);
+    });
+
+    return Array.from(optionsMap.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+  }, [tasks]);
   const commitmentTableColumnCount = 10;
 
   const displayedTasks = useMemo(() => {
@@ -962,6 +990,9 @@ const WorkProgressModule = () => {
     const filteredTasks = tasks.filter((task) => {
       const matchesProject = projectFilter === "all" || normalizeValue(task.projectId) === projectFilter;
       if (!matchesProject) return false;
+
+      const matchesType = taskTypeFilter === "all" || normalizeValue(task.sheetLogType || task.type) === taskTypeFilter;
+      if (!matchesType) return false;
 
       const isDone = isTaskCompleted(task);
       if (taskStatusFilter === "completed" && !isDone) return false;
@@ -1064,7 +1095,7 @@ const WorkProgressModule = () => {
     });
 
     return sortedTasks.map((task) => ({ ...task, __depth: 0 }));
-  }, [commitmentCategoryById, countdownSortOrder, directionSortOrder, isManualTaskOrderEnabled, parentTaskTitleById, prioritySortOrder, projectFilter, taskCreatedSortOrder, taskSearchTerm, taskStatusFilter, tasks]);
+  }, [commitmentCategoryById, countdownSortOrder, directionSortOrder, isManualTaskOrderEnabled, parentTaskTitleById, prioritySortOrder, projectFilter, taskTypeFilter, taskCreatedSortOrder, taskSearchTerm, taskStatusFilter, tasks]);
 
   const categoryFilteredDisplayedTasks = useMemo(() => {
     const selectedCategoryId = commitmentCategoryFilter === "all" ? "" : commitmentCategoryFilter;
@@ -1284,6 +1315,19 @@ const WorkProgressModule = () => {
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
   }, [projects, sheetLogs]);
 
+  const sheetLogTypeFilterOptions = useMemo(() => {
+    const knownTypes = new Set(
+      sheetLogTypes.map((entry) => normalizeValue(entry.name)).filter(Boolean)
+    );
+
+    return Array.from(knownTypes).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [sheetLogTypes]);
+
+  const activeSheetLogTypes = useMemo(
+    () => new Set(sheetLogTypeFilterOptions),
+    [sheetLogTypeFilterOptions]
+  );
+
   const sheetLogTypeOptions = useMemo(() => {
     const knownTypes = new Set(sheetLogTypes.map((entry) => normalizeValue(entry.name)).filter(Boolean));
 
@@ -1314,6 +1358,9 @@ const WorkProgressModule = () => {
       const matchesProject = sheetLogProjectFilter === "all" || normalizeValue(entry.projectId) === sheetLogProjectFilter;
       if (!matchesProject) return false;
 
+      const matchesType = sheetLogTypeFilter === "all" || normalizeValue(entry.type) === sheetLogTypeFilter;
+      if (!matchesType) return false;
+
       if (!normalizedSearch) return true;
       return buildSheetLogSearchText(entry).includes(normalizedSearch);
     });
@@ -1325,7 +1372,7 @@ const WorkProgressModule = () => {
         ? leftCreatedAt - rightCreatedAt
         : rightCreatedAt - leftCreatedAt;
     });
-  }, [sheetLogCreatedSortOrder, sheetLogProjectFilter, sheetLogSearchTerm, sheetLogs]);
+  }, [sheetLogCreatedSortOrder, sheetLogProjectFilter, sheetLogTypeFilter, sheetLogSearchTerm, sheetLogs]);
 
   useEffect(() => {
     setLogNoteDraft("");
@@ -3044,50 +3091,62 @@ const WorkProgressModule = () => {
 
         <div style={{ ...cardStyle, marginBottom: "16px", padding: "10px" }}>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={() => setActiveSectionTab("commitments")}
+            <Link
+              to={buildTabLink("commitments")}
               style={{
                 ...buttonStyle,
+                display: "inline-flex",
+                textDecoration: "none",
+                alignItems: "center",
+                justifyContent: "center",
                 background: activeSectionTab === "commitments" ? "#1D4ED8" : "#E2E8F0",
                 color: activeSectionTab === "commitments" ? "#FFFFFF" : "#0F172A",
               }}
             >
               Commitments
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSectionTab("commitment_categories")}
+            </Link>
+            <Link
+              to={buildTabLink("commitment_categories")}
               style={{
                 ...buttonStyle,
+                display: "inline-flex",
+                textDecoration: "none",
+                alignItems: "center",
+                justifyContent: "center",
                 background: activeSectionTab === "commitment_categories" ? "#1D4ED8" : "#E2E8F0",
                 color: activeSectionTab === "commitment_categories" ? "#FFFFFF" : "#0F172A",
               }}
             >
               Commitment Categories
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSectionTab("sheet_log")}
+            </Link>
+            <Link
+              to={buildTabLink("sheet_log")}
               style={{
                 ...buttonStyle,
+                display: "inline-flex",
+                textDecoration: "none",
+                alignItems: "center",
+                justifyContent: "center",
                 background: activeSectionTab === "sheet_log" ? "#1D4ED8" : "#E2E8F0",
                 color: activeSectionTab === "sheet_log" ? "#FFFFFF" : "#0F172A",
               }}
             >
               Sheet Log
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSectionTab("sheet_log_types")}
+            </Link>
+            <Link
+              to={buildTabLink("sheet_log_types")}
               style={{
                 ...buttonStyle,
+                display: "inline-flex",
+                textDecoration: "none",
+                alignItems: "center",
+                justifyContent: "center",
                 background: activeSectionTab === "sheet_log_types" ? "#1D4ED8" : "#E2E8F0",
                 color: activeSectionTab === "sheet_log_types" ? "#FFFFFF" : "#0F172A",
               }}
             >
               Sheet Types
-            </button>
+            </Link>
           </div>
         </div>
 
@@ -3508,6 +3567,24 @@ const WorkProgressModule = () => {
                   </select>
                 </div>
                 <div>
+                  <label htmlFor="sheet-log-type-filter" style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 700, display: "block", marginBottom: "4px" }}>
+                    Filter by type
+                  </label>
+                  <select
+                    id="sheet-log-type-filter"
+                    value={sheetLogTypeFilter}
+                    onChange={(event) => setSheetLogTypeFilter(event.target.value)}
+                    style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem" }}
+                  >
+                    <option value="all">All types</option>
+                    {sheetLogTypeFilterOptions.map((typeOption) => (
+                      <option key={`sheet-log-type-filter-${typeOption}`} value={typeOption}>
+                        {typeOption}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
                   <label htmlFor="sheet-log-search" style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 700, display: "block", marginBottom: "4px" }}>
                     Search sheet log
                   </label>
@@ -3594,8 +3671,23 @@ const WorkProgressModule = () => {
 
                                 {identifierIndex === 0 ? (
                                   <>
-                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
-                                      {normalizeValue(entry.type) || "-"}
+                                    <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", verticalAlign: "top" }}>
+                                      {(() => {
+                                        const normalizedType = normalizeValue(entry.type);
+                                        const isDeletedType = normalizedType && !activeSheetLogTypes.has(normalizedType);
+                                        return (
+                                          <div style={{ display: "grid", gap: "4px" }}>
+                                            <span style={{ color: isDeletedType ? "#B91C1C" : "#334155", fontWeight: 700 }}>
+                                              {normalizedType || "-"}
+                                            </span>
+                                            {isDeletedType ? (
+                                              <span style={{ color: "#B91C1C", fontSize: "0.72rem", fontWeight: 700 }}>
+                                                Deleted type — update needed
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        );
+                                      })()}
                                     </td>
                                     <td rowSpan={packageRowCount} style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", verticalAlign: "top" }}>
                                       {normalizeValue(entry.revisionNumber) || "-"}
@@ -3668,6 +3760,25 @@ const WorkProgressModule = () => {
                 {taskProjectOptions.map((projectOption) => (
                   <option key={`project-filter-${projectOption.value}`} value={projectOption.value}>
                     {projectOption.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="type-filter" style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 700, display: "block", marginBottom: "4px" }}>
+                Filter by type
+              </label>
+              <select
+                id="type-filter"
+                value={taskTypeFilter}
+                onChange={(event) => setTaskTypeFilter(event.target.value)}
+                style={{ ...inputStyle, padding: "7px 8px", fontSize: "0.82rem" }}
+              >
+                <option value="all">All types</option>
+                {taskTypeOptions.map((typeOption) => (
+                  <option key={`task-type-filter-${typeOption.value}`} value={typeOption.value}>
+                    {typeOption.label}
                   </option>
                 ))}
               </select>
