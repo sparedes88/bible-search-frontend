@@ -171,6 +171,7 @@ const FreshBooksCallback = React.lazy(() => import("./components/FreshBooksCallb
 const SqlServerBridge = React.lazy(() => import("./components/SqlServerBridge"));
 const ExcelRowDetail = React.lazy(() => import("./components/ExcelRowDetail"));
 const CampusesPage = React.lazy(() => import("./pages/organization/CampusesPage"));
+const PanelSchedules = React.lazy(() => import("./components/PanelSchedules"));
 const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
@@ -520,6 +521,16 @@ const App = () => {
           <Route path="/organization/:id/teams/create" element={<CreateTeamPage />} />
           <Route path="/organization/:id/maintenance" element={<MaintenancePage />} />
           <Route path="/organization/:id/campuses" element={<CampusesPage />} />
+          <Route
+            path="/organization/:id/panel-schedules"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <PanelSchedules />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           <Route path="/organization/:id/rooms" element={<ChurchRooms />} />
           <Route path="/organization/:id/inventory" element={<ChurchInventory />} />
           <Route path="/organization/:id/finances" element={<ChurchFinances />} />
@@ -968,6 +979,16 @@ const App = () => {
           <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin", "member"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
+          <Route
+            path="/church/:id/panel-schedules"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <PanelSchedules />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
           <Route path="/church/:id/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
           <Route path="/church/:id/form/:formId" element={
             <ErrorBoundary>

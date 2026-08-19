@@ -3206,6 +3206,53 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
         }
       });
 
+      // Auto-complete existing issues absent from the latest upload (mirrors the manual Completed button)
+      const incomingIssueIds = new Set(
+        parsedRows.map((r) => getPrimaryIssueId(r?.rowData || {})).filter(Boolean)
+      );
+      const closeTimestamp = new Date().toISOString();
+      const closeDateLabel = getTodayMMDDYY();
+      let autoClosedCount = 0;
+
+      console.log("[AutoComplete] incomingIssueIds:", [...incomingIssueIds]);
+      console.log("[AutoComplete] nextRows count:", nextRows.length);
+
+      nextRows.forEach((row, index) => {
+        const rowData = row?.rowData || {};
+        const issueId = getPrimaryIssueId(rowData);
+
+        console.log(`[AutoComplete] row[${index}] issueId="${issueId}" inIncoming=${incomingIssueIds.has(issueId)}`);
+
+        if (!issueId || incomingIssueIds.has(issueId)) return;
+
+        const statusFieldName = findFieldByAliases(mergedFields, rowData, ["status", "state", "task status"]);
+        const e2StatusDateFieldName =
+          findFieldByAliases(mergedFields, rowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
+
+        console.log(`[AutoComplete] row[${index}] statusFieldName="${statusFieldName}" rowDataKeys:`, Object.keys(rowData));
+
+        const currentStatus = statusFieldName ? normalizeValue(rowData[statusFieldName]).toLowerCase() : "";
+        if (currentStatus === "completed" || currentStatus === "complete") return;
+
+        const prevStatus = statusFieldName ? (normalizeValue(rowData[statusFieldName]) || "-") : "-";
+        const previousUpdates = Array.isArray(rowData.updates) ? [...rowData.updates] : [];
+        previousUpdates.push({
+          text: `[System] Status changed from '${prevStatus}' to 'Completed' — issue not present in latest upload (${file.name}).`,
+          date: closeTimestamp,
+        });
+
+        const updatedRowData = {
+          ...rowData,
+          [e2StatusDateFieldName]: closeDateLabel,
+          updates: previousUpdates,
+        };
+        if (statusFieldName) updatedRowData[statusFieldName] = "Completed";
+
+        nextRows[index] = { ...row, rowData: updatedRowData };
+        changedCells += 1;
+        autoClosedCount += 1;
+      });
+
       if (!changedCells) {
         toast.info("No data changes detected. Existing grid values were kept intact.");
         return;
@@ -3232,8 +3279,11 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
       }
 
       toast.success(
-        `Sync complete from ${selectedSheetName}: ${updatedRowsCount} updated, ${insertedRowsCount} inserted, ${changedCells} changed cells.`
+        `Sync complete from ${selectedSheetName}: ${updatedRowsCount} updated, ${insertedRowsCount} inserted, ${autoClosedCount} auto-closed, ${changedCells} changed cells.`
       );
+      if (autoClosedCount > 0) {
+        toast.info(`${autoClosedCount} issue(s) were automatically closed and logged — not found in the latest upload.`);
+      }
       if (skippedRowsWithoutId) {
         toast.warn(`${skippedRowsWithoutId} row(s) were skipped because they do not contain Issue ID.`);
       }

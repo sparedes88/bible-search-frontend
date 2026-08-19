@@ -15,6 +15,7 @@ const SYSTEM_ROLE_ALIASES = {
 const LEGACY_MODULE_ID_ALIASES = {
   conduitruncounter: "conduit-run-counter",
   timetracker: "time-tracker",
+  panelschedules: "panel-schedules",
   timerotate: "time-rotate",
   timeRotate: "time-rotate",
   time_rotate: "time-rotate",
@@ -201,6 +202,13 @@ const organizationModuleDefinitions = [
         description: "Manage campus locations and addresses",
         icon: "🏫",
         buildPath: (organizationId) => `/organization/${organizationId}/campuses`,
+      }),
+      createModule({
+        id: "panel-schedules",
+        title: "Panel Schedules",
+        description: "Import and manage electrical panel schedule circuits",
+        icon: "⚡",
+        buildPath: (organizationId) => `/organization/${organizationId}/panel-schedules`,
       }),
       createModule({
         id: "inventory",

@@ -732,6 +732,40 @@ const getWeekDifference = (fromDateValue, toDateValue) => {
   return Math.max(0, Math.round((toDate.getTime() - fromDate.getTime()) / millisPerWeek));
 };
 
+const getExpectedWeekMondayDate = (targetWeek, invoiceRows = [], fallbackDate = "") => {
+  const targetWeekNumber = Number(targetWeek);
+  if (!Number.isFinite(targetWeekNumber) || targetWeekNumber <= 0) {
+    return toDateInputValue(fallbackDate) || "";
+  }
+
+  const normalizedRows = (Array.isArray(invoiceRows) ? invoiceRows : [])
+    .map((invoice) => {
+      const weekNumber = Number(invoice?.weekNumber || 0);
+      const mondayDate = toDateInputValue(invoice?.mondayDate || invoice?.weekStartDate || "");
+      if (!Number.isFinite(weekNumber) || weekNumber <= 0 || !mondayDate) {
+        return null;
+      }
+
+      return { weekNumber, mondayDate };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.weekNumber - right.weekNumber);
+
+  if (normalizedRows.length === 0) {
+    return toDateInputValue(fallbackDate) || "";
+  }
+
+  const latestPreviousWeek = [...normalizedRows]
+    .reverse()
+    .find((invoice) => invoice.weekNumber <= targetWeekNumber);
+
+  if (!latestPreviousWeek) {
+    return toDateInputValue(fallbackDate) || "";
+  }
+
+  return shiftDateInputValue(latestPreviousWeek.mondayDate, 7 * (targetWeekNumber - latestPreviousWeek.weekNumber));
+};
+
 const getNextWeekSuggestion = (invoiceRows = []) => {
   if (!Array.isArray(invoiceRows) || invoiceRows.length === 0) {
     return {
@@ -758,7 +792,7 @@ const getNextWeekSuggestion = (invoiceRows = []) => {
   const latestMonday = toDateInputValue(highestWeekInvoice?.mondayDate || "");
   const highestWeekPaymentTerms = String(highestWeekInvoice?.paymentTerms || "net30").trim().toLowerCase() || "net30";
   const highestWeekNetDays = resolveNetDays(highestWeekPaymentTerms, highestWeekInvoice?.netDays);
-  const nextWeekMondayDate = latestMonday ? shiftDateInputValue(latestMonday, 7) : "";
+  const nextWeekMondayDate = getExpectedWeekMondayDate(nextWeekNumber, invoiceRows, latestMonday ? shiftDateInputValue(latestMonday, 7) : "");
 
   return {
     weekNumber: String(nextWeekNumber),
@@ -2962,6 +2996,20 @@ const InvoiceManager = () => {
 
   const buildMissingWeekInvoices = (targetWeek, existingInvoiceMap, draft) => {
     const rows = [];
+    const normalizedTargetWeek = Number(targetWeek);
+    const sequenceInvoiceRows = Array.from(existingInvoiceMap.values())
+      .filter((invoice) => Number.isFinite(Number(invoice?.weekNumber || 0)) && Number(invoice?.weekNumber || 0) > 0)
+      .map((invoice) => ({
+        weekNumber: Number(invoice.weekNumber),
+        mondayDate: toDateInputValue(invoice.mondayDate || ""),
+      }))
+      .filter((invoice) => invoice.mondayDate);
+
+    const correctedTargetMondayDate = getExpectedWeekMondayDate(
+      normalizedTargetWeek,
+      sequenceInvoiceRows,
+      draft.mondayDate || ""
+    );
 
     for (let week = 1; week <= targetWeek; week += 1) {
       if (existingInvoiceMap.has(week)) {
@@ -2969,9 +3017,11 @@ const InvoiceManager = () => {
       }
 
       const weekDistance = targetWeek - week;
-      const mondayDate = shiftDateInputValue(draft.mondayDate, -7 * weekDistance);
+      const mondayDate = correctedTargetMondayDate
+        ? shiftDateInputValue(correctedTargetMondayDate, -7 * weekDistance)
+        : "";
       const netDays = resolveNetDays(draft.paymentTerms, draft.netDays);
-      const dueDate = shiftDateInputValue(mondayDate, netDays);
+      const dueDate = mondayDate ? shiftDateInputValue(mondayDate, netDays) : "";
 
       const invoiceNumber = week === targetWeek
         ? normalizeInvoiceNumber(draft.invoiceNumber)
@@ -3014,7 +3064,11 @@ const InvoiceManager = () => {
     const total = parseMoney(invoiceDraft.total);
     const paymentTerms = String(invoiceDraft.paymentTerms || "net30").trim().toLowerCase() || "net30";
     const netDays = resolveNetDays(paymentTerms);
-    const mondayDate = toDateInputValue(invoiceDraft.mondayDate || suggestion.mondayDate);
+    const mondayDate = getExpectedWeekMondayDate(
+      weekNumber,
+      invoices,
+      invoiceDraft.mondayDate || suggestion.mondayDate
+    );
     const dueDate = mondayDate ? shiftDateInputValue(mondayDate, netDays) : "";
 
     if (!weekNumber) {

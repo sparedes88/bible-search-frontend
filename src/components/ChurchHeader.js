@@ -16,10 +16,13 @@ import { toast, ToastContainer } from "react-toastify";
 
 const ChurchHeader = ({
   id,
+  churchId,
   applyShadow = true,
   allowEditBannerLogo = false,
   showOrganizationName = true,
 }) => {
+  const organizationId = id || churchId;
+
   const [church, setChurch] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -39,7 +42,7 @@ const ChurchHeader = ({
   useEffect(() => {
     const fetchChurch = async () => {
       try {
-        const data = await getChurchData(id);
+        const data = await getChurchData(organizationId);
         if (data) {
           const initialPosition = Number.isFinite(Number(data.bannerPositionY)) ? Number(data.bannerPositionY) : 0;
           const rawHeight = Number(data.bannerHeight);
@@ -59,14 +62,14 @@ const ChurchHeader = ({
       setLoading(false);
     };
 
-    if (id) {
+    if (organizationId) {
       fetchChurch();
     }
-  }, [id, refresh]);
+  }, [organizationId, refresh]);
 
   const handleFileUpload = async (event, field) => {
     const file = event.target.files[0];
-    if (!file || !id) return;
+    if (!file || !organizationId) return;
 
     // Check if storage is available
     if (!storage) {
@@ -95,7 +98,7 @@ const ChurchHeader = ({
     setUploading(true);
     try {
       const uniqueFileName = `${field}-${Date.now()}-${file.name}`;
-      const filePath = `/churches/church_${id}/${uniqueFileName}`;
+      const filePath = `/churches/church_${organizationId}/${uniqueFileName}`;
       const fileRef = ref(storage, filePath);
 
       // Delete previous file if exists
@@ -119,7 +122,7 @@ const ChurchHeader = ({
       const downloadURL = await getDownloadURL(fileRef);
 
       // Update church document
-      const churchRef = doc(db, "churches", id);
+      const churchRef = doc(db, "churches", organizationId);
       await updateDoc(churchRef, { [field]: filePath });
 
       toast.success("Changes saved successfully!");
@@ -150,9 +153,9 @@ const ChurchHeader = ({
   };
 
   const persistBannerLayout = async ({ showToastOnError = true } = {}) => {
-    if (!id) return;
+    if (!organizationId) return;
     try {
-      await updateDoc(doc(db, "churches", id), {
+      await updateDoc(doc(db, "churches", organizationId), {
         bannerPositionY: bannerPositionY,
         bannerHeight: bannerHeight,
       });
@@ -166,7 +169,7 @@ const ChurchHeader = ({
   };
 
   useEffect(() => {
-    if (!allowEditBannerLogo || loading || !hasLoadedBannerStateRef.current || !id) {
+    if (!allowEditBannerLogo || loading || !hasLoadedBannerStateRef.current || !organizationId) {
       return undefined;
     }
 
@@ -182,7 +185,7 @@ const ChurchHeader = ({
     }, 550);
 
     return () => clearTimeout(autoSaveTimer);
-  }, [bannerPositionY, bannerHeight, allowEditBannerLogo, loading, id]);
+  }, [bannerPositionY, bannerHeight, allowEditBannerLogo, loading, organizationId]);
 
   useEffect(() => {
     if (!isDraggingBanner && !isResizingBanner) return undefined;

@@ -250,9 +250,245 @@ const toInlineDataFromUrl = async (url) => {
 const extractGeminiText = (data) => {
   return (Array.isArray(data?.candidates) ? data.candidates : [])
     .flatMap((candidate) => (Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []))
-    .map((part) => String(part?.text || '').trim())
+    .map((part) => {
+      if (typeof part?.text === 'string') {
+        return part.text.trim();
+      }
+
+      if (part?.text && typeof part.text === 'object') {
+        try {
+          return JSON.stringify(part.text);
+        } catch (_error) {
+          return '';
+        }
+      }
+
+      return String(part?.text || '').trim();
+    })
     .filter(Boolean)
     .join('\n\n');
+};
+
+const sanitizePotentialJson = (value) => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
+};
+
+const collectBalancedJsonCandidates = (value) => {
+  if (typeof value !== 'string' || !value) {
+    return [];
+  }
+
+  const candidates = [];
+  const stack = [];
+  let startIndex = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      if (!stack.length) {
+        startIndex = index;
+      }
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      if (!stack.length) {
+        continue;
+      }
+
+      const expected = char === '}' ? '{' : '[';
+      const last = stack[stack.length - 1];
+      if (last !== expected) {
+        stack.length = 0;
+        startIndex = -1;
+        continue;
+      }
+
+      stack.pop();
+      if (!stack.length && startIndex !== -1) {
+        candidates.push(value.slice(startIndex, index + 1));
+        startIndex = -1;
+      }
+    }
+  }
+
+  return candidates;
+};
+
+const extractNamedArrayCandidate = (value, keyName) => {
+  const text = normalizeText(value);
+  const normalizedKey = normalizeText(keyName);
+  if (!text || !normalizedKey) {
+    return '';
+  }
+
+  const keyToken = `"${normalizedKey}"`;
+  const keyIndex = text.toLowerCase().indexOf(keyToken.toLowerCase());
+  if (keyIndex < 0) {
+    return '';
+  }
+
+  const arrayStart = text.indexOf('[', keyIndex + keyToken.length);
+  if (arrayStart < 0) {
+    return '';
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = arrayStart; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '[') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(arrayStart, index + 1);
+      }
+    }
+  }
+
+  return '';
+};
+
+const extractObjectsFromNamedArrayPrefix = (value, keyName) => {
+  const text = normalizeText(value);
+  const normalizedKey = normalizeText(keyName);
+  if (!text || !normalizedKey) {
+    return [];
+  }
+
+  const keyToken = `"${normalizedKey}"`;
+  const keyIndex = text.toLowerCase().indexOf(keyToken.toLowerCase());
+  if (keyIndex < 0) {
+    return [];
+  }
+
+  const arrayStart = text.indexOf('[', keyIndex + keyToken.length);
+  if (arrayStart < 0) {
+    return [];
+  }
+
+  const parsedObjects = [];
+  let objectStart = -1;
+  let objectDepth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = arrayStart + 1; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{') {
+      if (objectDepth === 0) {
+        objectStart = index;
+      }
+      objectDepth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      if (objectDepth > 0) {
+        objectDepth -= 1;
+        if (objectDepth === 0 && objectStart !== -1) {
+          const objectText = text.slice(objectStart, index + 1);
+          const sanitizedObjectText = sanitizePotentialJson(objectText);
+          for (const candidate of [objectText, sanitizedObjectText].filter(Boolean)) {
+            try {
+              const parsedObject = JSON.parse(candidate);
+              if (parsedObject && typeof parsedObject === 'object' && !Array.isArray(parsedObject)) {
+                parsedObjects.push(parsedObject);
+                break;
+              }
+            } catch (_objectParseError) {
+              // Try the next candidate or continue scanning.
+            }
+          }
+          objectStart = -1;
+        }
+      }
+      continue;
+    }
+
+    if (char === ']' && objectDepth === 0) {
+      break;
+    }
+  }
+
+  return parsedObjects;
 };
 
 const parseGeminiJson = (value) => {
@@ -262,22 +498,413 @@ const parseGeminiJson = (value) => {
   }
 
   const fencedMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
-  const candidateText = fencedMatch ? fencedMatch[1] : text;
+  const candidateText = (fencedMatch ? fencedMatch[1] : text).trim();
 
-  try {
-    return JSON.parse(candidateText);
-  } catch (error) {
-    const fallbackMatch = candidateText.match(/\{[\s\S]*\}/);
-    if (!fallbackMatch) {
-      return null;
-    }
+  const parseCandidates = [candidateText, text]
+    .flatMap((entry) => [entry, ...collectBalancedJsonCandidates(entry)])
+    .map((entry) => normalizeText(entry))
+    .filter(Boolean);
 
+  for (const entry of parseCandidates) {
     try {
-      return JSON.parse(fallbackMatch[0]);
-    } catch (parseError) {
-      return null;
+      return JSON.parse(entry);
+    } catch (_parseError) {
+      const sanitized = sanitizePotentialJson(entry);
+      if (!sanitized || sanitized === entry) {
+        continue;
+      }
+      try {
+        return JSON.parse(sanitized);
+      } catch (_sanitizedError) {
+        // Continue trying next parse candidate.
+      }
     }
   }
+
+  const circuitsArrayCandidate = extractNamedArrayCandidate(candidateText, 'circuits')
+    || extractNamedArrayCandidate(text, 'circuits');
+
+  if (circuitsArrayCandidate) {
+    const sanitizedCircuitsArray = sanitizePotentialJson(circuitsArrayCandidate);
+    for (const arrayCandidate of [circuitsArrayCandidate, sanitizedCircuitsArray].filter(Boolean)) {
+      try {
+        const parsedCircuits = JSON.parse(arrayCandidate);
+        if (Array.isArray(parsedCircuits)) {
+          return { circuits: parsedCircuits };
+        }
+      } catch (_arrayParseError) {
+        // Ignore and fall through to null.
+      }
+    }
+  }
+
+  const salvageCircuits = extractObjectsFromNamedArrayPrefix(candidateText, 'circuits');
+  if (salvageCircuits.length) {
+    return { circuits: salvageCircuits };
+  }
+
+  const fallbackSalvageCircuits = extractObjectsFromNamedArrayPrefix(text, 'circuits');
+  if (fallbackSalvageCircuits.length) {
+    return { circuits: fallbackSalvageCircuits };
+  }
+
+  return null;
+};
+
+const PANEL_HEADER_FIELDS = [
+  { key: 'voltageLL', labels: ['VOLTS (L-L)', 'VOLTAGE'] },
+  { key: 'phase', labels: ['PHASE'] },
+  { key: 'wires', labels: ['WIRES', 'WIRE'] },
+  { key: 'options', labels: ['OPTIONS'] },
+  { key: 'panelType', labels: ['PANEL TYPE'] },
+  { key: 'mounting', labels: ['MOUNTING'] },
+  { key: 'enclosure', labels: ['ENCLOSURE'] },
+  { key: 'mcb', labels: ['MCB', 'MAIN BREAKER'] },
+  { key: 'busRating', labels: ['BUS RATING'] },
+  { key: 'aicRating', labels: ['AIC RATING'] },
+  { key: 'supplyFrom', labels: ['SUPPLY FROM'] },
+];
+
+const createEmptyPanelDetails = () => ({
+  voltageLL: '',
+  phase: '',
+  wires: '',
+  options: '',
+  panelType: '',
+  mounting: '',
+  enclosure: '',
+  mcb: '',
+  busRating: '',
+  aicRating: '',
+  supplyFrom: '',
+});
+
+const normalizePanelDetails = (value) => {
+  const details = createEmptyPanelDetails();
+  if (!value || typeof value !== 'object') {
+    return details;
+  }
+
+  Object.keys(details).forEach((key) => {
+    details[key] = normalizeText(value?.[key]);
+  });
+
+  return details;
+};
+
+const buildLineSnippetFromTextIndex = (text, index, fallbackText = '') => {
+  const sourceText = String(text || '');
+  const lineBreakRegex = /\r?\n/g;
+  const lines = sourceText.split(lineBreakRegex);
+  if (!lines.length) {
+    return {
+      lineNumber: 0,
+      snippet: normalizeText(fallbackText),
+    };
+  }
+
+  const boundedIndex = Number.isFinite(index) && index >= 0 ? index : 0;
+  const beforeText = sourceText.slice(0, boundedIndex);
+  const lineNumber = beforeText.split(lineBreakRegex).length;
+  const rawLine = lines[Math.max(0, lineNumber - 1)] || '';
+  const normalizedLine = normalizeText(rawLine);
+
+  if (normalizedLine) {
+    return {
+      lineNumber,
+      snippet: normalizedLine,
+    };
+  }
+
+  const start = Math.max(0, boundedIndex - 80);
+  const end = Math.min(sourceText.length, boundedIndex + 120);
+  return {
+    lineNumber,
+    snippet: normalizeText(sourceText.slice(start, end) || fallbackText),
+  };
+};
+
+const createEmptyPanelSourceEvidence = () => ({
+  panelName: { lineNumber: 0, snippet: '' },
+  voltageLL: { lineNumber: 0, snippet: '' },
+  phase: { lineNumber: 0, snippet: '' },
+  wires: { lineNumber: 0, snippet: '' },
+  options: { lineNumber: 0, snippet: '' },
+  panelType: { lineNumber: 0, snippet: '' },
+  mounting: { lineNumber: 0, snippet: '' },
+  enclosure: { lineNumber: 0, snippet: '' },
+  mcb: { lineNumber: 0, snippet: '' },
+  busRating: { lineNumber: 0, snippet: '' },
+  aicRating: { lineNumber: 0, snippet: '' },
+  supplyFrom: { lineNumber: 0, snippet: '' },
+});
+
+const normalizePanelSourceEvidence = (value) => {
+  const evidence = createEmptyPanelSourceEvidence();
+  if (!value || typeof value !== 'object') {
+    return evidence;
+  }
+
+  Object.keys(evidence).forEach((key) => {
+    evidence[key] = {
+      lineNumber: Number.parseInt(value?.[key]?.lineNumber, 10) || 0,
+      snippet: normalizeText(value?.[key]?.snippet),
+    };
+  });
+
+  return evidence;
+};
+
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const extractPanelFieldFromText = (text, labels) => {
+  const normalizedText = String(text || '');
+  for (const label of labels) {
+    const pattern = new RegExp(`${escapeRegex(label)}\\s*[:|-]?\\s*([^\\n|]+)`, 'i');
+    const match = normalizedText.match(pattern);
+    const value = normalizeText(match?.[1] || '');
+    if (value) {
+      return value.replace(/[;,]+$/, '').trim();
+    }
+  }
+
+  return '';
+};
+
+const extractPanelFieldEvidenceFromText = (text, labels) => {
+  const normalizedText = String(text || '');
+  for (const label of labels) {
+    const pattern = new RegExp(`${escapeRegex(label)}\\s*[:|-]?\\s*([^\\n|]+)`, 'i');
+    const match = pattern.exec(normalizedText);
+    const value = normalizeText(match?.[1] || '');
+    if (value) {
+      const cleanedValue = value.replace(/[;,]+$/, '').trim();
+      const snippetData = buildLineSnippetFromTextIndex(normalizedText, match?.index || 0, match?.[0] || '');
+      return {
+        value: cleanedValue,
+        lineNumber: snippetData.lineNumber,
+        snippet: snippetData.snippet,
+      };
+    }
+  }
+
+  return {
+    value: '',
+    lineNumber: 0,
+    snippet: '',
+  };
+};
+
+const extractPanelNameFromText = (text, fallbackName = 'Imported Panel') => {
+  const normalizedText = String(text || '');
+  const match = normalizedText.match(/((?:\(E\)\s*)?PANELBOARD\s*[:\-]\s*[^\n|]+)/i);
+  return normalizeText(match?.[1] || fallbackName);
+};
+
+const extractPanelNameEvidenceFromText = (text, fallbackName = 'Imported Panel') => {
+  const normalizedText = String(text || '');
+  const pattern = /((?:\(E\)\s*)?PANELBOARD\s*[:\-]\s*[^\n|]+)/i;
+  const match = pattern.exec(normalizedText);
+  const panelName = normalizeText(match?.[1] || fallbackName);
+  const snippetData = buildLineSnippetFromTextIndex(normalizedText, match?.index || 0, match?.[0] || panelName);
+
+  return {
+    panelName,
+    lineNumber: snippetData.lineNumber,
+    snippet: snippetData.snippet,
+  };
+};
+
+const extractPanelHeadersFromTranscript = (text, fallbackName = 'Imported Panel') => {
+  const documentText = String(text || '');
+  if (!normalizeText(documentText)) {
+    return [];
+  }
+
+  const panelSourceEvidence = createEmptyPanelSourceEvidence();
+
+  const panelDetails = PANEL_HEADER_FIELDS.reduce((details, field) => {
+    const evidence = extractPanelFieldEvidenceFromText(documentText, field.labels);
+    panelSourceEvidence[field.key] = {
+      lineNumber: evidence.lineNumber,
+      snippet: evidence.snippet,
+    };
+    details[field.key] = evidence.value;
+    return details;
+  }, createEmptyPanelDetails());
+
+  const panelNameEvidence = extractPanelNameEvidenceFromText(documentText, fallbackName);
+  const panelName = panelNameEvidence.panelName;
+  panelSourceEvidence.panelName = {
+    lineNumber: panelNameEvidence.lineNumber,
+    snippet: panelNameEvidence.snippet,
+  };
+
+  const hasAnyDetails = Object.values(panelDetails).some(Boolean);
+  if (!panelName && !hasAnyDetails) {
+    return [];
+  }
+
+  return [{
+    panelName: panelName || fallbackName,
+    panelKey: normalizeText(panelName || fallbackName).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+    ...panelDetails,
+    sourceEvidence: normalizePanelSourceEvidence(panelSourceEvidence),
+  }];
+};
+
+const extractPanelHeadersFromGeminiPayload = (parsedResponse, fallbackName = 'Imported Panel') => {
+  const panelRows = Array.isArray(parsedResponse?.panels)
+    ? parsedResponse.panels
+    : Array.isArray(parsedResponse?.panelHeaders)
+      ? parsedResponse.panelHeaders
+      : [];
+
+  return panelRows
+    .map((row) => ({
+      panelName: normalizeText(row?.panelName || row?.panel || row?.name) || fallbackName,
+      panelKey: normalizeText(row?.panelKey || row?.panelName || row?.panel || row?.name || fallbackName).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+      ...normalizePanelDetails(row),
+      sourceEvidence: normalizePanelSourceEvidence(row?.sourceEvidence),
+    }))
+    .filter((row) => row.panelName || Object.values(normalizePanelDetails(row)).some(Boolean));
+};
+
+const findPanelDetailsForName = (panelHeaders, panelName) => {
+  const normalizedName = normalizeText(panelName).toLowerCase();
+  if (!normalizedName) {
+    return createEmptyPanelDetails();
+  }
+
+  const match = (panelHeaders || []).find((panel) => normalizeText(panel?.panelName).toLowerCase() === normalizedName);
+  return normalizePanelDetails(match);
+};
+
+const requestGeminiWithModelFallback = async ({ geminiApiKey, modelCandidates, requestBody, fallbackModel = 'gemini-2.0-flash' }) => {
+  let geminiResponse = null;
+  let resolvedModel = modelCandidates[0] || fallbackModel;
+  let lastModelError = null;
+  const attemptedModels = [];
+
+  for (const modelCandidate of modelCandidates.length ? modelCandidates : [fallbackModel]) {
+    attemptedModels.push(modelCandidate);
+    try {
+      geminiResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelCandidate)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        requestBody,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 90000,
+        }
+      );
+      resolvedModel = modelCandidate;
+      lastModelError = null;
+      break;
+    } catch (modelError) {
+      lastModelError = modelError;
+      const statusCode = modelError?.response?.status;
+      if (statusCode === 404 || statusCode === 400) {
+        continue;
+      }
+      throw modelError;
+    }
+  }
+
+  return {
+    geminiResponse,
+    resolvedModel,
+    lastModelError,
+    attemptedModels,
+  };
+};
+
+const normalizeFieldKey = (value) =>
+  normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const CIRCUIT_NUMBER_KEY_CANDIDATES = new Set([
+  'circuitnumber',
+  'circuit',
+  'number',
+  'ckt',
+  'circu #',
+  'circuit#',
+  'circuitno',
+  'circuitnum',
+]);
+
+const hasCircuitNumberLikeField = (row) => {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    return false;
+  }
+
+  return Object.keys(row).some((key) => {
+    const normalizedKey = normalizeFieldKey(key);
+    return CIRCUIT_NUMBER_KEY_CANDIDATES.has(normalizedKey)
+      || normalizedKey.includes('circuitnumber')
+      || normalizedKey === 'circuit'
+      || normalizedKey === 'number';
+  });
+};
+
+const pickFirstArrayWithCircuitRows = (value, depth = 0) => {
+  if (depth > 5 || value === null || value === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    if (value.some((entry) => hasCircuitNumberLikeField(entry))) {
+      return value;
+    }
+
+    for (const entry of value) {
+      const nested = pickFirstArrayWithCircuitRows(entry, depth + 1);
+      if (nested.length) {
+        return nested;
+      }
+    }
+    return [];
+  }
+
+  if (typeof value === 'object') {
+    for (const nestedValue of Object.values(value)) {
+      const nested = pickFirstArrayWithCircuitRows(nestedValue, depth + 1);
+      if (nested.length) {
+        return nested;
+      }
+    }
+  }
+
+  return [];
+};
+
+const extractCircuitRowsFromGeminiPayload = (parsedResponse) => {
+  if (!parsedResponse) {
+    return [];
+  }
+
+  if (Array.isArray(parsedResponse)) {
+    return parsedResponse;
+  }
+
+  if (Array.isArray(parsedResponse?.circuits)) {
+    return parsedResponse.circuits;
+  }
+
+  if (Array.isArray(parsedResponse?.rows)) {
+    return parsedResponse.rows;
+  }
+
+  if (Array.isArray(parsedResponse?.data?.circuits)) {
+    return parsedResponse.data.circuits;
+  }
+
+  if (Array.isArray(parsedResponse?.result?.circuits)) {
+    return parsedResponse.result.circuits;
+  }
+
+  return pickFirstArrayWithCircuitRows(parsedResponse);
 };
 
 const buildPastortechSourceContext = (sources = []) =>
@@ -3425,3 +4052,313 @@ RULES:
     }
   });
 });
+
+exports.extractPanelScheduleFromPdfWithGemini = functions
+  .runWith({ memory: "1GB", timeoutSeconds: 120 })
+  .https.onRequest((req, res) => {
+    if (handleCors(req, res)) return;
+
+    corsHandler(req, res, async () => {
+      try {
+        if (req.method !== "POST") {
+          return res.status(405).json({ error: "Method not allowed. Use POST." });
+        }
+
+        const authHeader = normalizeText(req.headers.authorization);
+        const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+        const idToken = tokenMatch ? normalizeText(tokenMatch[1]) : "";
+        if (!idToken) {
+          return res.status(401).json({ error: "Missing Authorization Bearer token." });
+        }
+
+        let decodedToken = null;
+        try {
+          decodedToken = await admin.auth().verifyIdToken(idToken);
+        } catch (authError) {
+          return res.status(401).json({ error: "Invalid auth token." });
+        }
+
+        const churchId = normalizeText(req.body?.churchId);
+        const pdfBase64 = normalizeText(req.body?.pdfBase64);
+        const fileName = normalizeText(req.body?.fileName) || "Panel Schedule PDF";
+        const requestedModel = normalizeGeminiModelName(req.body?.model);
+
+        if (!churchId) {
+          return res.status(400).json({ error: "Missing `churchId` in request body." });
+        }
+
+        if (!pdfBase64) {
+          return res.status(400).json({ error: "Missing `pdfBase64` in request body." });
+        }
+
+        let pdfBuffer = null;
+        try {
+          pdfBuffer = Buffer.from(pdfBase64, "base64");
+        } catch (decodeError) {
+          return res.status(400).json({ error: "Invalid PDF base64 payload." });
+        }
+
+        // Keep this conservative: base64 inflates payload size by ~33%, and very large JSON
+        // requests may be rejected before this function runs.
+        const maxPdfBytes = 6 * 1024 * 1024;
+        if (!pdfBuffer || !pdfBuffer.length || pdfBuffer.length > maxPdfBytes) {
+          return res.status(400).json({
+            error: `PDF is empty or exceeds ${Math.floor(maxPdfBytes / (1024 * 1024))}MB limit for Gemini import.`,
+          });
+        }
+
+        const callerDoc = await admin.firestore().doc(`users/${decodedToken.uid}`).get();
+        if (!callerDoc.exists) {
+          return res.status(403).json({ error: "Caller user profile not found." });
+        }
+
+        const callerData = callerDoc.data() || {};
+        const roleCandidates = [
+          callerData.role,
+          callerData.baseRole,
+          callerData.systemRole,
+          callerData.basedOn,
+        ]
+          .map((role) => normalizeText(role).toLowerCase())
+          .filter(Boolean);
+
+        const isGlobalAdmin = roleCandidates.includes("global_admin") || roleCandidates.includes("system_global_admin");
+        const callerChurchCandidates = [callerData.churchId, callerData.churchID, callerData.organizationId]
+          .map((entry) => normalizeText(entry))
+          .filter(Boolean);
+
+        let hasChurchAccess = isGlobalAdmin || callerChurchCandidates.includes(churchId);
+        if (!hasChurchAccess) {
+          const memberDoc = await admin.firestore().doc(`churches/${churchId}/members/${decodedToken.uid}`).get();
+          hasChurchAccess = memberDoc.exists;
+        }
+
+        if (!hasChurchAccess) {
+          return res.status(403).json({ error: "You do not have access to this organization." });
+        }
+
+        const geminiApiKey = getGeminiApiKey();
+        if (!geminiApiKey) {
+          return res.status(500).json({ error: "Gemini API key not configured on Firebase." });
+        }
+
+        let discoveredModels = [];
+        try {
+          discoveredModels = await listGeminiModelCandidates(geminiApiKey);
+        } catch (modelDiscoveryError) {
+          console.warn("Unable to list Gemini models for PDF extraction:", modelDiscoveryError?.message || modelDiscoveryError);
+        }
+
+        const staticModelCandidates = [
+          requestedModel,
+          "gemini-2.5-flash",
+          "gemini-2.0-flash",
+          "gemini-1.5-pro",
+          "gemini-1.5-flash",
+        ].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean);
+
+        const modelCandidates = Array.from(
+          new Set([...staticModelCandidates, ...discoveredModels].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean))
+        );
+
+        const transcriptPrompt = [
+          'Transcribe this electrical panel schedule PDF into compact plain text.',
+          'Return plain text only. No JSON, no markdown, no commentary.',
+          'Include all visible panel names, row values, notes, headers, circuit numbers, conduit IDs, conduit sizes, feeder destinations, pull boxes, and source panel references that matter for importing panel schedules.',
+          'Preserve text exactly when possible, including punctuation, dashes, parentheses, and inch marks.',
+          `Source file name: ${fileName}`,
+        ].join('\n');
+
+        const transcriptRequestBody = {
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: transcriptPrompt },
+                {
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: pdfBuffer.toString('base64'),
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            topP: 0.85,
+            maxOutputTokens: 8192,
+          },
+        };
+
+        const transcriptResult = await requestGeminiWithModelFallback({
+          geminiApiKey,
+          modelCandidates,
+          requestBody: transcriptRequestBody,
+        });
+
+        if (!transcriptResult.geminiResponse) {
+          return res.status(500).json({
+            error: 'No Gemini model was available for PDF transcription.',
+            attemptedModels: transcriptResult.attemptedModels,
+            details: transcriptResult.lastModelError?.response?.data || transcriptResult.lastModelError?.message || '',
+          });
+        }
+
+        const documentTranscript = normalizeText(extractGeminiText(transcriptResult.geminiResponse.data));
+        if (!documentTranscript) {
+          return res.status(502).json({
+            error: 'Gemini did not return a transcript for this PDF.',
+            model: transcriptResult.resolvedModel,
+          });
+        }
+
+        const responseSchemaPrompt = [
+          'You are converting a panel schedule transcript into structured import rows.',
+          'Return valid JSON only. No markdown, no commentary.',
+          'Use this schema exactly:',
+          '{"panels":[{"panelName":"string","voltageLL":"string","phase":"string","wires":"string","options":"string","panelType":"string","mounting":"string","enclosure":"string","mcb":"string","busRating":"string","aicRating":"string","supplyFrom":"string"}],"circuits":[{"panelName":"string","circuitNumber":"number or string","conduitId":"string","conduitSize":"string","feederTo":"string","toPullBox":"string","feederSupplyFrom":"string","fromBranchCircuitPanel":"string"}]}',
+          'Rules:',
+          '- Extract each panel header field when present.',
+          '- Include one circuit row per circuit number.',
+          '- If a transcript line contains multiple circuit numbers, create one row per number.',
+          '- Keep blank fields as empty strings.',
+          '- Preserve panel names and conduit labels exactly when visible.',
+          '- Ignore summary totals unless they directly describe a circuit row.',
+          `- Source file name: ${fileName}`,
+        ].join('\n');
+
+        const structuredRequestBody = {
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `${responseSchemaPrompt}\n\nPanel schedule transcript:\n${documentTranscript}`,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            topP: 0.85,
+            maxOutputTokens: 8192,
+            responseMimeType: 'application/json',
+          },
+        };
+
+        const structuredResult = await requestGeminiWithModelFallback({
+          geminiApiKey,
+          modelCandidates,
+          requestBody: structuredRequestBody,
+        });
+
+        if (!structuredResult.geminiResponse) {
+          return res.status(500).json({
+            error: 'No Gemini model was available for structured panel parsing.',
+            attemptedModels: structuredResult.attemptedModels,
+            details: structuredResult.lastModelError?.response?.data || structuredResult.lastModelError?.message || '',
+            documentTranscript,
+            model: transcriptResult.resolvedModel,
+          });
+        }
+
+        const rawResponseText = extractGeminiText(structuredResult.geminiResponse.data);
+        const parsedResponse = parseGeminiJson(rawResponseText);
+        const transcriptPanelHeaders = extractPanelHeadersFromTranscript(documentTranscript, fileName.replace(/\.[^.]+$/, ''));
+        const geminiPanelHeaders = extractPanelHeadersFromGeminiPayload(parsedResponse, fileName.replace(/\.[^.]+$/, ''));
+        const panelHeaders = geminiPanelHeaders.length ? geminiPanelHeaders : transcriptPanelHeaders;
+        const rows = extractCircuitRowsFromGeminiPayload(parsedResponse);
+
+        if (!rows.length) {
+          return res.status(502).json({
+            error: "Gemini did not return any circuit rows.",
+            rawResponsePreview: rawResponseText.slice(0, 1000),
+            documentTranscript,
+            panelHeaders,
+            parsedShape: parsedResponse
+              ? (Array.isArray(parsedResponse) ? 'array' : Object.keys(parsedResponse).slice(0, 10))
+              : 'unparsed',
+            model: `${transcriptResult.resolvedModel} -> ${structuredResult.resolvedModel}`,
+          });
+        }
+
+        const fallbackPanelName = normalizeText(fileName.replace(/\.[^.]+$/, "")) || "Imported Panel";
+        const normalizedCircuits = rows.flatMap((row) => {
+          const panelName = normalizeText(row?.panelName || row?.panel || row?.panel_name || "") || fallbackPanelName;
+          const panelDetails = findPanelDetailsForName(panelHeaders, panelName);
+          const conduitId = normalizeText(row?.conduitId || row?.conduit_id || row?.conduit || "");
+          const conduitSize = normalizeText(row?.conduitSize || row?.conduit_size || row?.size || "");
+          const feederTo = normalizeText(row?.feederTo || row?.feeder_to || "");
+          const toPullBox = normalizeText(row?.toPullBox || row?.to_pull_box || "");
+          const feederSupplyFrom = normalizeText(row?.feederSupplyFrom || row?.feeder_supply_from || "");
+          const fromBranchCircuitPanel = normalizeText(row?.fromBranchCircuitPanel || row?.from_branch_circuit_panel || "");
+          const aiDescription = normalizeText(
+            row?.description
+            || row?.circuitDescription
+            || row?.circuit_description
+            || row?.loadDescription
+            || row?.load_description
+            || row?.load
+            || row?.notes
+            || ""
+          );
+          const description = aiDescription || feederTo || toPullBox || feederSupplyFrom || fromBranchCircuitPanel || "";
+
+          const circuitRaw = normalizeText(
+            row?.circuitNumber || row?.circuit_number || row?.number || row?.circuit || ""
+          );
+
+          const numbers = Array.from(
+            new Set(
+              (circuitRaw.match(/\d+/g) || [])
+                .map((value) => Number.parseInt(value, 10))
+                .filter((value) => Number.isFinite(value) && value > 0)
+            )
+          );
+
+          if (!numbers.length) {
+            return [];
+          }
+
+          return numbers.map((number) => ({
+            number,
+            side: number % 2 === 1 ? "left" : "right",
+            conduitId,
+            conduitSize,
+            feederTo,
+            toPullBox,
+            feederSupplyFrom,
+            fromBranchCircuitPanel,
+            description,
+            panelName,
+            panelDetails,
+            panelKey: normalizeText(panelName).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+          }));
+        });
+
+        if (!normalizedCircuits.length) {
+          return res.status(502).json({
+            error: "No valid circuit numbers were extracted from the PDF.",
+            documentTranscript,
+            panelHeaders,
+            model: `${transcriptResult.resolvedModel} -> ${structuredResult.resolvedModel}`,
+          });
+        }
+
+        return res.status(200).json({
+          model: `${transcriptResult.resolvedModel} -> ${structuredResult.resolvedModel}`,
+          documentTranscript,
+          panelHeaders,
+          circuits: normalizedCircuits,
+          circuitCount: normalizedCircuits.length,
+        });
+      } catch (error) {
+        console.error("extractPanelScheduleFromPdfWithGemini error:", error?.response?.data || error.message);
+        return res.status(500).json({
+          error: error.message || "Unexpected error in extractPanelScheduleFromPdfWithGemini.",
+          details: error?.response?.data || "",
+        });
+      }
+    });
+  });

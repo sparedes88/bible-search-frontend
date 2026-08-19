@@ -4,6 +4,7 @@ import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firesto
 const LEGACY_MODULE_ID_ALIASES = {
   'conduit-run-counter': 'conduitruncounter',
   'time-tracker': 'timetracker',
+  'panel-schedules': 'panelschedules',
 };
 
 const normalizePermissionModuleId = (module) => {
@@ -361,7 +362,7 @@ const checkSystemRolePermission = async (role, module, action) => {
       'managegroups', 'createteam', 'teamdetail', 'maintenance',
       'inventory', 'inventorydetail', 'rooms', 'roomreservations',
       'broadcast', 'broadcastview', 'socialmedia', 'socialmediaaccounts',
-      'buildmychurch', 'leica', 'process', 'forms'
+      'buildmychurch', 'leica', 'process', 'forms', 'panelschedules'
     ];
 
     // Check denied modules

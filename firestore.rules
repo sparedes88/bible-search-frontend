@@ -334,6 +334,12 @@ service cloud.firestore {
         }
       }
 
+      // Panel schedules - module-based CRUD access
+      match /panelSchedules/{panelScheduleId} {
+        allow read: if canReadModule(churchId, 'panelschedules');
+        allow create, update, delete: if canManageModule(churchId, 'panelschedules');
+      }
+
       // EZLink redirects must be publicly readable for QR scans by unauthenticated users.
       match /ezlinks/{slug} {
         allow read: if true;

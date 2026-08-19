@@ -164,6 +164,7 @@ const RoleManager = () => {
         { id: "roomreservations", name: "Room Reservations", description: "Room booking system" },
         { id: "inventory", name: "Inventory", description: "Track equipment and supplies" },
         { id: "inventorydetail", name: "Inventory Details", description: "Individual inventory items" },
+        { id: "panelschedules", name: "Panel Schedules", description: "Import and manage electrical panel schedule circuits" },
         { id: "maintenance", name: "Maintenance", description: "Track repairs and improvements" }
       ]
     },

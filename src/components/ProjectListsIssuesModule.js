@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import {
   addDoc,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -3907,9 +3908,45 @@ const ProjectListsIssuesModule = () => {
         skipped++;
       }
     }
+    // Auto-complete issues not present in the latest upload
+    const importedIssueNumbers = new Set(
+      importIssuesRows.map((row) => String(row.issueNumber || "").trim().toLowerCase()).filter(Boolean)
+    );
+    let autoCompletedCount = 0;
+    for (const [normalizedNumber, existingIssue] of existingByNumber) {
+      if (importedIssueNumbers.has(normalizedNumber)) continue;
+      if (!existingIssue?.id) continue;
+      if (isIssueDoneStatus(existingIssue.status)) continue;
+      const nowIso = new Date().toISOString();
+      const systemNote = {
+        text: `[System] Status changed from '${existingIssue.status || "Open"}' to 'Complete' — not present in latest upload.`,
+        createdAtIso: nowIso,
+        createdByUid: "",
+        createdByEmail: "system",
+        createdByName: "System",
+        attachments: [],
+      };
+      try {
+        await updateDoc(
+          doc(db, "churches", id, "projectListIssueProjects", selectedProjectId, "issues", existingIssue.id),
+          {
+            status: "Complete",
+            completedByUid: "",
+            completedByEmail: "system",
+            completedAt: serverTimestamp(),
+            notes: arrayUnion(systemNote),
+            updatedAt: serverTimestamp(),
+          }
+        );
+        autoCompletedCount++;
+      } catch (err) {
+        console.error("Failed to auto-complete issue:", existingIssue.id, err);
+      }
+    }
+
     setImportIssuesLoading(false);
     toast.success(
-      `Imported ${created} new issue(s). Reactivated ${reactivated} existing issue(s).${skipped > 0 ? ` ${skipped} skipped (missing bucket or invalid issue number).` : ""}`
+      `Imported ${created} new issue(s). Reactivated ${reactivated} existing issue(s). Auto-completed ${autoCompletedCount} missing issue(s).${skipped > 0 ? ` ${skipped} skipped (missing bucket or invalid issue number).` : ""}`
     );
     setImportIssuesRows([]);
     setShowImportIssuesPanel(false);
