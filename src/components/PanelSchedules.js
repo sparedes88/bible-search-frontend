@@ -48,7 +48,10 @@ const PANEL_DETAIL_KEYS = [
   "sheet",
   "area",
   "construction",
+  "constructionPhase",
   "projectPhase",
+  "revitConduitId",
+  "shopRevision",
 ];
 
 const PANEL_HEADER_DISPLAY_FIELDS = [
@@ -94,7 +97,10 @@ const EMPTY_MAPPING = {
   sheet: "",
   area: "",
   construction: "",
+  constructionPhase: "",
   projectPhase: "",
+  revitConduitId: "",
+  shopRevision: "",
 };
 
 const MAPPING_LABELS = {
@@ -125,7 +131,10 @@ const MAPPING_LABELS = {
   sheet: "Sheet",
   area: "Area",
   construction: "Construction",
+  constructionPhase: "Construction Phase",
   projectPhase: "Phase",
+  revitConduitId: "Revit Conduit ID",
+  shopRevision: "Shop Revision",
 };
 
 const MAPPING_FIELD_ORDER = [
@@ -156,7 +165,10 @@ const MAPPING_FIELD_ORDER = [
   "sheet",
   "area",
   "construction",
+  "constructionPhase",
   "projectPhase",
+  "revitConduitId",
+  "shopRevision",
 ];
 
 const MAPPING_ALIASES = {
@@ -193,7 +205,10 @@ const MAPPING_ALIASES = {
   sheet: ["sheet"],
   area: ["area"],
   construction: ["construction"],
-  projectPhase: ["phase", "construction phase"],
+  constructionPhase: ["construction phase", "phase", "project phase"],
+  projectPhase: ["phase", "construction phase", "project phase"],
+  revitConduitId: ["revit conduit id", "revitconduid", "revit conduit", "cond id", "conduit id revit"],
+  shopRevision: ["shop revision", "shoprevision", "revision", "shop rev"],
 };
 
 const normalizeText = (value) => String(value || "").trim();
@@ -294,17 +309,18 @@ const getConnectionTypeFromRow = (row) => {
 
   const hasBranchFrom = fromBranchCircuitPanel && !isIgnoredPanelLabel(fromBranchCircuitPanel);
   const hasToPullBox = toPullBox && !isIgnoredPanelLabel(toPullBox);
-  if (hasBranchFrom || hasToPullBox) {
-    return "branch";
-  }
-
   const hasFeederFrom = feederSupplyFrom && !isIgnoredPanelLabel(feederSupplyFrom);
   const hasFeederTo = feederTo && !isIgnoredPanelLabel(feederTo);
+
   if (hasFeederFrom || hasFeederTo) {
     return "feeder";
   }
 
-  return "unknown";
+  if (hasBranchFrom || hasToPullBox) {
+    return "branch";
+  }
+
+  return "NA";
 };
 
 const getCircuitPhaseLabel = (value) => {
@@ -805,6 +821,16 @@ const PanelSchedules = () => {
   const [expandedMissingRowKey, setExpandedMissingRowKey] = useState("");
   const [panelSearchQuery, setPanelSearchQuery] = useState("");
   const [listSortMode, setListSortMode] = useState("recent");
+  const [pageTab, setPageTab] = useState("schedules");
+  const [qualityReportTab, setQualityReportTab] = useState("current");
+  const [statusTablePanelFilter, setStatusTablePanelFilter] = useState("all");
+  const [statusTableContractorFilter, setStatusTableContractorFilter] = useState("all");
+  const [statusTableRevitFilter, setStatusTableRevitFilter] = useState("all");
+  const [statusTableDataFilter, setStatusTableDataFilter] = useState("all");
+  const [statusTablePhaseFilter, setStatusTablePhaseFilter] = useState("all");
+  const [statusTableSearchQuery, setStatusTableSearchQuery] = useState("");
+  const [manualCircuitAssignments, setManualCircuitAssignments] = useState({});
+  const [draftMissingCircuitSelections, setDraftMissingCircuitSelections] = useState({});
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [canView, setCanView] = useState(false);
   const [canManage, setCanManage] = useState(false);
@@ -901,10 +927,22 @@ const PanelSchedules = () => {
           })
           .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base", numeric: true }));
 
+        const savedPreferences = readPanelSchedulePreferences(id, user?.uid);
+        const lastUsedProjectId = savedPreferences?.projectId;
+        const fallbackProjectId = nextProjects[0]?.id || "";
+
         setProjects(nextProjects);
-        setSelectedProjectId((previous) =>
-          previous && nextProjects.some((project) => project.id === previous) ? previous : ""
-        );
+        setSelectedProjectId((previous) => {
+          if (previous && nextProjects.some((project) => project.id === previous)) {
+            return previous;
+          }
+
+          if (lastUsedProjectId && nextProjects.some((project) => project.id === lastUsedProjectId)) {
+            return lastUsedProjectId;
+          }
+
+          return fallbackProjectId;
+        });
       } catch (error) {
         console.error("Failed to load projects for panel schedules:", error);
         toast.error("Failed to load projects.");
@@ -1068,6 +1106,487 @@ const PanelSchedules = () => {
     },
     [activePanelHeaders, importPreview, selectedSchedule]
   );
+
+  const normalizeAssignedCircuitValues = useCallback((value) => {
+    const rawValues = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(",")
+        : [];
+
+    const normalized = rawValues
+      .flatMap((entry) => String(entry).split(","))
+      .map((entry) => Number(String(entry).trim()))
+      .filter((entry) => Number.isInteger(entry) && entry > 0);
+
+    return Array.from(new Set(normalized)).sort((left, right) => left - right);
+  }, []);
+
+  const buildMissingRowAssignmentKey = useCallback((scheduleId, entry, fallbackPanelName = "panel") => {
+    const panelName = normalizeText(entry?.panelName || fallbackPanelName);
+    const safeScheduleId = scheduleId || "unknown";
+    return [
+      safeScheduleId,
+      normalizePanelIdentity(panelName),
+      entry.rowNumber || "unknown",
+      normalizeText(entry.conduitId) || "na",
+    ].join("::");
+  }, []);
+
+  const getAvailableCircuitNumbersForPanel = useCallback((panelName, scheduleId = importPreview?.id || selectedSchedule?.id) => {
+    const targetPanelName = normalizeText(panelName);
+    if (!targetPanelName) return [];
+
+    const targetIdentity = normalizePanelIdentity(targetPanelName);
+    const scheduleForPanel = scheduleId
+      ? (schedules.find((schedule) => schedule.id === scheduleId) || null)
+      : null;
+
+    const circuitSource = scheduleForPanel?.circuits || activeCircuits || [];
+    const panelHeaderSource = scheduleForPanel?.panelHeaders || activePanelHeaders || [];
+
+    const usedNumbers = new Set(
+      circuitSource
+        .filter((row) => normalizePanelIdentity(row?.panelName) === targetIdentity)
+        .map((row) => normalizeCircuitNumber(row?.number))
+        .filter((value) => value !== null)
+    );
+
+    const targetPanel = panelHeaderSource.find(
+      (panel) => normalizePanelIdentity(panel?.panelName) === targetIdentity
+    );
+
+    const capacity = normalizePanelCircuitCapacity(targetPanel?.circuitCapacity || DEFAULT_PANEL_CIRCUIT_CAPACITY);
+    const assignedValues = new Set(
+      Object.entries(manualCircuitAssignments)
+        .filter(([key]) => {
+          const [keyScheduleId, keyPanelIdentity] = key.split("::");
+          return keyScheduleId === (scheduleId || "unknown") && keyPanelIdentity === targetIdentity;
+        })
+        .flatMap(([, value]) => normalizeAssignedCircuitValues(value))
+    );
+
+    const choices = [];
+    for (let number = 1; number <= capacity; number += 1) {
+      if (!usedNumbers.has(number) && !assignedValues.has(number)) {
+        choices.push(number);
+      }
+    }
+
+    return choices;
+  }, [activeCircuits, activePanelHeaders, importPreview?.id, manualCircuitAssignments, normalizeAssignedCircuitValues, schedules, selectedSchedule?.id]);
+
+  const dataQualityReportedKeys = useMemo(() => {
+    const keys = new Set();
+
+    const registerMissingRows = (missingRows = []) => {
+      missingRows.forEach((entry) => {
+        const panelName = normalizeText(entry?.panelName || "");
+        const conduitId = normalizeText(entry?.conduitId);
+        const normalizedConduitId = isIgnoredPanelLabel(conduitId) ? "blank" : conduitId;
+        const rowNumber = normalizeText(entry?.rowNumber || "");
+
+        if (!panelName && !normalizedConduitId && !rowNumber) return;
+
+        keys.add(`${panelName}::${normalizedConduitId}::${rowNumber || "unknown"}`);
+      });
+    };
+
+    schedules.forEach((schedule) => registerMissingRows(schedule?.missingCircuitRows));
+    if (importPreview?.missingCircuitRows) registerMissingRows(importPreview.missingCircuitRows);
+
+    return keys;
+  }, [importPreview, schedules]);
+
+  const statusTableRows = useMemo(() => {
+    const projectRows = schedules.flatMap((schedule) => {
+      const scheduleRows = Array.isArray(schedule?.circuits) ? schedule.circuits : [];
+      const missingRows = Array.isArray(schedule?.missingCircuitRows) ? schedule.missingCircuitRows : [];
+      const panelHeaderRows = Array.isArray(schedule?.panelHeaders) ? schedule.panelHeaders : [];
+      return [...scheduleRows, ...missingRows, ...panelHeaderRows];
+    });
+
+    const previewRows = Array.isArray(importPreview?.circuits) ? importPreview.circuits : [];
+    const previewMissingRows = Array.isArray(importPreview?.missingCircuitRows) ? importPreview.missingCircuitRows : [];
+    const previewHeaderRows = Array.isArray(importPreview?.panelHeaders) ? importPreview.panelHeaders : [];
+
+    const groupedRows = new Map();
+
+    const registerRow = (row) => {
+      const panelName = normalizeText(row?.panelName || row?.name || "");
+      const conduitId = normalizeText(row?.conduitId);
+      const normalizedConduitId = isIgnoredPanelLabel(conduitId) ? "" : conduitId;
+      const circuitNumber = normalizeCircuitNumber(row?.number ?? row?.circuitNumber);
+      const connectionType = getConnectionTypeFromRow(row);
+      if (!panelName && !normalizedConduitId && circuitNumber === null) return;
+
+      const matchingPanelGroup = !normalizedConduitId && panelName
+        ? Array.from(groupedRows.entries()).find(([_, existingRow]) => {
+            return normalizeText(existingRow?.panelName) === panelName && normalizeText(existingRow?.connectionType || "") === connectionType;
+          })
+        : null;
+
+      const groupKey = matchingPanelGroup ? matchingPanelGroup[0] : `${panelName || "Unassigned"}::${normalizedConduitId || "Unassigned"}::${connectionType}`;
+      const existing = groupedRows.get(groupKey) || {
+        panelName,
+        conduitId,
+        number: "",
+        conduitSize: "",
+        feederSupplyFrom: "",
+        feederTo: "",
+        fromBranchCircuitPanel: "",
+        toPullBox: "",
+        constructionPhase: "",
+        revitConduitId: "",
+        shopRevision: "",
+        providedByContractor: "",
+        revitStatus: "",
+        dataStatus: "",
+        groupedNumbers: [],
+        connectionType,
+        reportedInDataQuality: false,
+      };
+
+      if (circuitNumber !== null) {
+        const nextNumbers = existing.groupedNumbers || [];
+        if (!nextNumbers.includes(circuitNumber)) {
+          nextNumbers.push(circuitNumber);
+          nextNumbers.sort((left, right) => left - right);
+        }
+        existing.groupedNumbers = nextNumbers;
+        existing.number = nextNumbers.join(", ");
+      }
+
+      if (!existing.panelName && panelName) existing.panelName = panelName;
+      if (!existing.conduitId && normalizedConduitId) existing.conduitId = normalizedConduitId;
+      existing.connectionType = existing.connectionType || connectionType;
+
+      const rowConduitSize = normalizeText(row?.conduitSize);
+      const rowFeederSupplyFrom = normalizeText(row?.feederSupplyFrom);
+      const rowFeederTo = normalizeText(row?.feederTo);
+      const rowFromBranchCircuitPanel = normalizeText(row?.fromBranchCircuitPanel);
+      const rowToPullBox = normalizeText(row?.toPullBox);
+      const rowConstructionPhase = normalizeText(row?.constructionPhase || row?.projectPhase);
+      const rowRevitConduitId = normalizeText(row?.revitConduitId);
+      const rowShopRevision = normalizeText(row?.shopRevision);
+
+      if (!existing.conduitSize && rowConduitSize) existing.conduitSize = rowConduitSize;
+      if (!existing.feederSupplyFrom && rowFeederSupplyFrom) existing.feederSupplyFrom = rowFeederSupplyFrom;
+      if (!existing.feederTo && rowFeederTo) existing.feederTo = rowFeederTo;
+      if (!existing.fromBranchCircuitPanel && rowFromBranchCircuitPanel) existing.fromBranchCircuitPanel = rowFromBranchCircuitPanel;
+      if (!existing.toPullBox && rowToPullBox) existing.toPullBox = rowToPullBox;
+      if (!existing.constructionPhase && rowConstructionPhase) existing.constructionPhase = rowConstructionPhase;
+      if (!existing.revitConduitId && rowRevitConduitId) existing.revitConduitId = rowRevitConduitId;
+      if (!existing.shopRevision && rowShopRevision) existing.shopRevision = rowShopRevision;
+
+      const rowKey = `${panelName}::${normalizedConduitId || "blank"}::${normalizeText(row?.rowNumber || "unknown")}`;
+      existing.reportedInDataQuality = existing.reportedInDataQuality || dataQualityReportedKeys.has(rowKey) || (
+        panelName && Array.from(dataQualityReportedKeys).some((key) => key.startsWith(`${panelName}::`))
+      );
+
+      const contractorValue = normalizeOptionValue(row?.providedByContractor);
+      const revitValue = normalizeStatusValue(row?.revitStatus);
+      const dataValue = normalizeStatusValue(row?.dataStatus);
+
+      if (!existing.providedByContractor && contractorValue) existing.providedByContractor = contractorValue;
+      if (!existing.revitStatus && revitValue) existing.revitStatus = revitValue;
+      if (!existing.dataStatus && dataValue) existing.dataStatus = dataValue;
+
+      groupedRows.set(groupKey, existing);
+    };
+
+    [...projectRows, ...previewRows, ...previewMissingRows, ...previewHeaderRows].forEach(registerRow);
+
+    const groupedValues = Array.from(groupedRows.values());
+
+    return groupedValues.filter((row) => {
+      const panelName = normalizeText(row?.panelName);
+      const hasIdentity = panelName || normalizeText(row?.conduitId) || normalizeText(row?.number);
+      if (!hasIdentity) return false;
+
+      const isPlaceholderRow = !(
+        normalizeText(row?.conduitId) ||
+        normalizeText(row?.conduitSize) ||
+        normalizeText(row?.feederSupplyFrom) ||
+        normalizeText(row?.feederTo) ||
+        normalizeText(row?.fromBranchCircuitPanel) ||
+        normalizeText(row?.toPullBox) ||
+        normalizeText(row?.providedByContractor) ||
+        normalizeText(row?.revitStatus) ||
+        normalizeText(row?.dataStatus) ||
+        normalizeText(row?.number)
+      );
+
+      if (!isPlaceholderRow) return true;
+
+      if (!panelName) return true;
+
+      return !groupedValues.some((other) => {
+        if (other === row) return false;
+        if (normalizeText(other?.panelName) !== panelName) return false;
+        return Boolean(
+          normalizeText(other?.conduitId) ||
+          normalizeText(other?.conduitSize) ||
+          normalizeText(other?.feederSupplyFrom) ||
+          normalizeText(other?.feederTo) ||
+          normalizeText(other?.fromBranchCircuitPanel) ||
+          normalizeText(other?.toPullBox) ||
+          normalizeText(other?.providedByContractor) ||
+          normalizeText(other?.revitStatus) ||
+          normalizeText(other?.dataStatus) ||
+          normalizeText(other?.number)
+        );
+      });
+    });
+  }, [dataQualityReportedKeys, importPreview, schedules]);
+
+  const statusTablePanelOptions = useMemo(() => {
+    const panelNames = new Set();
+    statusTableRows.forEach((row) => {
+      const panelName = normalizeText(row?.panelName);
+      if (panelName) panelNames.add(panelName);
+    });
+
+    return Array.from(panelNames).sort((left, right) =>
+      left.localeCompare(right, undefined, { sensitivity: "base", numeric: true })
+    );
+  }, [statusTableRows]);
+
+  const statusTableContractorOptions = useMemo(() => {
+    const values = new Set();
+    statusTableRows.forEach((row) => {
+      const value = normalizeOptionValue(row?.providedByContractor);
+      if (value) values.add(value);
+    });
+
+    return Array.from(values).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [statusTableRows]);
+
+  const statusTableRevitOptions = useMemo(() => {
+    const values = new Set();
+    statusTableRows.forEach((row) => {
+      const value = normalizeStatusValue(row?.revitStatus);
+      if (value) values.add(value);
+    });
+
+    return Array.from(values).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [statusTableRows]);
+
+  const statusTableDataOptions = useMemo(() => {
+    const values = new Set();
+    statusTableRows.forEach((row) => {
+      const value = normalizeStatusValue(row?.dataStatus);
+      if (value) values.add(value);
+    });
+
+    return Array.from(values).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [statusTableRows]);
+
+  const statusTablePhaseOptions = useMemo(() => {
+    const values = new Set();
+    statusTableRows.forEach((row) => {
+      const value = normalizeStatusValue(row?.constructionPhase || row?.projectPhase);
+      if (value) values.add(value);
+    });
+
+    return Array.from(values).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [statusTableRows]);
+
+  const filteredStatusTableRows = useMemo(() => {
+    const searchTerm = normalizeText(statusTableSearchQuery).toLowerCase();
+
+    const rows = statusTableRows.filter((row) => {
+      const panelMatches = statusTablePanelFilter === "all" || normalizeText(row?.panelName) === statusTablePanelFilter;
+      const contractorValue = normalizeOptionValue(row?.providedByContractor);
+      const contractorMatches = statusTableContractorFilter === "all" || contractorValue === statusTableContractorFilter;
+      const revitValue = normalizeStatusValue(row?.revitStatus);
+      const revitMatches = statusTableRevitFilter === "all" || revitValue === statusTableRevitFilter;
+      const dataValue = normalizeStatusValue(row?.dataStatus);
+      const dataMatches = statusTableDataFilter === "all" || dataValue === statusTableDataFilter;
+      const phaseValue = normalizeStatusValue(row?.constructionPhase || row?.projectPhase);
+      const phaseMatches = statusTablePhaseFilter === "all" || phaseValue === statusTablePhaseFilter;
+      const searchableValue = [
+        row?.panelName,
+        row?.conduitId,
+        row?.revitConduitId,
+        row?.conduitSize,
+        row?.feederSupplyFrom,
+        row?.feederTo,
+        row?.fromBranchCircuitPanel,
+        row?.toPullBox,
+        row?.constructionPhase,
+        row?.projectPhase,
+        row?.shopRevision,
+        row?.providedByContractor,
+        row?.revitStatus,
+        row?.dataStatus,
+        Array.isArray(row?.groupedNumbers) ? row.groupedNumbers.join(", ") : row?.number,
+        getConnectionTypeFromRow(row),
+      ].join(" ").toLowerCase();
+      const searchMatches = !searchTerm || searchableValue.includes(searchTerm);
+
+      return panelMatches && contractorMatches && revitMatches && dataMatches && phaseMatches && searchMatches;
+    });
+
+    return rows.sort((left, right) => {
+      const leftPanel = normalizeText(left?.panelName || "");
+      const rightPanel = normalizeText(right?.panelName || "");
+      const leftNumbers = Array.isArray(left?.groupedNumbers) ? left.groupedNumbers : [];
+      const rightNumbers = Array.isArray(right?.groupedNumbers) ? right.groupedNumbers : [];
+      const leftNumber = leftNumbers.length ? leftNumbers[0] : normalizeCircuitNumber(left?.number);
+      const rightNumber = rightNumbers.length ? rightNumbers[0] : normalizeCircuitNumber(right?.number);
+
+      return leftPanel.localeCompare(rightPanel, undefined, { sensitivity: "base", numeric: true }) ||
+        (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) ? leftNumber - rightNumber : 0);
+    });
+  }, [statusTableContractorFilter, statusTableDataFilter, statusTablePanelFilter, statusTablePhaseFilter, statusTableRevitFilter, statusTableRows, statusTableSearchQuery]);
+
+  const statusTableSections = useMemo(() => {
+    const sections = {
+      feeder: [],
+      branch: [],
+    };
+
+    filteredStatusTableRows.forEach((row) => {
+      const type = getConnectionTypeFromRow(row);
+      if (type === "feeder") {
+        sections.feeder.push(row);
+      } else if (type === "branch") {
+        sections.branch.push(row);
+      }
+    });
+
+    return sections;
+  }, [filteredStatusTableRows]);
+
+  const renderStatusTableSection = (title, rows, sectionType) => {
+    const isFeeder = sectionType === "feeder";
+    const isBranch = sectionType === "branch";
+
+    return (
+      <div key={title} style={{ display: "grid", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #dfe3e8", paddingBottom: "6px" }}>
+          <h3 style={{ margin: 0, fontSize: "18px" }}>{title}</h3>
+          <span style={{ fontSize: "12px", color: "#475569", background: "#f1f5f9", padding: "4px 8px", borderRadius: "999px" }}>
+            {rows.length} row{rows.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <div style={{ overflowX: "auto", width: "100%" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #dfe3e8", tableLayout: "fixed" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Panel</th>
+                <th style={{ width: "8%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Circuit #</th>
+                <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Conduit ID</th>
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Revit Conduit ID</th>
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Conduit Size</th>
+                {!isBranch ? (
+                  <>
+                    <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Feeder Supply From</th>
+                    <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Feeder To</th>
+                  </>
+                ) : null}
+                {!isFeeder ? (
+                  <>
+                    <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>From Branch Circuit Panel</th>
+                    <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>To Pull Box</th>
+                  </>
+                ) : null}
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Construction Phase</th>
+                <th style={{ width: "8%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Type</th>
+                <th style={{ width: "12%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Provided by Contractor</th>
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Revit Status</th>
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Data Status</th>
+                <th style={{ width: "10%", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid #dfe3e8" }}>Shop Revision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length ? (
+                rows.map((row, index) => (
+                  <tr key={`${normalizeText(row?.panelName || "panel")}-${normalizeText(row?.number || index)}-${index}`}>
+                    <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.panelName || "-") || "-"}</td>
+                    <td style={{ width: "8%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>
+                      {normalizeText(row?.number) || (Array.isArray(row?.groupedNumbers) ? row.groupedNumbers.join(", ") : "-") || "-"}
+                    </td>
+                    <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.conduitId || "-") || "-"}</td>
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.revitConduitId || "-") || "-"}</td>
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.conduitSize || "-") || "-"}</td>
+                    {!isBranch ? (
+                      <>
+                        <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.feederSupplyFrom || "-") || "-"}</td>
+                        <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.feederTo || "-") || "-"}</td>
+                      </>
+                    ) : null}
+                    {!isFeeder ? (
+                      <>
+                        <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.fromBranchCircuitPanel || "-") || "-"}</td>
+                        <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.toPullBox || "-") || "-"}</td>
+                      </>
+                    ) : null}
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.constructionPhase || row?.projectPhase || "-") || "-"}</td>
+                    <td style={{ width: "8%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>
+                      {(() => {
+                        const connectionType = getConnectionTypeFromRow(row);
+                        return connectionType === "NA" ? "NA" : connectionType.charAt(0).toUpperCase() + connectionType.slice(1);
+                      })()}
+                    </td>
+                    <td style={{ width: "12%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeOptionValue(row?.providedByContractor) || "-"}</td>
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeStatusValue(row?.revitStatus) || "-"}</td>
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span>{normalizeStatusValue(row?.dataStatus) || "-"}</span>
+                        {row?.reportedInDataQuality ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: "999px", background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: 700 }}>
+                            Reported
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td style={{ width: "10%", padding: "10px 12px", borderBottom: "1px solid #edf2f7" }}>{normalizeText(row?.shopRevision || "-") || "-"}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={isFeeder ? 12 : 12} style={{ padding: "14px 12px", textAlign: "center", color: "#64748b" }}>
+                    No {title.toLowerCase()} rows match the current filters.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    if (statusTablePanelOptions.length && statusTablePanelFilter !== "all" && !statusTablePanelOptions.includes(statusTablePanelFilter)) {
+      setStatusTablePanelFilter("all");
+    }
+  }, [statusTablePanelFilter, statusTablePanelOptions]);
+
+  useEffect(() => {
+    setStatusTablePanelFilter("all");
+  }, [selectedProjectId]);
+
+  const allDataQualityReports = useMemo(() => {
+    if (!selectedProjectId || !schedules.length) return [];
+
+    return schedules
+      .map((schedule) => {
+        const missingRows = Array.isArray(schedule?.missingCircuitRows) ? schedule.missingCircuitRows : [];
+        if (!missingRows.length) return null;
+
+        return {
+          scheduleId: schedule.id,
+          scheduleName: schedule.name || "Untitled Panel",
+          missingRows,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.missingRows.length - left.missingRows.length || left.scheduleName.localeCompare(right.scheduleName, undefined, { sensitivity: "base", numeric: true }));
+  }, [schedules, selectedProjectId]);
   const circuitSections = useMemo(
     () => buildCircuitSections(activeCircuits, activePanelHeaders, importPreview?.name || selectedSchedule?.name || "Imported Panel"),
     [activeCircuits, activePanelHeaders, importPreview, selectedSchedule]
@@ -1251,6 +1770,101 @@ const PanelSchedules = () => {
     }
   };
 
+  const handleAssignMissingCircuit = useCallback(async (entry, assignedCircuitNumbers, scheduleIdOverride = selectedSchedule?.id || "active") => {
+    if (!entry || !assignedCircuitNumbers) return;
+
+    const normalizedAssignedValues = normalizeAssignedCircuitValues(assignedCircuitNumbers);
+    if (!normalizedAssignedValues.length) return;
+
+    const scheduleId = scheduleIdOverride || selectedSchedule?.id || "active";
+    const rowKey = buildMissingRowAssignmentKey(scheduleId, entry, selectedSchedule?.name || "panel");
+    setManualCircuitAssignments((previous) => ({
+      ...previous,
+      [rowKey]: normalizedAssignedValues,
+    }));
+
+    const nextCircuitEntries = normalizedAssignedValues.map((nextCircuitNumber) => ({
+      number: nextCircuitNumber,
+      side: nextCircuitNumber % 2 === 1 ? "left" : "right",
+      conduitId: normalizeText(entry.conduitId) || "",
+      conduitSize: normalizeText(entry.conduitSize) || "",
+      feederTo: normalizeText(entry.feederTo) || "",
+      sourcePanelLocation: normalizeText(entry.panelName) || "",
+      toPullBox: normalizeText(entry.toPullBox) || "",
+      feederSupplyFrom: normalizeText(entry.feederSupplyFrom) || "",
+      fromBranchCircuitPanel: normalizeText(entry.fromBranchCircuitPanel) || "",
+      description: "Assigned from Data Quality Report",
+      panelName: normalizeText(entry.panelName) || selectedSchedule?.name || "Imported Panel",
+      panelKey: normalizePanelKey(normalizeText(entry.panelName) || selectedSchedule?.name || "Imported Panel"),
+    }));
+
+    if (importPreview) {
+      setImportPreview((previous) => {
+        if (!previous) return previous;
+
+        const nextMissingRows = (previous.missingCircuitRows || []).filter((row) => {
+          const rowIdentity = buildMissingRowAssignmentKey(scheduleId, row, previous.name || "panel");
+          return rowIdentity !== rowKey;
+        });
+
+        const nextCircuits = [
+          ...(previous.circuits || []),
+          ...nextCircuitEntries,
+        ];
+
+        return {
+          ...previous,
+          circuits: nextCircuits,
+          circuitCount: nextCircuits.length,
+          missingCircuitRows: nextMissingRows,
+        };
+      });
+      return;
+    }
+
+    const scheduleToUpdate = schedules.find((schedule) => schedule.id === scheduleId) || selectedSchedule;
+    if (!scheduleToUpdate?.id || !id || !canManage) return;
+
+    const nextMissingRows = (scheduleToUpdate.missingCircuitRows || []).filter((row) => {
+      const rowIdentity = buildMissingRowAssignmentKey(scheduleToUpdate.id, row, scheduleToUpdate.name || "panel");
+      return rowIdentity !== rowKey;
+    });
+
+    const nextCircuits = [...(scheduleToUpdate.circuits || []), ...nextCircuitEntries];
+    const nextSchedule = {
+      ...scheduleToUpdate,
+      circuits: nextCircuits,
+      missingCircuitRows: nextMissingRows,
+      circuitCount: nextCircuits.length,
+      updatedBy: user?.uid || "",
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await updateDoc(doc(db, "churches", id, "panelSchedules", scheduleToUpdate.id), {
+        circuits: nextCircuits,
+        missingCircuitRows: nextMissingRows,
+        circuitCount: nextCircuits.length,
+        updatedBy: user?.uid || "",
+        updatedAt: serverTimestamp(),
+      });
+
+      setSchedules((current) =>
+        current.map((schedule) =>
+          schedule.id === scheduleToUpdate.id
+            ? {
+                ...schedule,
+                ...nextSchedule,
+              }
+            : schedule
+        )
+      );
+    } catch (error) {
+      console.error("Failed to assign circuit numbers to missing row:", error);
+      toast.error("Failed to assign the selected circuit numbers.");
+    }
+  }, [buildMissingRowAssignmentKey, canManage, id, importPreview, normalizeAssignedCircuitValues, schedules, selectedSchedule, user?.uid]);
+
   const clearExcelDraft = () => {
     setExcelRows([]);
     setExcelColumns([]);
@@ -1382,7 +1996,10 @@ const PanelSchedules = () => {
           sheet: "",
           area: "",
           construction: "",
+          constructionPhase: "",
           projectPhase: "",
+          revitConduitId: "",
+          shopRevision: "",
         });
       }
 
@@ -1390,14 +2007,17 @@ const PanelSchedules = () => {
     };
 
     excelRows.forEach((row, rowIndex) => {
+      const directPanelNameRaw =
+        normalizeText(row?.[columnMapping.panelName]) ||
+        normalizeText(row?.[columnMapping.circuitPanel]);
       const fromPanelOwnerRaw =
         normalizeText(row?.[columnMapping.feederSupplyFrom]) ||
-        normalizeText(row?.[columnMapping.fromBranchCircuitPanel]) ||
         normalizeText(row?.[columnMapping.sourcePanelLocation]);
+      const branchPanelOwnerRaw = normalizeText(row?.[columnMapping.fromBranchCircuitPanel]);
       const toPanelOwnerRaw = normalizeText(row?.[columnMapping.feederTo]);
 
-      // Create a panel entry only for the chosen ownership path.
-      const rowPanelOwnerName = ensurePanel(fromPanelOwnerRaw) || ensurePanel(toPanelOwnerRaw);
+      // Create a panel entry from the direct panel name, then branch panel source, then feeder ownership fields.
+      const rowPanelOwnerName = ensurePanel(directPanelNameRaw) || ensurePanel(branchPanelOwnerRaw) || ensurePanel(fromPanelOwnerRaw) || ensurePanel(toPanelOwnerRaw);
 
       if (!rowPanelOwnerName) return;
 
@@ -1452,6 +2072,9 @@ const PanelSchedules = () => {
       const feederSupplyFrom = normalizeText(row?.[columnMapping.feederSupplyFrom]);
       const fromBranchCircuitPanelValue = normalizeText(row?.[columnMapping.fromBranchCircuitPanel]);
       const description = normalizeText(row?.[columnMapping.description]);
+      const constructionPhaseValue = normalizeText(row?.[columnMapping.constructionPhase]) || normalizeText(row?.[columnMapping.projectPhase]);
+      const revitConduitIdValue = normalizeText(row?.[columnMapping.revitConduitId]);
+      const shopRevisionValue = normalizeText(row?.[columnMapping.shopRevision]);
 
       circuitNumbers.forEach((circuitNumber) => {
         circuits.push({
@@ -1468,6 +2091,10 @@ const PanelSchedules = () => {
           feederSupplyFrom,
           fromBranchCircuitPanel: fromBranchCircuitPanelValue,
           description,
+          constructionPhase: constructionPhaseValue,
+          projectPhase: constructionPhaseValue,
+          revitConduitId: revitConduitIdValue,
+          shopRevision: shopRevisionValue,
           panelName: rowPanelOwnerName,
           panelKey: normalizeText(rowPanelOwnerName).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
         });
@@ -1729,421 +2356,941 @@ const PanelSchedules = () => {
   }
 
   return (
-    <div className="panel-schedules-page">
-      <ChurchHeader id={id} user={user} />
+    <>
+      <div className="panel-schedules-page">
+        <ChurchHeader id={id} user={user} />
 
-      <div className="panel-schedules-shell">
-        <div className="panel-schedules-toolbar">
-          <div>
-            <h1>Panel Schedules</h1>
-            <p>Select an IglesiaTech project, import Excel, map columns, then save panel schedules.</p>
+        <div className="panel-schedules-shell">
+          <div className="panel-schedules-toolbar">
+            <div>
+              <h1>Panel Schedules</h1>
+              <p>Select an IglesiaTech project, import Excel, map columns, then save panel schedules.</p>
+            </div>
+
+            <div className="panel-schedules-toolbar-controls">
+              <label className="panel-schedules-project-picker">
+                <span>Project</span>
+                <select value={selectedProjectId} onChange={handleProjectChange} disabled={loadingProjects}>
+                  <option value="">Select a project</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className={`panel-schedules-import-btn ${importingExcel ? "is-loading" : ""}`}>
+                {importingExcel ? "Importing Excel..." : "Import Excel"}
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                  onChange={handleExcelImport}
+                  disabled={importingExcel || !canManage || !selectedProjectId}
+                />
+              </label>
+            </div>
           </div>
 
-          <div className="panel-schedules-toolbar-controls">
-            <label className="panel-schedules-project-picker">
-              <span>Project</span>
-              <select value={selectedProjectId} onChange={handleProjectChange} disabled={loadingProjects}>
-                <option value="">Select a project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "18px" }}>
+            <button
+              type="button"
+              onClick={() => setPageTab("schedules")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "999px",
+                border: "1px solid #d0d7de",
+                background: pageTab === "schedules" ? "#0f172a" : "#fff",
+                color: pageTab === "schedules" ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Schedules
+            </button>
+            <button
+              type="button"
+              onClick={() => setPageTab("data-quality")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "999px",
+                border: "1px solid #d0d7de",
+                background: pageTab === "data-quality" ? "#0f172a" : "#fff",
+                color: pageTab === "data-quality" ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Data Quality
+            </button>
+            <button
+              type="button"
+              onClick={() => setPageTab("status-table")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "999px",
+                border: "1px solid #d0d7de",
+                background: pageTab === "status-table" ? "#0f172a" : "#fff",
+                color: pageTab === "status-table" ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Status Table
+            </button>
+          </div>
+
+          {excelRows.length > 0 && !importPreview ? (
+            <section className="panel-schedules-mapping">
+              <div className="panel-schedules-mapping-header">
+                <h2>Map Excel Columns</h2>
+                <p>
+                  File: {excelSourceFileName} | Rows: {excelRows.length}
+                </p>
+              </div>
+              <div className="panel-schedules-mapping-grid">
+                {MAPPING_FIELD_ORDER.map((field) => (
+                  <label key={field} className="panel-schedules-mapping-field">
+                    <span>{MAPPING_LABELS[field]}</span>
+                    <select value={columnMapping[field] || ""} onChange={(event) => handleMappingChange(field, event.target.value)}>
+                      <option value="">Not mapped</option>
+                      {excelColumns.map((column) => (
+                        <option key={`${field}-${column}`} value={column}>
+                          {column}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 ))}
-              </select>
-            </label>
+              </div>
+              <div className="panel-schedules-mapping-actions">
+                <button type="button" onClick={buildPreviewFromExcel}>Build Preview</button>
+                <button type="button" onClick={handleDirectImport} disabled={savingImport}>
+                  {savingImport ? "Importing..." : "Import Directly"}
+                </button>
+                <button type="button" onClick={clearExcelDraft}>Clear File</button>
+              </div>
+            </section>
+          ) : null}
 
-            <label className={`panel-schedules-import-btn ${importingExcel ? "is-loading" : ""}`}>
-              {importingExcel ? "Importing Excel..." : "Import Excel"}
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-                onChange={handleExcelImport}
-                disabled={importingExcel || !canManage || !selectedProjectId}
-              />
-            </label>
-          </div>
-        </div>
-
-        {excelRows.length > 0 && !importPreview ? (
-          <section className="panel-schedules-mapping">
-            <div className="panel-schedules-mapping-header">
-              <h2>Map Excel Columns</h2>
-              <p>
-                File: {excelSourceFileName} | Rows: {excelRows.length}
-              </p>
-            </div>
-            <div className="panel-schedules-mapping-grid">
-              {MAPPING_FIELD_ORDER.map((field) => (
-                <label key={field} className="panel-schedules-mapping-field">
-                  <span>{MAPPING_LABELS[field]}</span>
-                  <select value={columnMapping[field] || ""} onChange={(event) => handleMappingChange(field, event.target.value)}>
-                    <option value="">Not mapped</option>
-                    {excelColumns.map((column) => (
-                      <option key={`${field}-${column}`} value={column}>
-                        {column}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="panel-schedules-mapping-actions">
-              <button type="button" onClick={buildPreviewFromExcel}>Build Preview</button>
-              <button type="button" onClick={handleDirectImport} disabled={savingImport}>
-                {savingImport ? "Importing..." : "Import Directly"}
-              </button>
-              <button type="button" onClick={clearExcelDraft}>Clear File</button>
-            </div>
-          </section>
-        ) : null}
-
-        <div className="panel-schedules-grid">
-          <aside className="panel-schedules-list">
-            <h2>Saved Schedules {selectedProject ? `- ${selectedProject.name}` : ""}</h2>
-            <div className="panel-schedules-list-controls">
-              <input
-                type="text"
-                placeholder="Search panels..."
-                value={panelSearchQuery}
-                onChange={(event) => setPanelSearchQuery(event.target.value)}
-                disabled={!selectedProjectId || loading}
-              />
-              <select
-                value={listSortMode}
-                onChange={(event) => setListSortMode(event.target.value)}
-                disabled={!selectedProjectId || loading}
-              >
-                <option value="recent">Newest First</option>
-                <option value="most-complete">Most Complete</option>
-              </select>
-              <button
-                type="button"
-                className="panel-schedules-delete-all"
-                onClick={handleDeleteAllSchedules}
-                disabled={!selectedProjectId || !schedules.length || deletingAll || loading}
-              >
-                {deletingAll ? "Deleting..." : "Delete All Panels"}
-              </button>
-            </div>
-            {!selectedProjectId ? (
-              <div className="panel-schedules-state">Select a project first to load panel schedules.</div>
-            ) : null}
-            {loading ? <div className="panel-schedules-state">Loading schedules...</div> : null}
-            {!loading && selectedProjectId && schedules.length === 0 ? (
-              <div className="panel-schedules-state">No panel schedules saved yet.</div>
-            ) : null}
-            {!loading && selectedProjectId && schedules.length > 0 && filteredSchedules.length === 0 ? (
-              <div className="panel-schedules-state">No panels match your search.</div>
-            ) : null}
-
-            {filteredSchedules.map((schedule) => {
-              const isSelected = schedule.id === selectedScheduleId && !importPreview;
-              return (
-                <button
-                  key={schedule.id}
-                  type="button"
-                  className={`panel-schedules-list-item ${isSelected ? "is-active" : ""}`}
-                  onClick={() => {
-                    setImportPreview(null);
-                    setExpandedCircuitKey("");
-                    setSelectedScheduleId(schedule.id);
-                  }}
-                >
-                  <div>
-                    <strong>{schedule.name || "Untitled Panel"}</strong>
-                    <span>{(schedule.circuitCount || schedule?.circuits?.length || 0)} circuits</span>
-                    <small>{formatDateTime(schedule.updatedAt || schedule.createdAt)}</small>
+          {pageTab === "status-table" ? (
+            <div style={{ display: "grid", gap: "16px", width: "100%" }}>
+              {selectedProjectId && (importPreview || selectedSchedule) ? (
+                <section className="panel-schedules-section" style={{ width: "100%" }}>
+                  <div className="panel-schedules-report-heading" style={{ marginBottom: "12px" }}>
+                    <h2>Contractor / Revit / Data Status</h2>
                   </div>
-                  {canManage ? (
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      className={`panel-schedules-delete ${deletingId === schedule.id ? "is-loading" : ""}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!deletingId) {
-                          handleDeleteSchedule(schedule.id);
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          if (!deletingId) {
-                            handleDeleteSchedule(schedule.id);
-                          }
-                        }
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px", flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Search</span>
+                      <input
+                        type="text"
+                        value={statusTableSearchQuery}
+                        onChange={(event) => setStatusTableSearchQuery(event.target.value)}
+                        placeholder="Search rows..."
+                        style={{ minWidth: "220px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      />
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Panel</span>
+                      <select
+                        value={statusTablePanelFilter}
+                        onChange={(event) => setStatusTablePanelFilter(event.target.value)}
+                        style={{ minWidth: "180px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      >
+                        <option value="all">All Panels</option>
+                        {statusTablePanelOptions.map((panelName) => (
+                          <option key={panelName} value={panelName}>
+                            {panelName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Contractor</span>
+                      <select
+                        value={statusTableContractorFilter}
+                        onChange={(event) => setStatusTableContractorFilter(event.target.value)}
+                        style={{ minWidth: "150px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      >
+                        <option value="all">All</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                        {statusTableContractorOptions
+                          .filter((option) => option !== "Yes" && option !== "No")
+                          .map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Revit Status</span>
+                      <select
+                        value={statusTableRevitFilter}
+                        onChange={(event) => setStatusTableRevitFilter(event.target.value)}
+                        style={{ minWidth: "170px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      >
+                        <option value="all">All</option>
+                        {statusTableRevitOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Data Status</span>
+                      <select
+                        value={statusTableDataFilter}
+                        onChange={(event) => setStatusTableDataFilter(event.target.value)}
+                        style={{ minWidth: "170px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      >
+                        <option value="all">All</option>
+                        {statusTableDataOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}>
+                      <span>Phase</span>
+                      <select
+                        value={statusTablePhaseFilter}
+                        onChange={(event) => setStatusTablePhaseFilter(event.target.value)}
+                        style={{ minWidth: "170px", padding: "6px 10px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                      >
+                        <option value="all">All</option>
+                        {statusTablePhaseOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div style={{ display: "grid", gap: "18px", width: "100%" }}>
+                    {renderStatusTableSection("Feeder", statusTableSections.feeder, "feeder")}
+                    {renderStatusTableSection("Branch", statusTableSections.branch, "branch")}
+                  </div>
+                </section>
+              ) : (
+                <div className="panel-schedules-state">Choose a project to review status data.</div>
+              )}
+            </div>
+          ) : null}
+
+          {pageTab === "data-quality" ? (
+            <div style={{ display: "grid", gap: "16px" }}>
+              {selectedProjectId && (importPreview || selectedSchedule) ? (
+                <>
+                  <div className="panel-schedules-report-heading" style={{ marginBottom: "12px", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                    <span>Data Quality Report</span>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="panel-schedules-report-tab"
+                        onClick={() => setQualityReportTab("current")}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: "999px",
+                          border: "1px solid #d0d7de",
+                          background: qualityReportTab === "current" ? "#0f172a" : "#fff",
+                          color: qualityReportTab === "current" ? "#fff" : "#0f172a",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Current Panel
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-schedules-report-tab"
+                        onClick={() => setQualityReportTab("all")}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: "999px",
+                          border: "1px solid #d0d7de",
+                          background: qualityReportTab === "all" ? "#0f172a" : "#fff",
+                          color: qualityReportTab === "all" ? "#fff" : "#0f172a",
+                          cursor: "pointer",
+                        }}
+                      >
+                        All Panels
+                      </button>
+                    </div>
+                  </div>
+
+                  {qualityReportTab === "current" ? (
+                    <section className="panel-schedules-section panel-schedules-missing-report">
+                      <div className="panel-schedules-report-heading">
+                        <h2>Rows Not Imported: Missing Circuit #</h2>
+                      </div>
+                      {activeMissingCircuitRows.length ? (
+                        <>
+                          <p>
+                            {activeMissingCircuitRows.length} row(s) were skipped because Circuit # was blank or invalid.
+                          </p>
+                          <div className="panel-schedules-missing-list">
+                            {activeMissingCircuitRows.map((entry, index) => {
+                              const itemKey = `missing-circuit-${entry.rowNumber}-${index}`;
+                              const isExpanded = expandedMissingRowKey === itemKey;
+                              const scheduleIdForAssignment = selectedSchedule?.id || "active";
+                              const availableCircuitNumbers = getAvailableCircuitNumbersForPanel(
+                                entry.panelName || selectedSchedule?.name || "",
+                                scheduleIdForAssignment
+                              );
+                              const rowAssignmentKey = buildMissingRowAssignmentKey(
+                                scheduleIdForAssignment,
+                                entry,
+                                selectedSchedule?.name || "panel"
+                              );
+                              const savedAssignmentValue = normalizeAssignedCircuitValues(
+                                manualCircuitAssignments[rowAssignmentKey]
+                              );
+                              const draftAssignmentValue = draftMissingCircuitSelections[rowAssignmentKey] ?? savedAssignmentValue;
+                              const hasUnsavedSelection = JSON.stringify(draftAssignmentValue) !== JSON.stringify(savedAssignmentValue);
+
+                              const summaryItems = [
+                                ["Feeder Supply From", entry.feederSupplyFrom],
+                                ["Feeder to", entry.feederTo],
+                                ["From Branch Circuit Panel", entry.fromBranchCircuitPanel],
+                                ["To Pull Box", entry.toPullBox],
+                                ["Conduit Size", entry.conduitSize],
+                              ].filter(([, value]) => {
+                                const nextValue = normalizeText(value);
+                                return nextValue && !isIgnoredPanelLabel(nextValue) && nextValue !== "-";
+                              });
+
+                              return (
+                                <article key={itemKey} className={`panel-schedules-missing-item ${isExpanded ? "is-expanded" : ""}`}>
+                                  <button
+                                    type="button"
+                                    className="panel-schedules-missing-toggle"
+                                    onClick={() => setExpandedMissingRowKey((current) => (current === itemKey ? "" : itemKey))}
+                                    aria-expanded={isExpanded}
+                                  >
+                                    <strong>Row {entry.rowNumber}</strong>
+                                    <div className="panel-schedules-missing-inline">
+                                      {summaryItems.length ? (
+                                        summaryItems.map(([label, value]) => (
+                                          <span key={`${itemKey}-${label}`}>{label}: {value}</span>
+                                        ))
+                                      ) : (
+                                        <span>No non-empty feeder fields on this row.</span>
+                                      )}
+                                    </div>
+                                  </button>
+
+                                  {isExpanded ? (
+                                    <div className="panel-schedules-missing-meta">
+                                      <span>Panel: {entry.panelName || "-"}</span>
+                                      <span>Conduit ID: {entry.conduitId || "-"}</span>
+                                      <span>Conduit Size: {entry.conduitSize || "-"}</span>
+                                      <span>Mapped Circuit Column: {entry.mappedCircuitColumn || "-"}</span>
+                                      <span>Mapped Circuit Value: {entry.mappedCircuitValue || "-"}</span>
+                                      <span>Primary Circuit Column: {entry.primaryCircuitColumn || "-"}</span>
+                                      <span>Primary Circuit Value: {entry.primaryCircuitValue || "-"}</span>
+                                      <label style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }}>
+                                        <span>Assign available circuit #</span>
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                          {availableCircuitNumbers.length ? (
+                                            availableCircuitNumbers.map((circuitNumber) => {
+                                              const checked = draftAssignmentValue.includes(circuitNumber);
+                                              return (
+                                                <label
+                                                  key={`${itemKey}-circuit-${circuitNumber}`}
+                                                  style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: "6px",
+                                                    padding: "6px 8px",
+                                                    border: "1px solid #d0d7de",
+                                                    borderRadius: "8px",
+                                                    background: checked ? "#e8f1ff" : "#fff",
+                                                    cursor: canManage ? "pointer" : "not-allowed",
+                                                  }}
+                                                >
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    disabled={!canManage}
+                                                    onChange={(event) => {
+                                                      const nextValues = event.target.checked
+                                                        ? Array.from(new Set([...draftAssignmentValue, circuitNumber])).sort((a, b) => a - b)
+                                                        : draftAssignmentValue.filter((value) => value !== circuitNumber);
+                                                      setDraftMissingCircuitSelections((previous) => ({
+                                                        ...previous,
+                                                        [rowAssignmentKey]: nextValues,
+                                                      }));
+                                                    }}
+                                                  />
+                                                  <span>#{circuitNumber}</span>
+                                                </label>
+                                              );
+                                            })
+                                          ) : (
+                                            <span style={{ color: "#64748b" }}>No free circuits available</span>
+                                          )}
+                                        </div>
+                                        {hasUnsavedSelection ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              handleAssignMissingCircuit(entry, draftAssignmentValue, scheduleIdForAssignment);
+                                              setDraftMissingCircuitSelections((previous) => ({
+                                                ...previous,
+                                                [rowAssignmentKey]: draftAssignmentValue,
+                                              }));
+                                            }}
+                                            style={{
+                                              marginTop: "8px",
+                                              alignSelf: "flex-start",
+                                              padding: "6px 10px",
+                                              borderRadius: "8px",
+                                              border: "1px solid #0f172a",
+                                              background: "#0f172a",
+                                              color: "#fff",
+                                              cursor: "pointer",
+                                            }}
+                                          >
+                                            Save selected circuits
+                                          </button>
+                                        ) : null}
+                                      </label>
+                                    </div>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <p>No rows are currently missing Circuit # for this panel.</p>
+                      )}
+                    </section>
+                  ) : null}
+
+                  {qualityReportTab === "all" ? (
+                    <section className="panel-schedules-section panel-schedules-missing-report">
+                      <div className="panel-schedules-report-heading">
+                        <h2>All Panels: Data Quality Reports</h2>
+                      </div>
+                      {allDataQualityReports.length ? (
+                        <div className="panel-schedules-missing-list">
+                          {allDataQualityReports.map((report) => (
+                            <article key={report.scheduleId} className="panel-schedules-missing-item is-expanded" style={{ marginBottom: "12px" }}>
+                              <div className="panel-schedules-missing-toggle" style={{ cursor: "default" }}>
+                                <strong>{report.scheduleName}</strong>
+                                <div className="panel-schedules-missing-inline">
+                                  <span>{report.missingRows.length} missing Circuit # row(s)</span>
+                                </div>
+                              </div>
+                              <div className="panel-schedules-missing-meta">
+                                {report.missingRows.map((entry, index) => {
+                                  const rowAssignmentKey = buildMissingRowAssignmentKey(report.scheduleId, entry, report.scheduleName);
+                                  const availableCircuitNumbers = getAvailableCircuitNumbersForPanel(
+                                    entry.panelName || report.scheduleName,
+                                    report.scheduleId
+                                  );
+                                  const savedAssignmentValue = normalizeAssignedCircuitValues(manualCircuitAssignments[rowAssignmentKey]);
+                                  const draftAssignmentValue = draftMissingCircuitSelections[rowAssignmentKey] ?? savedAssignmentValue;
+                                  const hasUnsavedSelection = JSON.stringify(draftAssignmentValue) !== JSON.stringify(savedAssignmentValue);
+
+                                  return (
+                                    <div key={`${report.scheduleId}-row-${entry.rowNumber || index}`} style={{ display: "grid", gap: "8px", padding: "8px 0", borderTop: index > 0 ? "1px solid #e2e8f0" : "none" }}>
+                                      <span>Row {entry.rowNumber || index + 1}</span>
+                                      <span>Panel: {entry.panelName || "-"}</span>
+                                      <span>Conduit ID: {entry.conduitId || "-"}</span>
+                                      <span>Conduit Size: {entry.conduitSize || "-"}</span>
+                                      <span>Feeder Supply From: {entry.feederSupplyFrom || "-"}</span>
+                                      <span>Feeder to: {entry.feederTo || "-"}</span>
+                                      <span>From Branch Circuit Panel: {entry.fromBranchCircuitPanel || "-"}</span>
+                                      <span>To Pull Box: {entry.toPullBox || "-"}</span>
+                                      <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                        <span>Assign available circuit #</span>
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                          {availableCircuitNumbers.length ? (
+                                            availableCircuitNumbers.map((circuitNumber) => {
+                                              const checked = draftAssignmentValue.includes(circuitNumber);
+                                              return (
+                                                <label
+                                                  key={`${rowAssignmentKey}-circuit-${circuitNumber}`}
+                                                  style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: "6px",
+                                                    padding: "6px 8px",
+                                                    border: "1px solid #d0d7de",
+                                                    borderRadius: "8px",
+                                                    background: checked ? "#e8f1ff" : "#fff",
+                                                    cursor: canManage ? "pointer" : "not-allowed",
+                                                  }}
+                                                >
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    disabled={!canManage}
+                                                    onChange={(event) => {
+                                                      const nextValues = event.target.checked
+                                                        ? Array.from(new Set([...draftAssignmentValue, circuitNumber])).sort((a, b) => a - b)
+                                                        : draftAssignmentValue.filter((value) => value !== circuitNumber);
+                                                      setDraftMissingCircuitSelections((previous) => ({
+                                                        ...previous,
+                                                        [rowAssignmentKey]: nextValues,
+                                                      }));
+                                                    }}
+                                                  />
+                                                  <span>#{circuitNumber}</span>
+                                                </label>
+                                              );
+                                            })
+                                          ) : (
+                                            <span style={{ color: "#64748b" }}>No free circuits available</span>
+                                          )}
+                                        </div>
+                                        {hasUnsavedSelection ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              handleAssignMissingCircuit(entry, draftAssignmentValue, report.scheduleId);
+                                              setDraftMissingCircuitSelections((previous) => ({
+                                                ...previous,
+                                                [rowAssignmentKey]: draftAssignmentValue,
+                                              }));
+                                            }}
+                                            style={{
+                                              marginTop: "8px",
+                                              alignSelf: "flex-start",
+                                              padding: "6px 10px",
+                                              borderRadius: "8px",
+                                              border: "1px solid #0f172a",
+                                              background: "#0f172a",
+                                              color: "#fff",
+                                              cursor: "pointer",
+                                            }}
+                                          >
+                                            Save selected circuits
+                                          </button>
+                                        ) : null}
+                                      </label>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>No data quality issues found across the panel schedules for this project.</p>
+                      )}
+                    </section>
+                  ) : null}
+                </>
+              ) : (
+                <div className="panel-schedules-state">Choose a project to review data quality issues.</div>
+              )}
+            </div>
+          ) : null}
+
+          {pageTab === "schedules" ? (
+            <div className="panel-schedules-grid">
+              <aside className="panel-schedules-list">
+                <h2>Saved Schedules {selectedProject ? `- ${selectedProject.name}` : ""}</h2>
+                <div className="panel-schedules-list-controls">
+                  <input
+                    type="text"
+                    placeholder="Search panels..."
+                    value={panelSearchQuery}
+                    onChange={(event) => setPanelSearchQuery(event.target.value)}
+                    disabled={!selectedProjectId || loading}
+                  />
+                  <select
+                    value={listSortMode}
+                    onChange={(event) => setListSortMode(event.target.value)}
+                    disabled={!selectedProjectId || loading}
+                  >
+                    <option value="recent">Newest First</option>
+                    <option value="most-complete">Most Complete</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="panel-schedules-delete-all"
+                    onClick={handleDeleteAllSchedules}
+                    disabled={!selectedProjectId || !schedules.length || deletingAll || loading}
+                  >
+                    {deletingAll ? "Deleting..." : "Delete All Panels"}
+                  </button>
+                </div>
+                {!selectedProjectId ? (
+                  <div className="panel-schedules-state">Select a project first to load panel schedules.</div>
+                ) : null}
+                {loading ? <div className="panel-schedules-state">Loading schedules...</div> : null}
+                {!loading && selectedProjectId && schedules.length === 0 ? (
+                  <div className="panel-schedules-state">No panel schedules saved yet.</div>
+                ) : null}
+                {!loading && selectedProjectId && schedules.length > 0 && filteredSchedules.length === 0 ? (
+                  <div className="panel-schedules-state">No panels match your search.</div>
+                ) : null}
+
+                {filteredSchedules.map((schedule) => {
+                  const isSelected = schedule.id === selectedScheduleId && !importPreview;
+                  return (
+                    <button
+                      key={schedule.id}
+                      type="button"
+                      className={`panel-schedules-list-item ${isSelected ? "is-active" : ""}`}
+                      onClick={() => {
+                        setImportPreview(null);
+                        setExpandedCircuitKey("");
+                        setSelectedScheduleId(schedule.id);
                       }}
                     >
-                      {deletingId === schedule.id ? "..." : "Delete"}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </aside>
-
-          <main className="panel-schedules-content">
-            {!importPreview && filteredSchedules.length > 0 ? (
-              <div className="panel-schedules-dataset-nav" role="group" aria-label="Dataset navigation">
-                <button
-                  type="button"
-                  onClick={() => goToAdjacentSchedule(-1)}
-                  disabled={!canGoToPreviousSchedule}
-                >
-                  &lt;&lt; Previous
-                </button>
-                <span>
-                  Dataset {selectedScheduleIndex >= 0 ? selectedScheduleIndex + 1 : 1} of {filteredSchedules.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => goToAdjacentSchedule(1)}
-                  disabled={!canGoToNextSchedule}
-                >
-                  Next &gt;&gt;
-                </button>
-              </div>
-            ) : null}
-
-            {importPreview ? (
-              <div className="panel-schedules-preview-banner">
-                <strong>Unsaved Import:</strong> {importPreview.sourceFileName} | {importPreview.circuitCount} circuits
-                <div className="panel-schedules-preview-actions">
-                  <button type="button" onClick={handleDiscardImport} disabled={savingImport}>
-                    Discard
-                  </button>
-                  <button type="button" onClick={handleSaveImport} disabled={savingImport}>
-                    {savingImport ? "Saving..." : "Save Schedule"}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {!selectedProjectId ? (
-              <div className="panel-schedules-state">Choose a project to start importing or viewing panel schedules.</div>
-            ) : null}
-
-            {selectedProjectId && !importPreview && !selectedSchedule ? (
-              <div className="panel-schedules-state">Import Excel and build preview, or select a saved schedule.</div>
-            ) : null}
-
-            {selectedProjectId && (activeCircuits.length > 0 || activePanelHeaders.length > 0 || selectedSchedule) ? (
-              <section className="panel-schedules-section">
-                <h2>Circuit Layout ({activeCircuits.length || DEFAULT_PANEL_CIRCUIT_CAPACITY})</h2>
-
-                {circuitSections.map((section) => {
-                  const sectionPanel = panelHeaderByIdentity.get(normalizePanelIdentity(section.panelName)) || null;
-                  const sectionPanelKey =
-                    sectionPanel?.panelKey || `${sectionPanel?.panelName || section.panelName || "panel"}-${sectionPanel?.__panelIndex || 0}`;
-
-                  return (
-                    <div className="panel-schedules-split-wrap" key={`section-${section.panelName}`}>
-                      <div className="panel-schedules-split-header">
-                        <h3>{section.panelName}</h3>
-                        {sectionPanel ? (
-                          <div className="panel-schedules-split-header-meta">
-                            {PANEL_HEADER_DISPLAY_FIELDS.map((field) => (
-                              <span key={`${sectionPanelKey}-${field.key}`}>
-                                {field.label}: {sectionPanel[field.key] || "-"}
-                              </span>
-                            ))}
-                            <span>
-                              Circuit Capacity:
-                              <select
-                                value={normalizePanelCircuitCapacity(sectionPanel?.circuitCapacity)}
-                                onChange={(event) =>
-                                  handlePanelCircuitCapacityChange(
-                                    sectionPanelKey,
-                                    event.target.value
-                                  )
-                                }
-                                disabled={!importPreview && !canManage}
-                              >
-                                {PANEL_CIRCUIT_CAPACITY_OPTIONS.map((size) => (
-                                  <option key={`${sectionPanelKey}-capacity-${size}`} value={size}>
-                                    {size}
-                                  </option>
-                                ))}
-                              </select>
-                            </span>
-                          </div>
-                        ) : null}
+                      <div>
+                        <strong>{schedule.name || "Untitled Panel"}</strong>
+                        <span>{(schedule.circuitCount || schedule?.circuits?.length || 0)} circuits</span>
+                        <small>{formatDateTime(schedule.updatedAt || schedule.createdAt)}</small>
                       </div>
-
-                      <div className="panel-schedules-split-rows">
-                        {section.pairRows.map(({ baseNumber, oddCircuit, evenCircuit }) => (
-                          <div className="panel-schedules-split-row" key={`${section.panelName}-${baseNumber}`}>
-                            {(() => {
-                              const oddCardKey = `${section.panelName}-${baseNumber}-left`;
-                              const evenCardKey = `${section.panelName}-${baseNumber}-right`;
-                              return (
-                                <>
-                            <CircuitCard
-                              circuitNumber={oddCircuit?.number || baseNumber}
-                              row={oddCircuit}
-                              side="left"
-                              expanded={expandedCircuitKey === oddCardKey}
-                              onToggle={() =>
-                                setExpandedCircuitKey((current) => (current === oddCardKey ? "" : oddCardKey))
+                      {canManage ? (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className={`panel-schedules-delete ${deletingId === schedule.id ? "is-loading" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!deletingId) {
+                              handleDeleteSchedule(schedule.id);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (!deletingId) {
+                                handleDeleteSchedule(schedule.id);
                               }
-                              conduitColor={
-                                conduitColorByIdentity.get(normalizePanelIdentity(oddCircuit?.conduitId || "")) || null
-                              }
-                            />
-                            <CircuitCard
-                              circuitNumber={evenCircuit?.number || baseNumber + 1}
-                              row={evenCircuit}
-                              side="right"
-                              expanded={expandedCircuitKey === evenCardKey}
-                              onToggle={() =>
-                                setExpandedCircuitKey((current) => (current === evenCardKey ? "" : evenCardKey))
-                              }
-                              conduitColor={
-                                conduitColorByIdentity.get(normalizePanelIdentity(evenCircuit?.conduitId || "")) || null
-                              }
-                            />
-                                </>
-                              );
-                            })()}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                            }
+                          }}
+                        >
+                          {deletingId === schedule.id ? "..." : "Delete"}
+                        </span>
+                      ) : null}
+                    </button>
                   );
                 })}
-              </section>
-            ) : null}
+              </aside>
 
-            {selectedProjectId && (importPreview || selectedSchedule) ? (
-              <section className="panel-schedules-section panel-schedules-conduit-report">
-                <div className="panel-schedules-report-heading">
-                  <span>Conduit Report</span>
-                  <h2>Conduit Schedule By Color Group</h2>
-                </div>
-                {conduitScheduleRows.length ? (
-                  <div className="panel-schedules-conduit-list">
-                    {conduitScheduleRows.map((entry) => {
-                      const colorMeta =
-                        conduitColorByIdentity.get(entry.conduitIdentity) ||
-                        buildConduitColorMeta(entry.conduitId);
+              <main className="panel-schedules-content">
+                {!importPreview && filteredSchedules.length > 0 ? (
+                  <div className="panel-schedules-dataset-nav" role="group" aria-label="Dataset navigation">
+                    <button
+                      type="button"
+                      onClick={() => goToAdjacentSchedule(-1)}
+                      disabled={!canGoToPreviousSchedule}
+                    >
+                      &lt;&lt; Previous
+                    </button>
+                    <span>
+                      Dataset {selectedScheduleIndex >= 0 ? selectedScheduleIndex + 1 : 1} of {filteredSchedules.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => goToAdjacentSchedule(1)}
+                      disabled={!canGoToNextSchedule}
+                    >
+                      Next &gt;&gt;
+                    </button>
+                  </div>
+                ) : null}
+
+                {importPreview ? (
+                  <div className="panel-schedules-preview-banner">
+                    <strong>Unsaved Import:</strong> {importPreview.sourceFileName} | {importPreview.circuitCount} circuits
+                    <div className="panel-schedules-preview-actions">
+                      <button type="button" onClick={handleDiscardImport} disabled={savingImport}>
+                        Discard
+                      </button>
+                      <button type="button" onClick={handleSaveImport} disabled={savingImport}>
+                        {savingImport ? "Saving..." : "Save Schedule"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {!selectedProjectId ? (
+                  <div className="panel-schedules-state">Choose a project to start importing or viewing panel schedules.</div>
+                ) : null}
+
+                {selectedProjectId && !importPreview && !selectedSchedule ? (
+                  <div className="panel-schedules-state">Import Excel and build preview, or select a saved schedule.</div>
+                ) : null}
+
+                {selectedProjectId && (activeCircuits.length > 0 || activePanelHeaders.length > 0 || selectedSchedule) ? (
+                  <section className="panel-schedules-section">
+                    <h2>Circuit Layout ({activeCircuits.length || DEFAULT_PANEL_CIRCUIT_CAPACITY})</h2>
+
+                    {circuitSections.map((section) => {
+                      const sectionPanel = panelHeaderByIdentity.get(normalizePanelIdentity(section.panelName)) || null;
+                      const sectionPanelKey =
+                        sectionPanel?.panelKey || `${sectionPanel?.panelName || section.panelName || "panel"}-${sectionPanel?.__panelIndex || 0}`;
 
                       return (
-                        <article className="panel-schedules-conduit-item" key={`conduit-report-${entry.conduitIdentity}`}>
-                          <div className="panel-schedules-conduit-item-title">
-                            <span
-                              className="panel-schedules-conduit-dot"
-                              style={{ background: colorMeta.accent }}
-                              aria-hidden="true"
-                            />
-                            <strong>{entry.conduitId}</strong>
-                            {entry.connectionType !== "unknown" ? (
-                              <span className={`panel-schedules-conduit-type type-${entry.connectionType}`}>
-                                {entry.connectionType === "branch" ? "Branch" : "Feeder"}
-                              </span>
+                        <div className="panel-schedules-split-wrap" key={`section-${section.panelName}`}>
+                          <div className="panel-schedules-split-header">
+                            <h3>{section.panelName}</h3>
+                            {sectionPanel ? (
+                              <div className="panel-schedules-split-header-meta">
+                                {PANEL_HEADER_DISPLAY_FIELDS.map((field) => (
+                                  <span key={`${sectionPanelKey}-${field.key}`}>
+                                    {field.label}: {sectionPanel[field.key] || "-"}
+                                  </span>
+                                ))}
+                                <span>
+                                  Circuit Capacity:
+                                  <select
+                                    value={normalizePanelCircuitCapacity(sectionPanel?.circuitCapacity)}
+                                    onChange={(event) =>
+                                      handlePanelCircuitCapacityChange(
+                                        sectionPanelKey,
+                                        event.target.value
+                                      )
+                                    }
+                                    disabled={!importPreview && !canManage}
+                                  >
+                                    {PANEL_CIRCUIT_CAPACITY_OPTIONS.map((size) => (
+                                      <option key={`${sectionPanelKey}-capacity-${size}`} value={size}>
+                                        {size}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </span>
+                              </div>
                             ) : null}
-                            <span>Size: {entry.primarySize}</span>
                           </div>
-                          {entry.connectionType === "feeder" ? (
-                            <p>
-                              Feeder Supply From: {entry.feederSupplyFrom} | Feeder to: {entry.feederTo}
-                            </p>
-                          ) : null}
-                          {entry.connectionType === "branch" ? (
-                            <p>
-                              From Branch Circuit Panel: {entry.fromBranchCircuitPanel} | To Pull Box: {entry.toPullBox}
-                            </p>
-                          ) : null}
-                          {entry.sizeOptions.length > 1 ? (
-                            <p className="panel-schedules-conduit-warning">
-                              Multiple sizes found: {entry.sizeOptions.join(", ")}
-                            </p>
-                          ) : null}
-                          <p>
-                            Circuits: {entry.circuitNumbers.length ? entry.circuitNumbers.join(", ") : "-"}
-                          </p>
-                        </article>
+
+                          <div className="panel-schedules-split-rows">
+                            {section.pairRows.map(({ baseNumber, oddCircuit, evenCircuit }) => (
+                              <div className="panel-schedules-split-row" key={`${section.panelName}-${baseNumber}`}>
+                                {(() => {
+                                  const oddCardKey = `${section.panelName}-${baseNumber}-left`;
+                                  const evenCardKey = `${section.panelName}-${baseNumber}-right`;
+                                  return (
+                                    <>
+                                      <CircuitCard
+                                        circuitNumber={oddCircuit?.number || baseNumber}
+                                        row={oddCircuit}
+                                        side="left"
+                                        expanded={expandedCircuitKey === oddCardKey}
+                                        onToggle={() =>
+                                          setExpandedCircuitKey((current) => (current === oddCardKey ? "" : oddCardKey))
+                                        }
+                                        conduitColor={
+                                          conduitColorByIdentity.get(normalizePanelIdentity(oddCircuit?.conduitId || "")) || null
+                                        }
+                                      />
+                                      <CircuitCard
+                                        circuitNumber={evenCircuit?.number || baseNumber + 1}
+                                        row={evenCircuit}
+                                        side="right"
+                                        expanded={expandedCircuitKey === evenCardKey}
+                                        onToggle={() =>
+                                          setExpandedCircuitKey((current) => (current === evenCardKey ? "" : evenCardKey))
+                                        }
+                                        conduitColor={
+                                          conduitColorByIdentity.get(normalizePanelIdentity(evenCircuit?.conduitId || "")) || null
+                                        }
+                                      />
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       );
                     })}
-                  </div>
-                ) : (
-                  <p>No conduit groups found for this panel view.</p>
-                )}
-              </section>
-            ) : null}
+                  </section>
+                ) : null}
 
-            {selectedProjectId && (importPreview || selectedSchedule) ? (
-              <section className="panel-schedules-section panel-schedules-missing-report">
-                <div className="panel-schedules-report-heading">
-                  <span>Data Quality Report</span>
-                  <h2>Rows Not Imported: Missing Circuit #</h2>
-                </div>
-                {activeMissingCircuitRows.length ? (
-                  <>
+                {selectedProjectId && activeMissingCircuitRows.length ? (
+                  <section className="panel-schedules-section panel-schedules-missing-report">
+                    <div className="panel-schedules-report-heading">
+                      <h2>Missing Circuit # Assignments</h2>
+                    </div>
                     <p>
-                      {activeMissingCircuitRows.length} row(s) were skipped because Circuit # was blank or invalid.
+                      {activeMissingCircuitRows.length} row(s) still need a circuit number. Pick an available circuit for each row below so the data is no longer missing.
                     </p>
                     <div className="panel-schedules-missing-list">
                       {activeMissingCircuitRows.map((entry, index) => {
-                        const itemKey = `missing-circuit-${entry.rowNumber}-${index}`;
-                        const isExpanded = expandedMissingRowKey === itemKey;
-
-                        const summaryItems = [
-                          ["Feeder Supply From", entry.feederSupplyFrom],
-                          ["Feeder to", entry.feederTo],
-                          ["From Branch Circuit Panel", entry.fromBranchCircuitPanel],
-                          ["To Pull Box", entry.toPullBox],
-                          ["Conduit Size", entry.conduitSize],
-                        ].filter(([, value]) => {
-                          const nextValue = normalizeText(value);
-                          return nextValue && !isIgnoredPanelLabel(nextValue) && nextValue !== "-";
-                        });
+                        const itemKey = `schedule-missing-circuit-${entry.rowNumber}-${index}`;
+                        const availableCircuitNumbers = getAvailableCircuitNumbersForPanel(entry.panelName || selectedSchedule?.name || "");
+                        const rowAssignmentKey = buildMissingRowAssignmentKey(
+                          selectedSchedule?.id || "active",
+                          entry,
+                          selectedSchedule?.name || "panel"
+                        );
+                        const savedAssignmentValue = normalizeAssignedCircuitValues(
+                          manualCircuitAssignments[rowAssignmentKey]
+                        );
+                        const draftAssignmentValue = draftMissingCircuitSelections[rowAssignmentKey] ?? savedAssignmentValue;
+                        const hasUnsavedSelection = JSON.stringify(draftAssignmentValue) !== JSON.stringify(savedAssignmentValue);
 
                         return (
-                          <article key={itemKey} className={`panel-schedules-missing-item ${isExpanded ? "is-expanded" : ""}`}>
-                            <button
-                              type="button"
-                              className="panel-schedules-missing-toggle"
-                              onClick={() => setExpandedMissingRowKey((current) => (current === itemKey ? "" : itemKey))}
-                              aria-expanded={isExpanded}
-                            >
-                              <strong>Row {entry.rowNumber}</strong>
+                          <article key={itemKey} className="panel-schedules-missing-item is-expanded" style={{ marginBottom: "12px" }}>
+                            <div className="panel-schedules-missing-toggle" style={{ cursor: "default" }}>
+                              <strong>Row {entry.rowNumber || index + 1}</strong>
                               <div className="panel-schedules-missing-inline">
-                                {summaryItems.length ? (
-                                  summaryItems.map(([label, value]) => (
-                                    <span key={`${itemKey}-${label}`}>{label}: {value}</span>
-                                  ))
-                                ) : (
-                                  <span>No non-empty feeder fields on this row.</span>
-                                )}
-                              </div>
-                            </button>
-
-                            {isExpanded ? (
-                              <div className="panel-schedules-missing-meta">
                                 <span>Panel: {entry.panelName || "-"}</span>
                                 <span>Conduit ID: {entry.conduitId || "-"}</span>
-                                <span>Conduit Size: {entry.conduitSize || "-"}</span>
-                                <span>Mapped Circuit Column: {entry.mappedCircuitColumn || "-"}</span>
-                                <span>Mapped Circuit Value: {entry.mappedCircuitValue || "-"}</span>
-                                <span>Primary Circuit Column: {entry.primaryCircuitColumn || "-"}</span>
-                                <span>Primary Circuit Value: {entry.primaryCircuitValue || "-"}</span>
+                                <span>Feeder Supply From: {entry.feederSupplyFrom || "-"}</span>
                               </div>
-                            ) : null}
+                            </div>
+                            <div className="panel-schedules-missing-meta">
+                              <label style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }}>
+                                <span>Assign available circuit #</span>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                  {availableCircuitNumbers.length ? (
+                                    availableCircuitNumbers.map((circuitNumber) => {
+                                      const checked = draftAssignmentValue.includes(circuitNumber);
+                                      return (
+                                        <label
+                                          key={`${itemKey}-circuit-${circuitNumber}`}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: "6px",
+                                            padding: "6px 8px",
+                                            border: "1px solid #d0d7de",
+                                            borderRadius: "8px",
+                                            background: checked ? "#e8f1ff" : "#fff",
+                                            cursor: canManage ? "pointer" : "not-allowed",
+                                          }}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={!canManage}
+                                            onChange={(event) => {
+                                              const nextValues = event.target.checked
+                                                ? Array.from(new Set([...draftAssignmentValue, circuitNumber])).sort((a, b) => a - b)
+                                                : draftAssignmentValue.filter((value) => value !== circuitNumber);
+                                              setDraftMissingCircuitSelections((previous) => ({
+                                                ...previous,
+                                                [rowAssignmentKey]: nextValues,
+                                              }));
+                                            }}
+                                          />
+                                          <span>#{circuitNumber}</span>
+                                        </label>
+                                      );
+                                    })
+                                  ) : (
+                                    <span style={{ color: "#64748b" }}>No free circuits available</span>
+                                  )}
+                                </div>
+                                {hasUnsavedSelection ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleAssignMissingCircuit(entry, draftAssignmentValue, selectedSchedule?.id || "active");
+                                      setDraftMissingCircuitSelections((previous) => ({
+                                        ...previous,
+                                        [rowAssignmentKey]: draftAssignmentValue,
+                                      }));
+                                    }}
+                                    style={{
+                                      marginTop: "8px",
+                                      alignSelf: "flex-start",
+                                      padding: "6px 10px",
+                                      borderRadius: "8px",
+                                      border: "1px solid #0f172a",
+                                      background: "#0f172a",
+                                      color: "#fff",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Save selected circuits
+                                  </button>
+                                ) : null}
+                              </label>
+                            </div>
                           </article>
                         );
                       })}
                     </div>
-                  </>
-                ) : (
-                  <p>No rows are currently missing Circuit # for this panel.</p>
-                )}
-              </section>
-            ) : null}
-          </main>
+                  </section>
+                ) : null}
+
+                {selectedProjectId && (importPreview || selectedSchedule) ? (
+                  <section className="panel-schedules-section panel-schedules-conduit-report">
+                    <div className="panel-schedules-report-heading">
+                      <span>Conduit Report</span>
+                      <h2>Conduit Schedule By Color Group</h2>
+                    </div>
+                    {conduitScheduleRows.length ? (
+                      <div className="panel-schedules-conduit-list">
+                        {conduitScheduleRows.map((entry) => {
+                          const colorMeta =
+                            conduitColorByIdentity.get(entry.conduitIdentity) ||
+                            buildConduitColorMeta(entry.conduitId);
+
+                          return (
+                            <article className="panel-schedules-conduit-item" key={`conduit-report-${entry.conduitIdentity}`}>
+                              <div className="panel-schedules-conduit-item-title">
+                                <span
+                                  className="panel-schedules-conduit-dot"
+                                  style={{ background: colorMeta.accent }}
+                                  aria-hidden="true"
+                                />
+                                <strong>{entry.conduitId}</strong>
+                                {entry.connectionType !== "unknown" ? (
+                                  <span className={`panel-schedules-conduit-type type-${entry.connectionType}`}>
+                                    {entry.connectionType === "branch" ? "Branch" : "Feeder"}
+                                  </span>
+                                ) : null}
+                                <span>Size: {entry.primarySize}</span>
+                              </div>
+                              {entry.connectionType === "feeder" ? (
+                                <p>
+                                  Feeder Supply From: {entry.feederSupplyFrom} | Feeder to: {entry.feederTo}
+                                </p>
+                              ) : null}
+                              {entry.connectionType === "branch" ? (
+                                <p>
+                                  From Branch Circuit Panel: {entry.fromBranchCircuitPanel} | To Pull Box: {entry.toPullBox}
+                                </p>
+                              ) : null}
+                              {entry.sizeOptions.length > 1 ? (
+                                <p className="panel-schedules-conduit-warning">
+                                  Multiple sizes found: {entry.sizeOptions.join(", ")}
+                                </p>
+                              ) : null}
+                              <p>
+                                Circuits: {entry.circuitNumbers.length ? entry.circuitNumbers.join(", ") : "-"}
+                              </p>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p>No conduit groups found for this panel view.</p>
+                    )}
+                  </section>
+                ) : null}
+              </main>
+            </div>
+          ) : null}
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
