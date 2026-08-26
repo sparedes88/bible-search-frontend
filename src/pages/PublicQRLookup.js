@@ -43,22 +43,62 @@ const TRANSLATIONS = {
       "Not Started": "Not Started",
     },
     feedback: {
-      faithful: {
-        verse: "“Well done, good and faithful servant! You have been faithful over a little; I will set you over much. Enter into the joy of your master.” — Matthew 25:21",
-        message: "You're showing up consistently, and it shows! Keep pressing on — your faithfulness is planting seeds that will bear fruit in due season (Galatians 6:9).",
-      },
-      committed: {
-        verse: "“And let us not grow weary of doing good, for in due season we will reap, if we do not give up.” — Galatians 6:9",
-        message: "You're engaged, but there's room to build a steadier rhythm. Try setting a reminder before each session — small, consistent steps build lasting faithfulness (Luke 16:10).",
-      },
-      tooEarly: {
-        verse: "“Let us consider how to stir up one another to love and good works, not neglecting to meet together.” — Hebrews 10:24-25",
-        message: "You're just getting started — keep showing up! Every check-in builds the foundation of a faithful habit.",
-      },
-      notStarted: {
-        verse: "“Draw near to God, and he will draw near to you.” — James 4:8",
-        message: "You haven't checked in for this one yet. Take the first step today — consistency starts with a single faithful decision.",
-      },
+      faithful: [
+        {
+          verse: "“Well done, good and faithful servant! You have been faithful over a little; I will set you over much. Enter into the joy of your master.” — Matthew 25:21",
+          message: "You're showing up consistently, and it shows! Keep pressing on — your faithfulness is planting seeds that will bear fruit in due season.",
+        },
+        {
+          verse: "“I have fought the good fight, I have finished the race, I have kept the faith.” — 2 Timothy 4:7",
+          message: "You're running this race well. Stay the course — every faithful check-in is part of a story worth finishing strong.",
+        },
+        {
+          verse: "“Be faithful unto death, and I will give you the crown of life.” — Revelation 2:10",
+          message: "Your consistency is a testimony. Don't grow tired — the reward for faithfulness is far greater than the effort it takes.",
+        },
+      ],
+      committed: [
+        {
+          verse: "“And let us not grow weary of doing good, for in due season we will reap, if we do not give up.” — Galatians 6:9",
+          message: "You're engaged, but there's room to build a steadier rhythm. Try setting a reminder before each session — small, consistent steps build lasting faithfulness.",
+        },
+        {
+          verse: "“Blessed is the man who remains steadfast under trial, for when he has stood the test he will receive the crown of life.” — James 1:12",
+          message: "You're on the right path. Push through the moments that make it easy to skip — that's exactly where faithfulness is built.",
+        },
+        {
+          verse: "“Let us run with endurance the race that is set before us.” — Hebrews 12:1",
+          message: "You've got real momentum. Keep tightening up your rhythm and this commitment will become second nature.",
+        },
+      ],
+      tooEarly: [
+        {
+          verse: "“Let us consider how to stir up one another to love and good works, not neglecting to meet together.” — Hebrews 10:24-25",
+          message: "You're just getting started — keep showing up! Every check-in builds the foundation of a faithful habit.",
+        },
+        {
+          verse: "“He who began a good work in you will bring it to completion.” — Philippians 1:6",
+          message: "It's early days, and that's okay. Keep at it — what God starts, He's faithful to complete.",
+        },
+        {
+          verse: "“Be steadfast, immovable, always abounding in the work of the Lord.” — 1 Corinthians 15:58",
+          message: "A few more check-ins and we'll have a clearer picture of your rhythm. Stay steady — you're building something real.",
+        },
+      ],
+      notStarted: [
+        {
+          verse: "“Draw near to God, and he will draw near to you.” — James 4:8",
+          message: "You haven't checked in for this one yet. Take the first step today — consistency starts with a single faithful decision.",
+        },
+        {
+          verse: "“But seek first the kingdom of God and his righteousness, and all these things will be added to you.” — Matthew 6:33",
+          message: "This one's still waiting on you. Make it a priority this week — small beginnings lead to lasting habits.",
+        },
+        {
+          verse: "“Whatever your hand finds to do, do it with your might.” — Ecclesiastes 9:10",
+          message: "No check-ins yet for this task. Whenever you're ready, show up fully — that first step matters more than you think.",
+        },
+      ],
     },
   },
   es: {
@@ -97,22 +137,62 @@ const TRANSLATIONS = {
       "Not Started": "Sin Comenzar",
     },
     feedback: {
-      faithful: {
-        verse: "“Bien, buen siervo y fiel; sobre poco has sido fiel, sobre mucho te pondré; entra en el gozo de tu señor.” — Mateo 25:21",
-        message: "¡Estás asistiendo con constancia, y se nota! Sigue adelante — tu fidelidad está sembrando semillas que darán fruto a su tiempo (Gálatas 6:9).",
-      },
-      committed: {
-        verse: "“No nos cansemos, pues, de hacer bien; porque a su tiempo segaremos, si no desmayamos.” — Gálatas 6:9",
-        message: "Estás participando, pero hay espacio para construir un ritmo más constante. Intenta poner un recordatorio antes de cada sesión — pequeños pasos constantes construyen una fidelidad duradera (Lucas 16:10).",
-      },
-      tooEarly: {
-        verse: "“Y considerémonos unos a otros para estimularnos al amor y a las buenas obras; no dejando de congregarnos.” — Hebreos 10:24-25",
-        message: "Apenas estás comenzando — ¡sigue viniendo! Cada registro construye la base de un hábito fiel.",
-      },
-      notStarted: {
-        verse: "“Acercaos a Dios, y él se acercará a vosotros.” — Santiago 4:8",
-        message: "Todavía no te has registrado para esto. Da el primer paso hoy — la constancia comienza con una sola decisión fiel.",
-      },
+      faithful: [
+        {
+          verse: "“Bien, buen siervo y fiel; sobre poco has sido fiel, sobre mucho te pondré; entra en el gozo de tu señor.” — Mateo 25:21",
+          message: "¡Estás asistiendo con constancia, y se nota! Sigue adelante — tu fidelidad está sembrando semillas que darán fruto a su tiempo.",
+        },
+        {
+          verse: "“He peleado la buena batalla, he acabado la carrera, he guardado la fe.” — 2 Timoteo 4:7",
+          message: "Estás corriendo bien esta carrera. Mantén el rumbo — cada registro fiel es parte de una historia que vale la pena terminar bien.",
+        },
+        {
+          verse: "“Sé fiel hasta la muerte, y yo te daré la corona de la vida.” — Apocalipsis 2:10",
+          message: "Tu constancia es un testimonio. No te canses — la recompensa de la fidelidad es mucho mayor que el esfuerzo que cuesta.",
+        },
+      ],
+      committed: [
+        {
+          verse: "“No nos cansemos, pues, de hacer bien; porque a su tiempo segaremos, si no desmayamos.” — Gálatas 6:9",
+          message: "Estás participando, pero hay espacio para construir un ritmo más constante. Intenta poner un recordatorio antes de cada sesión — pequeños pasos constantes construyen una fidelidad duradera.",
+        },
+        {
+          verse: "“Bienaventurado el varón que soporta la tentación; porque cuando haya resistido la prueba, recibirá la corona de vida.” — Santiago 1:12",
+          message: "Vas por buen camino. Sigue adelante en los momentos en que es fácil faltar — ahí es exactamente donde se construye la fidelidad.",
+        },
+        {
+          verse: "“Corramos con paciencia la carrera que tenemos por delante.” — Hebreos 12:1",
+          message: "Ya tienes buen impulso. Sigue ajustando tu ritmo y este compromiso se volverá algo natural.",
+        },
+      ],
+      tooEarly: [
+        {
+          verse: "“Y considerémonos unos a otros para estimularnos al amor y a las buenas obras; no dejando de congregarnos.” — Hebreos 10:24-25",
+          message: "Apenas estás comenzando — ¡sigue viniendo! Cada registro construye la base de un hábito fiel.",
+        },
+        {
+          verse: "“Estando persuadido de esto, que el que comenzó en vosotros la buena obra, la perfeccionará hasta el día de Jesucristo.” — Filipenses 1:6",
+          message: "Apenas es el comienzo, y está bien. Sigue así — lo que Dios comienza, Él es fiel para completarlo.",
+        },
+        {
+          verse: "“Estad firmes y constantes, creciendo en la obra del Señor siempre.” — 1 Corintios 15:58",
+          message: "Con algunos registros más tendremos un panorama más claro de tu ritmo. Mantente firme — estás construyendo algo real.",
+        },
+      ],
+      notStarted: [
+        {
+          verse: "“Acercaos a Dios, y él se acercará a vosotros.” — Santiago 4:8",
+          message: "Todavía no te has registrado para esto. Da el primer paso hoy — la constancia comienza con una sola decisión fiel.",
+        },
+        {
+          verse: "“Mas buscad primeramente el reino de Dios y su justicia, y todas estas cosas os serán añadidas.” — Mateo 6:33",
+          message: "Esta tarea todavía te está esperando. Hazla una prioridad esta semana — los pequeños comienzos llevan a hábitos duraderos.",
+        },
+        {
+          verse: "“Todo lo que te viniere a la mano para hacer, hazlo según tus fuerzas.” — Eclesiastés 9:10",
+          message: "Aún no hay registros para esta tarea. Cuando estés listo, preséntate por completo — ese primer paso importa más de lo que crees.",
+        },
+      ],
     },
   },
 };
@@ -122,6 +202,16 @@ const LEVEL_TO_MESSAGE_KEY = {
   Committed: "committed",
   "Too Early to Evaluate": "tooEarly",
   "Not Started": "notStarted",
+};
+
+// Deterministically picks a variant so the same task always shows the same
+// feedback, while different tasks in the same list show different encouragement.
+const pickFeedbackVariant = (variants, taskId) => {
+  let hash = 0;
+  for (let i = 0; i < taskId.length; i++) {
+    hash = (hash * 31 + taskId.charCodeAt(i)) >>> 0;
+  }
+  return variants[hash % variants.length];
 };
 
 const PublicQRLookup = () => {
@@ -657,7 +747,7 @@ const PublicQRLookup = () => {
 
           {!loadingCommitment && commitmentTasks && commitmentTasks.map((task) => {
             const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
-            const feedback = t.feedback[messageKey];
+            const feedback = pickFeedbackVariant(t.feedback[messageKey], task.taskId);
             const levelLabel = t.levels[task.level] || task.level;
             // Grayscale fades out as the member progresses toward Faithful, and
             // once Faithful is reached the image stays fully in color. "Too Early
