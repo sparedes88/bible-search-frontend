@@ -36,7 +36,7 @@ const TrackMe = () => {
   const [editingTask, setEditingTask] = useState(null);
   const [taskForm, setTaskForm] = useState({
     title: '', description: '', status: 'active',
-    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '',
+    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '', minCheckInsForEvaluation: '',
   });
   const [savingTask, setSavingTask] = useState(false);
 
@@ -142,17 +142,19 @@ const TrackMe = () => {
   }, [scansCollection]);
 
   // ─── Commitment analysis ──────────────────────────────────────────────────
-  // Each task answers two setup questions: how often it's expected to recur
+  // Each task answers three setup questions: how often it's expected to recur
   // (defines the expected number of sessions since the task was created, and
-  // the "on-time" gap between check-ins) and the minimum attendance percentage
-  // required to be "Faithful". Someone can hit the attendance percentage while
-  // still checking in in sporadic bursts (e.g. weekly expected, but only every
-  // 3 weeks) — that gap pattern is checked separately and also caps them at
-  // "Committed" rather than faithfully committed.
+  // the "on-time" gap between check-ins), the minimum attendance percentage
+  // required to be "Faithful", and the minimum total check-ins needed before
+  // that evaluation is considered reliable (too few check-ins yet = "Too Early
+  // to Evaluate" rather than a potentially misleading Faithful/Committed label).
+  // Someone can hit the attendance percentage while still checking in in
+  // sporadic bursts (e.g. weekly expected, but only every 3 weeks) — that gap
+  // pattern is checked separately and also caps them at "Committed".
   const GAP_TOLERANCE_MULTIPLIER = 1.5;
 
   const taskHasCommitmentConfig = (task) =>
-    !!task && !!(task.recurrenceDays) && !!(task.minCommitmentPercent);
+    !!task && !!(task.recurrenceDays) && !!(task.minCommitmentPercent) && !!(task.minCheckInsForEvaluation);
 
   const computeCommitmentStats = (taskId) => {
     const task = tasks.find((t) => t.id === taskId);
@@ -166,6 +168,7 @@ const TrackMe = () => {
     const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1, sessionDates.length);
     const threshold = task.minCommitmentPercent / 100;
     const maxAllowedGapDays = task.recurrenceDays * GAP_TOLERANCE_MULTIPLIER;
+    const minCheckInsForEvaluation = task.minCheckInsForEvaluation;
 
     const byUser = new Map();
     taskLogs.forEach((log) => {
@@ -195,7 +198,10 @@ const TrackMe = () => {
       const maxGapDays = gapsDays.length > 0 ? Math.max(...gapsDays) : null;
       const hasConsistentGaps = maxGapDays === null || maxGapDays <= maxAllowedGapDays;
 
-      const level = (attendanceRate >= threshold && hasConsistentGaps) ? 'Faithful' : 'Committed';
+      let level;
+      if (attendedCount < minCheckInsForEvaluation) level = 'Too Early to Evaluate';
+      else if (attendanceRate >= threshold && hasConsistentGaps) level = 'Faithful';
+      else level = 'Committed';
 
       return { ...person, attendedCount, expectedSessions, attendanceRate, avgGapDays, maxGapDays, hasConsistentGaps, level };
     });
@@ -212,7 +218,7 @@ const TrackMe = () => {
 
   const emptyTaskForm = {
     title: '', description: '', status: 'active',
-    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '',
+    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '', minCheckInsForEvaluation: '',
   };
 
   const openAddTask = () => {
@@ -230,6 +236,7 @@ const TrackMe = () => {
       expectedRecurrence: task.expectedRecurrence || '',
       expectedRecurrenceDays: task.expectedRecurrence === 'custom' ? String(task.recurrenceDays || '') : '',
       minCommitmentPercent: task.minCommitmentPercent ? String(task.minCommitmentPercent) : '',
+      minCheckInsForEvaluation: task.minCheckInsForEvaluation ? String(task.minCheckInsForEvaluation) : '',
     });
     setShowTaskForm(true);
   };
@@ -241,11 +248,13 @@ const TrackMe = () => {
       ? Number(taskForm.expectedRecurrenceDays)
       : RECURRENCE_DAYS[taskForm.expectedRecurrence];
     const minCommitmentPercent = Number(taskForm.minCommitmentPercent);
+    const minCheckInsForEvaluation = Number(taskForm.minCheckInsForEvaluation);
 
     const commitmentFields = {
       expectedRecurrence: taskForm.expectedRecurrence || null,
       recurrenceDays: recurrenceDays > 0 ? recurrenceDays : null,
       minCommitmentPercent: minCommitmentPercent > 0 && minCommitmentPercent <= 100 ? minCommitmentPercent : null,
+      minCheckInsForEvaluation: minCheckInsForEvaluation > 0 ? minCheckInsForEvaluation : null,
     };
 
     setSavingTask(true);
@@ -460,8 +469,8 @@ const TrackMe = () => {
       borderRadius: 12,
       fontSize: 12,
       fontWeight: 700,
-      background: level === 'Faithful' ? '#dcfce7' : '#fef3c7',
-      color: level === 'Faithful' ? '#16a34a' : '#b45309',
+      background: level === 'Faithful' ? '#dcfce7' : level === 'Committed' ? '#fef3c7' : '#f3f4f6',
+      color: level === 'Faithful' ? '#16a34a' : level === 'Committed' ? '#b45309' : '#6b7280',
     }),
     configWarningBadge: {
       display: 'inline-block',
@@ -661,9 +670,19 @@ const TrackMe = () => {
                     onChange={(e) => setTaskForm((f) => ({ ...f, minCommitmentPercent: e.target.value }))}
                   />
 
-                  {(!taskForm.expectedRecurrence || !taskForm.minCommitmentPercent) && (
+                  <label style={styles.label}>3. What's the minimum total check-ins needed for a solid faithful-commitment evaluation? *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    style={styles.input}
+                    placeholder="e.g. 4"
+                    value={taskForm.minCheckInsForEvaluation}
+                    onChange={(e) => setTaskForm((f) => ({ ...f, minCheckInsForEvaluation: e.target.value }))}
+                  />
+
+                  {(!taskForm.expectedRecurrence || !taskForm.minCommitmentPercent || !taskForm.minCheckInsForEvaluation) && (
                     <p style={{ margin: 0, fontSize: 12, color: '#dc2626' }}>
-                      ⚠️ Not answered yet — Commitment stats can't be calculated for this task until both questions are answered.
+                      ⚠️ Not answered yet — Commitment stats can't be calculated for this task until all three questions are answered.
                     </p>
                   )}
                 </div>
@@ -963,6 +982,7 @@ const TrackMe = () => {
                     {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked · {RECURRENCE_LABELS[task.expectedRecurrence]} recurrence (every {task.recurrenceDays} days)
                     · {expectedSessions} expected session{expectedSessions !== 1 ? 's' : ''} so far
                     · Faithful requires {Math.round(threshold * 100)}%+ attendance with check-ins no more than {maxAllowedGapDays} days apart
+                    · at least {task.minCheckInsForEvaluation} total check-ins before a level is assigned
                   </div>
                   <div style={{ ...styles.commitmentHeader, gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1fr' }}>
                     <span>User</span>
