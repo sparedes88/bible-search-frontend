@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { getChurchData } from "../api/church";
 
 const QR_LOOKUP_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberQrByPhone";
+const APPLE_WALLET_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/generateAppleWalletPass";
 
 const PublicQRLookup = () => {
   const { id } = useParams();
@@ -14,6 +15,7 @@ const PublicQRLookup = () => {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [showScannerAccess, setShowScannerAccess] = useState(false);
+  const [walletError, setWalletError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -58,6 +60,27 @@ const PublicQRLookup = () => {
       setError("Could not reach the server. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddToWallet = async () => {
+    if (!result?.uid) return;
+    setWalletError("");
+
+    const walletUrl = `${APPLE_WALLET_FUNCTION_URL}?churchId=${encodeURIComponent(id)}&uid=${encodeURIComponent(result.uid)}`;
+    try {
+      // Probe for configuration errors first so we can show a friendly message
+      // instead of letting the browser download a JSON error as a broken .pkpass file.
+      const response = await fetch(walletUrl);
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        setWalletError(data.error || "Apple Wallet is not available right now.");
+        return;
+      }
+      window.location.href = walletUrl;
+    } catch (walletFetchError) {
+      console.error("Add to Apple Wallet error:", walletFetchError);
+      setWalletError("Could not reach the server. Please try again.");
     }
   };
 
@@ -187,6 +210,28 @@ const PublicQRLookup = () => {
           font-size: 14px;
           cursor: pointer;
         }
+        .qr-lookup-wallet-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          width: 100%;
+          margin-top: 16px;
+          padding: 12px;
+          border-radius: 8px;
+          border: none;
+          background-color: #000;
+          color: white;
+          font-size: 15px;
+          font-weight: 500;
+          cursor: pointer;
+        }
+        .qr-lookup-wallet-error {
+          color: #dc2626;
+          margin-top: 10px;
+          text-align: center;
+          font-size: 13px;
+        }
       `}</style>
 
       <button className="qr-lookup-back" onClick={() => navigate(`/organization/${id}/login`)}>
@@ -237,6 +282,10 @@ const PublicQRLookup = () => {
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
             <p style={{ fontSize: "12px", color: "#9ca3af" }}>ID: {result.uid}</p>
+            <button type="button" onClick={handleAddToWallet} className="qr-lookup-wallet-btn">
+              🍎 Add to Apple Wallet
+            </button>
+            {walletError && <p className="qr-lookup-wallet-error">{walletError}</p>}
           </div>
         )}
 

@@ -4426,3 +4426,135 @@ exports.getMemberQrByPhone = functions.https.onRequest(async (req, res) => {
     return res.status(500).json({ success: false, error: "Unexpected error looking up member." });
   }
 });
+
+// Generates a signed Apple Wallet (.pkpass) check-in pass for a member's QR code.
+// Requires Apple Pass Type ID certificates to be configured as environment variables:
+//   APPLE_PASS_TEAM_IDENTIFIER, APPLE_PASS_TYPE_IDENTIFIER,
+//   APPLE_PASS_WWDR_CERT_BASE64, APPLE_PASS_SIGNER_CERT_BASE64,
+//   APPLE_PASS_SIGNER_KEY_BASE64, APPLE_PASS_SIGNER_KEY_PASSPHRASE (optional)
+// All certificate values must be base64-encoded PEM contents.
+exports.generateAppleWalletPass = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Only GET and POST methods are allowed" });
+  }
+
+  try {
+    const body = req.method === "GET" ? (req.query || {}) : (req.body || {});
+    const churchId = normalizeValue(body.churchId);
+    const uid = normalizeValue(body.uid);
+
+    if (!churchId || !uid) {
+      return res.status(400).json({ success: false, error: "Missing churchId or uid" });
+    }
+
+    const teamIdentifier = normalizeValue(process.env.APPLE_PASS_TEAM_IDENTIFIER);
+    const passTypeIdentifier = normalizeValue(process.env.APPLE_PASS_TYPE_IDENTIFIER);
+    const wwdrBase64 = normalizeValue(process.env.APPLE_PASS_WWDR_CERT_BASE64);
+    const signerCertBase64 = normalizeValue(process.env.APPLE_PASS_SIGNER_CERT_BASE64);
+    const signerKeyBase64 = normalizeValue(process.env.APPLE_PASS_SIGNER_KEY_BASE64);
+    const signerKeyPassphrase = normalizeValue(process.env.APPLE_PASS_SIGNER_KEY_PASSPHRASE) || undefined;
+
+    if (!teamIdentifier || !passTypeIdentifier || !wwdrBase64 || !signerCertBase64 || !signerKeyBase64) {
+      return res.status(501).json({
+        success: false,
+        error: "Apple Wallet is not configured for this project yet. An administrator needs to add the Pass Type ID certificates.",
+      });
+    }
+
+    const firestore = admin.firestore();
+    const [churchSnap, userSnap] = await Promise.all([
+      firestore.doc(`churches/${churchId}`).get(),
+      firestore.doc(`users/${uid}`).get(),
+    ]);
+
+    if (!userSnap.exists) {
+      return res.status(404).json({ success: false, error: "Member not found." });
+    }
+
+    const churchData = churchSnap.exists ? (churchSnap.data() || {}) : {};
+    const userData = userSnap.data() || {};
+    const organizationName = normalizeValue(churchData.nombre || churchData.name || churchData.churchName) || "Church";
+    const memberName = [userData.name, userData.lastName].filter(Boolean).join(" ").trim() || "Member";
+
+    const { PKPass } = require("passkit-generator");
+    const sharp = require("sharp");
+
+    // Fetch the church logo (falls back to a plain background if unavailable) to use as the pass icon.
+    let iconBuffer = null;
+    const logoUrl = normalizeValue(churchData.logo || churchData.logoUrl || churchData.logoURL);
+    if (logoUrl) {
+      try {
+        const logoResponse = await axios.get(logoUrl, { responseType: "arraybuffer", timeout: 8000 });
+        iconBuffer = Buffer.from(logoResponse.data);
+      } catch (logoError) {
+        console.warn("Could not fetch church logo for Apple Wallet pass:", logoError.message);
+      }
+    }
+    if (!iconBuffer) {
+      // 1x1 white pixel fallback so the pass still bundles a valid icon.
+      iconBuffer = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64"
+      );
+    }
+
+    const [icon29, icon58, icon87, logo160, logo320] = await Promise.all([
+      sharp(iconBuffer).resize(29, 29, { fit: "cover" }).png().toBuffer(),
+      sharp(iconBuffer).resize(58, 58, { fit: "cover" }).png().toBuffer(),
+      sharp(iconBuffer).resize(87, 87, { fit: "cover" }).png().toBuffer(),
+      sharp(iconBuffer).resize(160, 50, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).png().toBuffer(),
+      sharp(iconBuffer).resize(320, 100, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).png().toBuffer(),
+    ]);
+
+    const passJson = {
+      formatVersion: 1,
+      passTypeIdentifier,
+      teamIdentifier,
+      organizationName,
+      serialNumber: uid,
+      description: `${organizationName} member check-in pass`,
+      generic: {
+        primaryFields: [{ key: "name", label: "Member", value: memberName }],
+        secondaryFields: [{ key: "organization", label: "Organization", value: organizationName }],
+      },
+      barcodes: [
+        {
+          message: uid,
+          format: "PKBarcodeFormatQR",
+          messageEncoding: "iso-8859-1",
+        },
+      ],
+      backgroundColor: "rgb(79,70,229)",
+      foregroundColor: "rgb(255,255,255)",
+      labelColor: "rgb(224,224,255)",
+    };
+
+    const pass = new PKPass(
+      {
+        "pass.json": Buffer.from(JSON.stringify(passJson)),
+        "icon.png": icon29,
+        "icon@2x.png": icon58,
+        "icon@3x.png": icon87,
+        "logo.png": logo160,
+        "logo@2x.png": logo320,
+      },
+      {
+        wwdr: Buffer.from(wwdrBase64, "base64").toString("utf8"),
+        signerCert: Buffer.from(signerCertBase64, "base64").toString("utf8"),
+        signerKey: Buffer.from(signerKeyBase64, "base64").toString("utf8"),
+        signerKeyPassphrase,
+      }
+    );
+
+    const buffer = pass.getAsBuffer();
+
+    res.set("Content-Type", "application/vnd.apple.pkpass");
+    res.set("Content-Disposition", `attachment; filename="${sanitizeFieldSegment(memberName)}-pass.pkpass"`);
+    return res.status(200).send(buffer);
+  } catch (error) {
+    console.error("generateAppleWalletPass error:", error);
+    return res.status(500).json({ success: false, error: "Unexpected error generating the Apple Wallet pass." });
+  }
+});

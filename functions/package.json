@@ -25,6 +25,8 @@
     "jest-cli": "^29.7.0",
     "mssql": "^10.0.2",
     "node-fetch": "^2.6.7",
+    "passkit-generator": "^3.5.7",
+    "sharp": "^0.35.4",
     "stripe": "^18.5.0",
     "tunnel-ssh": "^5.2.0",
     "twilio": "^5.5.2"
