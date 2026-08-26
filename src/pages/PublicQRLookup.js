@@ -26,6 +26,13 @@ const TRANSLATIONS = {
     openScanner: "Open QR Scanner (staff login required)",
     commitmentTitle: "My Faithful Commitment",
     commitmentSubtitle: "How you're doing on each check-in task, with a little encouragement.",
+    maturityTitle: "Spiritual maturity involves faithful commitment",
+    maturityIntro: "There's a difference between being committed and being faithfully committed:",
+    maturityPoints: [
+      "Commitment shows up when it's convenient. Faithful commitment shows up consistently — even when it's hard (Luke 16:10).",
+      "Commitment depends on how you feel in the moment. Faithful commitment is rooted in character, not feelings (1 Corinthians 4:2).",
+      "Commitment often fades with time. Faithful commitment endures and grows through trials, producing spiritual maturity (James 1:2-4).",
+    ],
     loadingText: "Loading...",
     noTasks: "No check-in tasks are set up for this organization yet.",
     sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} expected sessions (${pct}%)`,
@@ -74,6 +81,13 @@ const TRANSLATIONS = {
     openScanner: "Abrir Escáner QR (requiere inicio de sesión del personal)",
     commitmentTitle: "Mi Compromiso Fiel",
     commitmentSubtitle: "Cómo te va en cada tarea de registro, con un poco de ánimo.",
+    maturityTitle: "La madurez espiritual implica un compromiso fiel",
+    maturityIntro: "Hay una diferencia entre estar comprometido y estar fielmente comprometido:",
+    maturityPoints: [
+      "El compromiso aparece cuando es conveniente. El compromiso fiel aparece con constancia — incluso cuando es difícil (Lucas 16:10).",
+      "El compromiso depende de cómo te sientes en el momento. El compromiso fiel está arraigado en el carácter, no en los sentimientos (1 Corintios 4:2).",
+      "El compromiso a menudo se desvanece con el tiempo. El compromiso fiel perdura y crece a través de las pruebas, produciendo madurez espiritual (Santiago 1:2-4).",
+    ],
     loadingText: "Cargando...",
     noTasks: "Todavía no hay tareas de registro configuradas para esta organización.",
     sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} sesiones esperadas (${pct}%)`,
@@ -546,6 +560,37 @@ const PublicQRLookup = () => {
           font-style: italic;
           color: #4F46E5;
         }
+        .qr-maturity-box {
+          background: #eef2ff;
+          border: 1px solid #e0e7ff;
+          border-radius: 8px;
+          padding: 14px 16px;
+          margin-bottom: 20px;
+        }
+        .qr-maturity-title {
+          margin: 0 0 6px;
+          font-size: 14px;
+          font-weight: 700;
+          color: #4338ca;
+        }
+        .qr-maturity-intro {
+          margin: 0 0 8px;
+          font-size: 13px;
+          color: #374151;
+        }
+        .qr-maturity-list {
+          margin: 0;
+          padding-left: 18px;
+          font-size: 13px;
+          color: #374151;
+          line-height: 1.5;
+        }
+        .qr-maturity-list li {
+          margin-bottom: 6px;
+        }
+        .qr-maturity-list li:last-child {
+          margin-bottom: 0;
+        }
       `}</style>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -631,6 +676,16 @@ const PublicQRLookup = () => {
         <div className="qr-lookup-card" style={{ marginTop: "16px" }}>
           <h2 className="qr-lookup-title" style={{ marginBottom: "4px" }}>{t.commitmentTitle}</h2>
           <p className="qr-lookup-subtitle">{t.commitmentSubtitle}</p>
+
+          <div className="qr-maturity-box">
+            <p className="qr-maturity-title">{t.maturityTitle}</p>
+            <p className="qr-maturity-intro">{t.maturityIntro}</p>
+            <ol className="qr-maturity-list">
+              {t.maturityPoints.map((point, index) => (
+                <li key={index}>{point}</li>
+              ))}
+            </ol>
+          </div>
 
           {loadingCommitment && <p style={{ textAlign: "center", color: "#6b7280", fontSize: "14px" }}>{t.loadingText}</p>}
 
