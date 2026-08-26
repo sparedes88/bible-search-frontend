@@ -91,7 +91,7 @@ const PublicQRLookup = () => {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 10%;
+          padding: 10px;
           box-sizing: border-box;
           overflow: hidden;
         }
