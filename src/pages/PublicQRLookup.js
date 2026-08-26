@@ -576,10 +576,6 @@ const PublicQRLookup = () => {
           filter: grayscale(var(--qr-grayscale-amount, 0%));
           transition: filter 0.8s ease;
         }
-        .qr-commitment-image-hoverable:hover {
-          filter: grayscale(0%);
-          transition: filter 0.6s ease;
-        }
         .qr-commitment-task-header {
           display: flex;
           justify-content: space-between;
@@ -775,9 +771,7 @@ const PublicQRLookup = () => {
             // Faithful is reached, then it unlocks into full color and stays that
             // way as long as the level stays Faithful.
             const isUnevaluated = task.level === "Too Early to Evaluate" || task.level === "Not Started";
-            const colorPercent = task.level === "Faithful" ? 100 : 0;
-            const grayscaleAmount = Math.max(0, 100 - colorPercent);
-            const isGrayscale = grayscaleAmount > 0;
+            const grayscaleAmount = task.level === "Faithful" ? 0 : 100;
             const meterPercent = isUnevaluated
               ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
               : Math.round(task.attendanceRate * 100);
@@ -788,7 +782,7 @@ const PublicQRLookup = () => {
                     <img
                       src={task.imageUrl}
                       alt={task.title}
-                      className={`qr-commitment-image${isGrayscale ? " qr-commitment-image-hoverable" : ""}`}
+                      className="qr-commitment-image"
                       style={{ "--qr-grayscale-amount": `${grayscaleAmount}%` }}
                     />
                   </div>
