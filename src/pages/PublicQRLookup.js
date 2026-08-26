@@ -13,6 +13,7 @@ const PublicQRLookup = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [showScannerAccess, setShowScannerAccess] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -194,7 +195,13 @@ const PublicQRLookup = () => {
 
       {church?.logo && (
         <div className="qr-lookup-logo-wrap">
-          <div className="qr-lookup-logo-circle">
+          {/* Triple-click the logo to reveal the staff scanner shortcut */}
+          <div
+            className="qr-lookup-logo-circle"
+            onClick={(event) => {
+              if (event.detail === 3) setShowScannerAccess(true);
+            }}
+          >
             <img src={church.logo} alt={`${church.name || "Organization"} logo`} className="qr-lookup-logo" />
           </div>
         </div>
@@ -233,13 +240,15 @@ const PublicQRLookup = () => {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => navigate(`/organization/${id}/track-me`)}
-          className="qr-lookup-scanner-btn"
-        >
-          Open QR Scanner (staff login required)
-        </button>
+        {showScannerAccess && (
+          <button
+            type="button"
+            onClick={() => navigate(`/organization/${id}/track-me`)}
+            className="qr-lookup-scanner-btn"
+          >
+            Open QR Scanner (staff login required)
+          </button>
+        )}
       </div>
     </div>
   );
