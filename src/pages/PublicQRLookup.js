@@ -508,11 +508,12 @@ const PublicQRLookup = () => {
           border-radius: 8px;
           overflow: hidden;
           margin-bottom: 10px;
+          background: #f3f4f6;
         }
         .qr-commitment-image {
           width: 100%;
           height: 140px;
-          object-fit: cover;
+          object-fit: contain;
           display: block;
           filter: grayscale(var(--qr-grayscale-amount, 0%));
           transition: filter 0.8s ease;
