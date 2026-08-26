@@ -128,7 +128,7 @@ const TRANSLATIONS = {
     loadingText: "Cargando...",
     noTasks: "Todavía no hay tareas de registro configuradas para esta organización.",
     sessionsCaption: (attended, expected, pct) =>
-      `${attended} de ${expected} sesiones asistidas (${pct}%) — ${expected} es la cantidad de oportunidades que has tenido para registrarte hasta ahora, según la recurrencia esperada.`,
+      `${attended} de ${expected} sesiones asistidas (${pct}%) — ${expected} es la cantidad de oportunidades que has tenido para participar hasta ahora, según la recurrencia esperada.`,
     checkInsNeededCaption: (attended, min, remaining) =>
       `${attended} de ${min} registros completados — se necesitan ${remaining} más para poder evaluar tu compromiso.`,
     avgGapCaption: (d) => ` · promedio de ${d}d entre registros`,
