@@ -19,10 +19,7 @@ const TRANSLATIONS = {
     serverError: "Could not reach the server. Please try again.",
     idLabel: "ID:",
     saveContact: "👤 Save as Contact (iPhone & Android)",
-    saveImage: "📷 Save QR Code Image",
-    share: "📤 Share",
     savedContactMessage: "Contact card downloaded — open it and tap \"Add to Contacts\" to save the QR code as a contact photo.",
-    savedImageMessage: "Saved! Check your device's downloads or photos.",
     openScanner: "Open QR Scanner (staff login required)",
     commitmentTitle: "My Faithful Commitment",
     commitmentSubtitle: "How you're doing on each check-in task, with a little encouragement.",
@@ -76,10 +73,7 @@ const TRANSLATIONS = {
     serverError: "No se pudo conectar con el servidor. Inténtalo de nuevo.",
     idLabel: "ID:",
     saveContact: "👤 Guardar como Contacto (iPhone y Android)",
-    saveImage: "📷 Guardar Imagen del Código QR",
-    share: "📤 Compartir",
     savedContactMessage: "Tarjeta de contacto descargada — ábrela y toca \"Agregar a Contactos\" para guardar el código QR como foto de contacto.",
-    savedImageMessage: "¡Guardado! Revisa las descargas o fotos de tu dispositivo.",
     openScanner: "Abrir Escáner QR (requiere inicio de sesión del personal)",
     commitmentTitle: "Mi Compromiso Fiel",
     commitmentSubtitle: "Cómo te va en cada tarea de registro, con un poco de ánimo.",
@@ -220,13 +214,6 @@ const PublicQRLookup = () => {
     }
   };
 
-  const getQrImageBlob = () =>
-    new Promise((resolve) => {
-      const canvas = qrCanvasRef.current;
-      if (!canvas) return resolve(null);
-      canvas.toBlob((blob) => resolve(blob), "image/png");
-    });
-
   // Contact photos get aggressively zoom-cropped to a circle/square by different
   // iOS/Android Contacts apps (often beyond just a simple inscribed-circle crop),
   // so keep the QR code small and centered with a very generous white margin
@@ -248,42 +235,6 @@ const PublicQRLookup = () => {
     ctx.fillRect(0, 0, outputSize, outputSize);
     ctx.drawImage(sourceCanvas, offset, offset);
     return paddedCanvas;
-  };
-
-  const handleSaveImage = async () => {
-    setSaveMessage("");
-    const blob = await getQrImageBlob();
-    if (!blob) return;
-
-    const fileName = `${(church?.name || "my-qr-code").replace(/[^a-z0-9]+/gi, "-")}.png`;
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    setSaveMessage(t.savedImageMessage);
-  };
-
-  const handleShareImage = async () => {
-    setSaveMessage("");
-    const blob = await getQrImageBlob();
-    if (!blob) return;
-
-    const fileName = `${(church?.name || "my-qr-code").replace(/[^a-z0-9]+/gi, "-")}.png`;
-    const file = new File([blob], fileName, { type: "image/png" });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: "My Check-in QR Code" });
-      } catch (shareError) {
-        // User cancelled the share sheet; nothing to do.
-      }
-    } else {
-      handleSaveImage();
-    }
   };
 
   const handleSaveAsContact = () => {
@@ -468,22 +419,6 @@ const PublicQRLookup = () => {
           border: none;
           background-color: #4F46E5;
           color: white;
-          font-size: 15px;
-          font-weight: 500;
-          cursor: pointer;
-        }
-        .qr-lookup-share-btn {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          width: 100%;
-          margin-top: 10px;
-          padding: 12px;
-          border-radius: 8px;
-          border: 1px solid #d1d5db;
-          background-color: white;
-          color: #374151;
           font-size: 15px;
           font-weight: 500;
           cursor: pointer;
@@ -681,12 +616,6 @@ const PublicQRLookup = () => {
             <p style={{ fontSize: "12px", color: "#9ca3af" }}>{t.idLabel} {result.uid}</p>
             <button type="button" onClick={handleSaveAsContact} className="qr-lookup-wallet-btn">
               {t.saveContact}
-            </button>
-            <button type="button" onClick={handleSaveImage} className="qr-lookup-share-btn">
-              {t.saveImage}
-            </button>
-            <button type="button" onClick={handleShareImage} className="qr-lookup-share-btn">
-              {t.share}
             </button>
             {saveMessage && <p className="qr-lookup-save-message">{saveMessage}</p>}
           </div>
