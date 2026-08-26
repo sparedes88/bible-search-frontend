@@ -32,7 +32,8 @@ const TRANSLATIONS = {
     ],
     loadingText: "Loading...",
     noTasks: "No check-in tasks are set up for this organization yet.",
-    sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} expected sessions (${pct}%)`,
+    sessionsCaption: (attended, expected, pct) =>
+      `${attended} of ${expected} sessions attended (${pct}%) — ${expected} is how many opportunities you've had to check in for this so far, based on the expected recurrence.`,
     checkInsNeededCaption: (attended, min, remaining) =>
       `${attended} of ${min} check-ins completed — ${remaining} more needed before your commitment can be evaluated.`,
     avgGapCaption: (d) => ` · avg. ${d}d between check-ins`,
@@ -60,15 +61,15 @@ const TRANSLATIONS = {
       committed: [
         {
           verse: "“And let us not grow weary of doing good, for in due season we will reap, if we do not give up.” — Galatians 6:9",
-          message: "You're engaged, but there's room to build a steadier rhythm. Try setting a reminder before each session — small, consistent steps build lasting faithfulness.",
+          message: "You're not yet faithfully committed — but you can get there. Look at how many opportunities you've had versus how many you've taken, and use that gap as fuel. Try setting a reminder before each session — small, consistent steps build lasting faithfulness.",
         },
         {
           verse: "“Blessed is the man who remains steadfast under trial, for when he has stood the test he will receive the crown of life.” — James 1:12",
-          message: "You're on the right path. Push through the moments that make it easy to skip — that's exactly where faithfulness is built.",
+          message: "You're not yet faithfully committed, and that's exactly the gap worth closing. Push through the moments that make it easy to skip — that's precisely where faithfulness is built.",
         },
         {
           verse: "“Let us run with endurance the race that is set before us.” — Hebrews 12:1",
-          message: "You've got real momentum. Keep tightening up your rhythm and this commitment will become second nature.",
+          message: "You're not yet faithfully committed, but you've got real momentum. Compare your attendance to the opportunities you've had, tighten up your rhythm, and this commitment will become second nature.",
         },
       ],
       tooEarly: [
@@ -126,7 +127,8 @@ const TRANSLATIONS = {
     ],
     loadingText: "Cargando...",
     noTasks: "Todavía no hay tareas de registro configuradas para esta organización.",
-    sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} sesiones esperadas (${pct}%)`,
+    sessionsCaption: (attended, expected, pct) =>
+      `${attended} de ${expected} sesiones asistidas (${pct}%) — ${expected} es la cantidad de oportunidades que has tenido para registrarte hasta ahora, según la recurrencia esperada.`,
     checkInsNeededCaption: (attended, min, remaining) =>
       `${attended} de ${min} registros completados — se necesitan ${remaining} más para poder evaluar tu compromiso.`,
     avgGapCaption: (d) => ` · promedio de ${d}d entre registros`,
@@ -154,15 +156,15 @@ const TRANSLATIONS = {
       committed: [
         {
           verse: "“No nos cansemos, pues, de hacer bien; porque a su tiempo segaremos, si no desmayamos.” — Gálatas 6:9",
-          message: "Estás participando, pero hay espacio para construir un ritmo más constante. Intenta poner un recordatorio antes de cada sesión — pequeños pasos constantes construyen una fidelidad duradera.",
+          message: "Aún no eres fielmente comprometido — pero puedes lograrlo. Compara cuántas oportunidades has tenido con cuántas has aprovechado, y usa esa diferencia como motivación. Intenta poner un recordatorio antes de cada sesión — pequeños pasos constantes construyen una fidelidad duradera.",
         },
         {
           verse: "“Bienaventurado el varón que soporta la tentación; porque cuando haya resistido la prueba, recibirá la corona de vida.” — Santiago 1:12",
-          message: "Vas por buen camino. Sigue adelante en los momentos en que es fácil faltar — ahí es exactamente donde se construye la fidelidad.",
+          message: "Aún no eres fielmente comprometido, y esa es exactamente la brecha que vale la pena cerrar. Sigue adelante en los momentos en que es fácil faltar — ahí es precisamente donde se construye la fidelidad.",
         },
         {
           verse: "“Corramos con paciencia la carrera que tenemos por delante.” — Hebreos 12:1",
-          message: "Ya tienes buen impulso. Sigue ajustando tu ritmo y este compromiso se volverá algo natural.",
+          message: "Aún no eres fielmente comprometido, pero ya tienes buen impulso. Compara tu asistencia con las oportunidades que has tenido, ajusta tu ritmo, y este compromiso se volverá algo natural.",
         },
       ],
       tooEarly: [
