@@ -503,6 +503,19 @@ const PublicQRLookup = () => {
         .qr-commitment-task:last-child {
           border-bottom: none;
         }
+        .qr-commitment-image-wrap {
+          width: 100%;
+          border-radius: 8px;
+          overflow: hidden;
+          margin-bottom: 10px;
+        }
+        .qr-commitment-image {
+          width: 100%;
+          height: 140px;
+          object-fit: cover;
+          display: block;
+          transition: filter 0.8s ease;
+        }
         .qr-commitment-task-header {
           display: flex;
           justify-content: space-between;
@@ -699,8 +712,22 @@ const PublicQRLookup = () => {
             const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
             const feedback = t.feedback[messageKey];
             const levelLabel = t.levels[task.level] || task.level;
+            // Grayscale fades out as the member progresses toward Faithful, and
+            // once Faithful is reached the image stays fully in color.
+            const colorPercent = task.level === "Faithful" ? 100 : Math.round(task.attendanceRate * 100);
+            const grayscaleAmount = Math.max(0, 100 - colorPercent);
             return (
               <div key={task.taskId} className="qr-commitment-task">
+                {task.imageUrl && (
+                  <div className="qr-commitment-image-wrap">
+                    <img
+                      src={task.imageUrl}
+                      alt={task.title}
+                      className="qr-commitment-image"
+                      style={{ filter: `grayscale(${grayscaleAmount}%)` }}
+                    />
+                  </div>
+                )}
                 <div className="qr-commitment-task-header">
                   <span className="qr-commitment-task-title">{task.title}</span>
                   <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>

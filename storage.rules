@@ -98,6 +98,17 @@ service firebase.storage {
         && (isGlobalAdmin() || isChurchAdmin(churchId));
     }
 
+    // Track Me task images - public read (shown on the member-facing QR page), staff-only write
+    match /churches/{churchId}/trackMeTasks/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId))
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && (isGlobalAdmin() || isChurchAdmin(churchId));
+    }
+
     // Public church images - allow public read access
     match /public/churches/{churchId}/{fileName} {
       allow read: if true;  // Allow anyone to read public church images

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import {
   collection, getDocs, addDoc, updateDoc, deleteDoc,
   doc, query, orderBy, serverTimestamp, getDoc
 } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -37,8 +38,12 @@ const TrackMe = () => {
   const [taskForm, setTaskForm] = useState({
     title: '', description: '', status: 'active',
     expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '', minCheckInsForEvaluation: '',
+    imageUrl: '',
   });
   const [savingTask, setSavingTask] = useState(false);
+  const [taskImageFile, setTaskImageFile] = useState(null);
+  const [taskImagePreview, setTaskImagePreview] = useState('');
+  const [uploadingTaskImage, setUploadingTaskImage] = useState(false);
 
   // Scanner state
   const [scannerTask, setScannerTask] = useState(null);
@@ -219,11 +224,14 @@ const TrackMe = () => {
   const emptyTaskForm = {
     title: '', description: '', status: 'active',
     expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '', minCheckInsForEvaluation: '',
+    imageUrl: '',
   };
 
   const openAddTask = () => {
     setEditingTask(null);
     setTaskForm(emptyTaskForm);
+    setTaskImageFile(null);
+    setTaskImagePreview('');
     setShowTaskForm(true);
   };
 
@@ -237,8 +245,29 @@ const TrackMe = () => {
       expectedRecurrenceDays: task.expectedRecurrence === 'custom' ? String(task.recurrenceDays || '') : '',
       minCommitmentPercent: task.minCommitmentPercent ? String(task.minCommitmentPercent) : '',
       minCheckInsForEvaluation: task.minCheckInsForEvaluation ? String(task.minCheckInsForEvaluation) : '',
+      imageUrl: task.imageUrl || '',
     });
+    setTaskImageFile(null);
+    setTaskImagePreview(task.imageUrl || '');
     setShowTaskForm(true);
+  };
+
+  const handleTaskImageSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    if (!validTypes.includes(file.type)) { toast.error("File doesn't have a valid image type."); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB.'); return; }
+
+    setTaskImageFile(file);
+    setTaskImagePreview(URL.createObjectURL(file));
+  };
+
+  const removeTaskImage = () => {
+    setTaskImageFile(null);
+    setTaskImagePreview('');
+    setTaskForm((f) => ({ ...f, imageUrl: '' }));
   };
 
   const saveTask = async () => {
@@ -259,11 +288,28 @@ const TrackMe = () => {
 
     setSavingTask(true);
     try {
+      let imageUrl = taskForm.imageUrl || null;
+
+      if (taskImageFile && storage) {
+        setUploadingTaskImage(true);
+        const uniqueFileName = `task-image-${Date.now()}-${taskImageFile.name}`;
+        const fileRef = storageRef(storage, `churches/${organizationId}/trackMeTasks/${uniqueFileName}`);
+        await uploadBytes(fileRef, taskImageFile);
+        imageUrl = await getDownloadURL(fileRef);
+
+        // Clean up the previous image if this task already had one.
+        if (editingTask?.imageUrl && editingTask.imageUrl !== imageUrl) {
+          deleteObject(storageRef(storage, editingTask.imageUrl)).catch(() => {});
+        }
+        setUploadingTaskImage(false);
+      }
+
       if (editingTask) {
         await updateDoc(doc(db, 'churches', organizationId, 'trackMeTasks', editingTask.id), {
           title: taskForm.title.trim(),
           description: taskForm.description.trim(),
           status: taskForm.status,
+          imageUrl,
           ...commitmentFields,
           updatedAt: serverTimestamp(),
         });
@@ -273,6 +319,7 @@ const TrackMe = () => {
           title: taskForm.title.trim(),
           description: taskForm.description.trim(),
           status: taskForm.status,
+          imageUrl,
           ...commitmentFields,
           createdAt: serverTimestamp(),
           createdBy: user?.uid || '',
@@ -280,11 +327,14 @@ const TrackMe = () => {
         toast.success('Task created.');
       }
       setShowTaskForm(false);
+      setTaskImageFile(null);
+      setTaskImagePreview('');
       fetchTasks();
     } catch {
       toast.error('Failed to save task.');
     } finally {
       setSavingTask(false);
+      setUploadingTaskImage(false);
     }
   };
 
@@ -628,6 +678,24 @@ const TrackMe = () => {
                   <option value="inactive">Inactive</option>
                 </select>
 
+                <label style={styles.label}>Task Image (shown as a card on the member's QR page)</label>
+                {taskImagePreview && (
+                  <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <img
+                      src={taskImagePreview}
+                      alt="Task"
+                      style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb' }}
+                    />
+                    <button type="button" style={styles.btn('ghost')} onClick={removeTaskImage}>Remove</button>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/png, image/jpeg, image/jpg, image/webp"
+                  style={styles.input}
+                  onChange={handleTaskImageSelect}
+                />
+
                 <div style={{
                   background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8,
                   padding: 16, marginBottom: 12,
@@ -689,7 +757,7 @@ const TrackMe = () => {
 
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button style={styles.btn('primary')} onClick={saveTask} disabled={savingTask}>
-                    {savingTask ? 'Saving…' : 'Save'}
+                    {uploadingTaskImage ? 'Uploading image…' : savingTask ? 'Saving…' : 'Save'}
                   </button>
                   <button style={styles.btn('ghost')} onClick={() => setShowTaskForm(false)}>Cancel</button>
                 </div>

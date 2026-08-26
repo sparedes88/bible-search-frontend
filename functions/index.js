@@ -4623,6 +4623,7 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
           return {
             taskId: taskDoc.id,
             title: task.title || "Untitled",
+            imageUrl: task.imageUrl || null,
             configured: false,
             attendedCount,
           };
@@ -4655,6 +4656,7 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
         return {
           taskId: taskDoc.id,
           title: task.title || "Untitled",
+          imageUrl: task.imageUrl || null,
           configured: true,
           recurrenceLabel: RECURRENCE_LABELS_BY_KEY[task.expectedRecurrence] || "Custom",
           attendedCount,
