@@ -4,6 +4,7 @@ import { QRCodeCanvas } from "qrcode.react";
 import { getChurchData } from "../api/church";
 
 const QR_LOOKUP_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberQrByPhone";
+const COMMITMENT_SUMMARY_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberCommitmentSummary";
 
 const PublicQRLookup = () => {
   const { id } = useParams();
@@ -16,6 +17,8 @@ const PublicQRLookup = () => {
   const [result, setResult] = useState(null);
   const [showScannerAccess, setShowScannerAccess] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  const [commitmentTasks, setCommitmentTasks] = useState(null);
+  const [loadingCommitment, setLoadingCommitment] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -55,11 +58,30 @@ const PublicQRLookup = () => {
       }
 
       setResult(data);
+      fetchCommitmentSummary(data.uid);
     } catch (fetchError) {
       console.error("QR lookup error:", fetchError);
       setError("Could not reach the server. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCommitmentSummary = async (uid) => {
+    setLoadingCommitment(true);
+    setCommitmentTasks(null);
+    try {
+      const response = await fetch(
+        `${COMMITMENT_SUMMARY_FUNCTION_URL}?churchId=${encodeURIComponent(id)}&uid=${encodeURIComponent(uid)}`
+      );
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setCommitmentTasks(data.tasks.filter((t) => t.configured));
+      }
+    } catch (commitmentError) {
+      console.error("Commitment summary error:", commitmentError);
+    } finally {
+      setLoadingCommitment(false);
     }
   };
 
@@ -333,6 +355,70 @@ const PublicQRLookup = () => {
           text-align: center;
           font-size: 13px;
         }
+        .qr-commitment-task {
+          padding: 14px 0;
+          border-bottom: 1px solid #f3f4f6;
+        }
+        .qr-commitment-task:last-child {
+          border-bottom: none;
+        }
+        .qr-commitment-task-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 6px;
+        }
+        .qr-commitment-task-title {
+          font-weight: 600;
+          font-size: 14px;
+          color: #374151;
+        }
+        .qr-commitment-badge {
+          display: inline-block;
+          padding: 2px 10px;
+          border-radius: 12px;
+          font-size: 11px;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .qr-commitment-badge-faithful { background: #dcfce7; color: #16a34a; }
+        .qr-commitment-badge-committed { background: #fef3c7; color: #b45309; }
+        .qr-commitment-badge-too-early-to-evaluate,
+        .qr-commitment-badge-not-started { background: #f3f4f6; color: #6b7280; }
+        .qr-commitment-meter-track {
+          width: 100%;
+          height: 8px;
+          border-radius: 4px;
+          background: #f3f4f6;
+          overflow: hidden;
+        }
+        .qr-commitment-meter-fill {
+          height: 100%;
+          border-radius: 4px;
+          transition: width 0.3s ease;
+        }
+        .qr-commitment-meter-faithful { background: #16a34a; }
+        .qr-commitment-meter-committed { background: #f59e0b; }
+        .qr-commitment-meter-too-early-to-evaluate,
+        .qr-commitment-meter-not-started { background: #9ca3af; }
+        .qr-commitment-meter-caption {
+          margin: 6px 0 0;
+          font-size: 12px;
+          color: #6b7280;
+        }
+        .qr-commitment-feedback {
+          margin: 8px 0 2px;
+          font-size: 13px;
+          color: #374151;
+        }
+        .qr-commitment-verse {
+          margin: 0;
+          font-size: 12px;
+          font-style: italic;
+          color: #4F46E5;
+        }
       `}</style>
 
       <button className="qr-lookup-back" onClick={() => navigate(`/organization/${id}/login`)}>
@@ -406,6 +492,44 @@ const PublicQRLookup = () => {
           </button>
         )}
       </div>
+
+      {result && (
+        <div className="qr-lookup-card" style={{ marginTop: "16px" }}>
+          <h2 className="qr-lookup-title" style={{ marginBottom: "4px" }}>My Faithful Commitment</h2>
+          <p className="qr-lookup-subtitle">How you're doing on each check-in task, with a little encouragement.</p>
+
+          {loadingCommitment && <p style={{ textAlign: "center", color: "#6b7280", fontSize: "14px" }}>Loading...</p>}
+
+          {!loadingCommitment && commitmentTasks && commitmentTasks.length === 0 && (
+            <p style={{ textAlign: "center", color: "#9ca3af", fontSize: "14px" }}>
+              No check-in tasks are set up for this organization yet.
+            </p>
+          )}
+
+          {!loadingCommitment && commitmentTasks && commitmentTasks.map((task) => (
+            <div key={task.taskId} className="qr-commitment-task">
+              <div className="qr-commitment-task-header">
+                <span className="qr-commitment-task-title">{task.title}</span>
+                <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>
+                  {task.level}
+                </span>
+              </div>
+              <div className="qr-commitment-meter-track">
+                <div
+                  className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
+                  style={{ width: `${Math.round(task.attendanceRate * 100)}%` }}
+                />
+              </div>
+              <p className="qr-commitment-meter-caption">
+                {task.attendedCount} / {task.expectedSessions} expected sessions ({Math.round(task.attendanceRate * 100)}%)
+                {task.avgGapDays !== null && ` · avg. ${task.avgGapDays}d between check-ins`}
+              </p>
+              <p className="qr-commitment-feedback">{task.feedback.message}</p>
+              <p className="qr-commitment-verse">{task.feedback.verse}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

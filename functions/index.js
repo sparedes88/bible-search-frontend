@@ -4558,3 +4558,119 @@ exports.generateAppleWalletPass = functions.https.onRequest(async (req, res) => 
     return res.status(500).json({ success: false, error: "Unexpected error generating the Apple Wallet pass." });
   }
 });
+
+// Returns a per-task faithful-commitment summary for a single member, along with
+// encouraging biblical feedback — used on the public QR lookup page so members
+// can see their own standing without needing to log in as staff.
+const RECURRENCE_LABELS_BY_KEY = { weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly", custom: "Custom" };
+const GAP_TOLERANCE_MULTIPLIER = 1.5;
+
+const COMMITMENT_MESSAGES = {
+  faithful: {
+    verse: "\u201cWell done, good and faithful servant! You have been faithful over a little; I will set you over much. Enter into the joy of your master.\u201d \u2014 Matthew 25:21",
+    message: "You're showing up consistently, and it shows! Keep pressing on \u2014 your faithfulness is planting seeds that will bear fruit in due season (Galatians 6:9).",
+  },
+  committed: {
+    verse: "\u201cAnd let us not grow weary of doing good, for in due season we will reap, if we do not give up.\u201d \u2014 Galatians 6:9",
+    message: "You're engaged, but there's room to build a steadier rhythm. Try setting a reminder before each session \u2014 small, consistent steps build lasting faithfulness (Luke 16:10).",
+  },
+  tooEarly: {
+    verse: "\u201cLet us consider how to stir up one another to love and good works, not neglecting to meet together.\u201d \u2014 Hebrews 10:24-25",
+    message: "You're just getting started \u2014 keep showing up! Every check-in builds the foundation of a faithful habit.",
+  },
+  notStarted: {
+    verse: "\u201cDraw near to God, and he will draw near to you.\u201d \u2014 James 4:8",
+    message: "You haven't checked in for this one yet. Take the first step today \u2014 consistency starts with a single faithful decision.",
+  },
+};
+
+exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Only GET and POST methods are allowed" });
+  }
+
+  try {
+    const body = req.method === "GET" ? (req.query || {}) : (req.body || {});
+    const churchId = normalizeValue(body.churchId);
+    const uid = normalizeValue(body.uid);
+
+    if (!churchId || !uid) {
+      return res.status(400).json({ success: false, error: "Missing churchId or uid" });
+    }
+
+    const firestore = admin.firestore();
+    const tasksSnap = await firestore
+      .collection(`churches/${churchId}/trackMeTasks`)
+      .where("status", "==", "active")
+      .get();
+
+    const tasks = await Promise.all(
+      tasksSnap.docs.map(async (taskDoc) => {
+        const task = taskDoc.data() || {};
+        const hasConfig = !!(task.recurrenceDays && task.minCommitmentPercent && task.minCheckInsForEvaluation);
+
+        const scansSnap = await firestore
+          .collection(`churches/${churchId}/trackMeTasks/${taskDoc.id}/scans`)
+          .where("userId", "==", uid)
+          .get();
+
+        const dates = [...new Set(scansSnap.docs.map((d) => d.data().date).filter(Boolean))].sort();
+        const attendedCount = dates.length;
+
+        if (!hasConfig) {
+          return {
+            taskId: taskDoc.id,
+            title: task.title || "Untitled",
+            configured: false,
+            attendedCount,
+          };
+        }
+
+        const createdAt = task.createdAt?.toDate?.() || new Date();
+        const daysSinceCreated = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000));
+        const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1);
+        const attendanceRate = Math.min(1, attendedCount / expectedSessions);
+        const threshold = task.minCommitmentPercent / 100;
+        const maxAllowedGapDays = task.recurrenceDays * GAP_TOLERANCE_MULTIPLIER;
+
+        const gapsDays = [];
+        for (let i = 1; i < dates.length; i++) {
+          gapsDays.push(Math.round((new Date(dates[i]) - new Date(dates[i - 1])) / 86400000));
+        }
+        const avgGapDays = gapsDays.length > 0
+          ? Math.round(gapsDays.reduce((sum, g) => sum + g, 0) / gapsDays.length)
+          : null;
+        const maxGapDays = gapsDays.length > 0 ? Math.max(...gapsDays) : null;
+        const hasConsistentGaps = maxGapDays === null || maxGapDays <= maxAllowedGapDays;
+
+        let level;
+        let messageKey;
+        if (attendedCount === 0) { level = "Not Started"; messageKey = "notStarted"; }
+        else if (attendedCount < task.minCheckInsForEvaluation) { level = "Too Early to Evaluate"; messageKey = "tooEarly"; }
+        else if (attendanceRate >= threshold && hasConsistentGaps) { level = "Faithful"; messageKey = "faithful"; }
+        else { level = "Committed"; messageKey = "committed"; }
+
+        return {
+          taskId: taskDoc.id,
+          title: task.title || "Untitled",
+          configured: true,
+          recurrenceLabel: RECURRENCE_LABELS_BY_KEY[task.expectedRecurrence] || "Custom",
+          attendedCount,
+          expectedSessions,
+          attendanceRate,
+          avgGapDays,
+          hasConsistentGaps,
+          level,
+          feedback: COMMITMENT_MESSAGES[messageKey],
+        };
+      })
+    );
+
+    return res.status(200).json({ success: true, tasks });
+  } catch (error) {
+    console.error("getMemberCommitmentSummary error:", error);
+    return res.status(500).json({ success: false, error: "Unexpected error loading commitment summary." });
+  }
+});
