@@ -113,8 +113,8 @@ const PublicQRLookup = () => {
 
     // Embed the QR code as the contact's photo so it shows up right in Contacts.
     const base64Photo = canvas.toDataURL("image/png").split(",")[1];
-    const contactName = `${result?.name || "My"} QR Code`.trim();
     const organization = church?.name || "";
+    const contactName = `${organization} ${result?.name || ""}`.trim() || "My QR Code";
 
     const vCardLines = [
       "BEGIN:VCARD",
