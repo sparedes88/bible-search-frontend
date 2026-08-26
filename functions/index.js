@@ -4639,7 +4639,14 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
         }
 
         const createdAt = task.createdAt?.toDate?.() || new Date();
-        const daysSinceCreated = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000));
+        // Use whichever is earlier — the task's creation date or this member's
+        // earliest logged session — so backdated/manually-entered history properly
+        // extends the window used to calculate how many opportunities have occurred.
+        const earliestSessionDate = dates[0] ? new Date(dates[0]) : null;
+        const startDate = earliestSessionDate && earliestSessionDate.getTime() < createdAt.getTime()
+          ? earliestSessionDate
+          : createdAt;
+        const daysSinceCreated = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 86400000));
         // Never let expected sessions be lower than the check-ins actually logged
         // (can happen with manually backdated logs or a task created after scans began).
         const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1, attendedCount);

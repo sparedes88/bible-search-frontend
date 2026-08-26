@@ -213,8 +213,15 @@ const TrackMe = () => {
     const taskLogs = allLogs.filter((log) => log.taskId === taskId);
     const sessionDates = [...new Set(taskLogs.map((log) => log.date).filter(Boolean))].sort();
 
-    const createdAt = task.createdAt?.toDate?.() || (sessionDates[0] ? new Date(sessionDates[0]) : new Date());
-    const daysSinceCreated = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000));
+    // Use whichever is earlier — the task's creation date or the earliest logged
+    // session — so backdated/manually-entered history properly extends the window
+    // used to calculate how many check-in opportunities have actually occurred.
+    const taskCreatedAt = task.createdAt?.toDate?.() || new Date();
+    const earliestSessionDate = sessionDates[0] ? new Date(sessionDates[0]) : null;
+    const startDate = earliestSessionDate && earliestSessionDate.getTime() < taskCreatedAt.getTime()
+      ? earliestSessionDate
+      : taskCreatedAt;
+    const daysSinceCreated = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 86400000));
     const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1, sessionDates.length);
     const threshold = task.minCommitmentPercent / 100;
     const maxAllowedGapDays = task.recurrenceDays * GAP_TOLERANCE_MULTIPLIER;
