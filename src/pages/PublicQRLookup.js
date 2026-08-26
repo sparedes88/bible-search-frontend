@@ -70,15 +70,16 @@ const PublicQRLookup = () => {
       canvas.toBlob((blob) => resolve(blob), "image/png");
     });
 
-  // Contact photos get cropped to a circle/square by iOS and Android Contacts apps.
-  // Pad the QR code onto a larger white canvas so its corner finder patterns
-  // always stay inside that crop and the code stays scannable.
+  // Contact photos get aggressively zoom-cropped to a circle/square by different
+  // iOS/Android Contacts apps (often beyond just a simple inscribed-circle crop),
+  // so keep the QR code small and centered with a very generous white margin
+  // to guarantee its corner finder patterns always survive the crop.
   const getPaddedQrCanvas = () => {
     const sourceCanvas = qrCanvasRef.current;
     if (!sourceCanvas) return null;
 
     const outputSize = 600;
-    const qrDrawSize = 380; // fits inside the circle inscribed in a 600x600 square
+    const qrDrawSize = 240; // well inside any reasonable circular/zoomed crop
     const offset = (outputSize - qrDrawSize) / 2;
 
     const paddedCanvas = document.createElement("canvas");
