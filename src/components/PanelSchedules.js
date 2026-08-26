@@ -829,6 +829,8 @@ const PanelSchedules = () => {
   const [statusTableDataFilter, setStatusTableDataFilter] = useState("all");
   const [statusTablePhaseFilter, setStatusTablePhaseFilter] = useState("all");
   const [statusTableSearchQuery, setStatusTableSearchQuery] = useState("");
+  const [panelHeaderBuildLinkDrafts, setPanelHeaderBuildLinkDrafts] = useState({});
+  const [editingBuildLinkPanelKey, setEditingBuildLinkPanelKey] = useState(null);
   const [manualCircuitAssignments, setManualCircuitAssignments] = useState({});
   const [draftMissingCircuitSelections, setDraftMissingCircuitSelections] = useState({});
   const [permissionsLoading, setPermissionsLoading] = useState(true);
@@ -1767,6 +1769,73 @@ const PanelSchedules = () => {
     } catch (error) {
       console.error("Failed to update panel circuit capacity:", error);
       toast.error("Failed to update panel circuit capacity.");
+    }
+  };
+
+  const handlePanelBuildLinkSave = async (panelKey, nextBuildLink) => {
+    const buildLink = normalizeText(nextBuildLink);
+
+    if (importPreview) {
+      setImportPreview((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          panelHeaders: (previous.panelHeaders || []).map((panel, index) => {
+            const key = panel?.panelKey || `${panel?.panelName || "panel"}-${index}`;
+            if (key !== panelKey) return panel;
+            return {
+              ...panel,
+              buildLink,
+            };
+          }),
+        };
+      });
+      setPanelHeaderBuildLinkDrafts((previous) => ({
+        ...previous,
+        [panelKey]: buildLink,
+      }));
+      setEditingBuildLinkPanelKey(null);
+      return;
+    }
+
+    if (!selectedSchedule?.id || !id || !canManage) return;
+
+    const updatedPanelHeaders = (selectedSchedule.panelHeaders || []).map((panel, index) => {
+      const key = panel?.panelKey || `${panel?.panelName || "panel"}-${index}`;
+      if (key !== panelKey) return panel;
+      return {
+        ...panel,
+        buildLink,
+      };
+    });
+
+    try {
+      await updateDoc(doc(db, "churches", id, "panelSchedules", selectedSchedule.id), {
+        panelHeaders: updatedPanelHeaders,
+        updatedBy: user?.uid || "",
+        updatedAt: serverTimestamp(),
+      });
+
+      setSchedules((current) =>
+        current.map((schedule) =>
+          schedule.id === selectedSchedule.id
+            ? {
+                ...schedule,
+                panelHeaders: updatedPanelHeaders,
+              }
+            : schedule
+        )
+      );
+
+      setPanelHeaderBuildLinkDrafts((previous) => ({
+        ...previous,
+        [panelKey]: buildLink,
+      }));
+      setEditingBuildLinkPanelKey(null);
+      toast.success("Build link saved.");
+    } catch (error) {
+      console.error("Failed to update panel build link:", error);
+      toast.error("Failed to update panel build link.");
     }
   };
 
@@ -3072,6 +3141,60 @@ const PanelSchedules = () => {
                                     ))}
                                   </select>
                                 </span>
+                                <div className="panel-schedules-split-header-tools">
+                                  {editingBuildLinkPanelKey === sectionPanelKey ? (
+                                    <>
+                                      <label>
+                                        <span>Build Link</span>
+                                        <input
+                                          type="url"
+                                          value={panelHeaderBuildLinkDrafts[sectionPanelKey] ?? sectionPanel?.buildLink ?? ""}
+                                          onChange={(event) =>
+                                            setPanelHeaderBuildLinkDrafts((previous) => ({
+                                              ...previous,
+                                              [sectionPanelKey]: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="https://..."
+                                          disabled={!canManage}
+                                        />
+                                      </label>
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePanelBuildLinkSave(sectionPanelKey, panelHeaderBuildLinkDrafts[sectionPanelKey] ?? sectionPanel?.buildLink ?? "")}
+                                        disabled={!canManage}
+                                      >
+                                        Save
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="panel-schedules-build-link-button"
+                                      onDoubleClick={() => {
+                                        if (!canManage) return;
+                                        setPanelHeaderBuildLinkDrafts((previous) => ({
+                                          ...previous,
+                                          [sectionPanelKey]: sectionPanel?.buildLink ?? "",
+                                        }));
+                                        setEditingBuildLinkPanelKey(sectionPanelKey);
+                                      }}
+                                      disabled={!canManage}
+                                    >
+                                      {sectionPanel?.buildLink ? "Build Link" : "Add Build Link"}
+                                    </button>
+                                  )}
+                                  {sectionPanel?.buildLink ? (
+                                    <a
+                                      href={sectionPanel.buildLink}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="panel-schedules-build-link-open"
+                                    >
+                                      Open
+                                    </a>
+                                  ) : null}
+                                </div>
                               </div>
                             ) : null}
                           </div>

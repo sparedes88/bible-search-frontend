@@ -13,6 +13,7 @@ import {
   query,
   serverTimestamp,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { toast } from "react-toastify";
@@ -339,7 +340,19 @@ const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds) => {
   };
 };
 
-const getTimeLogUserLabel = (log = {}) => {
+const normalizeIdentityValue = (value) => String(value || "").trim().toLowerCase();
+
+// Prefers a person's full name (first + last) from the org user directory over whatever short name was logged.
+const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}) => {
+  const aliasMatches = [log.userId, log.userEmail, log.registeredBy]
+    .map(normalizeIdentityValue)
+    .filter(Boolean);
+
+  for (const alias of aliasMatches) {
+    const fullName = fullNameByIdentityAlias[alias];
+    if (fullName) return fullName;
+  }
+
   const byName = String(log.registeredBy || "").trim();
   const byEmail = String(log.userEmail || "").trim();
   const byUid = String(log.userId || "").trim();
@@ -766,6 +779,35 @@ const getExpectedWeekMondayDate = (targetWeek, invoiceRows = [], fallbackDate = 
   return shiftDateInputValue(latestPreviousWeek.mondayDate, 7 * (targetWeekNumber - latestPreviousWeek.weekNumber));
 };
 
+// Flags when a week's Monday date doesn't land exactly 7 days after the prior week, so gaps/overlaps surface in the UI.
+const getWeekSequenceGapInfo = (weekNumber, mondayDate, invoiceRows = [], excludeInvoiceId = null) => {
+  const normalizedWeek = Number(weekNumber);
+  const normalizedMonday = toDateInputValue(mondayDate);
+  if (!Number.isFinite(normalizedWeek) || normalizedWeek <= 1 || !normalizedMonday) {
+    return { hasGap: false };
+  }
+
+  const previousWeekInvoice = (Array.isArray(invoiceRows) ? invoiceRows : []).find(
+    (row) => row?.id !== excludeInvoiceId && Number(row?.weekNumber || 0) === normalizedWeek - 1
+  );
+  const previousMondayDate = toDateInputValue(previousWeekInvoice?.mondayDate || "");
+  if (!previousMondayDate) {
+    return { hasGap: false };
+  }
+
+  const expectedMondayDate = shiftDateInputValue(previousMondayDate, 7);
+  if (expectedMondayDate === normalizedMonday) {
+    return { hasGap: false };
+  }
+
+  const millisPerDay = 24 * 60 * 60 * 1000;
+  const gapDays = Math.round(
+    (new Date(`${normalizedMonday}T00:00:00`).getTime() - new Date(`${expectedMondayDate}T00:00:00`).getTime()) / millisPerDay
+  );
+
+  return { hasGap: true, expectedMondayDate, actualMondayDate: normalizedMonday, gapDays };
+};
+
 const getNextWeekSuggestion = (invoiceRows = []) => {
   if (!Array.isArray(invoiceRows) || invoiceRows.length === 0) {
     return {
@@ -832,7 +874,16 @@ const InvoiceManager = () => {
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
 
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const getLastSelectedProjectStorageKey = () => `invoiceManager:lastProjectId:${id}`;
+
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(`invoiceManager:lastProjectId:${id}`) || "";
+    } catch (error) {
+      return "";
+    }
+  });
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [projectTotalsById, setProjectTotalsById] = useState({});
@@ -851,6 +902,8 @@ const InvoiceManager = () => {
   const [creatingCatchUpInvoices, setCreatingCatchUpInvoices] = useState(false);
   const [recreateWeekNumber, setRecreateWeekNumber] = useState("");
   const [recreatingWeek, setRecreatingWeek] = useState(false);
+  const [insertingWeekInvoiceId, setInsertingWeekInvoiceId] = useState(null);
+  const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
   const [quickPaidSavingByInvoiceKey, setQuickPaidSavingByInvoiceKey] = useState({});
@@ -877,6 +930,7 @@ const InvoiceManager = () => {
   const [loadingSavedReconciliationReport, setLoadingSavedReconciliationReport] = useState(false);
   const [invoiceLogModalInvoice, setInvoiceLogModalInvoice] = useState(null);
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
+  const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
@@ -1059,6 +1113,55 @@ const InvoiceManager = () => {
     return unsubscribe;
   }, [id]);
 
+  // Loads org members so invoices can display each person's full name instead of whatever short name was logged.
+  useEffect(() => {
+    if (!id) {
+      setOrganizationUserDirectory([]);
+      return undefined;
+    }
+
+    const usersQuery = query(collection(db, "users"), where("churchId", "==", id));
+    const unsubscribe = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        const nextDirectory = snapshot.docs.map((userDoc) => {
+          const data = userDoc.data() || {};
+          const firstName = String(data.firstName || data.name || "").trim();
+          const lastName = String(data.lastName || "").trim();
+          const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+          const displayName = String(data.displayName || "").trim();
+          const email = String(data.email || "").trim();
+          const label = fullName || displayName || email || `User ${userDoc.id}`;
+
+          return {
+            userId: userDoc.id,
+            label,
+            aliases: [userDoc.id, email, displayName, data.name]
+              .map(normalizeIdentityValue)
+              .filter(Boolean),
+          };
+        });
+
+        setOrganizationUserDirectory(nextDirectory);
+      },
+      (error) => {
+        console.error("Error loading organization user directory for invoices:", error);
+      }
+    );
+
+    return unsubscribe;
+  }, [id]);
+
+  const fullNameByIdentityAlias = useMemo(() => {
+    const lookup = {};
+    organizationUserDirectory.forEach((userEntry) => {
+      userEntry.aliases.forEach((alias) => {
+        lookup[alias] = userEntry.label;
+      });
+    });
+    return lookup;
+  }, [organizationUserDirectory]);
+
   const timeRotateProjectOptions = useMemo(() => {
     const allValues = [
       ...timeRotateLogs.map((log) => String(log.projectName || "").trim()),
@@ -1121,7 +1224,7 @@ const InvoiceManager = () => {
           eventTimestamp,
           safeDuration,
           weekKey,
-          userLabel: getTimeLogUserLabel(log),
+          userLabel: getTimeLogUserLabel(log, fullNameByIdentityAlias),
         };
       })
       .filter(Boolean)
@@ -1130,7 +1233,7 @@ const InvoiceManager = () => {
         if (timeDelta !== 0) return timeDelta;
         return String(left.id || "").localeCompare(String(right.id || ""));
       });
-  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs]);
+  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias]);
 
   useEffect(() => {
     let active = true;
@@ -1992,6 +2095,21 @@ const InvoiceManager = () => {
 
     return unsubscribe;
   }, [id, projectsRef, selectedProjectId]);
+
+  // Remembers the last viewed project per organization so returning to this page keeps the same selection.
+  useEffect(() => {
+    if (typeof window === "undefined" || !id) return;
+
+    try {
+      if (selectedProjectId) {
+        window.localStorage.setItem(getLastSelectedProjectStorageKey(), selectedProjectId);
+      } else {
+        window.localStorage.removeItem(getLastSelectedProjectStorageKey());
+      }
+    } catch (error) {
+      // Ignore storage failures (e.g., private browsing mode).
+    }
+  }, [id, selectedProjectId]);
 
   useEffect(() => {
     if (!invoicesRef) {
@@ -3380,6 +3498,8 @@ const InvoiceManager = () => {
     const previewPayload = {
       fileName,
       generatedAt: Date.now(),
+      projectId: selectedProjectId,
+      invoiceId: invoice.id,
       projectName,
       invoiceNumber,
       weekNumber: invoice.weekNumber || "-",
@@ -3418,6 +3538,7 @@ const InvoiceManager = () => {
           description: String(card.description || "").trim(),
           taskIdentity: String(card.taskIdentity || "").trim(),
           projectDocId: String(card.projectDocId || "").trim(),
+          hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({
           cardLabel: String(note.cardLabel || "").trim(),
@@ -3653,6 +3774,183 @@ const InvoiceManager = () => {
       toast.error("Failed to recreate week.");
     } finally {
       setRecreatingWeek(false);
+    }
+  };
+
+  // Inserts a new placeholder week at the gap and renumbers every week from that point onward by +1.
+  const handleInsertMissingWeek = async (invoice, gapInfo) => {
+    if (!canManageInvoices) {
+      toast.error("You do not have permission to create invoices.");
+      return;
+    }
+
+    if (!selectedProjectId || !gapInfo?.hasGap) {
+      return;
+    }
+
+    const insertedWeekNumber = Number(invoice.weekNumber);
+    if (!Number.isFinite(insertedWeekNumber) || insertedWeekNumber <= 0) {
+      toast.error("Cannot insert a week without a valid week number.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Insert a new Week ${insertedWeekNumber} starting ${formatDisplayDate(gapInfo.expectedMondayDate)}? `
+      + `Week ${insertedWeekNumber} and every week after it will be renumbered by +1 (their dates stay the same).`
+    );
+    if (!confirmed) return;
+
+    setInsertingWeekInvoiceId(invoice.id);
+
+    try {
+      const invoiceCollectionRef = collection(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices");
+      const existingSnapshot = await getDocs(invoiceCollectionRef);
+      const existingInvoices = existingSnapshot.docs.map((invoiceDoc) => ({ id: invoiceDoc.id, ...invoiceDoc.data() }));
+
+      const invoicesToShift = existingInvoices.filter(
+        (row) => Number(row.weekNumber || 0) >= insertedWeekNumber
+      );
+
+      const batch = writeBatch(db);
+
+      invoicesToShift.forEach((row) => {
+        const newWeekNumber = Number(row.weekNumber) + 1;
+        const rowRef = doc(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices", row.id);
+        const updates = {
+          weekNumber: newWeekNumber,
+          weekLabel: `Week ${newWeekNumber}`,
+          updatedAt: serverTimestamp(),
+          changeLog: [
+            ...(Array.isArray(row.changeLog) ? row.changeLog : []),
+            buildInvoiceLogEntry({
+              action: "Renumbered",
+              note: `Shifted from Week ${row.weekNumber} to Week ${newWeekNumber} to make room for an inserted week.`,
+              changes: { weekNumber: newWeekNumber },
+            }),
+          ],
+        };
+
+        if (Number.isFinite(Number(row.generatedFromWeek)) && Number(row.generatedFromWeek) >= insertedWeekNumber) {
+          updates.generatedFromWeek = Number(row.generatedFromWeek) + 1;
+        }
+
+        batch.update(rowRef, updates);
+      });
+
+      const netDays = resolveNetDays(invoice.paymentTerms, invoice.netDays);
+      const newInvoiceNumber = `W${String(insertedWeekNumber).padStart(2, "0")}`;
+      const newInvoiceRef = doc(invoiceCollectionRef);
+
+      batch.set(newInvoiceRef, {
+        weekNumber: insertedWeekNumber,
+        weekLabel: `Week ${insertedWeekNumber}`,
+        invoiceNumber: newInvoiceNumber,
+        total: 0,
+        mondayDate: gapInfo.expectedMondayDate,
+        dueDate: shiftDateInputValue(gapInfo.expectedMondayDate, netDays),
+        paymentTerms: String(invoice.paymentTerms || "net30").trim().toLowerCase() || "net30",
+        netDays,
+        isPaid: false,
+        invoiceStatus: normalizeInvoiceStatus("", 0, newInvoiceNumber),
+        isPlaceholder: true,
+        generatedFromWeek: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdByUid: user?.uid || "",
+        createdByEmail: user?.email || "",
+        changeLog: [
+          buildInvoiceLogEntry({
+            action: "Created",
+            note: `Auto-inserted to fill a detected date gap before the former Week ${insertedWeekNumber}.`,
+            changes: {
+              weekNumber: insertedWeekNumber,
+              mondayDate: gapInfo.expectedMondayDate,
+              dueDate: shiftDateInputValue(gapInfo.expectedMondayDate, netDays),
+            },
+          }),
+        ],
+      });
+
+      await batch.commit();
+      toast.success(`Week ${insertedWeekNumber} inserted. Later weeks were renumbered.`);
+    } catch (error) {
+      console.error("Error inserting missing week:", error);
+      toast.error("Failed to insert missing week.");
+    } finally {
+      setInsertingWeekInvoiceId(null);
+    }
+  };
+
+  // Appends the next sequential week using the same suggestion logic as the create-invoice form, with no data entry required.
+  const handleAddNextWeek = async () => {
+    if (!canManageInvoices) {
+      toast.error("You do not have permission to create invoices.");
+      return;
+    }
+
+    if (!selectedProjectId) {
+      toast.error("Select a project first.");
+      return;
+    }
+
+    setAddingNextWeek(true);
+
+    try {
+      const invoiceCollectionRef = collection(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices");
+      const existingSnapshot = await getDocs(invoiceCollectionRef);
+      const existingInvoices = existingSnapshot.docs.map((invoiceDoc) => ({ id: invoiceDoc.id, ...invoiceDoc.data() }));
+
+      const suggestion = getNextWeekSuggestion(existingInvoices);
+      const weekNumber = parseWeekNumber(suggestion.weekNumber);
+
+      if (!weekNumber) {
+        toast.error("Could not determine the next week number.");
+        return;
+      }
+
+      if (existingInvoices.some((invoice) => Number(invoice.weekNumber || 0) === weekNumber)) {
+        toast.error(`Week ${weekNumber} already exists for this project.`);
+        return;
+      }
+
+      const mondayDate = toDateInputValue(suggestion.mondayDate) || formatIsoDate(getStartOfIsoWeek(new Date()));
+      const paymentTerms = String(suggestion.paymentTerms || "net30").trim().toLowerCase() || "net30";
+      const netDays = resolveNetDays(paymentTerms, suggestion.netDays);
+      const dueDate = shiftDateInputValue(mondayDate, netDays);
+      const invoiceNumber = `W${String(weekNumber).padStart(2, "0")}`;
+
+      await addDoc(invoiceCollectionRef, {
+        weekNumber,
+        weekLabel: `Week ${weekNumber}`,
+        invoiceNumber,
+        total: 0,
+        mondayDate,
+        dueDate,
+        paymentTerms,
+        netDays,
+        isPaid: false,
+        invoiceStatus: normalizeInvoiceStatus("", 0, invoiceNumber),
+        isPlaceholder: false,
+        generatedFromWeek: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdByUid: user?.uid || "",
+        createdByEmail: user?.email || "",
+        changeLog: [
+          buildInvoiceLogEntry({
+            action: "Created",
+            note: `Week ${weekNumber} added via "Add Next Week".`,
+            changes: { weekNumber, mondayDate, dueDate },
+          }),
+        ],
+      });
+
+      toast.success(`Week ${weekNumber} added.`);
+    } catch (error) {
+      console.error("Error adding next week:", error);
+      toast.error("Failed to add next week.");
+    } finally {
+      setAddingNextWeek(false);
     }
   };
 
@@ -5047,6 +5345,7 @@ const InvoiceManager = () => {
                         const isEditing = editingInvoiceId === invoice.id;
                         const dueCountdown = getDueCountdownMeta(invoice.dueDate);
                         const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
+                        const weekGapInfo = getWeekSequenceGapInfo(invoice.weekNumber, invoice.mondayDate, invoices, invoice.id);
                         const isMissingInvoiceTotal = !invoice.total;
                         const invoiceTotalValue = parseAmountValue(invoice.total);
                         const hasUpdatedInvoiceTotal = invoiceTotalValue !== null && invoiceTotalValue > 0;
@@ -5082,6 +5381,12 @@ const InvoiceManager = () => {
                           const editWeekEndDate = editInvoiceDraft.mondayDate
                             ? shiftDateInputValue(editInvoiceDraft.mondayDate, 6)
                             : "";
+                          const editWeekGapInfo = getWeekSequenceGapInfo(
+                            editInvoiceDraft.weekNumber,
+                            editInvoiceDraft.mondayDate,
+                            invoices,
+                            invoice.id
+                          );
                           return (
                             <tr key={invoice.id} style={{ background: rowBg }}>
                               <td style={tableBodyCellStyle}>
@@ -5114,6 +5419,25 @@ const InvoiceManager = () => {
                                 ) : (
                                   <span title="Monday for This Week">{formatDisplayDate(editInvoiceDraft.mondayDate)}</span>
                                 )}
+                                {editWeekGapInfo.hasGap ? (
+                                  <div style={{ marginTop: "4px", fontSize: "0.72rem", color: "#B91C1C", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                                    <span>
+                                      Gap: expected {formatDisplayDate(editWeekGapInfo.expectedMondayDate)}
+                                      {" "}({editWeekGapInfo.gapDays > 0 ? "+" : ""}{editWeekGapInfo.gapDays}d off)
+                                    </span>
+                                    {isMasterInvoice ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditInvoiceDraft((prev) => ({ ...prev, mondayDate: editWeekGapInfo.expectedMondayDate }))
+                                        }
+                                        style={{ border: "none", borderRadius: "4px", padding: "1px 6px", background: "#B91C1C", color: "#FFFFFF", fontSize: "0.7rem", cursor: "pointer" }}
+                                      >
+                                        Fix
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                               </td>
                               <td style={tableBodyCellStyle}>
                                 <span title="Sunday for This Week">{formatDisplayDate(editWeekEndDate)}</span>
@@ -5307,8 +5631,50 @@ const InvoiceManager = () => {
                                     M
                                   </span>
                                 ) : null}
+                                {weekGapInfo.hasGap ? (
+                                  <span
+                                    title={`Date gap detected: expected ${formatDisplayDate(weekGapInfo.expectedMondayDate)} based on Week ${Number(invoice.weekNumber) - 1}, but this week starts ${formatDisplayDate(weekGapInfo.actualMondayDate)} (${weekGapInfo.gapDays > 0 ? "+" : ""}${weekGapInfo.gapDays} days off).`}
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      width: "18px",
+                                      height: "18px",
+                                      borderRadius: "999px",
+                                      background: "#FEE2E2",
+                                      color: "#B91C1C",
+                                      fontSize: "0.72rem",
+                                      fontWeight: 700,
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    !
+                                  </span>
+                                ) : null}
                                 <span>{`Week ${invoice.weekNumber}`}</span>
                               </div>
+                              {weekGapInfo.hasGap ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleInsertMissingWeek(invoice, weekGapInfo)}
+                                  disabled={insertingWeekInvoiceId === invoice.id}
+                                  title={`Insert a new Week ${invoice.weekNumber} on ${formatDisplayDate(weekGapInfo.expectedMondayDate)} and renumber this week (and later ones) by +1`}
+                                  style={{
+                                    marginTop: "4px",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    padding: "2px 8px",
+                                    background: "#B91C1C",
+                                    color: "#FFFFFF",
+                                    fontSize: "0.7rem",
+                                    fontWeight: 700,
+                                    cursor: insertingWeekInvoiceId === invoice.id ? "not-allowed" : "pointer",
+                                    opacity: insertingWeekInvoiceId === invoice.id ? 0.7 : 1,
+                                  }}
+                                >
+                                  {insertingWeekInvoiceId === invoice.id ? "Inserting..." : "Insert Week Immediately"}
+                                </button>
+                              ) : null}
                             </td>
                             <td style={tableBodyCellStyle}>
                               {formatDisplayDate(invoice.mondayDate)}
@@ -5476,6 +5842,13 @@ const InvoiceManager = () => {
                                 >
                                   Billable Invoice
                                 </button>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonStyle, background: "#DC2626" }}
+                                  onClick={() => handleDeleteInvoice(invoice.id)}
+                                >
+                                  Delete
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -5505,6 +5878,27 @@ const InvoiceManager = () => {
                           </div>
                         </td>
                         <td style={tableBodyCellStyle} colSpan={8} />
+                      </tr>
+                      <tr>
+                        <td style={{ ...tableBodyCellStyle, textAlign: "center", padding: "14px" }} colSpan={13}>
+                          <button
+                            type="button"
+                            onClick={handleAddNextWeek}
+                            disabled={addingNextWeek || !canManageInvoices}
+                            style={{
+                              border: "none",
+                              borderRadius: "8px",
+                              padding: "10px 18px",
+                              background: "#16A34A",
+                              color: "#FFFFFF",
+                              fontWeight: 700,
+                              cursor: addingNextWeek || !canManageInvoices ? "not-allowed" : "pointer",
+                              opacity: addingNextWeek || !canManageInvoices ? 0.7 : 1,
+                            }}
+                          >
+                            {addingNextWeek ? "Adding..." : "+ Add Next Week"}
+                          </button>
+                        </td>
                       </tr>
                     </tbody>
                   </table>

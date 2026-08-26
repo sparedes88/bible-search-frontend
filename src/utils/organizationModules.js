@@ -407,6 +407,14 @@ const organizationModuleDefinitions = [
         buildPath: (organizationId) => `/organization/${organizationId}/my-ezlink`,
         defaultVisibilityByRole: { member: false },
       }),
+      createModule({
+        id: "track-me",
+        title: "Track Me",
+        description: "Create tasks and scan user QR codes to record attendance with timestamp and location",
+        icon: "📍",
+        buildPath: (organizationId) => `/organization/${organizationId}/track-me`,
+        defaultVisibilityByRole: { member: false },
+      }),
     ],
   },
   {

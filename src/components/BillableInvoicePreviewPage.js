@@ -1,8 +1,25 @@
-import React, { useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import * as html2pdfLib from "html2pdf.js";
+import { addDoc, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
+import { getChurchData } from "../api/church";
+import { db } from "../firebase";
+
+const SECTION_DEFS = [
+  { key: "companyHeader", label: "Company Header & Client" },
+  { key: "invoiceInfo", label: "Invoice Details" },
+  { key: "summary", label: "Billable Summary by Person" },
+  { key: "workSummary", label: "Work Summary per User" },
+  { key: "issuesNotes", label: "Issues and Notes" },
+];
+
+const DEFAULT_SECTION_VISIBILITY = SECTION_DEFS.reduce((acc, section) => {
+  acc[section.key] = section.key !== "issuesNotes";
+  return acc;
+}, {});
 
 const tableHeaderCellStyle = {
   textAlign: "left",
@@ -34,9 +51,18 @@ const numericBodyCellStyle = {
 
 const cardStyle = {
   background: "#FFFFFF",
-  border: "1px solid #E5E7EB",
-  borderRadius: "12px",
+  border: "1px solid #E2E8F0",
+  borderRadius: "4px",
   padding: "16px",
+};
+
+const sectionHeadingStyle = {
+  marginTop: 0,
+  marginBottom: "14px",
+  fontSize: "1.05rem",
+  fontWeight: 700,
+  color: "#0F172A",
+  letterSpacing: "0.01em",
 };
 
 const formatCurrency = (value) => {
@@ -96,6 +122,99 @@ const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
   const pdfContentRef = useRef(null);
+  const [companyBranding, setCompanyBranding] = useState({ name: "", logo: "" });
+  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const [sectionVisibility, setSectionVisibility] = useState(DEFAULT_SECTION_VISIBILITY);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadCompanyBranding = async () => {
+      if (!id) return;
+      const churchData = await getChurchData(id);
+      if (!isMounted || !churchData) return;
+
+      setCompanyBranding({
+        name: churchData.name || churchData.churchName || "",
+        logo: churchData.logo || "",
+      });
+    };
+
+    loadCompanyBranding();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
+
+  // Inlines the logo as a data URL so html2canvas can always render it, regardless of CORS on the remote asset.
+  useEffect(() => {
+    let isMounted = true;
+
+    const convertLogoToDataUrl = async () => {
+      if (!companyBranding.logo) {
+        setLogoDataUrl("");
+        return;
+      }
+
+      try {
+        const response = await fetch(companyBranding.logo, { mode: "cors" });
+        const blob = await response.blob();
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        if (isMounted) setLogoDataUrl(dataUrl);
+      } catch (error) {
+        console.warn("Could not inline invoice logo as a data URL, falling back to remote URL:", error);
+        if (isMounted) setLogoDataUrl("");
+      }
+    };
+
+    convertLogoToDataUrl();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [companyBranding.logo]);
+
+  const toggleSectionVisibility = (sectionKey) => {
+    setSectionVisibility((previous) => ({
+      ...previous,
+      [sectionKey]: !previous[sectionKey],
+    }));
+  };
+
+  const [noteRowOverrides, setNoteRowOverrides] = useState({});
+  const [editingNoteRowKey, setEditingNoteRowKey] = useState(null);
+
+  const getNoteRowKey = (userIndex, rowIndex) => `${userIndex}:${rowIndex}`;
+
+  const toggleNoteRowHidden = (rowKey) => {
+    setNoteRowOverrides((previous) => ({
+      ...previous,
+      [rowKey]: { ...previous[rowKey], hidden: !previous[rowKey]?.hidden },
+    }));
+    setEditingNoteRowKey((previous) => (previous === rowKey ? null : previous));
+  };
+
+  const updateNoteRowText = (rowKey, noteText) => {
+    setNoteRowOverrides((previous) => ({
+      ...previous,
+      [rowKey]: { ...previous[rowKey], noteText },
+    }));
+  };
+
+  // Resolves a note's displayed/exported text after applying any hide or edit override for that row.
+  const getEffectiveNoteText = (userIndex, rowIndex, originalText) => {
+    const override = noteRowOverrides[getNoteRowKey(userIndex, rowIndex)];
+    if (!override) return originalText;
+    if (override.hidden) return "";
+    return typeof override.noteText === "string" ? override.noteText : originalText;
+  };
 
   const draftKey = useMemo(() => {
     const params = new URLSearchParams(location.search || "");
@@ -114,6 +233,265 @@ const BillableInvoicePreviewPage = () => {
       return null;
     }
   }, [draftKey]);
+
+  const invoiceDocRef = useMemo(() => {
+    if (!id || !draftPayload?.projectId || !draftPayload?.invoiceId) return null;
+    return doc(db, "churches", id, "invoiceProjects", draftPayload.projectId, "invoices", draftPayload.invoiceId);
+  }, [id, draftPayload?.projectId, draftPayload?.invoiceId]);
+
+  const projectDocRef = useMemo(() => {
+    if (!id || !draftPayload?.projectId) return null;
+    return doc(db, "churches", id, "invoiceProjects", draftPayload.projectId);
+  }, [id, draftPayload?.projectId]);
+
+  const [billTo, setBillTo] = useState(null);
+  const [billToClients, setBillToClients] = useState([]);
+  const [isEditingBillTo, setIsEditingBillTo] = useState(false);
+  const [billToDraftMode, setBillToDraftMode] = useState("new");
+  const [billToDraftClientId, setBillToDraftClientId] = useState("");
+  const [billToDraftFullName, setBillToDraftFullName] = useState("");
+  const [billToDraftAddress, setBillToDraftAddress] = useState("");
+  const [isSavingBillTo, setIsSavingBillTo] = useState(false);
+
+  // Loads the Bill To saved on this project so it persists across every invoice for that project.
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProjectBillTo = async () => {
+      if (!projectDocRef) return;
+      try {
+        const projectSnap = await getDoc(projectDocRef);
+        const savedBillTo = projectSnap.data()?.billTo;
+        if (isMounted && savedBillTo && typeof savedBillTo === "object") {
+          setBillTo(savedBillTo);
+        }
+      } catch (error) {
+        console.error("Failed to load saved Bill To for this project:", error);
+      }
+    };
+
+    loadProjectBillTo();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [projectDocRef]);
+
+  // Loads reusable Bill To contacts already created for other projects in this organization.
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadBillToClients = async () => {
+      if (!id) return;
+      try {
+        const clientsSnapshot = await getDocs(collection(db, "churches", id, "billToClients"));
+        const nextClients = clientsSnapshot.docs.map((clientDoc) => ({ id: clientDoc.id, ...clientDoc.data() }));
+        if (isMounted) setBillToClients(nextClients);
+      } catch (error) {
+        console.error("Failed to load Bill To contacts:", error);
+      }
+    };
+
+    loadBillToClients();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
+
+  const openBillToEditor = () => {
+    setBillToDraftMode(billToClients.length > 0 ? "existing" : "new");
+    setBillToDraftClientId(billTo?.clientId || "");
+    setBillToDraftFullName(billTo?.fullName || "");
+    setBillToDraftAddress(billTo?.address || "");
+    setIsEditingBillTo(true);
+  };
+
+  const handleSelectExistingBillToClient = (clientId) => {
+    setBillToDraftClientId(clientId);
+    const matchedClient = billToClients.find((client) => client.id === clientId);
+    if (matchedClient) {
+      setBillToDraftFullName(matchedClient.fullName || "");
+      setBillToDraftAddress(matchedClient.address || "");
+    }
+  };
+
+  const handleSaveBillTo = async () => {
+    if (!projectDocRef) {
+      toast.error("This invoice preview cannot be saved to Firebase (missing project reference). Regenerate it from Invoices.");
+      return;
+    }
+
+    const fullName = billToDraftFullName.trim();
+    if (!fullName) {
+      toast.error("Full Name is required.");
+      return;
+    }
+
+    const address = billToDraftAddress.trim();
+
+    setIsSavingBillTo(true);
+    try {
+      let clientId = billToDraftMode === "existing" ? billToDraftClientId : "";
+
+      if (billToDraftMode === "new" || !clientId) {
+        const created = await addDoc(collection(db, "churches", id, "billToClients"), {
+          fullName,
+          address,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        clientId = created.id;
+        setBillToClients((previous) => [...previous, { id: clientId, fullName, address }]);
+      } else {
+        await updateDoc(doc(db, "churches", id, "billToClients", clientId), {
+          fullName,
+          address,
+          updatedAt: serverTimestamp(),
+        });
+        setBillToClients((previous) =>
+          previous.map((client) => (client.id === clientId ? { ...client, fullName, address } : client))
+        );
+      }
+
+      const nextBillTo = { clientId, fullName, address };
+      await updateDoc(projectDocRef, {
+        billTo: nextBillTo,
+        billToUpdatedAt: serverTimestamp(),
+      });
+
+      setBillTo(nextBillTo);
+      setIsEditingBillTo(false);
+      toast.success("Bill To saved for this project.");
+    } catch (error) {
+      console.error("Failed to save Bill To:", error);
+      toast.error("Failed to save Bill To.");
+    } finally {
+      setIsSavingBillTo(false);
+    }
+  };
+
+  const [companyInfo, setCompanyInfo] = useState(null);
+  const [isEditingCompanyInfo, setIsEditingCompanyInfo] = useState(false);
+  const [companyInfoDraftFullName, setCompanyInfoDraftFullName] = useState("");
+  const [companyInfoDraftAddress, setCompanyInfoDraftAddress] = useState("");
+  const [isSavingCompanyInfo, setIsSavingCompanyInfo] = useState(false);
+
+  const companyInfoDocRef = useMemo(() => {
+    if (!id) return null;
+    return doc(db, "churches", id, "invoiceSettings", "companyInfo");
+  }, [id]);
+
+  // Loads the org's saved invoice company info (full name + address) shown below the logo.
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadCompanyInfo = async () => {
+      if (!companyInfoDocRef) return;
+      try {
+        const companyInfoSnap = await getDoc(companyInfoDocRef);
+        const savedCompanyInfo = companyInfoSnap.data();
+        if (isMounted && savedCompanyInfo) {
+          setCompanyInfo({ fullName: savedCompanyInfo.fullName || "", address: savedCompanyInfo.address || "" });
+        }
+      } catch (error) {
+        console.error("Failed to load saved company info:", error);
+      }
+    };
+
+    loadCompanyInfo();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [companyInfoDocRef]);
+
+  const openCompanyInfoEditor = () => {
+    setCompanyInfoDraftFullName(companyInfo?.fullName || companyBranding.name || "");
+    setCompanyInfoDraftAddress(companyInfo?.address || "");
+    setIsEditingCompanyInfo(true);
+  };
+
+  const handleSaveCompanyInfo = async () => {
+    if (!companyInfoDocRef) {
+      toast.error("This invoice preview cannot be saved to Firebase (missing organization reference).");
+      return;
+    }
+
+    const fullName = companyInfoDraftFullName.trim();
+    if (!fullName) {
+      toast.error("Full Name is required.");
+      return;
+    }
+
+    const address = companyInfoDraftAddress.trim();
+
+    setIsSavingCompanyInfo(true);
+    try {
+      await setDoc(companyInfoDocRef, {
+        fullName,
+        address,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      setCompanyInfo({ fullName, address });
+      setIsEditingCompanyInfo(false);
+      toast.success("Company information saved.");
+    } catch (error) {
+      console.error("Failed to save company info:", error);
+      toast.error("Failed to save company information.");
+    } finally {
+      setIsSavingCompanyInfo(false);
+    }
+  };
+
+  const [isSavingNoteOverrides, setIsSavingNoteOverrides] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSavedNoteOverrides = async () => {
+      if (!invoiceDocRef) return;
+
+      try {
+        const invoiceSnap = await getDoc(invoiceDocRef);
+        const savedOverrides = invoiceSnap.data()?.billableNoteOverrides;
+        if (isMounted && savedOverrides && typeof savedOverrides === "object") {
+          setNoteRowOverrides(savedOverrides);
+        }
+      } catch (error) {
+        console.error("Failed to load saved note overrides:", error);
+      }
+    };
+
+    loadSavedNoteOverrides();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [invoiceDocRef]);
+
+  const handleSaveNoteOverrides = async () => {
+    if (!invoiceDocRef) {
+      toast.error("This invoice preview cannot be saved to Firebase (missing invoice reference). Regenerate it from Invoices.");
+      return;
+    }
+
+    setIsSavingNoteOverrides(true);
+    try {
+      await updateDoc(invoiceDocRef, {
+        billableNoteOverrides: noteRowOverrides,
+        billableNoteOverridesUpdatedAt: serverTimestamp(),
+      });
+      toast.success("Note changes saved.");
+    } catch (error) {
+      console.error("Failed to save note overrides:", error);
+      toast.error("Failed to save note changes.");
+    } finally {
+      setIsSavingNoteOverrides(false);
+    }
+  };
 
   const handleDownloadXlsx = () => {
     if (!draftPayload) return;
@@ -143,7 +521,7 @@ const BillableInvoicePreviewPage = () => {
         "Issues Worked",
         "Notes",
       ],
-      ...users.flatMap((userEntry) => {
+      ...users.flatMap((userEntry, userIndex) => {
         const name = userEntry.name || "Unknown User";
         const regularHours = Number(userEntry.regularHours || 0);
         const overtimeHours = Number(userEntry.overtimeHours || 0);
@@ -151,6 +529,11 @@ const BillableInvoicePreviewPage = () => {
         const overtimeRate = Number(userEntry.overtimeRate || 0);
         const regularCost = regularHours * regularRate;
         const overtimeCost = overtimeHours * overtimeRate;
+        const cardCount = Array.isArray(userEntry.cards) ? userEntry.cards.length : 0;
+        const notesSummary = (Array.isArray(userEntry.notes) ? userEntry.notes : [])
+          .map((note, noteIndex) => getEffectiveNoteText(userIndex, cardCount + noteIndex, note.text || ""))
+          .filter(Boolean)
+          .join(" | ");
 
         return [
           [
@@ -160,7 +543,7 @@ const BillableInvoicePreviewPage = () => {
             regularRate,
             regularCost,
             String(userEntry.issueSummary || ""),
-            String(userEntry.notesSummary || ""),
+            notesSummary,
           ],
           [
             name,
@@ -211,7 +594,7 @@ const BillableInvoicePreviewPage = () => {
       ["Person", "Issue/Card", "Project", "Issue ID", "Issue Title", "Issue Details", "Note"],
     ];
 
-    users.forEach((userEntry) => {
+    users.forEach((userEntry, userIndex) => {
       const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
       const notes = Array.isArray(userEntry.notes) ? userEntry.notes : [];
 
@@ -232,7 +615,7 @@ const BillableInvoicePreviewPage = () => {
         ]);
       });
 
-      notes.forEach((note) => {
+      notes.forEach((note, noteIndex) => {
         issueAndNoteRows.push([
           userEntry.name || "Unknown User",
           String(note.cardLabel || ""),
@@ -240,7 +623,7 @@ const BillableInvoicePreviewPage = () => {
           String(note.issueId || ""),
           getIssueTitleText(note),
           getIssueDetailsText(note),
-          String(note.text || ""),
+          getEffectiveNoteText(userIndex, cards.length + noteIndex, note.text || ""),
         ]);
       });
 
@@ -278,29 +661,56 @@ const BillableInvoicePreviewPage = () => {
       return;
     }
 
-    const baseName = String(draftPayload.fileName || "billable-invoice")
-      .replace(/\.xlsx$/i, "")
-      .trim() || "billable-invoice";
-    const fileName = `${baseName}.pdf`;
+    setIsGeneratingPdf(true);
+    try {
+      // html2canvas can't render a live <textarea> value, so close any open note edit before capturing.
+      if (editingNoteRowKey !== null) {
+        setEditingNoteRowKey(null);
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
 
-    const options = {
-      margin: [10, 10, 10, 10],
-      filename: fileName,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      },
-      jsPDF: {
-        unit: "mm",
-        format: "a4",
-        orientation: "portrait",
-      },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-    };
+      const containerElement = pdfContentRef.current;
+      const images = Array.from(containerElement.querySelectorAll("img"));
+      await Promise.all(
+        images.map((imageElement) => {
+          if (imageElement.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            imageElement.addEventListener("load", resolve, { once: true });
+            imageElement.addEventListener("error", resolve, { once: true });
+          });
+        })
+      );
 
-    await html2pdf().set(options).from(pdfContentRef.current).save();
+      const baseName = String(draftPayload.fileName || "billable-invoice")
+        .replace(/\.xlsx$/i, "")
+        .trim() || "billable-invoice";
+      const fileName = `${baseName}.pdf`;
+
+      const options = {
+        margin: [10, 10, 10, 10],
+        filename: fileName,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+        },
+        jsPDF: {
+          unit: "mm",
+          format: "a4",
+          orientation: "portrait",
+        },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      };
+
+      await html2pdf().set(options).from(containerElement).save();
+    } catch (error) {
+      console.error("Failed to export invoice PDF:", error);
+      toast.error("Failed to export PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   if (!draftPayload) {
@@ -347,10 +757,20 @@ const BillableInvoicePreviewPage = () => {
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={handleDownloadPdf}
-            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: "pointer" }}
+            onClick={handleSaveNoteOverrides}
+            disabled={isSavingNoteOverrides || !invoiceDocRef}
+            title={invoiceDocRef ? "Save hidden/edited notes to Firebase" : "Regenerate this preview from Invoices to enable saving"}
+            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: invoiceDocRef ? "#7C3AED" : "#94A3B8", color: "#FFFFFF", fontWeight: 700, cursor: invoiceDocRef ? "pointer" : "not-allowed" }}
           >
-            Export PDF
+            {isSavingNoteOverrides ? "Saving..." : "Save Note Changes"}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isGeneratingPdf ? "not-allowed" : "pointer", opacity: isGeneratingPdf ? 0.7 : 1 }}
+          >
+            {isGeneratingPdf ? "Generating PDF..." : "Export PDF"}
           </button>
           <button
             type="button"
@@ -368,22 +788,250 @@ const BillableInvoicePreviewPage = () => {
         </div>
       </div>
 
-      <div ref={pdfContentRef} style={{ marginTop: "12px" }}>
-      <div style={{ ...cardStyle }}>
-        <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-          <div><strong>Project:</strong> {draftPayload.projectName || "Unknown Project"}</div>
-          <div><strong>Invoice #:</strong> {draftPayload.invoiceNumber || "-"}</div>
-          <div><strong>Week:</strong> Week {draftPayload.weekNumber || "-"}</div>
-          <div><strong>Start of Week:</strong> {formatMonthDayYear(draftPayload.mondayDate)}</div>
-          <div><strong>End of Week:</strong> {formatMonthDayYear(draftPayload.weekEndDate)}</div>
-          <div><strong>Due Date:</strong> {formatMonthDayYear(draftPayload.dueDate)}</div>
-          <div><strong>Terms:</strong> {draftPayload.paymentTermsLabel || "-"}</div>
-          <div><strong>Overtime Policy:</strong> {overtimePolicyLabel}</div>
-        </div>
+      <div style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+        <strong style={{ color: "#0F172A" }}>Show/Hide Sections:</strong>
+        {SECTION_DEFS.map((section) => (
+          <label key={section.key} style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={Boolean(sectionVisibility[section.key])}
+              onChange={() => toggleSectionVisibility(section.key)}
+            />
+            {section.label}
+          </label>
+        ))}
       </div>
 
+      <div
+        ref={pdfContentRef}
+        style={{
+          marginTop: "12px",
+          fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+          color: "#1F2937",
+          lineHeight: 1.5,
+        }}
+      >
+      {sectionVisibility.companyHeader && (
+        <div style={{ ...cardStyle, padding: "20px 24px", borderTop: "3px solid #0F172A" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "20px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                {companyBranding.logo ? (
+                  <img
+                    src={logoDataUrl || companyBranding.logo}
+                    alt={`${companyBranding.name || "Company"} logo`}
+                    style={{ height: "52px", width: "auto", objectFit: "contain" }}
+                  />
+                ) : null}
+              </div>
+
+              <div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                  <div>
+                    <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0F172A" }}>
+                      {companyInfo?.fullName || ""}
+                    </div>
+                    {companyInfo?.address ? (
+                      <div style={{ fontSize: "0.85rem", color: "#334155", marginTop: "2px", whiteSpace: "pre-line" }}>
+                        {companyInfo.address}
+                      </div>
+                    ) : null}
+                  </div>
+                  {!isEditingCompanyInfo ? (
+                    <button
+                      type="button"
+                      data-html2canvas-ignore="true"
+                      onClick={openCompanyInfoEditor}
+                      style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "4px 10px", background: "#F1F5F9", color: "#334155", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      Edit Company Info
+                    </button>
+                  ) : null}
+                </div>
+
+                {isEditingCompanyInfo ? (
+                  <div data-html2canvas-ignore="true" style={{ marginTop: "10px", padding: "12px", border: "1px solid #CBD5E1", borderRadius: "8px", background: "#F8FAFC", display: "grid", gap: "8px", maxWidth: "420px" }}>
+                    <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                      Full Name
+                      <input
+                        type="text"
+                        value={companyInfoDraftFullName}
+                        onChange={(event) => setCompanyInfoDraftFullName(event.target.value)}
+                        placeholder="Company full name"
+                        style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                      Address
+                      <textarea
+                        value={companyInfoDraftAddress}
+                        onChange={(event) => setCompanyInfoDraftAddress(event.target.value)}
+                        placeholder="Street, City, State, ZIP"
+                        rows={3}
+                        style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem", fontFamily: "inherit" }}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        type="button"
+                        onClick={handleSaveCompanyInfo}
+                        disabled={isSavingCompanyInfo}
+                        style={{ border: "none", borderRadius: "6px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isSavingCompanyInfo ? "not-allowed" : "pointer", opacity: isSavingCompanyInfo ? 0.7 : 1 }}
+                      >
+                        {isSavingCompanyInfo ? "Saving..." : "Save Company Info"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingCompanyInfo(false)}
+                        style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "8px 14px", background: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#0F172A", letterSpacing: "0.08em" }}>INVOICE</div>
+              <div style={{ fontSize: "0.9rem", color: "#64748B", marginTop: "4px" }}>
+                {`Invoice #${draftPayload.invoiceNumber || "-"}`}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: "18px", paddingTop: "14px", borderTop: "1px solid #E2E8F0" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#94A3B8" }}>
+                  Bill To
+                </div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                  {billTo?.fullName || draftPayload.projectName || "Unknown Client"}
+                </div>
+                {billTo?.address ? (
+                  <div style={{ fontSize: "0.85rem", color: "#334155", marginTop: "2px", whiteSpace: "pre-line" }}>
+                    {billTo.address}
+                  </div>
+                ) : null}
+              </div>
+              {!isEditingBillTo ? (
+                <button
+                  type="button"
+                  data-html2canvas-ignore="true"
+                  onClick={openBillToEditor}
+                  style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "4px 10px", background: "#F1F5F9", color: "#334155", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Edit Bill To
+                </button>
+              ) : null}
+            </div>
+
+            {isEditingBillTo ? (
+              <div data-html2canvas-ignore="true" style={{ marginTop: "12px", padding: "12px", border: "1px solid #CBD5E1", borderRadius: "8px", background: "#F8FAFC", display: "grid", gap: "8px", maxWidth: "480px" }}>
+                {billToClients.length > 0 ? (
+                  <div style={{ display: "flex", gap: "14px", flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem", color: "#334155" }}>
+                      <input
+                        type="radio"
+                        checked={billToDraftMode === "existing"}
+                        onChange={() => setBillToDraftMode("existing")}
+                      />
+                      Select existing
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem", color: "#334155" }}>
+                      <input
+                        type="radio"
+                        checked={billToDraftMode === "new"}
+                        onChange={() => setBillToDraftMode("new")}
+                      />
+                      Create new
+                    </label>
+                  </div>
+                ) : null}
+
+                {billToDraftMode === "existing" && billToClients.length > 0 ? (
+                  <select
+                    value={billToDraftClientId}
+                    onChange={(event) => handleSelectExistingBillToClient(event.target.value)}
+                    style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                  >
+                    <option value="">Select a Bill To contact...</option>
+                    {billToClients.map((client) => (
+                      <option key={client.id} value={client.id}>{client.fullName}</option>
+                    ))}
+                  </select>
+                ) : null}
+
+                <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                  Full Name
+                  <input
+                    type="text"
+                    value={billToDraftFullName}
+                    onChange={(event) => setBillToDraftFullName(event.target.value)}
+                    placeholder="Client full name"
+                    style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                  Address
+                  <textarea
+                    value={billToDraftAddress}
+                    onChange={(event) => setBillToDraftAddress(event.target.value)}
+                    placeholder="Street, City, State, ZIP"
+                    rows={3}
+                    style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem", fontFamily: "inherit" }}
+                  />
+                </label>
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={handleSaveBillTo}
+                    disabled={isSavingBillTo}
+                    style={{ border: "none", borderRadius: "6px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isSavingBillTo ? "not-allowed" : "pointer", opacity: isSavingBillTo ? 0.7 : 1 }}
+                  >
+                    {isSavingBillTo ? "Saving..." : "Save Bill To"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBillTo(false)}
+                    style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "8px 14px", background: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {sectionVisibility.invoiceInfo && (
+      <div style={{ ...cardStyle, marginTop: sectionVisibility.companyHeader ? "12px" : 0, padding: "16px 24px" }}>
+        <div style={{ display: "grid", gap: "16px", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          {[
+            ["Week", `Week ${draftPayload.weekNumber || "-"}`],
+            ["Period", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
+            ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
+            ["Terms", draftPayload.paymentTermsLabel || "-"],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#94A3B8" }}>
+                {label}
+              </div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: "12px", fontSize: "0.78rem", color: "#64748B" }}>{overtimePolicyLabel}</div>
+      </div>
+      )}
+
+      {sectionVisibility.summary && (
       <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
-        <h2 style={{ marginTop: 0 }}>Billable Summary by Person</h2>
+        <h2 style={sectionHeadingStyle}>Billable Summary by Person</h2>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", justifyItems: "stretch", alignItems: "stretch", gap: "12px", width: "100%" }}>
           {users.map((userEntry, index) => {
             const personName = userEntry.name || "Unknown User";
@@ -401,13 +1049,26 @@ const BillableInvoicePreviewPage = () => {
                   width: "100%",
                   boxSizing: "border-box",
                   border: "1px solid #CBD5E1",
-                  borderRadius: "10px",
+                  borderRadius: "4px",
                   overflow: "hidden",
                   background: "#FFFFFF",
                 }}
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
-                  {personName}
+                  <div>{`BIM Coordinator #${index + 1}, User: ${personName}`}</div>
+                  <div style={{ marginTop: "4px", fontWeight: 600, fontSize: "0.85rem", color: "#334155" }}>
+                    <div><strong>Week:</strong> Week {draftPayload.weekNumber || "-"}</div>
+                    <div><strong>Start of Week:</strong> {formatMonthDayYear(draftPayload.mondayDate)}</div>
+                    <div><strong>End of Week:</strong> {formatMonthDayYear(draftPayload.weekEndDate)}</div>
+                  </div>
+                  <div style={{ marginTop: "8px" }}>
+                    <div style={{ fontWeight: 800, fontSize: "0.82rem", letterSpacing: "0.03em", textTransform: "uppercase" }}>
+                      BIM Coordinator / Detailer
+                    </div>
+                    <div style={{ marginTop: "4px", fontWeight: 400, fontSize: "0.82rem", color: "#334155", lineHeight: 1.4 }}>
+                      {`Provide weekly BIM Services, including drafting, coordination, and BIM assistance for project "${draftPayload.projectName || "Unknown Project"}". Drafting services include Revit, Revizto, Navisworks and Electrical BIM Coordination.`}
+                    </div>
+                  </div>
                 </div>
                 <div style={{ width: "100%", boxSizing: "border-box" }}>
                   <div
@@ -437,10 +1098,14 @@ const BillableInvoicePreviewPage = () => {
                     <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
                     <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div>
 
-                    <div style={tableBodyCellStyle}>Overtime (&gt; {overtimeThresholdHours}h)</div>
-                    <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
-                    <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
-                    <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
+                    {overtimeHours > 0 && (
+                      <>
+                        <div style={tableBodyCellStyle}>Overtime (&gt; {overtimeThresholdHours}h)</div>
+                        <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
+                        <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
+                        <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
+                      </>
+                    )}
 
                     <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Person Total</div>
                     <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{Number(userEntry.totalHours || 0).toFixed(2)}</div>
@@ -453,16 +1118,109 @@ const BillableInvoicePreviewPage = () => {
           })}
         </div>
 
-        <div style={{ marginTop: "12px", display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-          <div><strong>Total Regular Hours:</strong> {Number(draftPayload.totals?.totalRegularHours || 0).toFixed(2)}</div>
-          <div><strong>Total Overtime Hours:</strong> {Number(draftPayload.totals?.totalOvertimeHours || 0).toFixed(2)}</div>
-          <div><strong>Total Hours:</strong> {Number(draftPayload.totals?.totalHours || 0).toFixed(2)}</div>
-          <div><strong>Total Amount:</strong> {formatCurrency(draftPayload.totals?.totalAmount || 0)}</div>
+        <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ minWidth: "280px", border: "1px solid #E2E8F0", borderRadius: "4px", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
+              <span>Total Regular Hours</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalRegularHours || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
+              <span>Total Overtime Hours</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalOvertimeHours || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155" }}>
+              <span>Total Hours</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalHours || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#0F172A", color: "#FFFFFF" }}>
+              <span style={{ fontSize: "0.9rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>Total Due</span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(draftPayload.totals?.totalAmount || 0)}</span>
+            </div>
+          </div>
         </div>
       </div>
+      )}
 
+      {sectionVisibility.workSummary && (
+      <div
+        style={{
+          ...cardStyle,
+          marginTop: "12px",
+          width: "100%",
+          boxSizing: "border-box",
+          pageBreakBefore: "always",
+          breakBefore: "page",
+        }}
+      >
+        <h2 style={sectionHeadingStyle}>Work Summary per User</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", justifyItems: "stretch", alignItems: "stretch", gap: "12px", width: "100%" }}>
+          {users.length === 0 ? (
+            <div style={{ ...cardStyle, borderColor: "#CBD5E1", marginTop: 0 }}>No user rows available.</div>
+          ) : users.map((userEntry, userIndex) => {
+            const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+
+            return (
+              <div
+                key={`work-summary-${userIndex}-${userEntry.name || "unknown"}`}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  border: "1px solid #CBD5E1",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                  background: "#FFFFFF",
+                }}
+              >
+                <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
+                  {userEntry.name || "Unknown User"}
+                </div>
+                <div style={{ width: "100%", boxSizing: "border-box" }}>
+                  {cards.length === 0 ? (
+                    <div style={{ ...tableBodyCellStyle, borderBottom: "none" }}>
+                      No TD Cards were logged for this user in this invoice row.
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2.6fr)",
+                        width: "100%",
+                        background: "#F8FAFC",
+                        borderBottom: "1px solid #E5E7EB",
+                      }}
+                    >
+                      <div style={tableHeaderCellStyle}>TD Card</div>
+                      <div style={tableHeaderCellStyle}>Details</div>
+                    </div>
+                  )}
+
+                  {cards.length > 0 ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2.6fr)",
+                        width: "100%",
+                      }}
+                    >
+                      {cards.map((card, cardIndex) => (
+                        <React.Fragment key={`work-summary-${userIndex}-card-${cardIndex}`}>
+                          <div style={tableBodyCellStyle}>{card.issueId || card.label || "-"}</div>
+                          <div style={tableBodyCellStyle}>{getIssueDetailsText(card) || "-"}</div>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      )}
+
+      {sectionVisibility.issuesNotes && (
       <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
-        <h2 style={{ marginTop: 0 }}>Issues and Notes Included in This Invoice</h2>
+        <h2 style={sectionHeadingStyle}>Issues and Notes Included in This Invoice</h2>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", justifyItems: "stretch", alignItems: "stretch", gap: "12px", width: "100%" }}>
           {users.length === 0 ? (
             <div style={{ ...cardStyle, borderColor: "#CBD5E1", marginTop: 0 }}>No user rows available.</div>
@@ -495,7 +1253,7 @@ const BillableInvoicePreviewPage = () => {
                   width: "100%",
                   boxSizing: "border-box",
                   border: "1px solid #CBD5E1",
-                  borderRadius: "10px",
+                  borderRadius: "4px",
                   overflow: "hidden",
                   background: "#FFFFFF",
                 }}
@@ -540,7 +1298,47 @@ const BillableInvoicePreviewPage = () => {
                           <div style={tableBodyCellStyle}>{row.issueId}</div>
                           <div style={tableBodyCellStyle}>{row.issueTitle}</div>
                           <div style={tableBodyCellStyle}>{row.issueDetails}</div>
-                          <div style={tableBodyCellStyle}>{row.noteText}</div>
+                          {(() => {
+                            const rowKey = getNoteRowKey(userIndex, rowIndex);
+                            const isHidden = Boolean(noteRowOverrides[rowKey]?.hidden);
+                            const isEditing = editingNoteRowKey === rowKey;
+                            const effectiveNoteText = getEffectiveNoteText(userIndex, rowIndex, row.noteText);
+
+                            return (
+                              <div style={tableBodyCellStyle}>
+                                {isHidden ? (
+                                  <span style={{ fontStyle: "italic", color: "#94A3B8" }}>Hidden</span>
+                                ) : isEditing ? (
+                                  <textarea
+                                    value={effectiveNoteText}
+                                    onChange={(event) => updateNoteRowText(rowKey, event.target.value)}
+                                    rows={3}
+                                    style={{ width: "100%", boxSizing: "border-box", fontSize: "0.9rem", fontFamily: "inherit", padding: "6px", border: "1px solid #CBD5E1", borderRadius: "6px" }}
+                                  />
+                                ) : (
+                                  <span>{effectiveNoteText || "-"}</span>
+                                )}
+                                <div data-html2canvas-ignore="true" style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleNoteRowHidden(rowKey)}
+                                    style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "2px 8px", background: isHidden ? "#0F766E" : "#F1F5F9", color: isHidden ? "#FFFFFF" : "#334155", fontSize: "0.72rem", cursor: "pointer" }}
+                                  >
+                                    {isHidden ? "Show" : "Hide"}
+                                  </button>
+                                  {!isHidden && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingNoteRowKey(isEditing ? null : rowKey)}
+                                      style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "2px 8px", background: isEditing ? "#1D4ED8" : "#F1F5F9", color: isEditing ? "#FFFFFF" : "#334155", fontSize: "0.72rem", cursor: "pointer" }}
+                                    >
+                                      {isEditing ? "Done" : "Edit"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </React.Fragment>
                       ))}
                     </div>
@@ -550,6 +1348,11 @@ const BillableInvoicePreviewPage = () => {
             );
           })}
         </div>
+      </div>
+      )}
+
+      <div style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid #E2E8F0", textAlign: "center", color: "#94A3B8", fontSize: "0.8rem" }}>
+        Thank you for your business.
       </div>
 
       </div>

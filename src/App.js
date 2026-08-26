@@ -184,6 +184,7 @@ const E2StatusUpdate = React.lazy(() => import("./components/E2StatusUpdate"));
 const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"));
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
+const TrackMe = React.lazy(() => import("./components/TrackMe"));
 
 const App = () => {
   return (
@@ -1002,6 +1003,16 @@ const App = () => {
                 <SqlServerBridge />
               </PrivateRoute>
             } 
+          />
+          <Route
+            path="/organization/:id/track-me"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]} moduleId="track-me">
+                <ErrorBoundary>
+                  <TrackMe />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
           />
           <Route path="/freshbooks/callback" element={<FreshBooksCallback />} />
           <Route
