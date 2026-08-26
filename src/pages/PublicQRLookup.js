@@ -214,6 +214,30 @@ const pickFeedbackVariant = (variants, taskId) => {
   return variants[hash % variants.length];
 };
 
+// Progress meter color runs cold-to-hot: blue at 0%, orange midway, red at 100%.
+const PROGRESS_COLOR_STOPS = [
+  { pct: 0, rgb: [37, 99, 235] },
+  { pct: 50, rgb: [249, 115, 22] },
+  { pct: 100, rgb: [220, 38, 38] },
+];
+
+const getProgressColor = (percent) => {
+  const clamped = Math.max(0, Math.min(100, percent));
+  let lower = PROGRESS_COLOR_STOPS[0];
+  let upper = PROGRESS_COLOR_STOPS[PROGRESS_COLOR_STOPS.length - 1];
+  for (let i = 0; i < PROGRESS_COLOR_STOPS.length - 1; i++) {
+    if (clamped >= PROGRESS_COLOR_STOPS[i].pct && clamped <= PROGRESS_COLOR_STOPS[i + 1].pct) {
+      lower = PROGRESS_COLOR_STOPS[i];
+      upper = PROGRESS_COLOR_STOPS[i + 1];
+      break;
+    }
+  }
+  const range = upper.pct - lower.pct || 1;
+  const ratio = (clamped - lower.pct) / range;
+  const rgb = lower.rgb.map((channel, i) => Math.round(channel + (upper.rgb[i] - channel) * ratio));
+  return `rgb(${rgb.join(", ")})`;
+};
+
 const PublicQRLookup = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -594,12 +618,8 @@ const PublicQRLookup = () => {
         .qr-commitment-meter-fill {
           height: 100%;
           border-radius: 4px;
-          transition: width 0.3s ease;
+          transition: width 0.3s ease, background-color 0.3s ease;
         }
-        .qr-commitment-meter-faithful { background: #16a34a; }
-        .qr-commitment-meter-committed { background: #f59e0b; }
-        .qr-commitment-meter-too-early-to-evaluate,
-        .qr-commitment-meter-not-started { background: #9ca3af; }
         .qr-commitment-meter-caption {
           margin: 6px 0 0;
           font-size: 12px;
@@ -757,6 +777,9 @@ const PublicQRLookup = () => {
             const colorPercent = task.level === "Faithful" ? 100 : isUnevaluated ? 0 : Math.round(task.attendanceRate * 100);
             const grayscaleAmount = Math.max(0, 100 - colorPercent);
             const isGrayscale = grayscaleAmount > 0;
+            const meterPercent = isUnevaluated
+              ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
+              : Math.round(task.attendanceRate * 100);
             return (
               <div key={task.taskId} className="qr-commitment-task">
                 {task.imageUrl && (
@@ -780,11 +803,10 @@ const PublicQRLookup = () => {
                 )}
                 <div className="qr-commitment-meter-track">
                   <div
-                    className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
+                    className="qr-commitment-meter-fill"
                     style={{
-                      width: `${isUnevaluated
-                        ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
-                        : Math.round(task.attendanceRate * 100)}%`,
+                      width: `${meterPercent}%`,
+                      backgroundColor: getProgressColor(meterPercent),
                     }}
                   />
                 </div>
@@ -795,7 +817,7 @@ const PublicQRLookup = () => {
                         task.minCheckInsForEvaluation,
                         Math.max(0, task.minCheckInsForEvaluation - task.attendedCount)
                       )
-                    : t.sessionsCaption(task.attendedCount, task.expectedSessions, Math.round(task.attendanceRate * 100))}
+                    : t.sessionsCaption(task.attendedCount, task.expectedSessions, meterPercent)}
                   {!isUnevaluated && task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
                 </p>
                 <p className="qr-commitment-feedback">{feedback.message}</p>
