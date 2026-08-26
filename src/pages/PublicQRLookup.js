@@ -514,7 +514,12 @@ const PublicQRLookup = () => {
           height: 140px;
           object-fit: cover;
           display: block;
+          filter: grayscale(var(--qr-grayscale-amount, 0%));
           transition: filter 0.8s ease;
+        }
+        .qr-commitment-image-hoverable:hover {
+          filter: grayscale(0%);
+          transition: filter 0.6s ease;
         }
         .qr-commitment-task-header {
           display: flex;
@@ -713,9 +718,13 @@ const PublicQRLookup = () => {
             const feedback = t.feedback[messageKey];
             const levelLabel = t.levels[task.level] || task.level;
             // Grayscale fades out as the member progresses toward Faithful, and
-            // once Faithful is reached the image stays fully in color.
-            const colorPercent = task.level === "Faithful" ? 100 : Math.round(task.attendanceRate * 100);
+            // once Faithful is reached the image stays fully in color. "Too Early
+            // to Evaluate" and "Not Started" are always shown fully grayscale,
+            // regardless of raw attendance rate, since no reliable level has been reached yet.
+            const isUnevaluated = task.level === "Too Early to Evaluate" || task.level === "Not Started";
+            const colorPercent = task.level === "Faithful" ? 100 : isUnevaluated ? 0 : Math.round(task.attendanceRate * 100);
             const grayscaleAmount = Math.max(0, 100 - colorPercent);
+            const isGrayscale = grayscaleAmount > 0;
             return (
               <div key={task.taskId} className="qr-commitment-task">
                 {task.imageUrl && (
@@ -723,8 +732,8 @@ const PublicQRLookup = () => {
                     <img
                       src={task.imageUrl}
                       alt={task.title}
-                      className="qr-commitment-image"
-                      style={{ filter: `grayscale(${grayscaleAmount}%)` }}
+                      className={`qr-commitment-image${isGrayscale ? " qr-commitment-image-hoverable" : ""}`}
+                      style={{ "--qr-grayscale-amount": `${grayscaleAmount}%` }}
                     />
                   </div>
                 )}
