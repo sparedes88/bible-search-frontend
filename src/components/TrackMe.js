@@ -39,7 +39,12 @@ const TrackMe = () => {
   const [loadingOrgUsers, setLoadingOrgUsers] = useState(false);
   const [manualLogSearch, setManualLogSearch] = useState('');
   const [manualLogSelectedUser, setManualLogSelectedUser] = useState(null);
+  const [manualLogMode, setManualLogMode] = useState('single'); // 'single' | 'range'
   const [manualLogDate, setManualLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [manualLogStartDate, setManualLogStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [manualLogEndDate, setManualLogEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [manualLogRecurrence, setManualLogRecurrence] = useState('weekly');
+  const [manualLogRecurrenceDays, setManualLogRecurrenceDays] = useState('');
   const [savingManualLog, setSavingManualLog] = useState(false);
 
   // Task form state
@@ -440,7 +445,13 @@ const TrackMe = () => {
     setManualLogTask(task);
     setManualLogSearch('');
     setManualLogSelectedUser(null);
-    setManualLogDate(new Date().toISOString().split('T')[0]);
+    setManualLogMode('single');
+    const today = new Date().toISOString().split('T')[0];
+    setManualLogDate(today);
+    setManualLogStartDate(today);
+    setManualLogEndDate(today);
+    setManualLogRecurrence(task.expectedRecurrence || 'weekly');
+    setManualLogRecurrenceDays(task.recurrenceDays ? String(task.recurrenceDays) : '');
 
     if (orgUsers.length === 0) {
       setLoadingOrgUsers(true);
@@ -464,26 +475,68 @@ const TrackMe = () => {
     setManualLogSelectedUser(null);
   };
 
+  // Builds the list of check-in dates (YYYY-MM-DD) between start and end,
+  // stepping by the recurrence interval in days.
+  const buildRecurrenceDates = (startDate, endDate, intervalDays) => {
+    const dates = [];
+    const cursor = new Date(`${startDate}T12:00:00`);
+    const end = new Date(`${endDate}T12:00:00`);
+    if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || intervalDays <= 0) return dates;
+
+    while (cursor.getTime() <= end.getTime()) {
+      dates.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + intervalDays);
+    }
+    return dates;
+  };
+
   const submitManualLog = async () => {
-    if (!manualLogTask || !manualLogSelectedUser || !manualLogDate) {
-      toast.error('Select a member and a date.');
+    if (!manualLogTask || !manualLogSelectedUser) {
+      toast.error('Select a member.');
       return;
     }
+
+    let datesToLog = [];
+    if (manualLogMode === 'single') {
+      if (!manualLogDate) { toast.error('Select a date.'); return; }
+      datesToLog = [new Date(`${manualLogDate}T12:00:00`)];
+    } else {
+      const intervalDays = manualLogRecurrence === 'custom'
+        ? Number(manualLogRecurrenceDays)
+        : RECURRENCE_DAYS[manualLogRecurrence];
+      if (!manualLogStartDate || !manualLogEndDate || !(intervalDays > 0)) {
+        toast.error('Set a start date, end date, and recurrence.');
+        return;
+      }
+      if (new Date(manualLogEndDate) < new Date(manualLogStartDate)) {
+        toast.error('End date must be after the start date.');
+        return;
+      }
+      datesToLog = buildRecurrenceDates(manualLogStartDate, manualLogEndDate, intervalDays);
+      if (datesToLog.length === 0) { toast.error('No check-in dates fall in that range.'); return; }
+      if (datesToLog.length > 200) { toast.error('That range is too large (max 200 check-ins at once).'); return; }
+    }
+
     setSavingManualLog(true);
     try {
-      const chosenDate = new Date(`${manualLogDate}T12:00:00`);
-      await addDoc(scansCollection(manualLogTask.id), {
-        userId: manualLogSelectedUser.id,
-        userName: manualLogSelectedUser.name,
-        scannedAt: Timestamp.fromDate(chosenDate),
-        date: manualLogDate,
-        time: chosenDate.toLocaleTimeString(),
-        location: null,
-        scannedBy: user?.uid || '',
-        scannedByName: user?.name || user?.email || '',
-        manualEntry: true,
+      const batch = writeBatch(db);
+      datesToLog.forEach((chosenDate) => {
+        const logRef = doc(scansCollection(manualLogTask.id));
+        batch.set(logRef, {
+          userId: manualLogSelectedUser.id,
+          userName: manualLogSelectedUser.name,
+          scannedAt: Timestamp.fromDate(chosenDate),
+          date: chosenDate.toISOString().split('T')[0],
+          time: chosenDate.toLocaleTimeString(),
+          location: null,
+          scannedBy: user?.uid || '',
+          scannedByName: user?.name || user?.email || '',
+          manualEntry: true,
+        });
       });
-      toast.success(`✅ Manual log added for ${manualLogSelectedUser.name}`);
+      await batch.commit();
+
+      toast.success(`✅ ${datesToLog.length} log${datesToLog.length !== 1 ? 's' : ''} added for ${manualLogSelectedUser.name}`);
       closeManualLog();
       if (activeTab === TABS.DATA) fetchAllLogs(tasks);
       if (selectedTask?.id === manualLogTask.id) fetchLogs(manualLogTask.id);
@@ -1277,13 +1330,75 @@ const TrackMe = () => {
               </div>
             )}
 
-            <label style={styles.label}>Date *</label>
-            <input
-              type="date"
-              style={styles.input}
-              value={manualLogDate}
-              onChange={(e) => setManualLogDate(e.target.value)}
-            />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <button
+                type="button"
+                style={{ ...styles.btn(manualLogMode === 'single' ? 'primary' : 'ghost'), flex: 1 }}
+                onClick={() => setManualLogMode('single')}
+              >
+                Single Date
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.btn(manualLogMode === 'range' ? 'primary' : 'ghost'), flex: 1 }}
+                onClick={() => setManualLogMode('range')}
+              >
+                Date Range
+              </button>
+            </div>
+
+            {manualLogMode === 'single' ? (
+              <>
+                <label style={styles.label}>Date *</label>
+                <input
+                  type="date"
+                  style={styles.input}
+                  value={manualLogDate}
+                  onChange={(e) => setManualLogDate(e.target.value)}
+                />
+              </>
+            ) : (
+              <>
+                <label style={styles.label}>Start Date *</label>
+                <input
+                  type="date"
+                  style={styles.input}
+                  value={manualLogStartDate}
+                  onChange={(e) => setManualLogStartDate(e.target.value)}
+                />
+                <label style={styles.label}>End Date *</label>
+                <input
+                  type="date"
+                  style={styles.input}
+                  value={manualLogEndDate}
+                  onChange={(e) => setManualLogEndDate(e.target.value)}
+                />
+                <label style={styles.label}>Recurrence *</label>
+                <select
+                  style={styles.input}
+                  value={manualLogRecurrence}
+                  onChange={(e) => setManualLogRecurrence(e.target.value)}
+                >
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Biweekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="custom">Custom (every N days)</option>
+                </select>
+                {manualLogRecurrence === 'custom' && (
+                  <input
+                    type="number"
+                    min="1"
+                    style={styles.input}
+                    placeholder="Every how many days?"
+                    value={manualLogRecurrenceDays}
+                    onChange={(e) => setManualLogRecurrenceDays(e.target.value)}
+                  />
+                )}
+                <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6b7280' }}>
+                  This will create one log per recurrence interval between the start and end dates.
+                </p>
+              </>
+            )}
 
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <button style={styles.btn('primary')} onClick={submitManualLog} disabled={savingManualLog}>
