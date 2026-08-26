@@ -501,11 +501,14 @@ const PublicQRLookup = () => {
           font-size: 13px;
         }
         .qr-commitment-task {
-          padding: 14px 0;
-          border-bottom: 1px solid #f3f4f6;
+          padding: 20px 0;
+          margin-bottom: 8px;
+          border-bottom: 2px solid #e5e7eb;
         }
         .qr-commitment-task:last-child {
           border-bottom: none;
+          margin-bottom: 0;
+          padding-bottom: 0;
         }
         .qr-commitment-image-wrap {
           width: 100%;
