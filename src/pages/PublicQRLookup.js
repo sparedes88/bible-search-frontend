@@ -36,6 +36,8 @@ const TRANSLATIONS = {
     loadingText: "Loading...",
     noTasks: "No check-in tasks are set up for this organization yet.",
     sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} expected sessions (${pct}%)`,
+    checkInsNeededCaption: (attended, min, remaining) =>
+      `${attended} of ${min} check-ins completed — ${remaining} more needed before your commitment can be evaluated.`,
     avgGapCaption: (d) => ` · avg. ${d}d between check-ins`,
     levels: {
       Faithful: "Faithful",
@@ -91,6 +93,8 @@ const TRANSLATIONS = {
     loadingText: "Cargando...",
     noTasks: "Todavía no hay tareas de registro configuradas para esta organización.",
     sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} sesiones esperadas (${pct}%)`,
+    checkInsNeededCaption: (attended, min, remaining) =>
+      `${attended} de ${min} registros completados — se necesitan ${remaining} más para poder evaluar tu compromiso.`,
     avgGapCaption: (d) => ` · promedio de ${d}d entre registros`,
     levels: {
       Faithful: "Fiel",
@@ -755,12 +759,22 @@ const PublicQRLookup = () => {
                 <div className="qr-commitment-meter-track">
                   <div
                     className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
-                    style={{ width: `${Math.round(task.attendanceRate * 100)}%` }}
+                    style={{
+                      width: `${isUnevaluated
+                        ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
+                        : Math.round(task.attendanceRate * 100)}%`,
+                    }}
                   />
                 </div>
                 <p className="qr-commitment-meter-caption">
-                  {t.sessionsCaption(task.attendedCount, task.expectedSessions, Math.round(task.attendanceRate * 100))}
-                  {task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
+                  {isUnevaluated
+                    ? t.checkInsNeededCaption(
+                        task.attendedCount,
+                        task.minCheckInsForEvaluation,
+                        Math.max(0, task.minCheckInsForEvaluation - task.attendedCount)
+                      )
+                    : t.sessionsCaption(task.attendedCount, task.expectedSessions, Math.round(task.attendanceRate * 100))}
+                  {!isUnevaluated && task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
                 </p>
                 <p className="qr-commitment-feedback">{feedback.message}</p>
                 <p className="qr-commitment-verse">{feedback.verse}</p>

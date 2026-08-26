@@ -4666,6 +4666,7 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
           attendanceRate,
           avgGapDays,
           hasConsistentGaps,
+          minCheckInsForEvaluation: task.minCheckInsForEvaluation,
           level,
           feedback: COMMITMENT_MESSAGES[messageKey],
         };
