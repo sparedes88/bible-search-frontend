@@ -82,13 +82,23 @@ const PublicQRLookup = () => {
           justify-content: center;
           margin: 12px 0 20px;
         }
-        .qr-lookup-logo {
-          width: clamp(64px, 22vw, 96px);
-          height: clamp(64px, 22vw, 96px);
+        .qr-lookup-logo-circle {
+          width: clamp(72px, 24vw, 104px);
+          height: clamp(72px, 24vw, 104px);
           border-radius: 50%;
-          object-fit: cover;
           background: white;
           box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10%;
+          box-sizing: border-box;
+          overflow: hidden;
+        }
+        .qr-lookup-logo {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
         }
         .qr-lookup-card {
           width: 100%;
@@ -184,7 +194,9 @@ const PublicQRLookup = () => {
 
       {church?.logo && (
         <div className="qr-lookup-logo-wrap">
-          <img src={church.logo} alt={`${church.name || "Organization"} logo`} className="qr-lookup-logo" />
+          <div className="qr-lookup-logo-circle">
+            <img src={church.logo} alt={`${church.name || "Organization"} logo`} className="qr-lookup-logo" />
+          </div>
         </div>
       )}
 
