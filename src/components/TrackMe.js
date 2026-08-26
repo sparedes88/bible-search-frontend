@@ -143,10 +143,14 @@ const TrackMe = () => {
 
   // ─── Commitment analysis ──────────────────────────────────────────────────
   // Each task answers two setup questions: how often it's expected to recur
-  // (defines the expected number of sessions since the task was created) and
-  // the minimum attendance percentage required to be "Faithful". Anyone below
-  // that bar who has still attended at least once is "Committed" rather than
-  // faithfully committed.
+  // (defines the expected number of sessions since the task was created, and
+  // the "on-time" gap between check-ins) and the minimum attendance percentage
+  // required to be "Faithful". Someone can hit the attendance percentage while
+  // still checking in in sporadic bursts (e.g. weekly expected, but only every
+  // 3 weeks) — that gap pattern is checked separately and also caps them at
+  // "Committed" rather than faithfully committed.
+  const GAP_TOLERANCE_MULTIPLIER = 1.5;
+
   const taskHasCommitmentConfig = (task) =>
     !!task && !!(task.recurrenceDays) && !!(task.minCommitmentPercent);
 
@@ -161,6 +165,7 @@ const TrackMe = () => {
     const daysSinceCreated = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000));
     const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1, sessionDates.length);
     const threshold = task.minCommitmentPercent / 100;
+    const maxAllowedGapDays = task.recurrenceDays * GAP_TOLERANCE_MULTIPLIER;
 
     const byUser = new Map();
     taskLogs.forEach((log) => {
@@ -174,13 +179,31 @@ const TrackMe = () => {
     const stats = Array.from(byUser.values()).map((person) => {
       const attendedCount = person.dates.size;
       const attendanceRate = Math.min(1, attendedCount / expectedSessions);
-      const level = attendanceRate >= threshold ? 'Faithful' : 'Committed';
-      return { ...person, attendedCount, expectedSessions, attendanceRate, level };
+
+      // Gaps between this person's own consecutive check-ins, compared to the
+      // expected recurrence interval — catches sporadic-burst attendance that
+      // a raw attendance rate alone can miss.
+      const sortedDates = Array.from(person.dates).sort();
+      const gapsDays = [];
+      for (let i = 1; i < sortedDates.length; i++) {
+        const days = Math.round((new Date(sortedDates[i]) - new Date(sortedDates[i - 1])) / 86400000);
+        gapsDays.push(days);
+      }
+      const avgGapDays = gapsDays.length > 0
+        ? Math.round(gapsDays.reduce((sum, g) => sum + g, 0) / gapsDays.length)
+        : null;
+      const maxGapDays = gapsDays.length > 0 ? Math.max(...gapsDays) : null;
+      const hasConsistentGaps = maxGapDays === null || maxGapDays <= maxAllowedGapDays;
+
+      const level = (attendanceRate >= threshold && hasConsistentGaps) ? 'Faithful' : 'Committed';
+
+      return { ...person, attendedCount, expectedSessions, attendanceRate, avgGapDays, maxGapDays, hasConsistentGaps, level };
     });
 
     return {
       expectedSessions,
       threshold,
+      maxAllowedGapDays,
       stats: stats.sort((a, b) => b.attendanceRate - a.attendanceRate),
     };
   };
@@ -926,7 +949,7 @@ const TrackMe = () => {
               );
 
               const result = computeCommitmentStats(commitmentTaskId);
-              const { expectedSessions, threshold, stats } = result;
+              const { expectedSessions, threshold, maxAllowedGapDays, stats } = result;
 
               if (stats.length === 0) return (
                 <div style={{ ...styles.card, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
@@ -937,21 +960,30 @@ const TrackMe = () => {
               return (
                 <div style={styles.card}>
                   <div style={{ marginBottom: 10, fontSize: 12, color: '#6b7280' }}>
-                    {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked · {RECURRENCE_LABELS[task.expectedRecurrence]} recurrence
+                    {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked · {RECURRENCE_LABELS[task.expectedRecurrence]} recurrence (every {task.recurrenceDays} days)
                     · {expectedSessions} expected session{expectedSessions !== 1 ? 's' : ''} so far
-                    · Faithful requires {Math.round(threshold * 100)}%+ attendance
+                    · Faithful requires {Math.round(threshold * 100)}%+ attendance with check-ins no more than {maxAllowedGapDays} days apart
                   </div>
-                  <div style={styles.commitmentHeader}>
+                  <div style={{ ...styles.commitmentHeader, gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1fr' }}>
                     <span>User</span>
                     <span>Sessions Attended</span>
                     <span>Attendance</span>
+                    <span>Avg Gap Between Check-ins</span>
                     <span>Commitment</span>
                   </div>
                   {stats.map((person) => (
-                    <div key={person.userId} style={{ ...styles.commitmentRow, gridTemplateColumns: '2fr 1fr 1fr 1fr' }}>
+                    <div key={person.userId} style={{ ...styles.commitmentRow, gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1fr' }}>
                       <span style={{ fontWeight: 500, color: '#111827' }}>{person.userName}</span>
                       <span>{person.attendedCount} / {person.expectedSessions}</span>
                       <span>{Math.round(person.attendanceRate * 100)}%</span>
+                      <span>
+                        {person.avgGapDays === null ? '—' : `${person.avgGapDays}d`}
+                        {!person.hasConsistentGaps && (
+                          <span style={{ display: 'block', fontSize: 10, color: '#dc2626' }}>
+                            ⚠️ irregular (expected ~{task.recurrenceDays}d)
+                          </span>
+                        )}
+                      </span>
                       <span><span style={styles.commitmentBadge(person.level)}>{person.level}</span></span>
                     </div>
                   ))}
