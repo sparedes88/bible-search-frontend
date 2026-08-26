@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 import { getChurchData } from "../api/church";
 
@@ -115,6 +115,7 @@ const LEVEL_TO_MESSAGE_KEY = {
 const PublicQRLookup = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qrCanvasRef = useRef(null);
   const [church, setChurch] = useState(null);
   const [phone, setPhone] = useState("");
@@ -125,8 +126,16 @@ const PublicQRLookup = () => {
   const [saveMessage, setSaveMessage] = useState("");
   const [commitmentTasks, setCommitmentTasks] = useState(null);
   const [loadingCommitment, setLoadingCommitment] = useState(false);
-  const [language, setLanguage] = useState("en");
+  const language = searchParams.get("lang") === "es" ? "es" : "en";
   const t = TRANSLATIONS[language];
+
+  const setLanguage = (lang) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("lang", lang);
+      return next;
+    });
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -546,7 +555,7 @@ const PublicQRLookup = () => {
         <button
           type="button"
           className="qr-lookup-lang-toggle"
-          onClick={() => setLanguage((lang) => (lang === "en" ? "es" : "en"))}
+          onClick={() => setLanguage(language === "en" ? "es" : "en")}
         >
           {language === "en" ? "Español" : "English"}
         </button>
