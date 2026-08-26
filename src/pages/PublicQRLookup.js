@@ -769,12 +769,11 @@ const PublicQRLookup = () => {
             const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
             const feedback = pickFeedbackVariant(t.feedback[messageKey], task.taskId);
             const levelLabel = t.levels[task.level] || task.level;
-            // Grayscale fades out as the member progresses toward Faithful, and
-            // once Faithful is reached the image stays fully in color. "Too Early
-            // to Evaluate" and "Not Started" are always shown fully grayscale,
-            // regardless of raw attendance rate, since no reliable level has been reached yet.
+            // The image shows what they're working toward: fully grayscale until
+            // Faithful is reached, then it unlocks into full color and stays that
+            // way as long as the level stays Faithful.
             const isUnevaluated = task.level === "Too Early to Evaluate" || task.level === "Not Started";
-            const colorPercent = task.level === "Faithful" ? 100 : isUnevaluated ? 0 : Math.round(task.attendanceRate * 100);
+            const colorPercent = task.level === "Faithful" ? 100 : 0;
             const grayscaleAmount = Math.max(0, 100 - colorPercent);
             const isGrayscale = grayscaleAmount > 0;
             const meterPercent = isUnevaluated
