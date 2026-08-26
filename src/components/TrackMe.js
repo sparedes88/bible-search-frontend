@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { db, storage } from '../firebase';
 import {
   collection, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, query, orderBy, serverTimestamp, getDoc
+  doc, query, orderBy, serverTimestamp, getDoc, writeBatch
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../contexts/AuthContext';
@@ -70,13 +70,43 @@ const TrackMe = () => {
     setLoadingTasks(true);
     try {
       const snap = await getDocs(query(tasksCollection(), orderBy('createdAt', 'desc')));
-      setTasks(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const loadedTasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // Respect the staff-defined sortOrder when present; tasks without one
+      // (never manually reordered) keep their original createdAt-desc position.
+      loadedTasks.sort((a, b) => {
+        const aOrder = typeof a.sortOrder === 'number' ? a.sortOrder : Infinity;
+        const bOrder = typeof b.sortOrder === 'number' ? b.sortOrder : Infinity;
+        return aOrder - bOrder;
+      });
+      setTasks(loadedTasks);
     } catch {
       toast.error('Failed to load tasks.');
     } finally {
       setLoadingTasks(false);
     }
   }, [tasksCollection]);
+
+  // Reorders tasks and persists the new order so it's reflected on the member-facing QR page.
+  const moveTask = async (taskId, direction) => {
+    const currentIndex = tasks.findIndex((t) => t.id === taskId);
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex === -1 || targetIndex < 0 || targetIndex >= tasks.length) return;
+
+    const reordered = [...tasks];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    setTasks(reordered);
+
+    try {
+      const batch = writeBatch(db);
+      reordered.forEach((task, index) => {
+        batch.update(doc(db, 'churches', organizationId, 'trackMeTasks', task.id), { sortOrder: index });
+      });
+      await batch.commit();
+    } catch {
+      toast.error('Failed to save the new order.');
+      fetchTasks();
+    }
+  };
 
   useEffect(() => {
     fetchTasks();
@@ -771,9 +801,27 @@ const TrackMe = () => {
                 No tasks yet. Click <strong>+ New Task</strong> to get started.
               </div>
             ) : (
-              tasks.map((task) => (
+              tasks.map((task, index) => (
                 <div key={task.id} style={styles.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+                      <button
+                        style={{ ...styles.btn('ghost'), padding: '2px 8px', opacity: index === 0 ? 0.35 : 1 }}
+                        onClick={() => moveTask(task.id, 'up')}
+                        disabled={index === 0}
+                        title="Move up"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        style={{ ...styles.btn('ghost'), padding: '2px 8px', opacity: index === tasks.length - 1 ? 0.35 : 1 }}
+                        onClick={() => moveTask(task.id, 'down')}
+                        disabled={index === tasks.length - 1}
+                        title="Move down"
+                      >
+                        ▼
+                      </button>
+                    </div>
                     {task.imageUrl && (
                       <img
                         src={task.imageUrl}

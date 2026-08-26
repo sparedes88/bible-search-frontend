@@ -4606,8 +4606,16 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
       .where("status", "==", "active")
       .get();
 
+    // Respect the staff-defined sortOrder (set via the up/down reorder controls
+    // in Track Me) so the member sees tasks in the same order staff arranged them.
+    const orderedTaskDocs = [...tasksSnap.docs].sort((a, b) => {
+      const aOrder = typeof a.data().sortOrder === "number" ? a.data().sortOrder : Infinity;
+      const bOrder = typeof b.data().sortOrder === "number" ? b.data().sortOrder : Infinity;
+      return aOrder - bOrder;
+    });
+
     const tasks = await Promise.all(
-      tasksSnap.docs.map(async (taskDoc) => {
+      orderedTaskDocs.map(async (taskDoc) => {
         const task = taskDoc.data() || {};
         const hasConfig = !!(task.recurrenceDays && task.minCommitmentPercent && task.minCheckInsForEvaluation);
 
