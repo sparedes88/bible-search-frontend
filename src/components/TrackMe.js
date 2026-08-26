@@ -12,6 +12,10 @@ import ChurchHeader from './ChurchHeader';
 
 const TABS = { TASKS: 'tasks', SCANNER: 'scanner', LOGS: 'logs', DATA: 'data', COMMITMENT: 'commitment' };
 
+// Maps a recurrence answer to the number of days between expected occurrences.
+const RECURRENCE_DAYS = { weekly: 7, biweekly: 14, monthly: 30 };
+const RECURRENCE_LABELS = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', custom: 'Custom' };
+
 const TrackMe = () => {
   const { id: organizationId } = useParams();
   const { user } = useAuth();
@@ -30,7 +34,10 @@ const TrackMe = () => {
   // Task form state
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [taskForm, setTaskForm] = useState({ title: '', description: '', status: 'active' });
+  const [taskForm, setTaskForm] = useState({
+    title: '', description: '', status: 'active',
+    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '',
+  });
   const [savingTask, setSavingTask] = useState(false);
 
   // Scanner state
@@ -135,13 +142,25 @@ const TrackMe = () => {
   }, [scansCollection]);
 
   // ─── Commitment analysis ──────────────────────────────────────────────────
-  // Classifies each person's faithfulness for a task by comparing how many of the
-  // task's distinct scan dates ("sessions") they showed up for, plus their most
-  // recent consecutive-attendance streak — someone who shows up almost every time
-  // is "Faithful"; someone who only shows up now and then is "Occasional".
+  // Each task answers two setup questions: how often it's expected to recur
+  // (defines the expected number of sessions since the task was created) and
+  // the minimum attendance percentage required to be "Faithful". Anyone below
+  // that bar who has still attended at least once is "Committed" rather than
+  // faithfully committed.
+  const taskHasCommitmentConfig = (task) =>
+    !!task && !!(task.recurrenceDays) && !!(task.minCommitmentPercent);
+
   const computeCommitmentStats = (taskId) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!taskHasCommitmentConfig(task)) return null;
+
     const taskLogs = allLogs.filter((log) => log.taskId === taskId);
     const sessionDates = [...new Set(taskLogs.map((log) => log.date).filter(Boolean))].sort();
+
+    const createdAt = task.createdAt?.toDate?.() || (sessionDates[0] ? new Date(sessionDates[0]) : new Date());
+    const daysSinceCreated = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000));
+    const expectedSessions = Math.max(1, Math.floor(daysSinceCreated / task.recurrenceDays) + 1, sessionDates.length);
+    const threshold = task.minCommitmentPercent / 100;
 
     const byUser = new Map();
     taskLogs.forEach((log) => {
@@ -152,45 +171,60 @@ const TrackMe = () => {
       byUser.get(log.userId).dates.add(log.date);
     });
 
-    const totalSessions = sessionDates.length;
-
     const stats = Array.from(byUser.values()).map((person) => {
       const attendedCount = person.dates.size;
-      const attendanceRate = totalSessions > 0 ? attendedCount / totalSessions : 0;
-
-      // Count the current streak by walking sessions from most recent backwards.
-      let currentStreak = 0;
-      for (let i = sessionDates.length - 1; i >= 0; i--) {
-        if (person.dates.has(sessionDates[i])) currentStreak++;
-        else break;
-      }
-
-      let level = 'Occasional';
-      if (attendanceRate >= 0.75 || currentStreak >= 4) level = 'Faithful';
-      else if (attendanceRate >= 0.4) level = 'Consistent';
-
-      return { ...person, attendedCount, totalSessions, attendanceRate, currentStreak, level };
+      const attendanceRate = Math.min(1, attendedCount / expectedSessions);
+      const level = attendanceRate >= threshold ? 'Faithful' : 'Committed';
+      return { ...person, attendedCount, expectedSessions, attendanceRate, level };
     });
 
-    return stats.sort((a, b) => b.attendanceRate - a.attendanceRate || b.currentStreak - a.currentStreak);
+    return {
+      expectedSessions,
+      threshold,
+      stats: stats.sort((a, b) => b.attendanceRate - a.attendanceRate),
+    };
   };
 
   // ─── Task CRUD ────────────────────────────────────────────────────────────
 
+  const emptyTaskForm = {
+    title: '', description: '', status: 'active',
+    expectedRecurrence: '', expectedRecurrenceDays: '', minCommitmentPercent: '',
+  };
+
   const openAddTask = () => {
     setEditingTask(null);
-    setTaskForm({ title: '', description: '', status: 'active' });
+    setTaskForm(emptyTaskForm);
     setShowTaskForm(true);
   };
 
   const openEditTask = (task) => {
     setEditingTask(task);
-    setTaskForm({ title: task.title, description: task.description || '', status: task.status || 'active' });
+    setTaskForm({
+      title: task.title,
+      description: task.description || '',
+      status: task.status || 'active',
+      expectedRecurrence: task.expectedRecurrence || '',
+      expectedRecurrenceDays: task.expectedRecurrence === 'custom' ? String(task.recurrenceDays || '') : '',
+      minCommitmentPercent: task.minCommitmentPercent ? String(task.minCommitmentPercent) : '',
+    });
     setShowTaskForm(true);
   };
 
   const saveTask = async () => {
     if (!taskForm.title.trim()) { toast.error('Task title is required.'); return; }
+
+    const recurrenceDays = taskForm.expectedRecurrence === 'custom'
+      ? Number(taskForm.expectedRecurrenceDays)
+      : RECURRENCE_DAYS[taskForm.expectedRecurrence];
+    const minCommitmentPercent = Number(taskForm.minCommitmentPercent);
+
+    const commitmentFields = {
+      expectedRecurrence: taskForm.expectedRecurrence || null,
+      recurrenceDays: recurrenceDays > 0 ? recurrenceDays : null,
+      minCommitmentPercent: minCommitmentPercent > 0 && minCommitmentPercent <= 100 ? minCommitmentPercent : null,
+    };
+
     setSavingTask(true);
     try {
       if (editingTask) {
@@ -198,6 +232,7 @@ const TrackMe = () => {
           title: taskForm.title.trim(),
           description: taskForm.description.trim(),
           status: taskForm.status,
+          ...commitmentFields,
           updatedAt: serverTimestamp(),
         });
         toast.success('Task updated.');
@@ -206,6 +241,7 @@ const TrackMe = () => {
           title: taskForm.title.trim(),
           description: taskForm.description.trim(),
           status: taskForm.status,
+          ...commitmentFields,
           createdAt: serverTimestamp(),
           createdBy: user?.uid || '',
         });
@@ -401,9 +437,18 @@ const TrackMe = () => {
       borderRadius: 12,
       fontSize: 12,
       fontWeight: 700,
-      background: level === 'Faithful' ? '#dcfce7' : level === 'Consistent' ? '#fef3c7' : '#fee2e2',
-      color: level === 'Faithful' ? '#16a34a' : level === 'Consistent' ? '#b45309' : '#dc2626',
+      background: level === 'Faithful' ? '#dcfce7' : '#fef3c7',
+      color: level === 'Faithful' ? '#16a34a' : '#b45309',
     }),
+    configWarningBadge: {
+      display: 'inline-block',
+      padding: '2px 10px',
+      borderRadius: 12,
+      fontSize: 11,
+      fontWeight: 600,
+      background: '#fee2e2',
+      color: '#dc2626',
+    },
     commitmentRow: {
       display: 'grid',
       gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
@@ -550,6 +595,56 @@ const TrackMe = () => {
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
                 </select>
+
+                <div style={{
+                  background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8,
+                  padding: 16, marginBottom: 12,
+                }}>
+                  <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: '#374151' }}>
+                    Commitment criteria — needed to evaluate faithfulness for this task
+                  </p>
+
+                  <label style={styles.label}>1. How often is this task expected to happen? *</label>
+                  <select
+                    style={styles.input}
+                    value={taskForm.expectedRecurrence}
+                    onChange={(e) => setTaskForm((f) => ({ ...f, expectedRecurrence: e.target.value }))}
+                  >
+                    <option value="">Select recurrence…</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Biweekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="custom">Custom (every N days)</option>
+                  </select>
+                  {taskForm.expectedRecurrence === 'custom' && (
+                    <input
+                      type="number"
+                      min="1"
+                      style={styles.input}
+                      placeholder="Every how many days?"
+                      value={taskForm.expectedRecurrenceDays}
+                      onChange={(e) => setTaskForm((f) => ({ ...f, expectedRecurrenceDays: e.target.value }))}
+                    />
+                  )}
+
+                  <label style={styles.label}>2. What's the minimum attendance % to be considered faithfully committed? *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    style={styles.input}
+                    placeholder="e.g. 75"
+                    value={taskForm.minCommitmentPercent}
+                    onChange={(e) => setTaskForm((f) => ({ ...f, minCommitmentPercent: e.target.value }))}
+                  />
+
+                  {(!taskForm.expectedRecurrence || !taskForm.minCommitmentPercent) && (
+                    <p style={{ margin: 0, fontSize: 12, color: '#dc2626' }}>
+                      ⚠️ Not answered yet — Commitment stats can't be calculated for this task until both questions are answered.
+                    </p>
+                  )}
+                </div>
+
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button style={styles.btn('primary')} onClick={saveTask} disabled={savingTask}>
                     {savingTask ? 'Saving…' : 'Save'}
@@ -570,9 +665,12 @@ const TrackMe = () => {
                 <div key={task.id} style={styles.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontSize: 16 }}>{task.title}</span>
                         <span style={styles.badge(task.status)}>{task.status}</span>
+                        {!taskHasCommitmentConfig(task) && (
+                          <span style={styles.configWarningBadge}>⚠️ Commitment criteria not set</span>
+                        )}
                       </div>
                       {task.description && (
                         <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>{task.description}</p>
@@ -797,12 +895,11 @@ const TrackMe = () => {
               >
                 {tasks.length === 0 && <option value="">No tasks yet</option>}
                 {tasks.map((t) => (
-                  <option key={t.id} value={t.id}>{t.title}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.title}{!taskHasCommitmentConfig(t) ? ' (criteria not set)' : ''}
+                  </option>
                 ))}
               </select>
-              <span style={{ fontSize: 12, color: '#9ca3af' }}>
-                Faithful: attends ~75%+ of sessions or a 4+ session streak · Consistent: 40–74% · Occasional: under 40%
-              </span>
             </div>
 
             {loadingAllLogs ? (
@@ -812,9 +909,24 @@ const TrackMe = () => {
                 Create a task first to track commitment.
               </div>
             ) : (() => {
-              const stats = computeCommitmentStats(commitmentTaskId);
               const task = tasks.find((t) => t.id === commitmentTaskId);
-              const totalSessions = stats[0]?.totalSessions ?? 0;
+
+              if (!taskHasCommitmentConfig(task)) return (
+                <div style={{ ...styles.card, textAlign: 'center', color: '#dc2626', padding: 40 }}>
+                  ⚠️ "{task?.title}" doesn't have commitment criteria set yet.<br />
+                  <span style={{ color: '#6b7280', fontSize: 13 }}>
+                    Edit the task and answer the two required questions (expected recurrence and minimum attendance %) to evaluate commitment.
+                  </span>
+                  <div style={{ marginTop: 16 }}>
+                    <button style={styles.btn('primary')} onClick={() => { setActiveTab(TABS.TASKS); openEditTask(task); }}>
+                      Edit "{task?.title}"
+                    </button>
+                  </div>
+                </div>
+              );
+
+              const result = computeCommitmentStats(commitmentTaskId);
+              const { expectedSessions, threshold, stats } = result;
 
               if (stats.length === 0) return (
                 <div style={{ ...styles.card, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
@@ -825,21 +937,21 @@ const TrackMe = () => {
               return (
                 <div style={styles.card}>
                   <div style={{ marginBottom: 10, fontSize: 12, color: '#6b7280' }}>
-                    {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked across {totalSessions} session{totalSessions !== 1 ? 's' : ''} for "{task?.title}"
+                    {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked · {RECURRENCE_LABELS[task.expectedRecurrence]} recurrence
+                    · {expectedSessions} expected session{expectedSessions !== 1 ? 's' : ''} so far
+                    · Faithful requires {Math.round(threshold * 100)}%+ attendance
                   </div>
                   <div style={styles.commitmentHeader}>
                     <span>User</span>
                     <span>Sessions Attended</span>
                     <span>Attendance</span>
-                    <span>Current Streak</span>
                     <span>Commitment</span>
                   </div>
                   {stats.map((person) => (
-                    <div key={person.userId} style={styles.commitmentRow}>
+                    <div key={person.userId} style={{ ...styles.commitmentRow, gridTemplateColumns: '2fr 1fr 1fr 1fr' }}>
                       <span style={{ fontWeight: 500, color: '#111827' }}>{person.userName}</span>
-                      <span>{person.attendedCount} / {person.totalSessions}</span>
+                      <span>{person.attendedCount} / {person.expectedSessions}</span>
                       <span>{Math.round(person.attendanceRate * 100)}%</span>
-                      <span>{person.currentStreak}</span>
                       <span><span style={styles.commitmentBadge(person.level)}>{person.level}</span></span>
                     </div>
                   ))}
