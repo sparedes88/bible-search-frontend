@@ -74,12 +74,13 @@ const PublicQRLookup = () => {
   // iOS/Android Contacts apps (often beyond just a simple inscribed-circle crop),
   // so keep the QR code small and centered with a very generous white margin
   // to guarantee its corner finder patterns always survive the crop.
+  // The QR is drawn at its native size (no rescale) to avoid corrupting modules.
   const getPaddedQrCanvas = () => {
     const sourceCanvas = qrCanvasRef.current;
     if (!sourceCanvas) return null;
 
     const outputSize = 600;
-    const qrDrawSize = 240; // well inside any reasonable circular/zoomed crop
+    const qrDrawSize = sourceCanvas.width; // native size, drawn 1:1 to avoid resampling artifacts
     const offset = (outputSize - qrDrawSize) / 2;
 
     const paddedCanvas = document.createElement("canvas");
@@ -88,8 +89,7 @@ const PublicQRLookup = () => {
     const ctx = paddedCanvas.getContext("2d");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, outputSize, outputSize);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(sourceCanvas, offset, offset, qrDrawSize, qrDrawSize);
+    ctx.drawImage(sourceCanvas, offset, offset);
     return paddedCanvas;
   };
 
@@ -378,7 +378,7 @@ const PublicQRLookup = () => {
 
         {result && (
           <div className="qr-lookup-result">
-            <QRCodeCanvas ref={qrCanvasRef} value={result.uid} size={320} level="H" includeMargin />
+            <QRCodeCanvas ref={qrCanvasRef} value={result.uid} size={260} level="H" includeMargin />
             {result.name && (
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
