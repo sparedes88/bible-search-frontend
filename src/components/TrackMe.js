@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import ChurchHeader from './ChurchHeader';
 
-const TABS = { TASKS: 'tasks', SCANNER: 'scanner', LOGS: 'logs', DATA: 'data' };
+const TABS = { TASKS: 'tasks', SCANNER: 'scanner', LOGS: 'logs', DATA: 'data', COMMITMENT: 'commitment' };
 
 const TrackMe = () => {
   const { id: organizationId } = useParams();
@@ -25,6 +25,7 @@ const TrackMe = () => {
   const [allLogs, setAllLogs] = useState([]);
   const [loadingAllLogs, setLoadingAllLogs] = useState(false);
   const [dataFilter, setDataFilter] = useState({ task: 'all', search: '' });
+  const [commitmentTaskId, setCommitmentTaskId] = useState('');
 
   // Task form state
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -68,6 +69,11 @@ const TrackMe = () => {
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  // Default the commitment tab's task selector to the first task once tasks load
+  useEffect(() => {
+    if (!commitmentTaskId && tasks.length > 0) setCommitmentTaskId(tasks[0].id);
+  }, [tasks, commitmentTaskId]);
 
   const fetchLogs = useCallback(async (taskId) => {
     setLoadingLogs(true);
@@ -127,6 +133,47 @@ const TrackMe = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scansCollection]);
+
+  // ─── Commitment analysis ──────────────────────────────────────────────────
+  // Classifies each person's faithfulness for a task by comparing how many of the
+  // task's distinct scan dates ("sessions") they showed up for, plus their most
+  // recent consecutive-attendance streak — someone who shows up almost every time
+  // is "Faithful"; someone who only shows up now and then is "Occasional".
+  const computeCommitmentStats = (taskId) => {
+    const taskLogs = allLogs.filter((log) => log.taskId === taskId);
+    const sessionDates = [...new Set(taskLogs.map((log) => log.date).filter(Boolean))].sort();
+
+    const byUser = new Map();
+    taskLogs.forEach((log) => {
+      if (!log.userId) return;
+      if (!byUser.has(log.userId)) {
+        byUser.set(log.userId, { userId: log.userId, userName: log.userName || log.userId, dates: new Set() });
+      }
+      byUser.get(log.userId).dates.add(log.date);
+    });
+
+    const totalSessions = sessionDates.length;
+
+    const stats = Array.from(byUser.values()).map((person) => {
+      const attendedCount = person.dates.size;
+      const attendanceRate = totalSessions > 0 ? attendedCount / totalSessions : 0;
+
+      // Count the current streak by walking sessions from most recent backwards.
+      let currentStreak = 0;
+      for (let i = sessionDates.length - 1; i >= 0; i--) {
+        if (person.dates.has(sessionDates[i])) currentStreak++;
+        else break;
+      }
+
+      let level = 'Occasional';
+      if (attendanceRate >= 0.75 || currentStreak >= 4) level = 'Faithful';
+      else if (attendanceRate >= 0.4) level = 'Consistent';
+
+      return { ...person, attendedCount, totalSessions, attendanceRate, currentStreak, level };
+    });
+
+    return stats.sort((a, b) => b.attendanceRate - a.attendanceRate || b.currentStreak - a.currentStreak);
+  };
 
   // ─── Task CRUD ────────────────────────────────────────────────────────────
 
@@ -348,6 +395,35 @@ const TrackMe = () => {
       background: status === 'active' ? '#dcfce7' : '#f3f4f6',
       color: status === 'active' ? '#16a34a' : '#6b7280',
     }),
+    commitmentBadge: (level) => ({
+      display: 'inline-block',
+      padding: '3px 12px',
+      borderRadius: 12,
+      fontSize: 12,
+      fontWeight: 700,
+      background: level === 'Faithful' ? '#dcfce7' : level === 'Consistent' ? '#fef3c7' : '#fee2e2',
+      color: level === 'Faithful' ? '#16a34a' : level === 'Consistent' ? '#b45309' : '#dc2626',
+    }),
+    commitmentRow: {
+      display: 'grid',
+      gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
+      gap: 8,
+      padding: '10px 0',
+      borderBottom: '1px solid #f3f4f6',
+      fontSize: 13,
+      alignItems: 'center',
+    },
+    commitmentHeader: {
+      display: 'grid',
+      gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
+      gap: 8,
+      padding: '8px 0',
+      borderBottom: '2px solid #e5e7eb',
+      fontSize: 12,
+      fontWeight: 700,
+      color: '#6b7280',
+      textTransform: 'uppercase',
+    },
     logRow: {
       display: 'grid',
       gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1.2fr',
@@ -411,6 +487,9 @@ const TrackMe = () => {
           {activeTab === TABS.DATA && (
             <button style={styles.btn('ghost')} onClick={() => fetchAllLogs(tasks)}>↻ Refresh</button>
           )}
+          {activeTab === TABS.COMMITMENT && (
+            <button style={styles.btn('ghost')} onClick={() => fetchAllLogs(tasks)}>↻ Refresh</button>
+          )}
         </div>
 
         {/* Tab bar */}
@@ -422,6 +501,12 @@ const TrackMe = () => {
             onClick={() => { setActiveTab(TABS.DATA); fetchAllLogs(tasks); }}
           >
             Data Log
+          </button>
+          <button
+            style={styles.tab(activeTab === TABS.COMMITMENT)}
+            onClick={() => { setActiveTab(TABS.COMMITMENT); fetchAllLogs(tasks); }}
+          >
+            Commitment
           </button>
           {selectedTask && (
             <button style={styles.tab(activeTab === TABS.LOGS)} onClick={() => viewLogs(selectedTask)}>
@@ -693,6 +778,69 @@ const TrackMe = () => {
                           ? `${log.location.lat.toFixed(4)}, ${log.location.lng.toFixed(4)}`
                           : 'N/A'}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── COMMITMENT TAB ── */}
+        {activeTab === TABS.COMMITMENT && (
+          <div>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select
+                style={{ ...styles.input, margin: 0, flex: '0 0 240px' }}
+                value={commitmentTaskId}
+                onChange={(e) => setCommitmentTaskId(e.target.value)}
+              >
+                {tasks.length === 0 && <option value="">No tasks yet</option>}
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                Faithful: attends ~75%+ of sessions or a 4+ session streak · Consistent: 40–74% · Occasional: under 40%
+              </span>
+            </div>
+
+            {loadingAllLogs ? (
+              <p style={{ color: '#6b7280' }}>Loading commitment data…</p>
+            ) : !commitmentTaskId ? (
+              <div style={{ ...styles.card, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
+                Create a task first to track commitment.
+              </div>
+            ) : (() => {
+              const stats = computeCommitmentStats(commitmentTaskId);
+              const task = tasks.find((t) => t.id === commitmentTaskId);
+              const totalSessions = stats[0]?.totalSessions ?? 0;
+
+              if (stats.length === 0) return (
+                <div style={{ ...styles.card, textAlign: 'center', color: '#9ca3af', padding: 40 }}>
+                  No scans recorded yet for "{task?.title}".
+                </div>
+              );
+
+              return (
+                <div style={styles.card}>
+                  <div style={{ marginBottom: 10, fontSize: 12, color: '#6b7280' }}>
+                    {stats.length} {stats.length !== 1 ? 'people' : 'person'} tracked across {totalSessions} session{totalSessions !== 1 ? 's' : ''} for "{task?.title}"
+                  </div>
+                  <div style={styles.commitmentHeader}>
+                    <span>User</span>
+                    <span>Sessions Attended</span>
+                    <span>Attendance</span>
+                    <span>Current Streak</span>
+                    <span>Commitment</span>
+                  </div>
+                  {stats.map((person) => (
+                    <div key={person.userId} style={styles.commitmentRow}>
+                      <span style={{ fontWeight: 500, color: '#111827' }}>{person.userName}</span>
+                      <span>{person.attendedCount} / {person.totalSessions}</span>
+                      <span>{Math.round(person.attendanceRate * 100)}%</span>
+                      <span>{person.currentStreak}</span>
+                      <span><span style={styles.commitmentBadge(person.level)}>{person.level}</span></span>
                     </div>
                   ))}
                 </div>
