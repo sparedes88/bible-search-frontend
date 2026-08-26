@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { db, storage } from '../firebase';
 import {
   collection, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, query, orderBy, serverTimestamp, getDoc, writeBatch
+  doc, query, orderBy, where, serverTimestamp, Timestamp, getDoc, writeBatch
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,7 +19,8 @@ const RECURRENCE_LABELS = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Mo
 
 const TrackMe = () => {
   const { id: organizationId } = useParams();
-  const { user } = useAuth();
+  const { user, isAdmin, isGlobalAdmin } = useAuth();
+  const canManageManualLogs = isAdmin() || isGlobalAdmin();
 
   const [activeTab, setActiveTab] = useState(TABS.TASKS);
   const [tasks, setTasks] = useState([]);
@@ -31,6 +32,15 @@ const TrackMe = () => {
   const [loadingAllLogs, setLoadingAllLogs] = useState(false);
   const [dataFilter, setDataFilter] = useState({ task: 'all', search: '' });
   const [commitmentTaskId, setCommitmentTaskId] = useState('');
+
+  // Manual log entry state (admin / global_admin only)
+  const [manualLogTask, setManualLogTask] = useState(null);
+  const [orgUsers, setOrgUsers] = useState([]);
+  const [loadingOrgUsers, setLoadingOrgUsers] = useState(false);
+  const [manualLogSearch, setManualLogSearch] = useState('');
+  const [manualLogSelectedUser, setManualLogSelectedUser] = useState(null);
+  const [manualLogDate, setManualLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [savingManualLog, setSavingManualLog] = useState(false);
 
   // Task form state
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -421,6 +431,66 @@ const TrackMe = () => {
       toast.error('Failed to record scan.');
     } finally {
       setProcessingScans((prev) => { const next = new Set(prev); next.delete(userId); return next; });
+    }
+  };
+
+  // ─── Manual log entry (admin / global_admin) ──────────────────────────────
+
+  const openManualLog = async (task) => {
+    setManualLogTask(task);
+    setManualLogSearch('');
+    setManualLogSelectedUser(null);
+    setManualLogDate(new Date().toISOString().split('T')[0]);
+
+    if (orgUsers.length === 0) {
+      setLoadingOrgUsers(true);
+      try {
+        const usersRef = collection(db, 'users');
+        const snap = await getDocs(query(usersRef, where('churchId', '==', organizationId)));
+        setOrgUsers(snap.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, name: [data.name, data.lastName].filter(Boolean).join(' ') || data.email || d.id };
+        }));
+      } catch {
+        toast.error('Failed to load members.');
+      } finally {
+        setLoadingOrgUsers(false);
+      }
+    }
+  };
+
+  const closeManualLog = () => {
+    setManualLogTask(null);
+    setManualLogSelectedUser(null);
+  };
+
+  const submitManualLog = async () => {
+    if (!manualLogTask || !manualLogSelectedUser || !manualLogDate) {
+      toast.error('Select a member and a date.');
+      return;
+    }
+    setSavingManualLog(true);
+    try {
+      const chosenDate = new Date(`${manualLogDate}T12:00:00`);
+      await addDoc(scansCollection(manualLogTask.id), {
+        userId: manualLogSelectedUser.id,
+        userName: manualLogSelectedUser.name,
+        scannedAt: Timestamp.fromDate(chosenDate),
+        date: manualLogDate,
+        time: chosenDate.toLocaleTimeString(),
+        location: null,
+        scannedBy: user?.uid || '',
+        scannedByName: user?.name || user?.email || '',
+        manualEntry: true,
+      });
+      toast.success(`✅ Manual log added for ${manualLogSelectedUser.name}`);
+      closeManualLog();
+      if (activeTab === TABS.DATA) fetchAllLogs(tasks);
+      if (selectedTask?.id === manualLogTask.id) fetchLogs(manualLogTask.id);
+    } catch {
+      toast.error('Failed to add manual log.');
+    } finally {
+      setSavingManualLog(false);
     }
   };
 
@@ -854,6 +924,9 @@ const TrackMe = () => {
                         📷 Scan
                       </button>
                       <button style={styles.btn('ghost')} onClick={() => viewLogs(task)}>📋 Logs</button>
+                      {canManageManualLogs && (
+                        <button style={styles.btn('ghost')} onClick={() => openManualLog(task)}>➕ Add Log</button>
+                      )}
                       <button style={styles.btn('ghost')} onClick={() => openEditTask(task)}>✏️ Edit</button>
                       <button style={styles.btn('danger')} onClick={() => deleteTask(task)}>🗑️</button>
                     </div>
@@ -1136,6 +1209,67 @@ const TrackMe = () => {
           </div>
         )}
       </div>
+
+      {manualLogTask && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16,
+          }}
+          onClick={closeManualLog}
+        >
+          <div
+            style={{ background: 'white', borderRadius: 10, padding: 24, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Add Manual Log</h3>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>Task: {manualLogTask.title}</p>
+
+            <label style={styles.label}>Member *</label>
+            <input
+              style={styles.input}
+              placeholder="Search by name or email…"
+              value={manualLogSelectedUser ? manualLogSelectedUser.name : manualLogSearch}
+              onChange={(e) => { setManualLogSearch(e.target.value); setManualLogSelectedUser(null); }}
+            />
+            {!manualLogSelectedUser && manualLogSearch.trim() && (
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, maxHeight: 160, overflowY: 'auto', marginBottom: 12 }}>
+                {loadingOrgUsers ? (
+                  <p style={{ padding: 10, margin: 0, fontSize: 13, color: '#6b7280' }}>Loading members…</p>
+                ) : (
+                  orgUsers
+                    .filter((u) => u.name.toLowerCase().includes(manualLogSearch.trim().toLowerCase()))
+                    .slice(0, 20)
+                    .map((u) => (
+                      <div
+                        key={u.id}
+                        style={{ padding: '8px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}
+                        onClick={() => { setManualLogSelectedUser(u); setManualLogSearch(''); }}
+                      >
+                        {u.name}
+                      </div>
+                    ))
+                )}
+              </div>
+            )}
+
+            <label style={styles.label}>Date *</label>
+            <input
+              type="date"
+              style={styles.input}
+              value={manualLogDate}
+              onChange={(e) => setManualLogDate(e.target.value)}
+            />
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button style={styles.btn('primary')} onClick={submitManualLog} disabled={savingManualLog}>
+                {savingManualLog ? 'Saving…' : 'Add Log'}
+              </button>
+              <button style={styles.btn('ghost')} onClick={closeManualLog}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

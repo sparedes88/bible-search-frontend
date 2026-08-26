@@ -631,6 +631,17 @@ service cloud.firestore {
         allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
       }
 
+      // Track Me: check-in tasks and their scan logs
+      match /trackMeTasks/{taskId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isChurchAdmin(churchId);
+
+        match /scans/{scanId} {
+          allow read: if isAuthenticated() && isUserInChurch(churchId);
+          allow create, update, delete: if isChurchAdmin(churchId);
+        }
+      }
+
       // Collection metadata (per church)
       match /collectionMetadata/{metaId} {
         allow read: if isAuthenticated() && isUserInChurch(churchId);
