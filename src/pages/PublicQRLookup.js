@@ -6,6 +6,112 @@ import { getChurchData } from "../api/church";
 const QR_LOOKUP_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberQrByPhone";
 const COMMITMENT_SUMMARY_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberCommitmentSummary";
 
+const TRANSLATIONS = {
+  en: {
+    back: "⬅ Back",
+    title: "Get My QR Code",
+    subtitle: "Enter the phone number on your profile to retrieve your check-in QR code.",
+    phonePlaceholder: "Phone Number",
+    submit: "Get My QR Code",
+    submitting: "Searching...",
+    invalidPhone: "Please enter a valid phone number.",
+    notFound: "No member found with that phone number.",
+    serverError: "Could not reach the server. Please try again.",
+    idLabel: "ID:",
+    saveContact: "👤 Save as Contact (iPhone & Android)",
+    saveImage: "📷 Save QR Code Image",
+    share: "📤 Share",
+    savedContactMessage: "Contact card downloaded — open it and tap \"Add to Contacts\" to save the QR code as a contact photo.",
+    savedImageMessage: "Saved! Check your device's downloads or photos.",
+    openScanner: "Open QR Scanner (staff login required)",
+    commitmentTitle: "My Faithful Commitment",
+    commitmentSubtitle: "How you're doing on each check-in task, with a little encouragement.",
+    loadingText: "Loading...",
+    noTasks: "No check-in tasks are set up for this organization yet.",
+    sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} expected sessions (${pct}%)`,
+    avgGapCaption: (d) => ` · avg. ${d}d between check-ins`,
+    levels: {
+      Faithful: "Faithful",
+      Committed: "Committed",
+      "Too Early to Evaluate": "Too Early to Evaluate",
+      "Not Started": "Not Started",
+    },
+    feedback: {
+      faithful: {
+        verse: "“Well done, good and faithful servant! You have been faithful over a little; I will set you over much. Enter into the joy of your master.” — Matthew 25:21",
+        message: "You're showing up consistently, and it shows! Keep pressing on — your faithfulness is planting seeds that will bear fruit in due season (Galatians 6:9).",
+      },
+      committed: {
+        verse: "“And let us not grow weary of doing good, for in due season we will reap, if we do not give up.” — Galatians 6:9",
+        message: "You're engaged, but there's room to build a steadier rhythm. Try setting a reminder before each session — small, consistent steps build lasting faithfulness (Luke 16:10).",
+      },
+      tooEarly: {
+        verse: "“Let us consider how to stir up one another to love and good works, not neglecting to meet together.” — Hebrews 10:24-25",
+        message: "You're just getting started — keep showing up! Every check-in builds the foundation of a faithful habit.",
+      },
+      notStarted: {
+        verse: "“Draw near to God, and he will draw near to you.” — James 4:8",
+        message: "You haven't checked in for this one yet. Take the first step today — consistency starts with a single faithful decision.",
+      },
+    },
+  },
+  es: {
+    back: "⬅ Atrás",
+    title: "Obtener mi Código QR",
+    subtitle: "Ingresa el número de teléfono de tu perfil para obtener tu código QR de asistencia.",
+    phonePlaceholder: "Número de Teléfono",
+    submit: "Obtener mi Código QR",
+    submitting: "Buscando...",
+    invalidPhone: "Por favor ingresa un número de teléfono válido.",
+    notFound: "No se encontró ningún miembro con ese número de teléfono.",
+    serverError: "No se pudo conectar con el servidor. Inténtalo de nuevo.",
+    idLabel: "ID:",
+    saveContact: "👤 Guardar como Contacto (iPhone y Android)",
+    saveImage: "📷 Guardar Imagen del Código QR",
+    share: "📤 Compartir",
+    savedContactMessage: "Tarjeta de contacto descargada — ábrela y toca \"Agregar a Contactos\" para guardar el código QR como foto de contacto.",
+    savedImageMessage: "¡Guardado! Revisa las descargas o fotos de tu dispositivo.",
+    openScanner: "Abrir Escáner QR (requiere inicio de sesión del personal)",
+    commitmentTitle: "Mi Compromiso Fiel",
+    commitmentSubtitle: "Cómo te va en cada tarea de registro, con un poco de ánimo.",
+    loadingText: "Cargando...",
+    noTasks: "Todavía no hay tareas de registro configuradas para esta organización.",
+    sessionsCaption: (attended, expected, pct) => `${attended} / ${expected} sesiones esperadas (${pct}%)`,
+    avgGapCaption: (d) => ` · promedio de ${d}d entre registros`,
+    levels: {
+      Faithful: "Fiel",
+      Committed: "Comprometido",
+      "Too Early to Evaluate": "Muy Pronto para Evaluar",
+      "Not Started": "Sin Comenzar",
+    },
+    feedback: {
+      faithful: {
+        verse: "“Bien, buen siervo y fiel; sobre poco has sido fiel, sobre mucho te pondré; entra en el gozo de tu señor.” — Mateo 25:21",
+        message: "¡Estás asistiendo con constancia, y se nota! Sigue adelante — tu fidelidad está sembrando semillas que darán fruto a su tiempo (Gálatas 6:9).",
+      },
+      committed: {
+        verse: "“No nos cansemos, pues, de hacer bien; porque a su tiempo segaremos, si no desmayamos.” — Gálatas 6:9",
+        message: "Estás participando, pero hay espacio para construir un ritmo más constante. Intenta poner un recordatorio antes de cada sesión — pequeños pasos constantes construyen una fidelidad duradera (Lucas 16:10).",
+      },
+      tooEarly: {
+        verse: "“Y considerémonos unos a otros para estimularnos al amor y a las buenas obras; no dejando de congregarnos.” — Hebreos 10:24-25",
+        message: "Apenas estás comenzando — ¡sigue viniendo! Cada registro construye la base de un hábito fiel.",
+      },
+      notStarted: {
+        verse: "“Acercaos a Dios, y él se acercará a vosotros.” — Santiago 4:8",
+        message: "Todavía no te has registrado para esto. Da el primer paso hoy — la constancia comienza con una sola decisión fiel.",
+      },
+    },
+  },
+};
+
+const LEVEL_TO_MESSAGE_KEY = {
+  Faithful: "faithful",
+  Committed: "committed",
+  "Too Early to Evaluate": "tooEarly",
+  "Not Started": "notStarted",
+};
+
 const PublicQRLookup = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -19,6 +125,8 @@ const PublicQRLookup = () => {
   const [saveMessage, setSaveMessage] = useState("");
   const [commitmentTasks, setCommitmentTasks] = useState(null);
   const [loadingCommitment, setLoadingCommitment] = useState(false);
+  const [language, setLanguage] = useState("en");
+  const t = TRANSLATIONS[language];
 
   useEffect(() => {
     let isMounted = true;
@@ -39,7 +147,7 @@ const PublicQRLookup = () => {
 
     const digits = phone.replace(/\D/g, "");
     if (digits.length < 7) {
-      setError("Please enter a valid phone number.");
+      setError(t.invalidPhone);
       return;
     }
 
@@ -53,7 +161,7 @@ const PublicQRLookup = () => {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        setError(data.error || "No member found with that phone number.");
+        setError(t.notFound);
         return;
       }
 
@@ -61,7 +169,7 @@ const PublicQRLookup = () => {
       fetchCommitmentSummary(data.uid);
     } catch (fetchError) {
       console.error("QR lookup error:", fetchError);
-      setError("Could not reach the server. Please try again.");
+      setError(t.serverError);
     } finally {
       setLoading(false);
     }
@@ -129,7 +237,7 @@ const PublicQRLookup = () => {
     link.click();
     link.remove();
     URL.revokeObjectURL(objectUrl);
-    setSaveMessage("Saved! Check your device's downloads or photos.");
+    setSaveMessage(t.savedImageMessage);
   };
 
   const handleShareImage = async () => {
@@ -181,7 +289,7 @@ const PublicQRLookup = () => {
     link.click();
     link.remove();
     URL.revokeObjectURL(objectUrl);
-    setSaveMessage("Contact card downloaded — open it and tap \"Add to Contacts\" to save the QR code as a contact photo.");
+    setSaveMessage(t.savedContactMessage);
   };
 
   return (
@@ -200,6 +308,16 @@ const PublicQRLookup = () => {
           font-size: 15px;
           cursor: pointer;
           padding: 8px 4px;
+        }
+        .qr-lookup-lang-toggle {
+          background: white;
+          border: 1px solid #4F46E5;
+          color: #4F46E5;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          padding: 6px 14px;
+          border-radius: 20px;
         }
         .qr-lookup-logo-wrap {
           display: flex;
@@ -421,9 +539,18 @@ const PublicQRLookup = () => {
         }
       `}</style>
 
-      <button className="qr-lookup-back" onClick={() => navigate(`/organization/${id}/login`)}>
-        ⬅ Back
-      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button className="qr-lookup-back" onClick={() => navigate(`/organization/${id}/login`)}>
+          {t.back}
+        </button>
+        <button
+          type="button"
+          className="qr-lookup-lang-toggle"
+          onClick={() => setLanguage((lang) => (lang === "en" ? "es" : "en"))}
+        >
+          {language === "en" ? "Español" : "English"}
+        </button>
+      </div>
 
       {church?.logo && (
         <div className="qr-lookup-logo-wrap">
@@ -440,23 +567,21 @@ const PublicQRLookup = () => {
       )}
 
       <div className="qr-lookup-card">
-        <h2 className="qr-lookup-title">Get My QR Code</h2>
+        <h2 className="qr-lookup-title">{t.title}</h2>
         {church?.name && <p className="qr-lookup-org-name">{church.name}</p>}
-        <p className="qr-lookup-subtitle">
-          Enter the phone number on your profile to retrieve your check-in QR code.
-        </p>
+        <p className="qr-lookup-subtitle">{t.subtitle}</p>
 
         <form onSubmit={handleSubmit} className="qr-lookup-form">
           <input
             type="tel"
-            placeholder="Phone Number"
+            placeholder={t.phonePlaceholder}
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
             required
             className="qr-lookup-input"
           />
           <button type="submit" disabled={loading} className="qr-lookup-submit">
-            {loading ? "Searching..." : "Get My QR Code"}
+            {loading ? t.submitting : t.submit}
           </button>
         </form>
 
@@ -468,15 +593,15 @@ const PublicQRLookup = () => {
             {result.name && (
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
-            <p style={{ fontSize: "12px", color: "#9ca3af" }}>ID: {result.uid}</p>
+            <p style={{ fontSize: "12px", color: "#9ca3af" }}>{t.idLabel} {result.uid}</p>
             <button type="button" onClick={handleSaveAsContact} className="qr-lookup-wallet-btn">
-              👤 Save as Contact (iPhone &amp; Android)
+              {t.saveContact}
             </button>
             <button type="button" onClick={handleSaveImage} className="qr-lookup-share-btn">
-              📷 Save QR Code Image
+              {t.saveImage}
             </button>
             <button type="button" onClick={handleShareImage} className="qr-lookup-share-btn">
-              📤 Share
+              {t.share}
             </button>
             {saveMessage && <p className="qr-lookup-save-message">{saveMessage}</p>}
           </div>
@@ -488,46 +613,51 @@ const PublicQRLookup = () => {
             onClick={() => navigate(`/organization/${id}/track-me`)}
             className="qr-lookup-scanner-btn"
           >
-            Open QR Scanner (staff login required)
+            {t.openScanner}
           </button>
         )}
       </div>
 
       {result && (
         <div className="qr-lookup-card" style={{ marginTop: "16px" }}>
-          <h2 className="qr-lookup-title" style={{ marginBottom: "4px" }}>My Faithful Commitment</h2>
-          <p className="qr-lookup-subtitle">How you're doing on each check-in task, with a little encouragement.</p>
+          <h2 className="qr-lookup-title" style={{ marginBottom: "4px" }}>{t.commitmentTitle}</h2>
+          <p className="qr-lookup-subtitle">{t.commitmentSubtitle}</p>
 
-          {loadingCommitment && <p style={{ textAlign: "center", color: "#6b7280", fontSize: "14px" }}>Loading...</p>}
+          {loadingCommitment && <p style={{ textAlign: "center", color: "#6b7280", fontSize: "14px" }}>{t.loadingText}</p>}
 
           {!loadingCommitment && commitmentTasks && commitmentTasks.length === 0 && (
             <p style={{ textAlign: "center", color: "#9ca3af", fontSize: "14px" }}>
-              No check-in tasks are set up for this organization yet.
+              {t.noTasks}
             </p>
           )}
 
-          {!loadingCommitment && commitmentTasks && commitmentTasks.map((task) => (
-            <div key={task.taskId} className="qr-commitment-task">
-              <div className="qr-commitment-task-header">
-                <span className="qr-commitment-task-title">{task.title}</span>
-                <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>
-                  {task.level}
-                </span>
+          {!loadingCommitment && commitmentTasks && commitmentTasks.map((task) => {
+            const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
+            const feedback = t.feedback[messageKey];
+            const levelLabel = t.levels[task.level] || task.level;
+            return (
+              <div key={task.taskId} className="qr-commitment-task">
+                <div className="qr-commitment-task-header">
+                  <span className="qr-commitment-task-title">{task.title}</span>
+                  <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>
+                    {levelLabel}
+                  </span>
+                </div>
+                <div className="qr-commitment-meter-track">
+                  <div
+                    className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
+                    style={{ width: `${Math.round(task.attendanceRate * 100)}%` }}
+                  />
+                </div>
+                <p className="qr-commitment-meter-caption">
+                  {t.sessionsCaption(task.attendedCount, task.expectedSessions, Math.round(task.attendanceRate * 100))}
+                  {task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
+                </p>
+                <p className="qr-commitment-feedback">{feedback.message}</p>
+                <p className="qr-commitment-verse">{feedback.verse}</p>
               </div>
-              <div className="qr-commitment-meter-track">
-                <div
-                  className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
-                  style={{ width: `${Math.round(task.attendanceRate * 100)}%` }}
-                />
-              </div>
-              <p className="qr-commitment-meter-caption">
-                {task.attendedCount} / {task.expectedSessions} expected sessions ({Math.round(task.attendanceRate * 100)}%)
-                {task.avgGapDays !== null && ` · avg. ${task.avgGapDays}d between check-ins`}
-              </p>
-              <p className="qr-commitment-feedback">{task.feedback.message}</p>
-              <p className="qr-commitment-verse">{task.feedback.verse}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
