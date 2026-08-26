@@ -83,15 +83,15 @@ const PublicQRLookup = () => {
           margin: 12px 0 20px;
         }
         .qr-lookup-logo-circle {
-          width: clamp(72px, 24vw, 104px);
-          height: clamp(72px, 24vw, 104px);
+          width: clamp(144px, 48vw, 208px);
+          height: clamp(144px, 48vw, 208px);
           border-radius: 50%;
           background: white;
           box-shadow: 0 2px 8px rgba(0,0,0,0.12);
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 10px;
+          padding: 16px;
           box-sizing: border-box;
           overflow: hidden;
         }
