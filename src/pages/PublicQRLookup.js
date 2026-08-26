@@ -1,21 +1,21 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { QRCodeSVG } from "qrcode.react";
+import { QRCodeCanvas } from "qrcode.react";
 import { getChurchData } from "../api/church";
 
 const QR_LOOKUP_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberQrByPhone";
-const APPLE_WALLET_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/generateAppleWalletPass";
 
 const PublicQRLookup = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const qrCanvasRef = useRef(null);
   const [church, setChurch] = useState(null);
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [showScannerAccess, setShowScannerAccess] = useState(false);
-  const [walletError, setWalletError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -63,25 +63,80 @@ const PublicQRLookup = () => {
     }
   };
 
-  const handleAddToWallet = async () => {
-    if (!result?.uid) return;
-    setWalletError("");
+  const getQrImageBlob = () =>
+    new Promise((resolve) => {
+      const canvas = qrCanvasRef.current;
+      if (!canvas) return resolve(null);
+      canvas.toBlob((blob) => resolve(blob), "image/png");
+    });
 
-    const walletUrl = `${APPLE_WALLET_FUNCTION_URL}?churchId=${encodeURIComponent(id)}&uid=${encodeURIComponent(result.uid)}`;
-    try {
-      // Probe for configuration errors first so we can show a friendly message
-      // instead of letting the browser download a JSON error as a broken .pkpass file.
-      const response = await fetch(walletUrl);
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        setWalletError(data.error || "Apple Wallet is not available right now.");
-        return;
+  const handleSaveImage = async () => {
+    setSaveMessage("");
+    const blob = await getQrImageBlob();
+    if (!blob) return;
+
+    const fileName = `${(church?.name || "my-qr-code").replace(/[^a-z0-9]+/gi, "-")}.png`;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setSaveMessage("Saved! Check your device's downloads or photos.");
+  };
+
+  const handleShareImage = async () => {
+    setSaveMessage("");
+    const blob = await getQrImageBlob();
+    if (!blob) return;
+
+    const fileName = `${(church?.name || "my-qr-code").replace(/[^a-z0-9]+/gi, "-")}.png`;
+    const file = new File([blob], fileName, { type: "image/png" });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: "My Check-in QR Code" });
+      } catch (shareError) {
+        // User cancelled the share sheet; nothing to do.
       }
-      window.location.href = walletUrl;
-    } catch (walletFetchError) {
-      console.error("Add to Apple Wallet error:", walletFetchError);
-      setWalletError("Could not reach the server. Please try again.");
+    } else {
+      handleSaveImage();
     }
+  };
+
+  const handleSaveAsContact = () => {
+    setSaveMessage("");
+    const canvas = qrCanvasRef.current;
+    if (!canvas) return;
+
+    // Embed the QR code as the contact's photo so it shows up right in Contacts.
+    const base64Photo = canvas.toDataURL("image/png").split(",")[1];
+    const contactName = `${result?.name || "My"} QR Code`.trim();
+    const organization = church?.name || "";
+
+    const vCardLines = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `N:;${contactName};;;`,
+      `FN:${contactName}`,
+      organization ? `ORG:${organization}` : null,
+      `NOTE:Check-in QR code ID ${result?.uid || ""}`,
+      `PHOTO;ENCODING=b;TYPE=PNG:${base64Photo}`,
+      "END:VCARD",
+    ].filter(Boolean);
+
+    const blob = new Blob([vCardLines.join("\r\n")], { type: "text/vcard" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `${contactName.replace(/[^a-z0-9]+/gi, "-")}.vcf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setSaveMessage("Contact card downloaded — open it and tap \"Add to Contacts\" to save the QR code as a contact photo.");
   };
 
   return (
@@ -220,14 +275,36 @@ const PublicQRLookup = () => {
           padding: 12px;
           border-radius: 8px;
           border: none;
-          background-color: #000;
+          background-color: #4F46E5;
           color: white;
+          font-size: 15px;
+          font-weight: 500;
+          cursor: pointer;
+        }
+        .qr-lookup-share-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          width: 100%;
+          margin-top: 10px;
+          padding: 12px;
+          border-radius: 8px;
+          border: 1px solid #d1d5db;
+          background-color: white;
+          color: #374151;
           font-size: 15px;
           font-weight: 500;
           cursor: pointer;
         }
         .qr-lookup-wallet-error {
           color: #dc2626;
+          margin-top: 10px;
+          text-align: center;
+          font-size: 13px;
+        }
+        .qr-lookup-save-message {
+          color: #16a34a;
           margin-top: 10px;
           text-align: center;
           font-size: 13px;
@@ -277,15 +354,21 @@ const PublicQRLookup = () => {
 
         {result && (
           <div className="qr-lookup-result">
-            <QRCodeSVG value={result.uid} level="H" />
+            <QRCodeCanvas ref={qrCanvasRef} value={result.uid} level="H" includeMargin />
             {result.name && (
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
             <p style={{ fontSize: "12px", color: "#9ca3af" }}>ID: {result.uid}</p>
-            <button type="button" onClick={handleAddToWallet} className="qr-lookup-wallet-btn">
-              🍎 Add to Apple Wallet
+            <button type="button" onClick={handleSaveAsContact} className="qr-lookup-wallet-btn">
+              👤 Save as Contact (iPhone &amp; Android)
             </button>
-            {walletError && <p className="qr-lookup-wallet-error">{walletError}</p>}
+            <button type="button" onClick={handleSaveImage} className="qr-lookup-share-btn">
+              📷 Save QR Code Image
+            </button>
+            <button type="button" onClick={handleShareImage} className="qr-lookup-share-btn">
+              📤 Share
+            </button>
+            {saveMessage && <p className="qr-lookup-save-message">{saveMessage}</p>}
           </div>
         )}
 
