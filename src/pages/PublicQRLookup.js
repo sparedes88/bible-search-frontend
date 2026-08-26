@@ -1,18 +1,30 @@
-import React, { Suspense, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
-import ChurchHeader from "../components/ChurchHeader";
-import commonStyles from "./commonStyles";
+import { getChurchData } from "../api/church";
 
 const QR_LOOKUP_FUNCTION_URL = "https://us-central1-igletechv1.cloudfunctions.net/getMemberQrByPhone";
 
 const PublicQRLookup = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [church, setChurch] = useState(null);
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (id) {
+      getChurchData(id).then((data) => {
+        if (isMounted) setChurch(data);
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -49,92 +61,159 @@ const PublicQRLookup = () => {
   };
 
   return (
-    <div
-      style={{
-        ...commonStyles.fullWidthContainer,
-        minHeight: "100vh",
-        paddingBottom: "40px",
-      }}
-    >
-      <div style={{ padding: "12px 16px" }}>
-        <button onClick={() => navigate(`/organization/${id}/login`)} style={commonStyles.backButton}>
-          ⬅ Back
-        </button>
-      </div>
+    <div className="qr-lookup-page">
+      <style>{`
+        .qr-lookup-page {
+          min-height: 100vh;
+          background: linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
+          padding: 16px;
+          box-sizing: border-box;
+        }
+        .qr-lookup-back {
+          background: none;
+          border: none;
+          color: #4F46E5;
+          font-size: 15px;
+          cursor: pointer;
+          padding: 8px 4px;
+        }
+        .qr-lookup-logo-wrap {
+          display: flex;
+          justify-content: center;
+          margin: 12px 0 20px;
+        }
+        .qr-lookup-logo {
+          width: clamp(64px, 22vw, 96px);
+          height: clamp(64px, 22vw, 96px);
+          border-radius: 50%;
+          object-fit: cover;
+          background: white;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        }
+        .qr-lookup-card {
+          width: 100%;
+          max-width: 420px;
+          margin: 0 auto;
+          padding: clamp(16px, 5vw, 28px);
+          background-color: white;
+          border-radius: 12px;
+          box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+          box-sizing: border-box;
+        }
+        .qr-lookup-title {
+          text-align: center;
+          margin-bottom: 6px;
+          color: #374151;
+          font-size: clamp(18px, 5vw, 22px);
+        }
+        .qr-lookup-org-name {
+          text-align: center;
+          color: #4F46E5;
+          font-weight: 600;
+          font-size: clamp(14px, 4vw, 16px);
+          margin-bottom: 4px;
+        }
+        .qr-lookup-subtitle {
+          text-align: center;
+          color: #6b7280;
+          margin-bottom: 20px;
+          font-size: 14px;
+        }
+        .qr-lookup-form {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .qr-lookup-input {
+          padding: 12px;
+          border-radius: 6px;
+          border: 1px solid #d1d5db;
+          font-size: 16px;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .qr-lookup-submit {
+          padding: 12px;
+          border-radius: 6px;
+          border: none;
+          background-color: #4F46E5;
+          color: white;
+          font-size: 15px;
+          cursor: pointer;
+          width: 100%;
+        }
+        .qr-lookup-submit:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        .qr-lookup-error {
+          color: #dc2626;
+          margin-top: 16px;
+          text-align: center;
+          font-size: 14px;
+        }
+        .qr-lookup-result {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin-top: 24px;
+          padding-top: 20px;
+          border-top: 1px solid #e5e7eb;
+        }
+        .qr-lookup-result svg {
+          width: clamp(140px, 55vw, 200px) !important;
+          height: clamp(140px, 55vw, 200px) !important;
+        }
+        .qr-lookup-scanner-btn {
+          display: block;
+          width: 100%;
+          margin-top: 24px;
+          padding: 12px;
+          border-radius: 6px;
+          border: 1px solid #4F46E5;
+          background-color: white;
+          color: #4F46E5;
+          font-size: 14px;
+          cursor: pointer;
+        }
+      `}</style>
 
-      {id && (
-        <Suspense fallback={<div style={{ minHeight: 120 }} />}>
-          <ChurchHeader id={id} applyShadow={false} />
-        </Suspense>
+      <button className="qr-lookup-back" onClick={() => navigate(`/organization/${id}/login`)}>
+        ⬅ Back
+      </button>
+
+      {church?.logo && (
+        <div className="qr-lookup-logo-wrap">
+          <img src={church.logo} alt={`${church.name || "Organization"} logo`} className="qr-lookup-logo" />
+        </div>
       )}
 
-      <div
-        style={{
-          maxWidth: "420px",
-          margin: "24px auto",
-          padding: "24px",
-          backgroundColor: "white",
-          borderRadius: "12px",
-          boxShadow: "0 1px 6px rgba(0,0,0,0.1)",
-        }}
-      >
-        <h2 style={{ textAlign: "center", marginBottom: "8px", color: "#374151" }}>
-          Get My QR Code
-        </h2>
-        <p style={{ textAlign: "center", color: "#6b7280", marginBottom: "20px", fontSize: "14px" }}>
+      <div className="qr-lookup-card">
+        <h2 className="qr-lookup-title">Get My QR Code</h2>
+        {church?.name && <p className="qr-lookup-org-name">{church.name}</p>}
+        <p className="qr-lookup-subtitle">
           Enter the phone number on your profile to retrieve your check-in QR code.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <form onSubmit={handleSubmit} className="qr-lookup-form">
           <input
             type="tel"
             placeholder="Phone Number"
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
             required
-            style={{
-              padding: "10px 12px",
-              borderRadius: "6px",
-              border: "1px solid #d1d5db",
-              fontSize: "16px",
-            }}
+            className="qr-lookup-input"
           />
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              padding: "10px 12px",
-              borderRadius: "6px",
-              border: "none",
-              backgroundColor: "#4F46E5",
-              color: "white",
-              fontSize: "15px",
-              cursor: loading ? "not-allowed" : "pointer",
-              opacity: loading ? 0.7 : 1,
-            }}
-          >
+          <button type="submit" disabled={loading} className="qr-lookup-submit">
             {loading ? "Searching..." : "Get My QR Code"}
           </button>
         </form>
 
-        {error && (
-          <p style={{ color: "#dc2626", marginTop: "16px", textAlign: "center", fontSize: "14px" }}>
-            {error}
-          </p>
-        )}
+        {error && <p className="qr-lookup-error">{error}</p>}
 
         {result && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              marginTop: "24px",
-              paddingTop: "20px",
-              borderTop: "1px solid #e5e7eb",
-            }}
-          >
-            <QRCodeSVG value={result.uid} size={180} level="H" />
+          <div className="qr-lookup-result">
+            <QRCodeSVG value={result.uid} level="H" />
             {result.name && (
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
@@ -145,18 +224,7 @@ const PublicQRLookup = () => {
         <button
           type="button"
           onClick={() => navigate(`/organization/${id}/track-me`)}
-          style={{
-            display: "block",
-            width: "100%",
-            marginTop: "24px",
-            padding: "10px 12px",
-            borderRadius: "6px",
-            border: "1px solid #4F46E5",
-            backgroundColor: "white",
-            color: "#4F46E5",
-            fontSize: "14px",
-            cursor: "pointer",
-          }}
+          className="qr-lookup-scanner-btn"
         >
           Open QR Scanner (staff login required)
         </button>
