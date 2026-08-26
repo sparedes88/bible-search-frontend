@@ -531,9 +531,14 @@ const PublicQRLookup = () => {
           margin-bottom: 6px;
         }
         .qr-commitment-task-title {
-          font-weight: 600;
-          font-size: 14px;
-          color: #374151;
+          font-weight: 700;
+          font-size: 18px;
+          color: #1f2937;
+        }
+        .qr-commitment-task-description {
+          margin: 0 0 8px;
+          font-size: 13px;
+          color: #6b7280;
         }
         .qr-commitment-badge {
           display: inline-block;
@@ -744,6 +749,9 @@ const PublicQRLookup = () => {
                     {levelLabel}
                   </span>
                 </div>
+                {task.description && (
+                  <p className="qr-commitment-task-description">{task.description}</p>
+                )}
                 <div className="qr-commitment-meter-track">
                   <div
                     className={`qr-commitment-meter-fill qr-commitment-meter-${task.level.replace(/\s+/g, "-").toLowerCase()}`}
