@@ -42,6 +42,7 @@ const BuildBIRedirect = () => {
 // Lazy load route components so the login page does not pull the full app graph up front.
 const ChurchInfo = React.lazy(() => import("./pages/ChurchInfo"));
 const MiPerfil = React.lazy(() => import("./components/MiPerfil"));
+const PublicQRLookup = React.lazy(() => import("./pages/PublicQRLookup"));
 const ProfilePage = React.lazy(() => import("./components/ProfilePage"));
 const Search = React.lazy(() => import("./components/Search"));
 const EventsPage = React.lazy(() => import("./pages/EventsPage"));
@@ -206,6 +207,7 @@ const App = () => {
           <Route path="/organization/:id" element={<ErrorBoundary><ChurchApp /></ErrorBoundary>} />
           <Route path="/organization/:id/info" element={<ErrorBoundary><ChurchInfo /></ErrorBoundary>} />
           <Route path="/organization/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
+          <Route path="/organization/:id/qr-lookup" element={<ErrorBoundary><PublicQRLookup /></ErrorBoundary>} />
           <Route path="/organization/:id/profile" element={<ErrorBoundary><ProfilePage /></ErrorBoundary>} />
           <Route path="/organization/:id/search" element={<ErrorBoundary><Search /></ErrorBoundary>} />
           <Route path="/organization/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
@@ -951,6 +953,7 @@ const App = () => {
           <Route path="/church/:id/bible" element={<ErrorBoundary><BiblePage /></ErrorBoundary>} />
           <Route path="/church/:id/events" element={<ErrorBoundary><EventsPage /></ErrorBoundary>} />
           <Route path="/church/:id/mi-perfil" element={<ErrorBoundary><MiPerfil /></ErrorBoundary>} />
+          <Route path="/church/:id/qr-lookup" element={<ErrorBoundary><PublicQRLookup /></ErrorBoundary>} />
           <Route
             path="/church/:id/mi-organizacion"
             element={

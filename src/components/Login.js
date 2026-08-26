@@ -1307,6 +1307,14 @@ const Login = () => {
                 : "Forgot your password?"}
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => navigate(`/organization/${id}/qr-lookup`)}
+            className="login-secondary-action"
+          >
+            Get my QR Code
+          </button>
         </section>
       </div>
 

@@ -4362,3 +4362,67 @@ exports.extractPanelScheduleFromPdfWithGemini = functions
       }
     });
   });
+
+// Public lookup: given an organization (church) id and a phone number, return the
+// minimal data (uid + display name) needed to render that member's check-in QR code.
+// Uses the Admin SDK so it works for unauthenticated visitors, without loosening
+// Firestore rules for the `users` collection.
+const onlyDigits = (value) => normalizeValue(value).replace(/\D/g, "");
+
+exports.getMemberQrByPhone = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({ success: false, error: "Only GET and POST methods are allowed" });
+  }
+
+  try {
+    const body = req.method === "GET" ? (req.query || {}) : (req.body || {});
+    const churchId = normalizeValue(body.churchId);
+    const phoneDigits = onlyDigits(body.phone);
+
+    if (!churchId || phoneDigits.length < 7) {
+      return res.status(400).json({ success: false, error: "Missing or invalid churchId/phone" });
+    }
+
+    const lastTenDigits = phoneDigits.slice(-10);
+    const firestore = admin.firestore();
+    const usersCollection = firestore.collection("users");
+
+    // Church association field name is inconsistent across the app
+    // (churchId, churchID, organizationId), so check all three variants.
+    const churchFieldNames = ["churchId", "churchID", "organizationId"];
+    const querySnapshots = await Promise.all(
+      churchFieldNames.map((fieldName) => usersCollection.where(fieldName, "==", churchId).get())
+    );
+
+    const candidateDocsById = new Map();
+    querySnapshots.forEach((snap) => {
+      snap.docs.forEach((docSnap) => {
+        candidateDocsById.set(docSnap.id, docSnap);
+      });
+    });
+
+    const matchedDoc = Array.from(candidateDocsById.values()).find((docSnap) => {
+      const data = docSnap.data() || {};
+      const candidatePhone = onlyDigits(data.phone || data.phoneNumber);
+      return candidatePhone && candidatePhone.slice(-10) === lastTenDigits;
+    });
+
+    if (!matchedDoc) {
+      return res.status(404).json({ success: false, error: "No member found with that phone number." });
+    }
+
+    const matchedData = matchedDoc.data() || {};
+    const displayName = [matchedData.name, matchedData.lastName].filter(Boolean).join(" ").trim();
+
+    return res.status(200).json({
+      success: true,
+      uid: matchedDoc.id,
+      name: displayName || null,
+    });
+  } catch (error) {
+    console.error("getMemberQrByPhone error:", error);
+    return res.status(500).json({ success: false, error: "Unexpected error looking up member." });
+  }
+});

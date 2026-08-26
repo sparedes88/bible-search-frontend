@@ -36,8 +36,10 @@ const TrackMe = () => {
   const [scannerTask, setScannerTask] = useState(null);
   const [scannerActive, setScannerActive] = useState(false);
   const [processingScans, setProcessingScans] = useState(new Set());
+  const [lastScanConfirmation, setLastScanConfirmation] = useState(null);
   const scannerRef = useRef(null);
   const scannerInstanceRef = useRef(null);
+  const lastScannedCodeRef = useRef(null);
 
   // ─── Firestore helpers ────────────────────────────────────────────────────
 
@@ -217,6 +219,7 @@ const TrackMe = () => {
         scannedByName: user?.name || user?.email || '',
       });
       toast.success(`✅ Scan recorded for task: ${task.title}`);
+      setLastScanConfirmation({ userName: resolvedName, userId, time: now.toLocaleTimeString() });
       // Refresh data log if currently viewing it
       if (activeTab === TABS.DATA) fetchAllLogs(tasks);
     } catch {
@@ -231,6 +234,8 @@ const TrackMe = () => {
       scannerInstanceRef.current.clear().catch(() => {});
       scannerInstanceRef.current = null;
     }
+    lastScannedCodeRef.current = null;
+    setLastScanConfirmation(null);
     setScannerTask(task);
     setScannerActive(true);
   }, []);
@@ -251,7 +256,11 @@ const TrackMe = () => {
     scanner.render(
       (decodedText) => {
         const userId = decodedText.trim();
-        if (userId) recordScan(userId, scannerTask);
+        if (!userId) return;
+        // Ignore repeated detections of the same QR code while it stays in view
+        if (lastScannedCodeRef.current === userId) return;
+        lastScannedCodeRef.current = userId;
+        recordScan(userId, scannerTask);
       },
       () => {}
     );
@@ -270,6 +279,8 @@ const TrackMe = () => {
       scannerInstanceRef.current.clear().catch(() => {});
       scannerInstanceRef.current = null;
     }
+    lastScannedCodeRef.current = null;
+    setLastScanConfirmation(null);
     setScannerActive(false);
     setScannerTask(null);
   };
@@ -543,6 +554,16 @@ const TrackMe = () => {
                     Point the camera at a user's QR code from their profile. Each scan is automatically recorded with timestamp and location.
                   </p>
                 </div>
+                {lastScanConfirmation && (
+                  <div style={{ ...styles.card, background: '#f0fdf4', borderColor: '#86efac', marginBottom: 20, textAlign: 'center' }}>
+                    <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 16 }}>
+                      ✅ Scanned: {lastScanConfirmation.userName || lastScanConfirmation.userId}
+                    </p>
+                    <p style={{ margin: '4px 0 0', fontSize: 12, color: '#16a34a' }}>
+                      Recorded at {lastScanConfirmation.time}. Scan a different QR code to continue.
+                    </p>
+                  </div>
+                )}
                 <div
                   id="track-me-qr-reader"
                   ref={scannerRef}
