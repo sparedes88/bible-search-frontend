@@ -774,6 +774,13 @@ const TrackMe = () => {
               tasks.map((task) => (
                 <div key={task.id} style={styles.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                    {task.imageUrl && (
+                      <img
+                        src={task.imageUrl}
+                        alt={task.title}
+                        style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb', flexShrink: 0 }}
+                      />
+                    )}
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontSize: 16 }}>{task.title}</span>
