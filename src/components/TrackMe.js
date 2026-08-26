@@ -494,6 +494,18 @@ const TrackMe = () => {
     }
   };
 
+  const deleteLog = async (taskId, logId) => {
+    if (!window.confirm('Delete this log entry? This cannot be undone.')) return;
+    try {
+      await deleteDoc(doc(db, 'churches', organizationId, 'trackMeTasks', taskId, 'scans', logId));
+      toast.success('Log deleted.');
+      if (selectedTask?.id === taskId) fetchLogs(taskId);
+      if (activeTab === TABS.DATA) fetchAllLogs(tasks);
+    } catch {
+      toast.error('Failed to delete log.');
+    }
+  };
+
   const startScanner = useCallback((task) => {
     if (scannerInstanceRef.current) {
       scannerInstanceRef.current.clear().catch(() => {});
@@ -653,7 +665,7 @@ const TrackMe = () => {
     },
     logRow: {
       display: 'grid',
-      gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1.2fr',
+      gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1.2fr 0.6fr',
       gap: 8,
       padding: '10px 0',
       borderBottom: '1px solid #f3f4f6',
@@ -662,7 +674,7 @@ const TrackMe = () => {
     },
     logHeader: {
       display: 'grid',
-      gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1.2fr',
+      gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1.2fr 0.6fr',
       gap: 8,
       padding: '8px 0',
       borderBottom: '2px solid #e5e7eb',
@@ -673,7 +685,7 @@ const TrackMe = () => {
     },
     taskLogRow: {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr 1fr 1fr',
+      gridTemplateColumns: '1fr 1fr 1fr 1fr 0.6fr',
       gap: 8,
       padding: '10px 0',
       borderBottom: '1px solid #f3f4f6',
@@ -682,7 +694,7 @@ const TrackMe = () => {
     },
     taskLogHeader: {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr 1fr 1fr',
+      gridTemplateColumns: '1fr 1fr 1fr 1fr 0.6fr',
       gap: 8,
       padding: '8px 0',
       borderBottom: '2px solid #e5e7eb',
@@ -1017,6 +1029,7 @@ const TrackMe = () => {
                   <span>Date</span>
                   <span>Time</span>
                   <span>Location</span>
+                  <span></span>
                 </div>
                 {scanLogs.map((log) => (
                   <div key={log.id} style={styles.taskLogRow}>
@@ -1034,6 +1047,11 @@ const TrackMe = () => {
                       {log.location
                         ? `${log.location.lat.toFixed(4)}, ${log.location.lng.toFixed(4)}`
                         : 'N/A'}
+                    </span>
+                    <span>
+                      {canManageManualLogs && (
+                        <button style={styles.btn('danger')} onClick={() => deleteLog(selectedTask.id, log.id)}>🗑️</button>
+                      )}
                     </span>
                   </div>
                 ))}
@@ -1095,6 +1113,7 @@ const TrackMe = () => {
                     <span>Date</span>
                     <span>Time</span>
                     <span>Location</span>
+                    <span></span>
                   </div>
                   {filtered.map((log) => (
                     <div key={`${log.taskId}-${log.id}`} style={styles.logRow}>
@@ -1113,6 +1132,11 @@ const TrackMe = () => {
                         {log.location
                           ? `${log.location.lat.toFixed(4)}, ${log.location.lng.toFixed(4)}`
                           : 'N/A'}
+                      </span>
+                      <span>
+                        {canManageManualLogs && (
+                          <button style={styles.btn('danger')} onClick={() => deleteLog(log.taskId, log.id)}>🗑️</button>
+                        )}
                       </span>
                     </div>
                   ))}
