@@ -70,6 +70,28 @@ const PublicQRLookup = () => {
       canvas.toBlob((blob) => resolve(blob), "image/png");
     });
 
+  // Contact photos get cropped to a circle/square by iOS and Android Contacts apps.
+  // Pad the QR code onto a larger white canvas so its corner finder patterns
+  // always stay inside that crop and the code stays scannable.
+  const getPaddedQrCanvas = () => {
+    const sourceCanvas = qrCanvasRef.current;
+    if (!sourceCanvas) return null;
+
+    const outputSize = 600;
+    const qrDrawSize = 380; // fits inside the circle inscribed in a 600x600 square
+    const offset = (outputSize - qrDrawSize) / 2;
+
+    const paddedCanvas = document.createElement("canvas");
+    paddedCanvas.width = outputSize;
+    paddedCanvas.height = outputSize;
+    const ctx = paddedCanvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, outputSize, outputSize);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(sourceCanvas, offset, offset, qrDrawSize, qrDrawSize);
+    return paddedCanvas;
+  };
+
   const handleSaveImage = async () => {
     setSaveMessage("");
     const blob = await getQrImageBlob();
@@ -108,11 +130,11 @@ const PublicQRLookup = () => {
 
   const handleSaveAsContact = () => {
     setSaveMessage("");
-    const canvas = qrCanvasRef.current;
-    if (!canvas) return;
+    const paddedCanvas = getPaddedQrCanvas();
+    if (!paddedCanvas) return;
 
-    // Embed the QR code as the contact's photo so it shows up right in Contacts.
-    const base64Photo = canvas.toDataURL("image/png").split(",")[1];
+    // Embed the padded QR code as the contact's photo so it shows up right in Contacts.
+    const base64Photo = paddedCanvas.toDataURL("image/png").split(",")[1];
     const organization = church?.name || "";
     const contactName = `${organization} ${result?.name || ""}`.trim() || "My QR Code";
 
@@ -249,7 +271,8 @@ const PublicQRLookup = () => {
           padding-top: 20px;
           border-top: 1px solid #e5e7eb;
         }
-        .qr-lookup-result svg {
+        .qr-lookup-result svg,
+        .qr-lookup-result canvas {
           width: clamp(140px, 55vw, 200px) !important;
           height: clamp(140px, 55vw, 200px) !important;
         }
@@ -354,7 +377,7 @@ const PublicQRLookup = () => {
 
         {result && (
           <div className="qr-lookup-result">
-            <QRCodeCanvas ref={qrCanvasRef} value={result.uid} level="H" includeMargin />
+            <QRCodeCanvas ref={qrCanvasRef} value={result.uid} size={320} level="H" includeMargin />
             {result.name && (
               <p style={{ marginTop: "12px", fontSize: "15px", color: "#374151" }}>{result.name}</p>
             )}
