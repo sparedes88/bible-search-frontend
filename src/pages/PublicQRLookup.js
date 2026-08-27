@@ -23,6 +23,9 @@ const TRANSLATIONS = {
     openScanner: "Open QR Scanner (staff login required)",
     commitmentTitle: "My Faithful Commitment",
     commitmentSubtitle: "How you're doing on each check-in task, with a little encouragement.",
+    swipeModeBtn: "👉 Swipe Mode",
+    listModeBtn: "📋 List Mode",
+    swipeCounter: (current, total) => `${current} of ${total}`,
     maturityTitle: "Spiritual maturity involves faithful commitment",
     maturityIntro: "There's a difference between being committed and being faithfully committed:",
     maturityPoints: [
@@ -118,6 +121,9 @@ const TRANSLATIONS = {
     openScanner: "Abrir Escáner QR (requiere inicio de sesión del personal)",
     commitmentTitle: "Mi Compromiso Fiel",
     commitmentSubtitle: "Cómo te va en cada tarea de registro, con un poco de ánimo.",
+    swipeModeBtn: "👉 Modo Deslizar",
+    listModeBtn: "📋 Modo Lista",
+    swipeCounter: (current, total) => `${current} de ${total}`,
     maturityTitle: "La madurez espiritual implica un compromiso fiel",
     maturityIntro: "Hay una diferencia entre estar comprometido y estar fielmente comprometido:",
     maturityPoints: [
@@ -254,6 +260,9 @@ const PublicQRLookup = () => {
   const [saveMessage, setSaveMessage] = useState("");
   const [commitmentTasks, setCommitmentTasks] = useState(null);
   const [loadingCommitment, setLoadingCommitment] = useState(false);
+  const [commitmentViewMode, setCommitmentViewMode] = useState("list"); // 'list' | 'swipe'
+  const [swipeIndex, setSwipeIndex] = useState(0);
+  const touchStartXRef = useRef(null);
   const language = searchParams.get("lang") === "es" ? "es" : "en";
   const t = TRANSLATIONS[language];
 
@@ -315,6 +324,7 @@ const PublicQRLookup = () => {
   const fetchCommitmentSummary = async (uid) => {
     setLoadingCommitment(true);
     setCommitmentTasks(null);
+    setSwipeIndex(0);
     try {
       const response = await fetch(
         `${COMMITMENT_SUMMARY_FUNCTION_URL}?churchId=${encodeURIComponent(id)}&uid=${encodeURIComponent(uid)}`
@@ -328,6 +338,22 @@ const PublicQRLookup = () => {
     } finally {
       setLoadingCommitment(false);
     }
+  };
+
+  const goToPrevTask = () => setSwipeIndex((i) => Math.max(0, i - 1));
+  const goToNextTask = (total) => setSwipeIndex((i) => Math.min(total - 1, i + 1));
+
+  const handleTouchStart = (event) => {
+    touchStartXRef.current = event.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (event, total) => {
+    if (touchStartXRef.current === null) return;
+    const deltaX = event.changedTouches[0].clientX - touchStartXRef.current;
+    touchStartXRef.current = null;
+    const SWIPE_THRESHOLD = 40;
+    if (deltaX > SWIPE_THRESHOLD) goToPrevTask();
+    else if (deltaX < -SWIPE_THRESHOLD) goToNextTask(total);
   };
 
   // Contact photos get aggressively zoom-cropped to a circle/square by different
@@ -384,6 +410,64 @@ const PublicQRLookup = () => {
     link.remove();
     URL.revokeObjectURL(objectUrl);
     setSaveMessage(t.savedContactMessage);
+  };
+
+  const renderTaskCard = (task) => {
+    const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
+    const feedback = pickFeedbackVariant(t.feedback[messageKey], task.taskId);
+    const levelLabel = t.levels[task.level] || task.level;
+    // The image shows what they're working toward: fully grayscale until
+    // Faithful is reached, then it unlocks into full color and stays that
+    // way as long as the level stays Faithful.
+    const isUnevaluated = task.level === "Too Early to Evaluate" || task.level === "Not Started";
+    const grayscaleAmount = task.level === "Faithful" ? 0 : 100;
+    const meterPercent = isUnevaluated
+      ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
+      : Math.round(task.attendanceRate * 100);
+    return (
+      <div key={task.taskId} className="qr-commitment-task">
+        {task.imageUrl && (
+          <div className="qr-commitment-image-wrap">
+            <img
+              src={task.imageUrl}
+              alt={task.title}
+              className="qr-commitment-image"
+              style={{ "--qr-grayscale-amount": `${grayscaleAmount}%` }}
+            />
+          </div>
+        )}
+        <div className="qr-commitment-task-header">
+          <span className="qr-commitment-task-title">{task.title}</span>
+          <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>
+            {levelLabel}
+          </span>
+        </div>
+        {task.description && (
+          <p className="qr-commitment-task-description">{task.description}</p>
+        )}
+        <div className="qr-commitment-meter-track">
+          <div
+            className="qr-commitment-meter-fill"
+            style={{
+              width: `${meterPercent}%`,
+              backgroundColor: getProgressColor(meterPercent),
+            }}
+          />
+        </div>
+        <p className="qr-commitment-meter-caption">
+          {isUnevaluated
+            ? t.checkInsNeededCaption(
+                task.attendedCount,
+                task.minCheckInsForEvaluation,
+                Math.max(0, task.minCheckInsForEvaluation - task.attendedCount)
+              )
+            : t.sessionsCaption(task.attendedCount, task.expectedSessions, meterPercent)}
+          {!isUnevaluated && task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
+        </p>
+        <p className="qr-commitment-feedback">{feedback.message}</p>
+        <p className="qr-commitment-verse">{feedback.verse}</p>
+      </div>
+    );
   };
 
   return (
@@ -634,6 +718,46 @@ const PublicQRLookup = () => {
           font-style: italic;
           color: #4F46E5;
         }
+        .qr-commitment-mode-toggle {
+          display: block;
+          margin: 0 0 16px auto;
+          padding: 6px 14px;
+          border-radius: 20px;
+          border: 1px solid #4F46E5;
+          background: white;
+          color: #4F46E5;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .qr-commitment-swipe-nav {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 20px;
+          margin-top: 4px;
+        }
+        .qr-commitment-swipe-btn {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          border: 1px solid #d1d5db;
+          background: white;
+          color: #4F46E5;
+          font-size: 20px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .qr-commitment-swipe-btn:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+        }
+        .qr-commitment-swipe-counter {
+          font-size: 13px;
+          color: #6b7280;
+          min-width: 60px;
+          text-align: center;
+        }
         .qr-maturity-box {
           background: #eef2ff;
           border: 1px solid #e0e7ff;
@@ -763,63 +887,49 @@ const PublicQRLookup = () => {
             </p>
           )}
 
-          {!loadingCommitment && commitmentTasks && commitmentTasks.map((task) => {
-            const messageKey = LEVEL_TO_MESSAGE_KEY[task.level] || "notStarted";
-            const feedback = pickFeedbackVariant(t.feedback[messageKey], task.taskId);
-            const levelLabel = t.levels[task.level] || task.level;
-            // The image shows what they're working toward: fully grayscale until
-            // Faithful is reached, then it unlocks into full color and stays that
-            // way as long as the level stays Faithful.
-            const isUnevaluated = task.level === "Too Early to Evaluate" || task.level === "Not Started";
-            const grayscaleAmount = task.level === "Faithful" ? 0 : 100;
-            const meterPercent = isUnevaluated
-              ? Math.round(Math.min(1, task.attendedCount / task.minCheckInsForEvaluation) * 100)
-              : Math.round(task.attendanceRate * 100);
-            return (
-              <div key={task.taskId} className="qr-commitment-task">
-                {task.imageUrl && (
-                  <div className="qr-commitment-image-wrap">
-                    <img
-                      src={task.imageUrl}
-                      alt={task.title}
-                      className="qr-commitment-image"
-                      style={{ "--qr-grayscale-amount": `${grayscaleAmount}%` }}
-                    />
+          {!loadingCommitment && commitmentTasks && commitmentTasks.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="qr-commitment-mode-toggle"
+                onClick={() => setCommitmentViewMode((mode) => (mode === "list" ? "swipe" : "list"))}
+              >
+                {commitmentViewMode === "list" ? t.swipeModeBtn : t.listModeBtn}
+              </button>
+
+              {commitmentViewMode === "list" && commitmentTasks.map((task) => renderTaskCard(task))}
+
+              {commitmentViewMode === "swipe" && (
+                <div
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={(event) => handleTouchEnd(event, commitmentTasks.length)}
+                >
+                  {renderTaskCard(commitmentTasks[swipeIndex])}
+                  <div className="qr-commitment-swipe-nav">
+                    <button
+                      type="button"
+                      className="qr-commitment-swipe-btn"
+                      onClick={goToPrevTask}
+                      disabled={swipeIndex === 0}
+                    >
+                      ‹
+                    </button>
+                    <span className="qr-commitment-swipe-counter">
+                      {t.swipeCounter(swipeIndex + 1, commitmentTasks.length)}
+                    </span>
+                    <button
+                      type="button"
+                      className="qr-commitment-swipe-btn"
+                      onClick={() => goToNextTask(commitmentTasks.length)}
+                      disabled={swipeIndex === commitmentTasks.length - 1}
+                    >
+                      ›
+                    </button>
                   </div>
-                )}
-                <div className="qr-commitment-task-header">
-                  <span className="qr-commitment-task-title">{task.title}</span>
-                  <span className={`qr-commitment-badge qr-commitment-badge-${task.level.replace(/\s+/g, "-").toLowerCase()}`}>
-                    {levelLabel}
-                  </span>
                 </div>
-                {task.description && (
-                  <p className="qr-commitment-task-description">{task.description}</p>
-                )}
-                <div className="qr-commitment-meter-track">
-                  <div
-                    className="qr-commitment-meter-fill"
-                    style={{
-                      width: `${meterPercent}%`,
-                      backgroundColor: getProgressColor(meterPercent),
-                    }}
-                  />
-                </div>
-                <p className="qr-commitment-meter-caption">
-                  {isUnevaluated
-                    ? t.checkInsNeededCaption(
-                        task.attendedCount,
-                        task.minCheckInsForEvaluation,
-                        Math.max(0, task.minCheckInsForEvaluation - task.attendedCount)
-                      )
-                    : t.sessionsCaption(task.attendedCount, task.expectedSessions, meterPercent)}
-                  {!isUnevaluated && task.avgGapDays !== null && t.avgGapCaption(task.avgGapDays)}
-                </p>
-                <p className="qr-commitment-feedback">{feedback.message}</p>
-                <p className="qr-commitment-verse">{feedback.verse}</p>
-              </div>
-            );
-          })}
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
