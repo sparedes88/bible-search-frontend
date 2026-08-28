@@ -360,6 +360,14 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: false },
       }),
       createModule({
+        id: "my-payments",
+        title: "My Payments",
+        description: "See only your own hours, balance, payment history, and payment method",
+        icon: "🧾",
+        buildPath: (organizationId) => `/organization/${organizationId}/my-payments`,
+        defaultVisibilityByRole: { member: false },
+      }),
+      createModule({
         id: "time-rotate-notes",
         title: "TimeRotate Notes",
         description: "View in-progress notes with timestamps",

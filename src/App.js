@@ -18,6 +18,7 @@ import { SafeToastContainer } from "./utils/toastUtils";
 import "react-toastify/dist/ReactToastify.css";
 import ProjectNameManagerPage from "./pages/ProjectNameManagerPage";
 const PayEveryone = React.lazy(() => import("./components/PayEveryone"));
+const MyPayments = React.lazy(() => import("./components/MyPayments"));
 // ...existing code...
 
 // Loading fallback component
@@ -1044,6 +1045,16 @@ const App = () => {
               <PrivateRoute roles={["admin", "global_admin"]}>
                 <ErrorBoundary>
                   <PayEveryone />
+                </ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/my-payments"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <ErrorBoundary>
+                  <MyPayments />
                 </ErrorBoundary>
               </PrivateRoute>
             }

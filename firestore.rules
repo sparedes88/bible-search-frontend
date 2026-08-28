@@ -465,8 +465,9 @@ service cloud.firestore {
         allow get: if isAuthenticated() && userBelongsToChurch(churchId) &&
           (isSettingsOwnerFromResource() || canReadPayEveryoneModule());
 
-        // Only users with explicit module read access can query all user settings.
-        allow list: if isAuthenticated() && canReadPayEveryoneModule();
+        // Owner-filtered queries are allowed; broad queries still need module read access.
+        allow list: if isAuthenticated() && userBelongsToChurch(churchId) &&
+          (isSettingsOwnerFromResource() || canReadPayEveryoneModule());
 
         allow create: if isAuthenticated() && canReadPayEveryoneModule() &&
           (isSettingsOwnerFromRequest() || canManagePayEveryoneModule());
@@ -487,9 +488,37 @@ service cloud.firestore {
           (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
       }
 
-      // PayEveryone payments are sensitive payroll data: managers/admins only.
+      // PayEveryone payments are sensitive payroll data: managers/admins manage all, users read only their own.
       match /payEveryonePayments/{paymentId} {
-        allow read, create, update, delete: if isAuthenticated() &&
+        function isPaymentOwner() {
+          return resource.data.userId == request.auth.uid ||
+            resource.data.userEmail == request.auth.token.email;
+        }
+
+        allow read: if isAuthenticated() &&
+          (
+            canManageModule(churchId, 'pay-everyone') ||
+            canManageModule(churchId, 'time-tracker') ||
+            (userBelongsToChurch(churchId) && isPaymentOwner())
+          );
+        allow create, update, delete: if isAuthenticated() &&
+          (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
+      }
+
+      // PayEveryone payment methods: managers/admins manage all, users read only their own.
+      match /payEveryonePaymentMethods/{paymentMethodId} {
+        function isPaymentMethodOwner() {
+          return resource.data.userId == request.auth.uid ||
+            resource.data.userEmail == request.auth.token.email;
+        }
+
+        allow read: if isAuthenticated() &&
+          (
+            canManageModule(churchId, 'pay-everyone') ||
+            canManageModule(churchId, 'time-tracker') ||
+            (userBelongsToChurch(churchId) && isPaymentMethodOwner())
+          );
+        allow create, update, delete: if isAuthenticated() &&
           (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
       }
 
