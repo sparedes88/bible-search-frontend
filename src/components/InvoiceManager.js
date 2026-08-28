@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   addDoc,
@@ -16,10 +16,11 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
+import { getDownloadURL, ref as storageRef, uploadBytesResumable } from "firebase/storage";
 import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
 import { useAuth } from "../contexts/AuthContext";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import ChurchHeader from "./ChurchHeader";
 import commonStyles from "../pages/commonStyles";
 import { canManageModule } from "../utils/enhancedPermissions";
@@ -184,7 +185,13 @@ const emptyInvoiceDraft = {
   paymentTerms: "net30",
   isPaid: false,
   invoiceStatus: "budgeted",
+  billingSource: "main_system",
 };
+
+const BILLING_SOURCE_OPTIONS = [
+  { value: "main_system", label: "Main System" },
+  { value: "freshbooks", label: "FreshBooks" },
+];
 
 const PAYMENT_TERM_OPTIONS = [
   { value: "net30", label: "Net 30", days: 30 },
@@ -265,6 +272,16 @@ const normalizeInvoiceStatus = (value, fallbackTotal = null, fallbackInvoiceNumb
 const getInvoiceStatusLabel = (value) => {
   const normalized = normalizeInvoiceStatus(value);
   return normalized === "final" ? "Final" : "Budgeted";
+};
+
+const normalizeBillingSource = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "freshbooks" ? "freshbooks" : "main_system";
+};
+
+const getBillingSourceLabel = (value) => {
+  const normalized = normalizeBillingSource(value);
+  return normalized === "freshbooks" ? "FreshBooks" : "Main System";
 };
 const normalizeProjectNameKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
@@ -929,11 +946,15 @@ const InvoiceManager = () => {
   const [lastSavedReconciliationAt, setLastSavedReconciliationAt] = useState("");
   const [loadingSavedReconciliationReport, setLoadingSavedReconciliationReport] = useState(false);
   const [invoiceLogModalInvoice, setInvoiceLogModalInvoice] = useState(null);
+  const [externalPdfInvoiceId, setExternalPdfInvoiceId] = useState("");
+  const [downloadingInvoiceStatusReport, setDownloadingInvoiceStatusReport] = useState(false);
+  const [uploadingExternalPdfInvoiceId, setUploadingExternalPdfInvoiceId] = useState("");
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
+  const externalPdfInputRef = useRef(null);
 
   const handleInvoicesTabChange = (tabKey, { replace = false } = {}) => {
     const normalizedTab = normalizeInvoiceTabKey(tabKey);
@@ -4115,6 +4136,168 @@ const InvoiceManager = () => {
     }
   };
 
+  const handleUpdateBillingSource = async (invoice, nextSourceValue) => {
+    if (!canManageInvoices || !selectedProjectId || !invoice?.id) {
+      return;
+    }
+
+    const normalizedSource = normalizeBillingSource(nextSourceValue);
+    const currentSource = normalizeBillingSource(invoice?.billingSource);
+    if (normalizedSource === currentSource) {
+      return;
+    }
+
+    try {
+      const existingChangeLog = Array.isArray(invoice?.changeLog) ? invoice.changeLog : [];
+      await updateDoc(doc(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices", invoice.id), {
+        billingSource: normalizedSource,
+        updatedAt: serverTimestamp(),
+        updatedByUid: user?.uid || "",
+        changeLog: [
+          ...existingChangeLog,
+          buildInvoiceLogEntry({
+            action: "Billing Source Updated",
+            note: "Billing source changed from Invoice Table.",
+            changes: {
+              before: { billingSource: currentSource },
+              after: { billingSource: normalizedSource },
+            },
+          }),
+        ],
+      });
+      toast.success(`Billing source marked as ${getBillingSourceLabel(normalizedSource)}.`);
+    } catch (error) {
+      console.error("Error updating billing source:", error);
+      toast.error("Failed to update billing source.");
+    }
+  };
+
+  const handleDownloadInvoiceStatusReportPdf = async () => {
+    if (!invoices.length) {
+      toast.error("No invoices available to export.");
+      return;
+    }
+
+    setDownloadingInvoiceStatusReport(true);
+    try {
+      const [jspdfModule, autoTableModule] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const JsPdfConstructor = jspdfModule.jsPDF || jspdfModule.default?.jsPDF || jspdfModule.default;
+      const autoTable = autoTableModule.default || autoTableModule;
+      if (typeof JsPdfConstructor !== "function" || typeof autoTable !== "function") {
+        throw new Error("PDF generation libraries did not load correctly.");
+      }
+
+      const projectName = String(selectedInvoiceProject?.name || "Project").trim();
+      const pdf = new JsPdfConstructor({ orientation: "landscape", unit: "pt", format: "letter" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const margin = 40;
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(16);
+      pdf.text("Invoice Status Report", margin, 40);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(`Project: ${projectName}`, margin, 58);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, 58, { align: "right" });
+
+      const sortedInvoices = [...invoices].sort(
+        (left, right) => (parseWeekNumber(left.weekNumber) || 0) - (parseWeekNumber(right.weekNumber) || 0)
+      );
+
+      const rows = sortedInvoices.map((invoice) => {
+        const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
+        return [
+          invoice.weekNumber ? `Week ${invoice.weekNumber}` : "-",
+          formatDisplayDate(invoice.mondayDate) || "-",
+          formatDisplayDate(weekEndDate) || "-",
+          formatCurrency(invoice.total || 0),
+          (invoice.invoiceNumber || "-").toString().toUpperCase(),
+          getInvoiceStatusLabel(invoice.invoiceStatus),
+          getBillingSourceLabel(invoice.billingSource),
+        ];
+      });
+
+      autoTable(pdf, {
+        startY: 76,
+        theme: "grid",
+        head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source"]],
+        body: rows,
+        styles: { font: "helvetica", fontSize: 9, cellPadding: 6 },
+        headStyles: { fillColor: [29, 78, 216], textColor: [255, 255, 255], fontStyle: "bold" },
+        margin: { left: margin, right: margin },
+      });
+
+      const safeProjectName = projectName.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "project";
+      pdf.save(`${safeProjectName}-invoice-status-report.pdf`);
+    } catch (error) {
+      console.error("Failed to generate invoice status report PDF:", error);
+      toast.error("Failed to generate the invoice status report PDF.");
+    } finally {
+      setDownloadingInvoiceStatusReport(false);
+    }
+  };
+
+  const handleSelectExternalPdf = (invoiceId) => {
+    if (!canManageInvoices || !invoiceId) return;
+    if (!storage) {
+      toast.error("File storage is not available. Please try again later.");
+      return;
+    }
+
+    setExternalPdfInvoiceId(invoiceId);
+    externalPdfInputRef.current?.click();
+  };
+
+  const handleExternalPdfUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    const invoiceId = externalPdfInvoiceId;
+    setExternalPdfInvoiceId("");
+
+    if (!file || !invoiceId || !selectedProjectId || !id) return;
+    if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name || "")) {
+      toast.error("Please select a PDF file.");
+      return;
+    }
+
+    try {
+      setUploadingExternalPdfInvoiceId(invoiceId);
+      const safeFileName = String(file.name || "external-invoice.pdf").replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storagePath = `churches/${id}/invoiceProjects/${selectedProjectId}/invoices/${invoiceId}/external-pdf/${Date.now()}-${safeFileName}`;
+      const fileRef = storageRef(storage, storagePath);
+      const uploadTask = uploadBytesResumable(fileRef, file, { contentType: "application/pdf" });
+      await new Promise((resolve, reject) => uploadTask.on("state_changed", null, reject, resolve));
+
+      const externalPdf = {
+        name: file.name || "External invoice PDF",
+        url: await getDownloadURL(fileRef),
+        storagePath,
+        size: Number(file.size || 0),
+        uploadedAt: new Date().toISOString(),
+        uploadedByUid: user?.uid || "",
+      };
+      const invoice = invoices.find((entry) => entry.id === invoiceId);
+      await updateDoc(doc(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices", invoiceId), {
+        externalPdf,
+        updatedAt: serverTimestamp(),
+        updatedByUid: user?.uid || "",
+        changeLog: [
+          ...(Array.isArray(invoice?.changeLog) ? invoice.changeLog : []),
+          buildInvoiceLogEntry({ action: "External PDF attached", note: externalPdf.name }),
+        ],
+      });
+      toast.success("External invoice PDF uploaded.");
+    } catch (error) {
+      console.error("Failed to upload external invoice PDF:", error);
+      toast.error("Failed to upload the external invoice PDF.");
+    } finally {
+      setUploadingExternalPdfInvoiceId("");
+    }
+  };
+
   const handleQuickPaidToggle = async (invoice, nextPaidValue) => {
     if (!canManageInvoices || !id || !invoice?.id || !invoice?.projectId) {
       return;
@@ -5316,12 +5499,34 @@ const InvoiceManager = () => {
                 </small>
               </div>
 
+              <div style={{ display: "flex", justifyContent: "flex-end", padding: "12px", borderBottom: "1px solid #E5E7EB" }}>
+                <button
+                  type="button"
+                  onClick={handleDownloadInvoiceStatusReportPdf}
+                  disabled={downloadingInvoiceStatusReport || !invoices.length}
+                  style={{
+                    ...compactButtonStyle,
+                    background: "#1D4ED8",
+                    opacity: downloadingInvoiceStatusReport || !invoices.length ? 0.7 : 1,
+                  }}
+                >
+                  {downloadingInvoiceStatusReport ? "Generating PDF..." : "Download Invoice Status Report (PDF)"}
+                </button>
+              </div>
+
               {loadingInvoices ? (
                 <p style={{ color: "#6B7280", margin: 0 }}>Loading invoices...</p>
               ) : invoices.length === 0 ? (
                 <div style={{ padding: "16px", color: "#6B7280" }}>No invoices for this project.</div>
               ) : (
                 <div style={{ overflowX: "auto" }}>
+                  <input
+                    ref={externalPdfInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={handleExternalPdfUpload}
+                    style={{ display: "none" }}
+                  />
                   <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
                     <thead>
                       <tr>
@@ -5337,6 +5542,7 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>Terms</th>
                         <th style={tableHeaderCellStyle}>Invoice Status</th>
                         <th style={tableHeaderCellStyle}>Paid Status</th>
+                        <th style={tableHeaderCellStyle}>Billing Source</th>
                         <th style={tableHeaderCellStyle}>Actions</th>
                       </tr>
                     </thead>
@@ -5818,6 +6024,19 @@ const InvoiceManager = () => {
                               </span>
                             </td>
                             <td style={tableBodyCellStyle}>
+                              <select
+                                style={{ ...compactInputStyle, minWidth: "120px" }}
+                                value={normalizeBillingSource(invoice.billingSource)}
+                                onChange={(event) => handleUpdateBillingSource(invoice, event.target.value)}
+                              >
+                                {BILLING_SOURCE_OPTIONS.map((option) => (
+                                  <option key={`billing-source-${invoice.id}-${option.value}`} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={tableBodyCellStyle}>
                               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                                 <button
                                   type="button"
@@ -5842,6 +6061,25 @@ const InvoiceManager = () => {
                                 >
                                   Billable Invoice
                                 </button>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === invoice.id ? 0.7 : 1 }}
+                                  onClick={() => handleSelectExternalPdf(invoice.id)}
+                                  disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === invoice.id}
+                                >
+                                  {uploadingExternalPdfInvoiceId === invoice.id ? "Uploading PDF..." : "Upload External PDF"}
+                                </button>
+                                {invoice.externalPdf?.url ? (
+                                  <a
+                                    href={invoice.externalPdf.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ ...buttonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
+                                    title={invoice.externalPdf.name || "View external invoice PDF"}
+                                  >
+                                    View External PDF
+                                  </a>
+                                ) : null}
                                 <button
                                   type="button"
                                   style={{ ...buttonStyle, background: "#DC2626" }}
@@ -5877,10 +6115,10 @@ const InvoiceManager = () => {
                             {OVERTIME_POLICY_LABEL}
                           </div>
                         </td>
-                        <td style={tableBodyCellStyle} colSpan={8} />
+                        <td style={tableBodyCellStyle} colSpan={9} />
                       </tr>
                       <tr>
-                        <td style={{ ...tableBodyCellStyle, textAlign: "center", padding: "14px" }} colSpan={13}>
+                        <td style={{ ...tableBodyCellStyle, textAlign: "center", padding: "14px" }} colSpan={14}>
                           <button
                             type="button"
                             onClick={handleAddNextWeek}

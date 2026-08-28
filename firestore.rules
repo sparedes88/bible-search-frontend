@@ -340,6 +340,12 @@ service cloud.firestore {
         allow create, update, delete: if canManageModule(churchId, 'panelschedules');
       }
 
+      // Panel schedule RFI questions - same module permissions as panel schedules
+      match /panelScheduleQuestions/{panelScheduleQuestionId} {
+        allow read: if canReadModule(churchId, 'panelschedules');
+        allow create, update, delete: if canManageModule(churchId, 'panelschedules');
+      }
+
       // EZLink redirects must be publicly readable for QR scans by unauthenticated users.
       match /ezlinks/{slug} {
         allow read: if true;

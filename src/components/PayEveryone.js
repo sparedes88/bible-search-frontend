@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
-import { addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
 import commonStyles from "../pages/commonStyles";
+import "./PayEveryonePayments.css";
 
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
 };
+
+const isHttpUrl = (value) => /^https?:\/\//i.test(normalizeValue(value));
 
 const toTimestampMs = (value) => {
   if (value === null || value === undefined) return 0;
@@ -160,8 +163,32 @@ const getDuplicateDeletePlan = (rows = []) => {
 };
 
 const resolveUserLabel = (entry) => {
+  const profile = entry.profile || entry.personalInfo || entry.userData || entry.user || {};
+  const firstName = normalizeValue(
+    entry.firstName || entry.first_name || entry.userFirstName || entry.user_first_name || entry.nombre || entry.first
+    || profile.firstName || profile.first_name || profile.userFirstName || profile.user_first_name || profile.nombre || profile.first
+  );
+  const lastName = normalizeValue(
+    entry.lastName || entry.last_name || entry.userLastName || entry.user_last_name || entry.apellido || entry.surname || entry.last
+    || profile.lastName || profile.last_name || profile.userLastName || profile.user_last_name || profile.apellido || profile.surname || profile.last
+  );
+  const name = normalizeValue(entry.name || profile.name);
+  const displayName = normalizeValue(entry.displayName || profile.displayName);
+  const existingName = normalizeValue(entry.fullName || entry.full_name || profile.fullName || profile.full_name);
+  const distinctNames = [name, displayName].filter((value, index, values) => value && values.indexOf(value) === index).join(" ");
+  const nameAlreadyIncludesLastName = lastName && name.toLowerCase().includes(lastName.toLowerCase());
+  const firstAndLastName = nameAlreadyIncludesLastName
+    ? name
+    : [firstName || name, lastName].filter(Boolean).join(" ");
+  const existingNameWithLastName = lastName && existingName.toLowerCase().includes(lastName.toLowerCase())
+    ? existingName
+    : [existingName || distinctNames, lastName].filter(Boolean).join(" ");
+
   return (
-    normalizeValue(entry.registeredBy)
+    firstAndLastName
+    || existingNameWithLastName
+    || distinctNames
+    || normalizeValue(entry.registeredBy)
     || normalizeValue(entry.userEmail)
     || normalizeValue(entry.userId)
     || "Unknown user"
@@ -169,6 +196,36 @@ const resolveUserLabel = (entry) => {
 };
 
 const normalizeComparable = (value) => normalizeValue(value).toLowerCase();
+
+const normalizeKey = (value) =>
+  normalizeValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+
+const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
+  const normalizedAliases = aliases.map(normalizeKey);
+  const candidates = [...(Array.isArray(fields) ? fields : []), ...Object.keys(rowData || {})];
+
+  for (const candidate of candidates) {
+    if (normalizedAliases.includes(normalizeKey(candidate))) {
+      return candidate;
+    }
+  }
+
+  for (const aliasKey of normalizedAliases) {
+    const startsWith = candidates.find((candidate) => normalizeKey(candidate).startsWith(aliasKey));
+    if (startsWith) return startsWith;
+
+    const includes = candidates.find((candidate) => normalizeKey(candidate).includes(aliasKey));
+    if (includes) return includes;
+  }
+
+  return null;
+};
+
+const ISSUE_ID_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
+const TITLE_ALIASES = ["title", "issue title", "task title", "name"];
+const PROJECT_NAME_ALIASES = ["project name", "project", "projectname"];
 
 const toCurrency = (value) => {
   const numericValue = Number(value) || 0;
@@ -901,7 +958,7 @@ const AttendanceTrackerTab = ({
       </div>
 
       <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0", fontSize: "0.82rem", fontWeight: 700, color: "#475569" }}>User</th>
@@ -1294,7 +1351,7 @@ const LessonsSubmittedTab = ({
       </div>
 
       <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0", fontSize: "0.82rem", fontWeight: 700, color: "#475569" }}>Submitted</th>
@@ -1852,7 +1909,7 @@ const HoursTrackerTab = ({
       </div>
 
       <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0", fontSize: "0.82rem", fontWeight: 700, color: "#475569" }}>User</th>
@@ -2184,7 +2241,7 @@ const WeeklyOwedHoursTab = ({
       </div>
 
       <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0", fontSize: "0.82rem", fontWeight: 700, color: "#475569" }}>Person</th>
@@ -2265,13 +2322,40 @@ const PaymentsTab = ({
   toHours,
   parseNumber,
 }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [payments, setPayments] = useState([]);
+  const [paymentMethods, setPaymentMethods] = useState({});
+  const [paymentsSubTab, setPaymentsSubTab] = useState("summary");
   const [selectedUser, setSelectedUser] = useState("all");
   const [paymentUser, setPaymentUser] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [paymentNote, setPaymentNote] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentMethodUser, setPaymentMethodUser] = useState("");
+  const [paymentMethodType, setPaymentMethodType] = useState("airtm");
+  const [paymentMethodOther, setPaymentMethodOther] = useState("");
+  const [paymentMethodDetails, setPaymentMethodDetails] = useState("");
+  const [paymentMethodNote, setPaymentMethodNote] = useState("");
+  const [savingPaymentMethod, setSavingPaymentMethod] = useState(false);
+  const [editingPaymentMethodId, setEditingPaymentMethodId] = useState("");
+  const [editingPaymentId, setEditingPaymentId] = useState("");
+  const [editingPaymentAmount, setEditingPaymentAmount] = useState("");
+  const [editingPaymentDate, setEditingPaymentDate] = useState("");
+  const [editingPaymentNote, setEditingPaymentNote] = useState("");
+  const [savingEditedPayment, setSavingEditedPayment] = useState(false);
+
+  const getPaymentsViewFromUrl = () => {
+    const requestedView = new URLSearchParams(location.search).get("view");
+    return ["add-payment", "add-method", "summary", "employee"].includes(requestedView)
+      ? requestedView
+      : "summary";
+  };
+
+  useEffect(() => {
+    setPaymentsSubTab(getPaymentsViewFromUrl());
+  }, [location.search]);
 
   useEffect(() => {
     if (!id) return () => {};
@@ -2303,6 +2387,39 @@ const PaymentsTab = ({
           .sort((left, right) => (right.paymentDateMs || 0) - (left.paymentDateMs || 0));
 
         setPayments(nextPayments);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return () => {};
+
+    const unsubscribe = onSnapshot(
+      collection(db, "churches", id, "payEveryonePaymentMethods"),
+      (snapshot) => {
+        const nextMethods = {};
+        snapshot.docs.forEach((snapshotDoc) => {
+          const data = snapshotDoc.data() || {};
+          const userKey = normalizeValue(data.userKey);
+          if (userKey) {
+            const method = {
+              id: snapshotDoc.id,
+              userKey,
+              methodType: normalizeValue(data.methodType),
+              methodOther: normalizeValue(data.methodOther),
+              details: normalizeValue(data.details),
+              note: normalizeValue(data.note),
+              updatedAt: toTimestampMs(data.updatedAt),
+            };
+            nextMethods[userKey] = (nextMethods[userKey] || []).concat(method);
+          }
+        });
+        Object.values(nextMethods).forEach((methods) => {
+          methods.sort((left, right) => right.updatedAt - left.updatedAt);
+        });
+        setPaymentMethods(nextMethods);
       }
     );
 
@@ -2375,6 +2492,34 @@ const PaymentsTab = ({
     });
   }, [paymentSummary, selectedUser]);
 
+  const filteredPayments = useMemo(() => {
+    return selectedUser === "all"
+      ? payments
+      : payments.filter((payment) => payment.userKey === selectedUser);
+  }, [payments, selectedUser]);
+
+  const employeePaymentTotals = useMemo(() => {
+    const entries = selectedUser === "all"
+      ? Array.from(paymentSummary.values())
+      : Array.from(paymentSummary.values()).filter((entry) => entry.userKey === selectedUser);
+
+    return entries.reduce((totals, entry) => ({
+      totalOwed: totals.totalOwed + entry.totalOwed,
+      totalPaid: totals.totalPaid + entry.totalPaid,
+      differenceOwed: totals.differenceOwed + entry.differenceOwed,
+    }), { totalOwed: 0, totalPaid: 0, differenceOwed: 0 });
+  }, [paymentSummary, selectedUser]);
+
+  const selectedPaymentBalance = paymentSummary.get(paymentUser);
+
+  useEffect(() => {
+    const savedMethod = paymentMethods[paymentMethodUser]?.[0];
+    setPaymentMethodType(savedMethod?.methodType || "airtm");
+    setPaymentMethodOther(savedMethod?.methodOther || "");
+    setPaymentMethodDetails(savedMethod?.details || "");
+    setPaymentMethodNote(savedMethod?.note || "");
+  }, [paymentMethodUser, paymentMethods]);
+
   const handleAddPayment = async (event) => {
     event.preventDefault();
     if (!paymentUser || !paymentAmount || !paymentDate) return;
@@ -2405,29 +2550,147 @@ const PaymentsTab = ({
     }
   };
 
+  const handleSavePaymentMethod = async (event) => {
+    event.preventDefault();
+    if (!paymentMethodUser || !paymentMethodType || !paymentMethodDetails.trim()) return;
+
+    const selectedEntry = combinedUsers.find((entry) => entry.userKey === paymentMethodUser);
+    if (!selectedEntry) return;
+
+    setSavingPaymentMethod(true);
+    try {
+      const paymentMethodData = {
+        userKey: selectedEntry.userKey,
+        userId: selectedEntry.userId || "",
+        userEmail: selectedEntry.userEmail || "",
+        userLabel: selectedEntry.userLabel || selectedEntry.userKey,
+        methodType: paymentMethodType,
+        methodOther: paymentMethodType === "other" ? paymentMethodOther.trim() : "",
+        details: paymentMethodDetails.trim(),
+        note: paymentMethodNote.trim(),
+        updatedAt: Date.now(),
+      };
+      if (editingPaymentMethodId) {
+        await updateDoc(doc(db, "churches", id, "payEveryonePaymentMethods", editingPaymentMethodId), paymentMethodData);
+      } else {
+        await addDoc(collection(db, "churches", id, "payEveryonePaymentMethods"), paymentMethodData);
+      }
+      setEditingPaymentMethodId("");
+    } catch (error) {
+      console.error("Error saving payment method:", error);
+    } finally {
+      setSavingPaymentMethod(false);
+    }
+  };
+
+  const startEditingPaymentMethod = (method) => {
+    setEditingPaymentMethodId(method.id);
+    setPaymentMethodType(method.methodType || "airtm");
+    setPaymentMethodOther(method.methodOther || "");
+    setPaymentMethodDetails(method.details || "");
+    setPaymentMethodNote(method.note || "");
+  };
+
+  const cancelEditingPaymentMethod = () => {
+    setEditingPaymentMethodId("");
+    setPaymentMethodType("airtm");
+    setPaymentMethodOther("");
+    setPaymentMethodDetails("");
+    setPaymentMethodNote("");
+  };
+
+  const handleDeletePaymentMethod = async (methodId) => {
+    if (!window.confirm("Delete this payment method?")) return;
+
+    try {
+      await deleteDoc(doc(db, "churches", id, "payEveryonePaymentMethods", methodId));
+      if (editingPaymentMethodId === methodId) cancelEditingPaymentMethod();
+    } catch (error) {
+      console.error("Error deleting payment method:", error);
+    }
+  };
+
+  const startEditingPayment = (payment) => {
+    setEditingPaymentId(payment.id);
+    setEditingPaymentAmount(String(payment.amount));
+    setEditingPaymentDate(payment.paymentDate || "");
+    setEditingPaymentNote(payment.note || "");
+  };
+
+  const cancelEditingPayment = () => {
+    setEditingPaymentId("");
+    setEditingPaymentAmount("");
+    setEditingPaymentDate("");
+    setEditingPaymentNote("");
+  };
+
+  const handleSaveEditedPayment = async (paymentId) => {
+    if (!editingPaymentAmount || !editingPaymentDate) return;
+
+    setSavingEditedPayment(true);
+    try {
+      await updateDoc(doc(db, "churches", id, "payEveryonePayments", paymentId), {
+        amount: parseNumber(editingPaymentAmount),
+        paymentDate: editingPaymentDate,
+        note: editingPaymentNote.trim(),
+        updatedAt: Date.now(),
+      });
+      cancelEditingPayment();
+    } catch (error) {
+      console.error("Error updating payment:", error);
+    } finally {
+      setSavingEditedPayment(false);
+    }
+  };
+
+  const handleDeletePayment = async (paymentId) => {
+    if (!window.confirm("Delete this payment?")) return;
+
+    try {
+      await deleteDoc(doc(db, "churches", id, "payEveryonePayments", paymentId));
+    } catch (error) {
+      console.error("Error deleting payment:", error);
+    }
+  };
+
   return (
-    <div style={{ marginTop: "12px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
-        <div>
-          <label style={{ display: "block", fontWeight: 700, fontSize: "0.82rem", color: "#334155", marginBottom: "4px" }}>
-            Filter by User
-          </label>
-          <select
-            value={selectedUser}
-            onChange={(event) => setSelectedUser(event.target.value)}
-            style={{ width: "100%", padding: "9px 10px", border: "1px solid #CBD5E1", borderRadius: "8px" }}
+    <div className="pay-everyone-payments" style={{ marginTop: "12px" }}>
+      <div className="payments-subtabs">
+        {[
+          ["add-payment", "Add Payment"],
+          ["add-method", "Add Payment Method"],
+          ["summary", "Payment Summary"],
+          ["employee", "Per-Employee Payments"],
+        ].map(([tabId, label]) => (
+          <button
+            key={tabId}
+            type="button"
+            onClick={() => navigate(`${location.pathname}?tab=payments&view=${tabId}`)}
+            className={`payments-subtab ${paymentsSubTab === tabId ? "active" : ""}`}
           >
-            {userOptions.map((option) => (
-              <option key={option.userKey} value={option.userKey}>
-                {option.userLabel}
-              </option>
-            ))}
-          </select>
-        </div>
+            {label}
+          </button>
+        ))}
       </div>
 
-      <div style={{ marginBottom: "12px", padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "10px" }}>
+      {paymentsSubTab === "add-payment" && <div style={{ marginBottom: "12px", padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "10px" }}>
         <div style={{ fontWeight: 700, color: "#0F172A", marginBottom: "8px" }}>Add Payment</div>
+        {selectedPaymentBalance && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", marginBottom: "14px" }}>
+            <div style={{ padding: "10px", border: "1px solid #E2E8F0", borderRadius: "8px", backgroundColor: "#FFFFFF" }}>
+              <div style={{ color: "#64748B", fontSize: "0.78rem", fontWeight: 700 }}>Total Owed</div>
+              <div style={{ color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{toCurrency(selectedPaymentBalance.totalOwed)}</div>
+            </div>
+            <div style={{ padding: "10px", border: "1px solid #E2E8F0", borderRadius: "8px", backgroundColor: "#FFFFFF" }}>
+              <div style={{ color: "#64748B", fontSize: "0.78rem", fontWeight: 700 }}>Total Paid</div>
+              <div style={{ color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{toCurrency(selectedPaymentBalance.totalPaid)}</div>
+            </div>
+            <div style={{ padding: "10px", border: "1px solid #E2E8F0", borderRadius: "8px", backgroundColor: "#FFFFFF" }}>
+              <div style={{ color: "#64748B", fontSize: "0.78rem", fontWeight: 700 }}>Balance Remaining</div>
+              <div style={{ color: selectedPaymentBalance.differenceOwed > 0 ? "#B45309" : "#065F46", fontSize: "1.05rem", fontWeight: 800 }}>{toCurrency(selectedPaymentBalance.differenceOwed)}</div>
+            </div>
+          </div>
+        )}
         <form onSubmit={handleAddPayment}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px" }}>
             <div>
@@ -2495,10 +2758,147 @@ const PaymentsTab = ({
             </button>
           </div>
         </form>
-      </div>
+      </div>}
 
-      <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      {paymentsSubTab === "add-method" && <div className="payment-method-layout">
+        <div className="payment-method-panel">
+          <div className="payment-method-heading">{editingPaymentMethodId ? "Edit Payment Method" : "Payment Method per User"}</div>
+          <p className="payment-method-description">{editingPaymentMethodId ? "Update this saved method, or cancel to keep it unchanged." : "Choose a user and save the account information used to pay them."}</p>
+          <form onSubmit={handleSavePaymentMethod}>
+          <div className="payment-method-grid">
+            <div className="payment-method-field">
+              <label>
+                User
+              </label>
+              <select
+                value={paymentMethodUser}
+                onChange={(event) => setPaymentMethodUser(event.target.value)}
+              >
+                <option value="">Select a user</option>
+                {paymentUserOptions.map((option) => (
+                  <option key={option.userKey} value={option.userKey}>
+                    {option.userLabel}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="payment-method-field">
+              <label>
+                Method
+              </label>
+              <select
+                value={paymentMethodType}
+                onChange={(event) => setPaymentMethodType(event.target.value)}
+              >
+                <option value="airtm">Airtm</option>
+                <option value="zelle">Zelle</option>
+                <option value="bank-transfer">Bank Transfer</option>
+                <option value="cash">Cash</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            {paymentMethodType === "other" && (
+              <div className="payment-method-field">
+                <label>
+                  Other Method
+                </label>
+                <input
+                  value={paymentMethodOther}
+                  onChange={(event) => setPaymentMethodOther(event.target.value)}
+                  placeholder="Method name"
+                />
+              </div>
+            )}
+          </div>
+          <div className="payment-method-field full-width">
+            <label>
+              Account Details
+            </label>
+            <input
+              value={paymentMethodDetails}
+              onChange={(event) => setPaymentMethodDetails(event.target.value)}
+              placeholder="Email, phone number, username, or account details"
+              required
+            />
+          </div>
+          <div className="payment-method-field full-width">
+            <label>
+              Note
+            </label>
+            <input
+              value={paymentMethodNote}
+              onChange={(event) => setPaymentMethodNote(event.target.value)}
+              placeholder="Optional payment method note"
+            />
+          </div>
+          <div className="payment-method-actions">
+            <button
+              type="submit"
+              disabled={savingPaymentMethod || !paymentMethodUser}
+              className="payment-method-primary"
+            >
+              {savingPaymentMethod ? "Saving..." : editingPaymentMethodId ? "Update Payment Method" : "Save Payment Method"}
+            </button>
+            {editingPaymentMethodId && (
+              <button
+                type="button"
+                onClick={cancelEditingPaymentMethod}
+                className="payment-method-secondary"
+              >
+                Cancel Edit
+              </button>
+            )}
+          </div>
+        </form>
+        </div>
+        {paymentMethodUser && (
+          <div className="payment-method-list">
+            <div className="payment-method-list-heading">
+              <strong>Saved Methods</strong>
+              <span className="payment-method-count">{(paymentMethods[paymentMethodUser] || []).length} saved</span>
+            </div>
+            {(paymentMethods[paymentMethodUser] || []).length === 0 ? (
+              <div className="payment-method-empty">No payment methods saved for this user.</div>
+            ) : (
+              <div>
+                {paymentMethods[paymentMethodUser].map((method) => (
+                  <div key={method.id} className="payment-method-card">
+                    <div className="payment-method-card-header">
+                      <span className="payment-method-badge">
+                      {method.methodType === "other" ? method.methodOther || "Other" : method.methodType}
+                      </span>
+                    </div>
+                    {isHttpUrl(method.details) ? (
+                      <a
+                        href={method.details}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="payment-method-link"
+                      >
+                        Open Payment Link
+                      </a>
+                    ) : (
+                      <div className="payment-method-details">{method.details}</div>
+                    )}
+                    {method.note && <div className="payment-method-note">{method.note}</div>}
+                    <div className="payment-method-card-actions">
+                      <button type="button" onClick={() => startEditingPaymentMethod(method)} className="payment-method-edit">
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => handleDeletePaymentMethod(method.id)} className="payment-method-delete">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>}
+
+      {paymentsSubTab === "summary" && <div style={{ marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Entry ID</th>
@@ -2546,7 +2946,115 @@ const PaymentsTab = ({
             )}
           </tbody>
         </table>
+      </div>}
+
+      {paymentsSubTab === "employee" && <>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
+          <div>
+            <label style={{ display: "block", fontWeight: 700, fontSize: "0.82rem", color: "#334155", marginBottom: "4px" }}>
+              Filter by User
+            </label>
+            <select
+              value={selectedUser}
+              onChange={(event) => setSelectedUser(event.target.value)}
+              style={{ width: "100%", padding: "9px 10px", border: "1px solid #CBD5E1", borderRadius: "8px" }}
+            >
+              {userOptions.map((option) => (
+                <option key={option.userKey} value={option.userKey}>
+                  {option.userLabel}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", marginBottom: "12px" }}>
+          <div style={{ padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "8px" }}>
+            <div style={{ color: "#64748B", fontSize: "0.82rem", fontWeight: 700 }}>Subtotal Owed</div>
+            <div style={{ color: "#0F172A", fontSize: "1.1rem", fontWeight: 700 }}>{toCurrency(employeePaymentTotals.totalOwed)}</div>
+          </div>
+          <div style={{ padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "8px" }}>
+            <div style={{ color: "#64748B", fontSize: "0.82rem", fontWeight: 700 }}>Subtotal Paid</div>
+            <div style={{ color: "#0F172A", fontSize: "1.1rem", fontWeight: 700 }}>{toCurrency(employeePaymentTotals.totalPaid)}</div>
+          </div>
+          <div style={{ padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "8px" }}>
+            <div style={{ color: "#64748B", fontSize: "0.82rem", fontWeight: 700 }}>Difference Owed</div>
+            <div style={{ color: employeePaymentTotals.differenceOwed > 0 ? "#B45309" : "#065F46", fontSize: "1.1rem", fontWeight: 700 }}>{toCurrency(employeePaymentTotals.differenceOwed)}</div>
+          </div>
+        </div>
+      <div style={{ marginTop: "16px", marginLeft: "-16px", marginRight: "-16px", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
+        <div style={{ padding: "12px 14px", backgroundColor: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 700, color: "#0F172A" }}>
+          Payment History ({filteredPayments.length})
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+          <thead>
+            <tr style={{ backgroundColor: "#F8FAFC" }}>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Payment ID</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Person</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Amount</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Payment Date</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Note</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", borderBottom: "1px solid #E2E8F0" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredPayments.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ padding: "14px", color: "#64748B" }}>
+                  No payments found for the selected filter.
+                </td>
+              </tr>
+            ) : (
+              filteredPayments.map((payment) => (
+                <tr key={payment.id}>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#666666", fontSize: "0.78rem", fontFamily: "monospace" }}>
+                    {payment.id}
+                  </td>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#0F172A", fontWeight: 700 }}>
+                    {payment.userLabel || payment.userKey}
+                  </td>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
+                    {editingPaymentId === payment.id ? (
+                      <input type="number" min="0" step="0.01" value={editingPaymentAmount} onChange={(event) => setEditingPaymentAmount(event.target.value)} style={{ width: "110px", padding: "6px", border: "1px solid #CBD5E1", borderRadius: "6px" }} />
+                    ) : toCurrency(payment.amount)}
+                  </td>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
+                    {editingPaymentId === payment.id ? (
+                      <input type="date" value={editingPaymentDate} onChange={(event) => setEditingPaymentDate(event.target.value)} style={{ padding: "6px", border: "1px solid #CBD5E1", borderRadius: "6px" }} />
+                    ) : formatDateOnly(payment.paymentDateMs || payment.paymentDate)}
+                  </td>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
+                    {editingPaymentId === payment.id ? (
+                      <input value={editingPaymentNote} onChange={(event) => setEditingPaymentNote(event.target.value)} style={{ width: "100%", minWidth: "140px", padding: "6px", border: "1px solid #CBD5E1", borderRadius: "6px" }} />
+                    ) : payment.note || "-"}
+                  </td>
+                  <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap" }}>
+                    {editingPaymentId === payment.id ? (
+                      <>
+                        <button type="button" onClick={() => handleSaveEditedPayment(payment.id)} disabled={savingEditedPayment} style={{ marginRight: "6px", padding: "6px 9px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>
+                          {savingEditedPayment ? "Saving..." : "Save"}
+                        </button>
+                        <button type="button" onClick={cancelEditingPayment} style={{ padding: "6px 9px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => startEditingPayment(payment)} style={{ marginRight: "6px", padding: "6px 9px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>
+                          Edit
+                        </button>
+                        <button type="button" onClick={() => handleDeletePayment(payment.id)} style={{ padding: "6px 9px", border: "none", borderRadius: "6px", backgroundColor: "#B91C1C", color: "#FFFFFF", fontWeight: 700 }}>
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
+      </>}
     </div>
   );
 };
@@ -2574,12 +3082,105 @@ const EditableTimeEntriesTab = ({
   const [creatingNewTimeRowId, setCreatingNewTimeRowId] = useState("");
   const [deletingRowId, setDeletingRowId] = useState("");
   const [historyModalRowId, setHistoryModalRowId] = useState("");
+  const [notesModalRowId, setNotesModalRowId] = useState("");
   const [pendingNewTimeRowId, setPendingNewTimeRowId] = useState("");
   const [activeRowId, setActiveRowId] = useState("");
   const [rowConfigOpenId, setRowConfigOpenId] = useState("");
   const [hasHydratedFilters, setHasHydratedFilters] = useState(false);
+  const [cardOptions, setCardOptions] = useState([]);
+  const [cardOptionsLoading, setCardOptionsLoading] = useState(false);
   const stableRowSortRef = useRef({});
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!id) return undefined;
+
+    let isCancelled = false;
+
+    const loadCardOptions = async () => {
+      setCardOptionsLoading(true);
+      try {
+        const projectsSnap = await getDocs(collection(db, "churches", id, "bimProjects"));
+        const nextOptions = [];
+
+        for (const projectDoc of projectsSnap.docs) {
+          const projectData = projectDoc.data() || {};
+          const fields = Array.isArray(projectData.fields) ? projectData.fields : [];
+          const issuesSnap = await getDocs(collection(db, "churches", id, "bimProjects", projectDoc.id, "issues"));
+
+          issuesSnap.docs.forEach((issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
+            const issueIdField = findFieldByAliases(fields, rowData, ISSUE_ID_ALIASES);
+            const titleField = findFieldByAliases(fields, rowData, TITLE_ALIASES);
+            const projectNameField = findFieldByAliases(fields, rowData, PROJECT_NAME_ALIASES);
+
+            const issueId = normalizeValue(issueIdField ? rowData[issueIdField] : "") || String(rowIndex + 1);
+            const projectName = normalizeValue(projectNameField ? rowData[projectNameField] : "")
+              || normalizeValue(projectData.projectName || projectData.name);
+
+            nextOptions.push({
+              key: `${projectDoc.id}-${issueDoc.id}`,
+              issueId,
+              projectName,
+              issueLabel: normalizeValue(titleField ? rowData[titleField] : ""),
+            });
+          });
+        }
+
+        // A card id can repeat across projects, so keep issue id + project name unique together.
+        const uniqueOptions = [];
+        const seenKeys = new Set();
+        nextOptions.forEach((option) => {
+          const uniqueKey = `${normalizeComparable(option.issueId)}||${normalizeComparable(option.projectName)}`;
+          if (seenKeys.has(uniqueKey)) return;
+          seenKeys.add(uniqueKey);
+          uniqueOptions.push({ ...option, value: uniqueKey });
+        });
+
+        uniqueOptions.sort((left, right) => (
+          String(left.issueId).localeCompare(String(right.issueId), undefined, { numeric: true })
+          || String(left.projectName).localeCompare(String(right.projectName))
+        ));
+
+        if (!isCancelled) {
+          setCardOptions(uniqueOptions);
+        }
+      } catch (error) {
+        console.error("Error loading card options:", error);
+        if (!isCancelled) setCardOptions([]);
+      } finally {
+        if (!isCancelled) setCardOptionsLoading(false);
+      }
+    };
+
+    loadCardOptions();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [id]);
+
+  const buildCardValue = (issueId, projectName) => `${normalizeComparable(issueId)}||${normalizeComparable(projectName)}`;
+
+  const cardOptionByValue = useMemo(() => {
+    return cardOptions.reduce((accumulator, option) => {
+      accumulator[option.value] = option;
+      return accumulator;
+    }, {});
+  }, [cardOptions]);
+
+  const projectNameOptions = useMemo(() => {
+    const uniqueProjectNames = new Map();
+    cardOptions.forEach((option) => {
+      const projectName = normalizeValue(option.projectName);
+      if (!projectName) return;
+      const projectKey = normalizeComparable(projectName);
+      if (!uniqueProjectNames.has(projectKey)) {
+        uniqueProjectNames.set(projectKey, projectName);
+      }
+    });
+    return Array.from(uniqueProjectNames.values()).sort((left, right) => left.localeCompare(right));
+  }, [cardOptions]);
 
   const toDateTimeInputValue = (value) => {
     const date = value instanceof Date ? value : new Date(value);
@@ -2588,7 +3189,8 @@ const EditableTimeEntriesTab = ({
     const day = String(date.getDate()).padStart(2, "0");
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
   };
 
   const getRowDurationMs = (row) => {
@@ -2607,6 +3209,11 @@ const EditableTimeEntriesTab = ({
     return rows.find((entry) => entry.id === historyModalRowId) || null;
   }, [historyModalRowId, rows]);
 
+  const notesModalRow = useMemo(() => {
+    if (!notesModalRowId) return null;
+    return rows.find((entry) => entry.id === notesModalRowId) || null;
+  }, [notesModalRowId, rows]);
+
   const rowsById = useMemo(() => {
     return rows.reduce((accumulator, row) => {
       accumulator[row.id] = row;
@@ -2618,13 +3225,23 @@ const EditableTimeEntriesTab = ({
     return Object.entries(editingValues).some(([rowId, entry]) => {
       const startValue = normalizeValue(entry?.startedAt);
       const endValue = normalizeValue(entry?.endedAt);
-      if (!startValue && !endValue) return false;
+      const cardValue = normalizeValue(entry?.cardValue);
+      const hasProjectDraft = entry?.projectName !== undefined;
+      if (!startValue && !endValue && !cardValue && !hasProjectDraft) return false;
 
       const sourceRow = rowsById[rowId];
       if (!sourceRow) return true;
 
+      if (cardValue && cardValue !== buildCardValue(sourceRow.issueId, sourceRow.projectName)) {
+        return true;
+      }
+
+      if (hasProjectDraft && normalizeComparable(entry.projectName) !== normalizeComparable(sourceRow.projectName)) {
+        return true;
+      }
+
       // Compare against what the user actually sees in datetime-local inputs
-      // (minute precision) to avoid false "unsaved" states from second-level ms.
+      // (second precision) to avoid false "unsaved" states from millisecond values.
       const sourceStartInput = toDateTimeInputValue(sourceRow.startedAt);
       const sourceEndInput = toDateTimeInputValue(sourceRow.endedAt);
 
@@ -2654,11 +3271,18 @@ const EditableTimeEntriesTab = ({
 
     const startValue = normalizeValue(rowEdits.startedAt);
     const endValue = normalizeValue(rowEdits.endedAt);
-    if (!startValue && !endValue) return false;
+    const cardValue = normalizeValue(rowEdits.cardValue);
+    const hasProjectDraft = rowEdits.projectName !== undefined;
+    if (!startValue && !endValue && !cardValue && !hasProjectDraft) return false;
 
     const sourceStartInput = toDateTimeInputValue(sourceRow.startedAt);
     const sourceEndInput = toDateTimeInputValue(sourceRow.endedAt);
-    return (startValue && startValue !== sourceStartInput) || (endValue && endValue !== sourceEndInput);
+    return (
+      (startValue && startValue !== sourceStartInput)
+      || (endValue && endValue !== sourceEndInput)
+      || (cardValue && cardValue !== buildCardValue(sourceRow.issueId, sourceRow.projectName))
+      || (hasProjectDraft && normalizeComparable(rowEdits.projectName) !== normalizeComparable(sourceRow.projectName))
+    );
   }, [activeRowId, editingValues, rowsById]);
 
   const isActiveRowLocked = Boolean(
@@ -2883,6 +3507,14 @@ const EditableTimeEntriesTab = ({
       return;
     }
 
+    const hasProjectDraft = rowEdits.projectName !== undefined;
+    const hasProjectChanged = hasProjectDraft
+      && normalizeComparable(rowEdits.projectName) !== normalizeComparable(row.projectName);
+    if (hasProjectChanged && !cardOptionByValue[normalizeValue(rowEdits.cardValue)]) {
+      console.warn("A card must be selected for the new project before saving.");
+      return;
+    }
+
     setSavingRowId(row.id);
     setLastSavedRowId(row.id);
     try {
@@ -2891,6 +3523,19 @@ const EditableTimeEntriesTab = ({
       const previousEndedAt = Number(row.endedAt) || 0;
       const previousDurationMs = getRowDurationMs(row);
       const hasTimeChanged = startMs !== previousStartedAt || endMs !== previousEndedAt;
+
+      const selectedCardValue = normalizeValue(rowEdits.cardValue);
+      const selectedCard = selectedCardValue ? cardOptionByValue[selectedCardValue] : null;
+      const previousIssueId = normalizeValue(row.issueId);
+      const previousProjectName = normalizeValue(row.projectName);
+      const hasCardChanged = Boolean(
+        selectedCard
+        && (
+          normalizeValue(selectedCard.issueId) !== previousIssueId
+          || normalizeValue(selectedCard.projectName) !== previousProjectName
+        )
+      );
+
       const existingHistory = Array.isArray(row.timeEditHistory) ? row.timeEditHistory : [];
       const changedByUserLabel = normalizeValue(user?.displayName || user?.email || user?.uid || "Unknown user");
       const newHistoryEntry = {
@@ -2904,16 +3549,30 @@ const EditableTimeEntriesTab = ({
         newStartedAt: startMs,
         newEndedAt: endMs,
         newDurationMs: durationMs,
+        previousIssueId,
+        previousProjectName,
+        newIssueId: hasCardChanged ? normalizeValue(selectedCard.issueId) : previousIssueId,
+        newProjectName: hasCardChanged ? normalizeValue(selectedCard.projectName) : previousProjectName,
       };
       console.log("Saving row:", { id: row.id, startMs, endMs, durationMs });
-      
-      await updateDoc(doc(db, "churches", id, "timeRotateLogs", row.id), {
+
+      const updatePayload = {
         startedAt: startMs,
         endedAt: endMs,
         durationMs: durationMs,
         requiresSaveConfirmation: false,
-        timeEditHistory: hasTimeChanged ? [...existingHistory, newHistoryEntry] : existingHistory,
-      });
+        timeEditHistory: hasTimeChanged || hasCardChanged ? [...existingHistory, newHistoryEntry] : existingHistory,
+      };
+
+      if (hasCardChanged) {
+        // Project always follows the selected card so both stay in sync.
+        updatePayload.issueId = normalizeValue(selectedCard.issueId);
+        updatePayload.projectName = normalizeValue(selectedCard.projectName);
+        updatePayload.issueLabel = normalizeValue(selectedCard.issueLabel);
+        updatePayload.issueTitle = normalizeValue(selectedCard.issueLabel);
+      }
+
+      await updateDoc(doc(db, "churches", id, "timeRotateLogs", row.id), updatePayload);
       
       console.log("Save successful for row:", row.id);
       
@@ -3191,7 +3850,7 @@ const EditableTimeEntriesTab = ({
       </div>
 
       <div style={{ marginLeft: "-16px", marginRight: "-16px", overflowX: "auto", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1240px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1240px", textAlign: "left" }}>
           <thead>
             <tr style={{ backgroundColor: "#F8FAFC" }}>
               <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Log ID</th>
@@ -3224,12 +3883,25 @@ const EditableTimeEntriesTab = ({
                 const isInvalid = !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs;
                 const isSavedRow = row.id === lastSavedRowId;
                 const historyEntries = Array.isArray(row.timeEditHistory) ? row.timeEditHistory : [];
+                const notesEntries = Array.isArray(row.notesList) ? row.notesList : [];
 
                 const sourceStartInput = toDateTimeInputValue(row.startedAt);
                 const sourceEndInput = toDateTimeInputValue(row.endedAt);
+                const sourceCardValue = buildCardValue(row.issueId, row.projectName);
+                const sourceProjectName = normalizeValue(row.projectName);
+                const projectInputValue = rowEdits.projectName !== undefined ? rowEdits.projectName : sourceProjectName;
+                const cardInputValue = rowEdits.cardValue !== undefined ? rowEdits.cardValue : sourceCardValue;
+                const selectedCardOption = cardOptionByValue[cardInputValue] || null;
+                const rowCardOptions = projectInputValue
+                  ? cardOptions.filter((option) => normalizeComparable(option.projectName) === normalizeComparable(projectInputValue))
+                  : cardOptions;
+                const hasProjectChange = normalizeComparable(projectInputValue) !== normalizeComparable(sourceProjectName);
+                const isCardSelectionIncomplete = hasProjectChange && !selectedCardOption;
                 const hasRowChanges =
                   (normalizeValue(rowEdits.startedAt).length > 0 && rowEdits.startedAt !== sourceStartInput)
-                  || (normalizeValue(rowEdits.endedAt).length > 0 && rowEdits.endedAt !== sourceEndInput);
+                  || (normalizeValue(rowEdits.endedAt).length > 0 && rowEdits.endedAt !== sourceEndInput)
+                  || (normalizeValue(rowEdits.cardValue).length > 0 && rowEdits.cardValue !== sourceCardValue)
+                  || hasProjectChange;
                 const requiresConfirmationSave = pendingNewTimeRowId === row.id;
                 const canShowSave = hasRowChanges || requiresConfirmationSave;
                 const isActiveRow = activeRowId === row.id;
@@ -3276,6 +3948,31 @@ const EditableTimeEntriesTab = ({
                             Time edited ({historyEntries.length})
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setNotesModalRowId(row.id);
+                          }}
+                          title={notesEntries.length > 0 ? "Click to view notes for this entry" : "No notes for this entry"}
+                          style={{
+                            alignSelf: "flex-start",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            padding: "2px 7px",
+                            borderRadius: "999px",
+                            border: "none",
+                            backgroundColor: notesEntries.length > 0 ? "#FEF3C7" : "#F1F5F9",
+                            color: notesEntries.length > 0 ? "#92400E" : "#64748B",
+                            fontSize: "0.7rem",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            maxWidth: "100%",
+                          }}
+                        >
+                          Notes ({notesEntries.length})
+                        </button>
                       </div>
                     </td>
                     <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
@@ -3288,15 +3985,96 @@ const EditableTimeEntriesTab = ({
                       {row.userLabel}
                     </td>
                     <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                      {row.issueId || "-"}
+                      {isActiveRow ? (
+                        <>
+                          <select
+                            value={cardOptionByValue[cardInputValue] ? cardInputValue : ""}
+                            onChange={(event) => {
+                              const nextCardValue = event.target.value;
+                              const nextCard = cardOptionByValue[nextCardValue];
+                              setEditingValues((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...(prev[row.id] || {}),
+                                  cardValue: nextCardValue,
+                                  projectName: nextCard ? normalizeValue(nextCard.projectName) : projectInputValue,
+                                },
+                              }));
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                            disabled={cardOptionsLoading}
+                            style={{
+                              width: "100%",
+                              minWidth: "150px",
+                              padding: "8px",
+                              border: `1px solid ${isCardSelectionIncomplete ? "#F59E0B" : "#CBD5E1"}`,
+                              borderRadius: "8px",
+                            }}
+                          >
+                            <option value="">
+                              {cardOptionsLoading
+                                ? "Loading cards..."
+                                : isCardSelectionIncomplete
+                                  ? "Select a card for this project"
+                                  : `Keep current (${row.issueId || "-"})`}
+                            </option>
+                            {rowCardOptions.map((option) => (
+                              <option key={option.key} value={option.value}>
+                                {option.issueId}{option.issueLabel ? ` - ${option.issueLabel}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {isCardSelectionIncomplete ? (
+                            <div style={{ marginTop: "4px", color: "#B45309", fontSize: "0.72rem", fontWeight: 700 }}>
+                              Card required for the new project
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        row.issueId || "-"
+                      )}
                     </td>
                     <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                      {row.projectName || "-"}
+                      {isActiveRow ? (
+                        <select
+                          value={projectInputValue}
+                          onChange={(event) => {
+                            const nextProjectName = event.target.value;
+                            setEditingValues((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...(prev[row.id] || {}),
+                                projectName: nextProjectName,
+                                cardValue: normalizeComparable(nextProjectName) === normalizeComparable(sourceProjectName)
+                                  ? sourceCardValue
+                                  : "",
+                              },
+                            }));
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                          disabled={cardOptionsLoading}
+                          title="Changing the project requires selecting a card from that project"
+                          style={{ width: "100%", minWidth: "170px", padding: "8px", border: "1px solid #CBD5E1", borderRadius: "8px" }}
+                        >
+                          {sourceProjectName && !projectNameOptions.some((projectName) => normalizeComparable(projectName) === normalizeComparable(sourceProjectName)) ? (
+                            <option value={sourceProjectName}>{sourceProjectName}</option>
+                          ) : null}
+                          {!sourceProjectName ? <option value="">Select a project</option> : null}
+                          {projectNameOptions.map((projectName) => (
+                            <option key={projectName} value={projectName}>
+                              {projectName}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        row.projectName || "-"
+                      )}
                     </td>
                     <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9" }}>
                       {isActiveRow ? (
                         <input
                           type="datetime-local"
+                          step="1"
                           value={startInputValue}
                           onChange={(event) => handleValueChange(row.id, "startedAt", event.target.value)}
                           onClick={(event) => event.stopPropagation()}
@@ -3310,6 +4088,7 @@ const EditableTimeEntriesTab = ({
                       {isActiveRow ? (
                         <input
                           type="datetime-local"
+                          step="1"
                           value={endInputValue}
                           onChange={(event) => handleValueChange(row.id, "endedAt", event.target.value)}
                           onClick={(event) => event.stopPropagation()}
@@ -3344,8 +4123,9 @@ const EditableTimeEntriesTab = ({
                                 event.stopPropagation();
                                 handleSave(row);
                               }}
-                              disabled={savingRowId === row.id || isInvalid}
-                              style={{ padding: "8px 10px", borderRadius: "8px", border: "none", backgroundColor: isInvalid ? "#CBD5E1" : "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: savingRowId === row.id || isInvalid ? "not-allowed" : "pointer" }}
+                              disabled={savingRowId === row.id || isInvalid || isCardSelectionIncomplete}
+                              style={{ padding: "8px 10px", borderRadius: "8px", border: "none", backgroundColor: isInvalid || isCardSelectionIncomplete ? "#CBD5E1" : "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: savingRowId === row.id || isInvalid || isCardSelectionIncomplete ? "not-allowed" : "pointer" }}
+                              title={isCardSelectionIncomplete ? "Select a card for the new project first" : undefined}
                             >
                               {savingRowId === row.id ? "Saving..." : "Save"}
                             </button>
@@ -3489,6 +4269,9 @@ const EditableTimeEntriesTab = ({
                   const previousEnd = formatHistoryTimestamp(entry.previousEndedAt);
                   const newStart = formatHistoryTimestamp(entry.newStartedAt);
                   const newEnd = formatHistoryTimestamp(entry.newEndedAt);
+                  const previousCard = normalizeValue(entry.previousIssueId);
+                  const newCard = normalizeValue(entry.newIssueId);
+                  const hasCardChange = Boolean((previousCard || newCard) && previousCard !== newCard);
                   return (
                     <div key={`${historyModalRow.id}-${entryIndex}`} style={{ border: "1px solid #E2E8F0", borderRadius: "10px", padding: "12px", marginBottom: entryIndex === entryList.length - 1 ? 0 : "10px", backgroundColor: "#F8FAFC" }}>
                       <div style={{ fontWeight: 800, color: "#0F172A", marginBottom: "6px" }}>
@@ -3502,9 +4285,77 @@ const EditableTimeEntriesTab = ({
                       <div style={{ fontSize: "0.86rem", color: "#334155" }}>
                         Duration: {formatDuration(entry.previousDurationMs || 0)}{" -> "}{formatDuration(entry.newDurationMs || 0)}
                       </div>
+                      {hasCardChange ? (
+                        <>
+                          <div style={{ fontSize: "0.86rem", color: "#334155" }}>Card ID: {previousCard || "-"}{" -> "}{newCard || "-"}</div>
+                          <div style={{ fontSize: "0.86rem", color: "#334155" }}>
+                            Project: {normalizeValue(entry.previousProjectName) || "-"}{" -> "}{normalizeValue(entry.newProjectName) || "-"}
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   );
                 })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {notesModalRow ? (
+        <div
+          onClick={() => setNotesModalRowId("")}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.45)",
+            zIndex: 2000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(680px, 100%)",
+              maxHeight: "80vh",
+              overflowY: "auto",
+              backgroundColor: "#FFFFFF",
+              borderRadius: "12px",
+              boxShadow: "0 20px 50px rgba(15, 23, 42, 0.25)",
+              border: "1px solid #E2E8F0",
+            }}
+          >
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid #E2E8F0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+              <div>
+                <div style={{ fontWeight: 800, color: "#0F172A" }}>Time Entry Notes</div>
+                <div style={{ color: "#475569", fontSize: "0.84rem", marginTop: "2px" }}>
+                  {normalizeValue(notesModalRow.userLabel) || "Unknown user"} - Card {notesModalRow.issueId || "-"} - {formatDateOnly(notesModalRow.startedAt)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotesModalRowId("")}
+                style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #CBD5E1", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={{ padding: "14px 16px" }}>
+              {(Array.isArray(notesModalRow.notesList) ? notesModalRow.notesList : []).length === 0 ? (
+                <div style={{ color: "#64748B" }}>No notes were registered for this time entry.</div>
+              ) : (
+                notesModalRow.notesList.map((noteText, noteIndex, noteList) => (
+                  <div
+                    key={`${notesModalRow.id}-note-${noteIndex}`}
+                    style={{ border: "1px solid #E2E8F0", borderRadius: "10px", padding: "12px", marginBottom: noteIndex === noteList.length - 1 ? 0 : "10px", backgroundColor: "#F8FAFC", color: "#334155", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}
+                  >
+                    {noteText}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -3530,6 +4381,7 @@ const PayEveryone = () => {
   const [rows, setRows] = useState([]);
   const [activeTimers, setActiveTimers] = useState([]);
   const [organizationUsers, setOrganizationUsers] = useState([]);
+  const [userProfiles, setUserProfiles] = useState([]);
   const [userCompSettings, setUserCompSettings] = useState({});
   const [draftCompSettings, setDraftCompSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -3866,6 +4718,7 @@ const PayEveryone = () => {
               issueId: normalizeValue(data.issueId),
               projectName: normalizeValue(data.projectName),
               startedAt: toTimestampMs(data.startedAt),
+              notesList: formatNotesList(data.notes),
             };
           })
           .filter((entry) => Number.isFinite(entry.startedAt) && entry.startedAt > 0)
@@ -3887,26 +4740,31 @@ const PayEveryone = () => {
       return () => {};
     }
 
-    const usersByChurchIdQuery = query(collection(db, "users"), where("churchId", "==", id));
-    const usersByChurchIDQuery = query(collection(db, "users"), where("churchID", "==", id));
-    const usersByOrganizationIdQuery = query(collection(db, "users"), where("organizationId", "==", id));
-
-    let churchIdDocs = [];
-    let churchIDDocs = [];
-    let organizationIdDocs = [];
+    const usersRef = collection(db, "users");
+    const numericId = Number(id);
+    const organizationIds = [id, Number.isFinite(numericId) ? numericId : null].filter(
+      (value, index, values) => value !== null && values.indexOf(value) === index
+    );
+    const userQueries = organizationIds.flatMap((organizationId) => [
+      query(usersRef, where("churchId", "==", organizationId)),
+      query(usersRef, where("churchID", "==", organizationId)),
+      query(usersRef, where("organizationId", "==", organizationId)),
+    ]);
+    const userQueryDocs = userQueries.map(() => []);
 
     const buildUsersFromSnapshots = () => {
-      const mergedDocs = [...churchIdDocs, ...churchIDDocs, ...organizationIdDocs];
+      const mergedDocs = userQueryDocs.flat();
       const nextUsersById = new Map();
 
       mergedDocs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data() || {};
         const userId = normalizeValue(snapshotDoc.id);
         const userEmail = normalizeValue(data.email);
-        const userLabel =
-          normalizeValue(data.fullName)
-          || normalizeValue(data.name)
-          || normalizeValue(data.displayName)
+        const userLabel = resolveUserLabel({
+          ...data,
+          userEmail,
+          userId,
+        })
           || userEmail
           || userId;
 
@@ -3928,27 +4786,53 @@ const PayEveryone = () => {
       setOrganizationUsers(nextUsers);
     };
 
-    const unsubByChurchId = onSnapshot(usersByChurchIdQuery, (snapshot) => {
-      churchIdDocs = snapshot.docs;
+    const unsubscribers = userQueries.map((userQuery, queryIndex) => onSnapshot(userQuery, (snapshot) => {
+      userQueryDocs[queryIndex] = snapshot.docs;
       buildUsersFromSnapshots();
-    });
+    }));
 
-    const unsubByChurchID = onSnapshot(usersByChurchIDQuery, (snapshot) => {
-      churchIDDocs = snapshot.docs;
-      buildUsersFromSnapshots();
-    });
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [id]);
 
-    const unsubByOrganizationId = onSnapshot(usersByOrganizationIdQuery, (snapshot) => {
-      organizationIdDocs = snapshot.docs;
-      buildUsersFromSnapshots();
+  useEffect(() => {
+    const userIds = Array.from(new Set(
+      [...organizationUsers, ...rows, ...activeTimers]
+        .map((entry) => normalizeValue(entry.userId))
+        .filter(Boolean)
+    ));
+
+    if (userIds.length === 0) {
+      setUserProfiles([]);
+      return () => {};
+    }
+
+    let active = true;
+    Promise.all(userIds.map(async (userId) => {
+      try {
+        const profileSnapshot = await getDoc(doc(db, "users", userId));
+        if (!profileSnapshot.exists()) return null;
+        const data = profileSnapshot.data() || {};
+        const userEmail = normalizeValue(data.email);
+        return {
+          userId,
+          userEmail,
+          userLabel: resolveUserLabel({ ...data, userId, userEmail }),
+          userKey: normalizeUserKey({ userId, userEmail, userLabel: resolveUserLabel({ ...data, userId, userEmail }) }),
+        };
+      } catch (error) {
+        console.error("Error loading user profile:", error);
+        return null;
+      }
+    })).then((profiles) => {
+      if (active) setUserProfiles(profiles.filter(Boolean));
     });
 
     return () => {
-      unsubByChurchId();
-      unsubByChurchID();
-      unsubByOrganizationId();
+      active = false;
     };
-  }, [id]);
+  }, [activeTimers, organizationUsers, rows]);
 
   useEffect(() => {
     if (!id) {
@@ -4009,15 +4893,51 @@ const PayEveryone = () => {
 
   const combinedUsers = useMemo(() => {
     const userMap = new Map();
+    const profileByIdentity = new Map();
+    userProfiles.forEach((profile) => {
+      [profile.userId, profile.userEmail].forEach((identity) => {
+        const normalizedIdentity = normalizeComparable(identity);
+        if (normalizedIdentity) profileByIdentity.set(normalizedIdentity, profile);
+      });
+    });
+
+    const addUserEntry = (sourceEntry) => {
+      const entry = { ...sourceEntry };
+      const profile = profileByIdentity.get(normalizeComparable(entry.userId))
+        || profileByIdentity.get(normalizeComparable(entry.userEmail));
+      if (profile) {
+        entry.userKey = profile.userKey;
+        entry.userId = profile.userId;
+        entry.userEmail = profile.userEmail;
+        entry.userLabel = profile.userLabel;
+      }
+      if (!entry.userKey) return;
+
+      const current = userMap.get(entry.userKey);
+      if (!current) {
+        userMap.set(entry.userKey, entry);
+        return;
+      }
+
+      const currentLabel = normalizeValue(current.userLabel);
+      const nextLabel = normalizeValue(entry.userLabel);
+      const currentScore = currentLabel.split(/\s+/).filter(Boolean).length * 1000 + currentLabel.length;
+      const nextScore = nextLabel.split(/\s+/).filter(Boolean).length * 1000 + nextLabel.length;
+      if (nextScore > currentScore || entry.userId === current.userId) {
+        userMap.set(entry.userKey, { ...current, ...entry, userLabel: nextScore >= currentScore ? nextLabel : currentLabel });
+      }
+    };
+
+    userProfiles.forEach((entry) => {
+      addUserEntry(entry);
+    });
 
     organizationUsers.forEach((entry) => {
-      if (!entry.userKey) return;
-      userMap.set(entry.userKey, entry);
+      addUserEntry(entry);
     });
 
     rows.forEach((entry) => {
-      if (!entry.userKey || userMap.has(entry.userKey)) return;
-      userMap.set(entry.userKey, {
+      addUserEntry({
         userKey: entry.userKey,
         userId: normalizeValue(entry.userId),
         userEmail: normalizeValue(entry.userEmail),
@@ -4026,8 +4946,7 @@ const PayEveryone = () => {
     });
 
     activeTimers.forEach((entry) => {
-      if (!entry.userKey || userMap.has(entry.userKey)) return;
-      userMap.set(entry.userKey, {
+      addUserEntry({
         userKey: entry.userKey,
         userId: normalizeValue(entry.userId),
         userEmail: normalizeValue(entry.userEmail),
@@ -4038,7 +4957,26 @@ const PayEveryone = () => {
     return Array.from(userMap.values()).sort((left, right) =>
       normalizeValue(left.userLabel).localeCompare(normalizeValue(right.userLabel))
     );
-  }, [activeTimers, organizationUsers, rows]);
+  }, [activeTimers, organizationUsers, rows, userProfiles]);
+
+  const canonicalUserLabel = useMemo(() => {
+    const labelsByIdentity = new Map();
+    combinedUsers.forEach((entry) => {
+      const label = normalizeValue(entry.userLabel) || normalizeValue(entry.userKey);
+      [entry.userKey, entry.userId, entry.userEmail].forEach((identity) => {
+        const normalizedIdentity = normalizeComparable(identity);
+        if (normalizedIdentity && label) labelsByIdentity.set(normalizedIdentity, label);
+      });
+    });
+
+    return (entry) => {
+      for (const identity of [entry.userKey, entry.userId, entry.userEmail]) {
+        const label = labelsByIdentity.get(normalizeComparable(identity));
+        if (label) return label;
+      }
+      return normalizeValue(entry.userLabel) || normalizeValue(entry.userKey) || "Unknown user";
+    };
+  }, [combinedUsers]);
 
   useEffect(() => {
     const nextDraft = {};
@@ -4066,23 +5004,13 @@ const PayEveryone = () => {
   }, [combinedUsers, userCompSettings]);
 
   const userOptions = useMemo(() => {
-    const seen = new Map();
-    rows.forEach((row) => {
-      const userKey = normalizeValue(row.userKey);
-      if (userKey && !seen.has(userKey)) {
-        seen.set(userKey, normalizeValue(row.userLabel) || userKey);
-      }
-    });
-    activeTimers.forEach((timerEntry) => {
-      const userKey = normalizeValue(timerEntry.userKey);
-      if (userKey && !seen.has(userKey)) {
-        seen.set(userKey, normalizeValue(timerEntry.userLabel) || userKey);
-      }
-    });
-    return Array.from(seen.entries())
-      .map(([userKey, userLabel]) => ({ userKey, userLabel }))
-      .sort((left, right) => left.userLabel.localeCompare(right.userLabel));
-  }, [activeTimers, rows]);
+    return [{ userKey: "all", userLabel: "All Users" }].concat(
+      combinedUsers.map((entry) => ({
+        userKey: entry.userKey,
+        userLabel: entry.userLabel || entry.userKey,
+      }))
+    );
+  }, [combinedUsers]);
 
   const projectOptions = useMemo(() => {
     return Array.from(
@@ -4174,6 +5102,33 @@ const PayEveryone = () => {
       return searchHaystack.includes(normalizedSearch);
     });
   }, [activeTimers, customDateEnd, customDateStart, dateFilterPreset, searchInput, selectedProject, selectedUser]);
+
+  const getOpenTimerTotalNotes = (timerEntry) => {
+    const timerDayStart = startOfDay(Number(timerEntry.startedAt) || 0).getTime();
+    const sameUser = (entry) => (
+      (normalizeValue(timerEntry.userId) && normalizeValue(entry.userId) === normalizeValue(timerEntry.userId))
+      || (normalizeValue(timerEntry.userEmail) && normalizeComparable(entry.userEmail) === normalizeComparable(timerEntry.userEmail))
+      || normalizeValue(entry.userKey) === normalizeValue(timerEntry.userKey)
+    );
+    const completedNotes = rows
+      .filter((row) => sameUser(row))
+      .filter((row) => startOfDay(Number(row.startedAt) || Number(row.endedAt) || 0).getTime() === timerDayStart)
+      .reduce((total, row) => total + (Array.isArray(row.notesList) ? row.notesList.length : 0), 0);
+
+    return completedNotes + (Array.isArray(timerEntry.notesList) ? timerEntry.notesList.length : 0);
+  };
+
+  const usersNotStarted = useMemo(() => {
+    const startedUserKeys = new Set([
+      ...filteredRows.map((entry) => normalizeValue(entry.userKey)),
+      ...filteredOpenTimers.map((entry) => normalizeValue(entry.userKey)),
+    ].filter(Boolean));
+
+    return combinedUsers
+      .filter((entry) => selectedUser === "all" || normalizeValue(entry.userKey) === selectedUser)
+      .filter((entry) => !startedUserKeys.has(normalizeValue(entry.userKey)))
+      .sort((left, right) => normalizeValue(left.userLabel).localeCompare(normalizeValue(right.userLabel)));
+  }, [combinedUsers, filteredOpenTimers, filteredRows, selectedUser]);
 
   const getRateAndCostForRow = (rowEntry, { overtimeExceeded = false } = {}) => {
     // Time and Cost tab should reflect the latest compensation values for all filtered rows.
@@ -4318,10 +5273,12 @@ const PayEveryone = () => {
         durationMs: 0,
         totalCost: 0,
         lineItems: 0,
+        totalNotes: 0,
       };
       currentDay.durationMs += rowDurationMs;
       currentDay.totalCost += rowCost;
       currentDay.lineItems += 1;
+      currentDay.totalNotes += Array.isArray(row.notesList) ? row.notesList.length : 0;
       dailyMap.set(dayMapKey, currentDay);
 
       const currentWeek = weeklyMap.get(weekMapKey) || {
@@ -4332,10 +5289,12 @@ const PayEveryone = () => {
         durationMs: 0,
         totalCost: 0,
         lineItems: 0,
+        totalNotes: 0,
       };
       currentWeek.durationMs += rowDurationMs;
       currentWeek.totalCost += rowCost;
       currentWeek.lineItems += 1;
+      currentWeek.totalNotes += Array.isArray(row.notesList) ? row.notesList.length : 0;
       weeklyMap.set(weekMapKey, currentWeek);
     });
 
@@ -4369,6 +5328,7 @@ const PayEveryone = () => {
           durationMs: 0,
           totalCost: 0,
           lineItems: 0,
+          totalNotes: 0,
         };
 
         nextRows.push({
@@ -4386,6 +5346,7 @@ const PayEveryone = () => {
           durationMs: 0,
           totalCost: 0,
           lineItems: 0,
+          totalNotes: 0,
         };
 
         nextRows.push({
@@ -4418,6 +5379,7 @@ const PayEveryone = () => {
           durationMs: 0,
           totalCost: 0,
           lineItems: 0,
+          totalNotes: 0,
         };
 
         nextRows.push({
@@ -4435,6 +5397,7 @@ const PayEveryone = () => {
           durationMs: 0,
           totalCost: 0,
           lineItems: 0,
+          totalNotes: 0,
         };
 
         nextRows.push({
@@ -5327,6 +6290,10 @@ const PayEveryone = () => {
             <div style={{ color: "#64748B", fontSize: "0.8rem", fontWeight: 700 }}>Open Timers</div>
             <div style={{ color: filteredOpenTimers.length > 0 ? "#9A3412" : "#0F172A", fontWeight: 800, fontSize: "1.1rem" }}>{filteredOpenTimers.length}</div>
           </div>
+          <div style={{ backgroundColor: usersNotStarted.length > 0 ? "#FEF2F2" : "#F8FAFC", border: `1px solid ${usersNotStarted.length > 0 ? "#FECACA" : "#E2E8F0"}`, borderRadius: "10px", padding: "10px 12px" }}>
+            <div style={{ color: "#64748B", fontSize: "0.8rem", fontWeight: 700 }}>Users Not Started</div>
+            <div style={{ color: usersNotStarted.length > 0 ? "#B91C1C" : "#0F172A", fontWeight: 800, fontSize: "1.1rem" }}>{usersNotStarted.length}</div>
+          </div>
           <div style={{ display: "flex", alignItems: "stretch" }}>
             <button
               type="button"
@@ -5348,16 +6315,30 @@ const PayEveryone = () => {
           </div>
         </div>
 
+        {usersNotStarted.length > 0 && (
+          <div style={{ marginTop: "12px", border: "1px solid #FECACA", backgroundColor: "#FEF2F2", borderRadius: "10px", padding: "10px 12px" }}>
+            <div style={{ color: "#991B1B", fontWeight: 800, marginBottom: "6px" }}>Users who have not started</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              {usersNotStarted.map((entry) => (
+                <span key={entry.userKey} style={{ padding: "5px 9px", borderRadius: "999px", backgroundColor: "#FFFFFF", border: "1px solid #FECACA", color: "#7F1D1D", fontSize: "0.82rem", fontWeight: 700 }}>
+                  {canonicalUserLabel(entry)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {filteredOpenTimers.length > 0 ? (
           <div style={{ marginTop: "12px", border: "1px solid #FDBA74", backgroundColor: "#FFF7ED", borderRadius: "10px", padding: "10px 12px" }}>
             <div style={{ color: "#9A3412", fontWeight: 800, marginBottom: "8px" }}>
               Open timers detected (not stopped yet)
             </div>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "820px", textAlign: "left" }}>
                 <thead>
                   <tr>
                     <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #FDBA74", color: "#7C2D12", fontSize: "0.8rem" }}>User</th>
+                    <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #FDBA74", color: "#7C2D12", fontSize: "0.8rem" }}>Total Notes</th>
                     <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #FDBA74", color: "#7C2D12", fontSize: "0.8rem" }}>Card ID</th>
                     <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #FDBA74", color: "#7C2D12", fontSize: "0.8rem" }}>Project</th>
                     <th style={{ textAlign: "left", padding: "8px", borderBottom: "1px solid #FDBA74", color: "#7C2D12", fontSize: "0.8rem" }}>Started</th>
@@ -5369,7 +6350,8 @@ const PayEveryone = () => {
                 <tbody>
                   {filteredOpenTimers.map((entry) => (
                     <tr key={`open-timer-${entry.id}`}>
-                      <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12", fontWeight: 700 }}>{entry.userLabel}</td>
+                      <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12", fontWeight: 700 }}>{canonicalUserLabel(entry)}</td>
+                      <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12", fontWeight: 700 }}>{getOpenTimerTotalNotes(entry)}</td>
                       <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12" }}>{entry.issueId || "-"}</td>
                       <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12" }}>{entry.projectName || "-"}</td>
                       <td style={{ padding: "8px", borderBottom: "1px solid #FED7AA", color: "#7C2D12" }}>{formatTimestamp(entry.startedAt)}</td>
@@ -5439,7 +6421,7 @@ const PayEveryone = () => {
         ) : null}
 
         <div style={{ marginLeft: "-16px", marginRight: "-16px", marginTop: "14px", overflowX: "auto", borderTop: "1px solid #E2E8F0", borderBottom: "1px solid #E2E8F0" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
             <thead>
               <tr style={{ backgroundColor: "#F8FAFC" }}>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Line Item</th>
@@ -5447,6 +6429,7 @@ const PayEveryone = () => {
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Card ID</th>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Project Name</th>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>User</th>
+                <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Total Notes</th>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Total Time</th>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Hourly Rate</th>
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>Cost</th>
@@ -5458,13 +6441,13 @@ const PayEveryone = () => {
             <tbody key={`report-body-${selectedUser}-${selectedProject}-${dateFilterPreset}`}>
               {loading ? (
                 <tr>
-                  <td colSpan={11} style={{ padding: "14px", color: "#64748B" }}>
+                  <td colSpan={12} style={{ padding: "14px", color: "#64748B" }}>
                     Loading line items...
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} style={{ padding: "14px", color: "#64748B" }}>
+                  <td colSpan={12} style={{ padding: "14px", color: "#64748B" }}>
                     No time logs match the current filters.
                   </td>
                 </tr>
@@ -5481,6 +6464,7 @@ const PayEveryone = () => {
                           </td>
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF" }} />
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF", color: "#3730A3", fontWeight: 700, fontSize: "0.82rem" }}>{entry.userLabel}</td>
+                          <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF", color: "#3730A3", fontWeight: 700, fontSize: "0.82rem" }}>{entry.totalNotes}</td>
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF", color: "#3730A3", fontWeight: 700, fontSize: "0.82rem" }}>{formatHours(entry.durationMs)}</td>
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF", color: "#3730A3", fontWeight: 700, fontSize: "0.82rem" }}>-</td>
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF", color: "#3730A3", fontWeight: 700, fontSize: "0.82rem" }}>{toCurrency(entry.totalCost)}</td>
@@ -5489,7 +6473,7 @@ const PayEveryone = () => {
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid #C7D2FE", backgroundColor: "#EEF2FF" }} />
                         </tr>
                         <tr aria-hidden="true">
-                          <td colSpan={11} style={{ height: "38px", padding: "10px 0", backgroundColor: "#F1F5F9", borderTop: "1px solid #E2E8F0", borderBottom: "2px solid #CBD5E1" }}>&nbsp;</td>
+                          <td colSpan={12} style={{ height: "38px", padding: "10px 0", backgroundColor: "#F1F5F9", borderTop: "1px solid #E2E8F0", borderBottom: "2px solid #CBD5E1" }}>&nbsp;</td>
                         </tr>
                       </React.Fragment>
                     );
@@ -5499,6 +6483,7 @@ const PayEveryone = () => {
                     return (
                       <tr key={`week-header-${entry.key}`}>
                         <td style={{ padding: "10px", borderBottom: "1px solid #BFDBFE", borderTop: "2px solid #60A5FA", backgroundColor: "#EFF6FF", color: "#1E3A8A", fontWeight: 800, fontSize: "0.88rem" }}>Week Start</td>
+                        <td style={{ padding: "10px", borderBottom: "1px solid #BFDBFE", borderTop: "2px solid #60A5FA", backgroundColor: "#EFF6FF" }} />
                         <td style={{ padding: "10px", borderBottom: "1px solid #BFDBFE", borderTop: "2px solid #60A5FA", backgroundColor: "#EFF6FF" }} />
                         <td style={{ padding: "10px", borderBottom: "1px solid #BFDBFE", borderTop: "2px solid #60A5FA", backgroundColor: "#EFF6FF", color: "#1E3A8A", fontWeight: 800, fontSize: "0.88rem" }}>
                           {formatDateOnly(entry.startMs)} - {formatDateOnly(addDays(entry.startMs, 6).getTime())}
@@ -5524,6 +6509,7 @@ const PayEveryone = () => {
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>{formatDateOnly(entry.startMs)}</td>
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5" }} />
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>{entry.userLabel}</td>
+                          <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>{entry.totalNotes}</td>
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>{formatHours(entry.durationMs)}</td>
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>-</td>
                           <td style={{ padding: "12px 12px", borderTop: "2px solid #86EFAC", borderBottom: "2px solid #34D399", backgroundColor: "#ECFDF5", color: "#065F46", fontWeight: 800, fontSize: "0.83rem" }}>{toCurrency(entry.totalCost)}</td>
@@ -5546,6 +6532,7 @@ const PayEveryone = () => {
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB", color: "#92400E", fontWeight: 800, fontSize: "0.84rem" }}>{formatDateOnly(entry.startMs)}</td>
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB" }} />
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB", color: "#92400E", fontWeight: 800, fontSize: "0.84rem" }}>{entry.userLabel} • Items: {entry.lineItems}</td>
+                        <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB" }} />
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB" }} />
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB" }} />
                         <td style={{ padding: "9px 10px", borderBottom: "1px solid #FDE68A", borderTop: "1px solid #FCD34D", backgroundColor: "#FFFBEB" }} />
@@ -5617,6 +6604,9 @@ const PayEveryone = () => {
                             </button>
                           ) : null}
                         </div>
+                      </td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#334155", fontWeight: 700 }}>
+                        {Array.isArray(row.notesList) ? row.notesList.length : 0}
                       </td>
                       <td style={{ padding: "10px", borderBottom: "1px solid #F1F5F9", color: "#0F172A", fontWeight: 700 }}>
                         {formatDuration(row.durationMs)}
@@ -5756,7 +6746,7 @@ const PayEveryone = () => {
           </>
         ) : (
           <div style={{ marginTop: "12px", overflowX: "auto", border: "1px solid #E2E8F0", borderRadius: "12px" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1200px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1200px", textAlign: "left" }}>
               <thead>
                 <tr style={{ backgroundColor: "#F8FAFC" }}>
                   <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #E2E8F0" }}>User</th>

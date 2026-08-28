@@ -206,6 +206,25 @@ service firebase.storage {
       allow delete: if isAuthenticated();
     }
 
+    // Panel schedule RFI attachments, including documents and images.
+    match /churches/{churchId}/panelScheduleQuestions/{rfiId}/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 5 * 1024 * 1024 * 1024 * 1024;
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
+    // External PDFs attached to Invoice Manager table rows.
+    match /churches/{churchId}/invoiceProjects/{projectId}/invoices/{invoiceId}/external-pdf/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 5 * 1024 * 1024 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf');
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
     // Project Issue Dashboard E2 document attachments
     match /churches/{churchId}/bimProjects/{projectId}/e2-documents/{issueKey}/{fileName} {
       allow read: if isAuthenticated() && isChurchMember(churchId);

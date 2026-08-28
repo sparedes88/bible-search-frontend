@@ -148,6 +148,9 @@ const BuildMyChurch = () => {
   const [topics, setTopics] = useState([]);
   const [assignees, setAssignees] = useState([]);
   const [newTopic, setNewTopic] = useState('');
+  const [editingTopicId, setEditingTopicId] = useState(null);
+  const [editingTopicName, setEditingTopicName] = useState('');
+  const [topicSaving, setTopicSaving] = useState(false);
   const [newTask, setNewTask] = useState({
     title: '',
     description: '',
@@ -162,6 +165,7 @@ const BuildMyChurch = () => {
     documents: []
   });
   const [editingTaskId, setEditingTaskId] = useState(null);
+  const [deletingAllTasks, setDeletingAllTasks] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterPriority, setFilterPriority] = useState('all');
@@ -1332,19 +1336,118 @@ const BuildMyChurch = () => {
     });
   };
 
+  const findDuplicateTopic = (name, excludeId = null) => topics.find(topic => (
+    topic.id !== excludeId && (topic.name || '').trim().toLowerCase() === name.trim().toLowerCase()
+  ));
+
   const handleAddTopic = async () => {
-    if (!newTopic.trim()) return;
+    const name = newTopic.trim();
+    if (!name) return;
+    if (findDuplicateTopic(name)) {
+      safeToast.error('A project with that name already exists');
+      return;
+    }
+    setTopicSaving(true);
     try {
       const topicRef = await addDoc(collection(db, 'buildTopics'), {
-        name: newTopic,
+        name,
         churchId: id,
         createdAt: new Date().toISOString()
       });
-      setTopics(prev => [...prev, { id: topicRef.id, name: newTopic }]);
+      setTopics(prev => [...prev, { id: topicRef.id, name }]);
       setNewTopic('');
+      safeToast.success('Project created');
     } catch (error) {
       console.error('Error adding topic:', error);
-      safeToast.error('Failed to add topic');
+      safeToast.error('Failed to add project');
+    } finally {
+      setTopicSaving(false);
+    }
+  };
+
+  const startEditTopic = (topic) => {
+    setEditingTopicId(topic.id);
+    setEditingTopicName(topic.name || '');
+  };
+
+  const cancelEditTopic = () => {
+    setEditingTopicId(null);
+    setEditingTopicName('');
+  };
+
+  const handleRenameTopic = async (topic) => {
+    const nextName = editingTopicName.trim();
+    if (!nextName) {
+      safeToast.error('Project name cannot be empty');
+      return;
+    }
+    if (nextName === (topic.name || '')) {
+      cancelEditTopic();
+      return;
+    }
+    if (findDuplicateTopic(nextName, topic.id)) {
+      safeToast.error('A project with that name already exists');
+      return;
+    }
+
+    setTopicSaving(true);
+    try {
+      await updateDoc(doc(db, 'buildTopics', topic.id), { name: nextName });
+
+      // Keep tasks that reference the project by name in sync with the rename
+      const linkedTasks = tasks.filter(task => task.topic === topic.name);
+      const linkedAgileTasks = agileTasks.filter(task => task.project === topic.name);
+      await Promise.all([
+        ...linkedTasks.map(task => updateDoc(doc(db, 'buildTasks', task.id), { topic: nextName })),
+        ...linkedAgileTasks.map(task => updateDoc(doc(db, 'agileTasks', task.id), { project: nextName }))
+      ]);
+
+      setTopics(prev => prev.map(item => (item.id === topic.id ? { ...item, name: nextName } : item)));
+      setTasks(prev => prev.map(task => (task.topic === topic.name ? { ...task, topic: nextName } : task)));
+      setAgileTasks(prev => prev.map(task => (task.project === topic.name ? { ...task, project: nextName } : task)));
+      setFilterTopic(prev => (prev === topic.name ? nextName : prev));
+      setNewTask(prev => (prev.topic === topic.name ? { ...prev, topic: nextName } : prev));
+      cancelEditTopic();
+      safeToast.success('Project updated');
+    } catch (error) {
+      console.error('Error renaming topic:', error);
+      safeToast.error('Failed to update project');
+    } finally {
+      setTopicSaving(false);
+    }
+  };
+
+  const handleDeleteTopic = async (topic) => {
+    const linkedTasks = tasks.filter(task => task.topic === topic.name);
+    const linkedAgileTasks = agileTasks.filter(task => task.project === topic.name);
+    const linkedCount = linkedTasks.length + linkedAgileTasks.length;
+    const confirmed = window.confirm(
+      linkedCount > 0
+        ? `Delete project "${topic.name}"? ${linkedCount} task(s) will be left without a project.`
+        : `Delete project "${topic.name}"?`
+    );
+    if (!confirmed) return;
+
+    setTopicSaving(true);
+    try {
+      await deleteDoc(doc(db, 'buildTopics', topic.id));
+      await Promise.all([
+        ...linkedTasks.map(task => updateDoc(doc(db, 'buildTasks', task.id), { topic: '' })),
+        ...linkedAgileTasks.map(task => updateDoc(doc(db, 'agileTasks', task.id), { project: '' }))
+      ]);
+
+      setTopics(prev => prev.filter(item => item.id !== topic.id));
+      setTasks(prev => prev.map(task => (task.topic === topic.name ? { ...task, topic: '' } : task)));
+      setAgileTasks(prev => prev.map(task => (task.project === topic.name ? { ...task, project: '' } : task)));
+      setFilterTopic(prev => (prev === topic.name ? 'all' : prev));
+      setNewTask(prev => (prev.topic === topic.name ? { ...prev, topic: '' } : prev));
+      if (editingTopicId === topic.id) cancelEditTopic();
+      safeToast.success('Project deleted');
+    } catch (error) {
+      console.error('Error deleting topic:', error);
+      safeToast.error('Failed to delete project');
+    } finally {
+      setTopicSaving(false);
     }
   };
 
@@ -1358,6 +1461,27 @@ const BuildMyChurch = () => {
         console.error('Error deleting task:', error);
         safeToast.error('Failed to delete task');
       }
+    }
+  };
+
+  const handleDeleteAllTasks = async () => {
+    if (tasks.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Delete all ${tasks.length} tasks for this organization? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingAllTasks(true);
+    try {
+      await Promise.all(tasks.map(task => deleteDoc(doc(db, 'buildTasks', task.id))));
+      setTasks([]);
+      safeToast.success('All tasks deleted successfully');
+    } catch (error) {
+      console.error('Error deleting all tasks:', error);
+      safeToast.error('Failed to delete all tasks');
+    } finally {
+      setDeletingAllTasks(false);
     }
   };
 
@@ -1585,6 +1709,9 @@ const BuildMyChurch = () => {
       const withDocumentsCount = filteredTasks.filter(task => (task.documents || []).length > 0).length;
       const withCommentsCount = filteredTasks.filter(task => (commentsByTask[task.id] || []).length > 0).length;
 
+      // jsPDF sizes fonts in pt but positions in mm, so convert to keep blocks from overlapping
+      const lineHeight = (fontSize) => (fontSize * 1.15 * 25.4) / 72;
+
       const addSectionHeader = (status, count) => {
         const label = statusLabelMap[status] || status;
         doc.setFont('helvetica', 'bold');
@@ -1619,17 +1746,17 @@ const BuildMyChurch = () => {
       let yOffset = 46;
 
       // Filters block
-      const filterLines = doc.splitTextToSize(filterText, contentWidth - 10);
-      const filterBlockHeight = 10 + (filterLines.length * 5);
+      const filterLines = doc.splitTextToSize(filterText, contentWidth - 8);
+      const filterBlockHeight = 12 + (filterLines.length * lineHeight(9));
       doc.setFillColor(243, 244, 246);
       doc.roundedRect(margin, yOffset, contentWidth, filterBlockHeight, 2, 2, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
       doc.setTextColor(55, 65, 81);
-      doc.text('Filters', margin + 4, yOffset + 6);
+      doc.text('Filters', margin + 4, yOffset + 4, { baseline: 'top' });
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(107, 114, 128);
-      doc.text(filterLines, margin + 4, yOffset + 12);
+      doc.text(filterLines, margin + 4, yOffset + 9, { baseline: 'top' });
 
       yOffset += filterBlockHeight + 10;
 
@@ -1677,6 +1804,14 @@ const BuildMyChurch = () => {
         let processedItems = 0;
         const totalItems = filteredTasks.length || 1;
 
+        const cardPadding = 4;
+        const columnGap = 6;
+        const columnWidthInner = (contentWidth - (cardPadding * 2) - columnGap) / 2;
+        const titleLineHeight = lineHeight(11);
+        const bodyLineHeight = lineHeight(9);
+        const sectionTop = 28;
+        const bottomLimit = pageHeight - 18;
+
         for (const [status, tasks] of Object.entries(statusGroups)) {
           if (tasks.length === 0) continue;
 
@@ -1691,11 +1826,14 @@ const BuildMyChurch = () => {
 
             const titleText = task.title || 'Untitled task';
             const descriptionText = task.description || 'No description provided.';
-            const titleLines = doc.splitTextToSize(titleText, contentWidth - 8);
-            const descriptionLines = doc.splitTextToSize(descriptionText, contentWidth - 8);
 
-            const titleHeight = titleLines.length * 6;
-            const descriptionHeight = descriptionLines.length * 5;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(11);
+            const titleLines = doc.splitTextToSize(titleText, contentWidth - (cardPadding * 2));
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            let descriptionLines = doc.splitTextToSize(descriptionText, contentWidth - (cardPadding * 2));
 
             const detailRows = [
               [`ID #: ${task.ticketId || task.id || 'N/A'}`, `Status: ${statusLabelMap[task.status] || task.status || 'N/A'}`],
@@ -1706,10 +1844,35 @@ const BuildMyChurch = () => {
               [`Comments: ${(commentsByTask[task.id] || []).length}`, '']
             ];
 
-            const detailHeight = (detailRows.length * 5) + 4;
-            const cardHeight = 8 + titleHeight + 3 + descriptionHeight + 4 + detailHeight + 6;
+            // Wrap each column separately so long values cannot bleed into the other column
+            const wrappedRows = detailRows.map(([left, right]) => {
+              const leftLines = left ? doc.splitTextToSize(left, columnWidthInner) : [];
+              const rightLines = right ? doc.splitTextToSize(right, columnWidthInner) : [];
+              const rows = Math.max(leftLines.length, rightLines.length, 1);
+              return { leftLines, rightLines, height: rows * bodyLineHeight };
+            });
 
-            if (yOffset + cardHeight > pageHeight - 20) {
+            const detailHeight = wrappedRows.reduce((sum, row) => sum + row.height, 0);
+            const staticHeight = cardPadding + 3 + bodyLineHeight + 3 + detailHeight + cardPadding;
+            const titleHeight = titleLines.length * titleLineHeight;
+
+            const availableHeight = bottomLimit - sectionTop;
+            let cardHeight = staticHeight + titleHeight + (descriptionLines.length * bodyLineHeight);
+
+            // A card must never be taller than a page, otherwise it runs over the footer
+            if (cardHeight > availableHeight) {
+              const maxDescriptionLines = Math.max(
+                1,
+                Math.floor((availableHeight - staticHeight - titleHeight) / bodyLineHeight)
+              );
+              if (descriptionLines.length > maxDescriptionLines) {
+                descriptionLines = descriptionLines.slice(0, maxDescriptionLines);
+                descriptionLines[descriptionLines.length - 1] = `${descriptionLines[descriptionLines.length - 1]}...`;
+              }
+              cardHeight = staticHeight + titleHeight + (descriptionLines.length * bodyLineHeight);
+            }
+
+            if (yOffset + cardHeight > bottomLimit) {
               doc.addPage();
               yOffset = addSectionHeader(status, tasks.length);
             }
@@ -1718,29 +1881,33 @@ const BuildMyChurch = () => {
             doc.setFillColor(249, 250, 251);
             doc.roundedRect(margin, yOffset, contentWidth, cardHeight, 2, 2, 'FD');
 
-            let textY = yOffset + 8;
+            let textY = yOffset + cardPadding;
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(11);
             doc.setTextColor(31, 41, 55);
-            doc.text(titleLines, margin + 4, textY);
-            textY += titleHeight + 2;
+            doc.text(titleLines, margin + cardPadding, textY, { baseline: 'top' });
+            textY += titleHeight + 3;
 
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(9);
             doc.setTextColor(107, 114, 128);
-            doc.text(descriptionLines, margin + 4, textY);
-            textY += descriptionHeight + 3;
+            doc.text(descriptionLines, margin + cardPadding, textY, { baseline: 'top' });
+            textY += (descriptionLines.length * bodyLineHeight) + (bodyLineHeight / 2);
 
             doc.setDrawColor(229, 231, 235);
-            doc.line(margin + 4, textY, pageWidth - margin - 4, textY);
-            textY += 4;
+            doc.line(margin + cardPadding, textY, pageWidth - margin - cardPadding, textY);
+            textY += bodyLineHeight / 2 + 3;
 
             doc.setFontSize(9);
             doc.setTextColor(75, 85, 99);
-            detailRows.forEach((row) => {
-              doc.text(row[0], margin + 4, textY);
-              doc.text(row[1], margin + (contentWidth / 2), textY);
-              textY += 5;
+            wrappedRows.forEach((row) => {
+              if (row.leftLines.length) {
+                doc.text(row.leftLines, margin + cardPadding, textY, { baseline: 'top' });
+              }
+              if (row.rightLines.length) {
+                doc.text(row.rightLines, margin + cardPadding + columnWidthInner + columnGap, textY, { baseline: 'top' });
+              }
+              textY += row.height;
             });
 
             yOffset += cardHeight + 6;
@@ -3105,6 +3272,12 @@ const BuildMyChurch = () => {
                 📋 Tasks
               </button>
               <button
+                className={`tab-button ${activeTab === 'projects' ? 'active' : ''}`}
+                onClick={() => setActiveTab('projects')}
+              >
+                🏗️ Manage Projects
+              </button>
+              <button
                 className={`tab-button ${activeTab === 'assignees' ? 'active' : ''}`}
                 onClick={() => setActiveTab('assignees')}
               >
@@ -3369,6 +3542,24 @@ const BuildMyChurch = () => {
               {filteredTasks.length !== tasks.length && 
                 `(Showing ${filteredTasks.length} of ${tasks.length})`
               }
+              <button
+                type="button"
+                onClick={handleDeleteAllTasks}
+                disabled={deletingAllTasks || tasks.length === 0}
+                style={{
+                  float: 'right',
+                  padding: '8px 12px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  backgroundColor: deletingAllTasks || tasks.length === 0 ? '#cbd5e1' : '#b91c1c',
+                  color: 'white',
+                  cursor: deletingAllTasks || tasks.length === 0 ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 600
+                }}
+              >
+                <FaTrash /> {deletingAllTasks ? 'Deleting...' : 'Delete All Tasks'}
+              </button>
             </h2>
 
             {filteredTasks.length === 0 ? (
@@ -3985,6 +4176,123 @@ const BuildMyChurch = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'projects' && (
+          <div className="projects-content">
+            <div className="projects-header">
+              <h2 className="section-title">Manage Projects</h2>
+              <p className="projects-description">
+                Create, rename and delete projects. Renaming a project updates every task linked to it.
+              </p>
+            </div>
+
+            <form
+              className="project-create-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleAddTopic();
+              }}
+            >
+              <input
+                type="text"
+                className="form-input"
+                placeholder="New project name"
+                value={newTopic}
+                onChange={(event) => setNewTopic(event.target.value)}
+              />
+              <button type="submit" className="submit-button" disabled={topicSaving || !newTopic.trim()}>
+                Add Project
+              </button>
+            </form>
+
+            <div className="projects-list">
+              {topics.length === 0 ? (
+                <div className="no-assignees">
+                  <div className="empty-icon">🏗️</div>
+                  <h3>No Projects Yet</h3>
+                  <p>Add your first project above to start grouping tasks.</p>
+                </div>
+              ) : (
+                [...topics]
+                  .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                  .map(topic => {
+                    const taskCount = tasks.filter(task => task.topic === topic.name).length
+                      + agileTasks.filter(task => task.project === topic.name).length;
+                    const isEditing = editingTopicId === topic.id;
+                    return (
+                      <div key={topic.id} className="project-item">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            className="form-input project-item-input"
+                            value={editingTopicName}
+                            onChange={(event) => setEditingTopicName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                handleRenameTopic(topic);
+                              }
+                              if (event.key === 'Escape') cancelEditTopic();
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <div className="project-item-info">
+                            <span className="project-item-name">{topic.name}</span>
+                            <span className="project-item-count">{taskCount} task{taskCount === 1 ? '' : 's'}</span>
+                          </div>
+                        )}
+
+                        <div className="project-item-actions">
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                className="icon-button"
+                                title="Save"
+                                disabled={topicSaving}
+                                onClick={() => handleRenameTopic(topic)}
+                              >
+                                <FaCheck />
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-button"
+                                title="Cancel"
+                                onClick={cancelEditTopic}
+                              >
+                                <FaTimes />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="icon-button"
+                                title="Rename project"
+                                onClick={() => startEditTopic(topic)}
+                              >
+                                <FaEdit />
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-button danger"
+                                title="Delete project"
+                                disabled={topicSaving}
+                                onClick={() => handleDeleteTopic(topic)}
+                              >
+                                <FaTrash />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
           </div>
         )}
 

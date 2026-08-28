@@ -12,10 +12,11 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { getDownloadURL, ref as storageRef, uploadBytesResumable } from "firebase/storage";
 import { toast } from "react-toastify";
 import ChurchHeader from "./ChurchHeader";
 import { useAuth } from "../contexts/AuthContext";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import { hasPermission } from "../utils/enhancedPermissions";
 import "./PanelSchedules.css";
 
@@ -44,6 +45,7 @@ const PANEL_DETAIL_KEYS = [
   "panelSchedule",
   "planSheet",
   "planSheetNote",
+  "planSheetLink",
   "singleLine",
   "sheet",
   "area",
@@ -93,6 +95,7 @@ const EMPTY_MAPPING = {
   panelSchedule: "",
   planSheet: "",
   planSheetNote: "",
+  planSheetLink: "",
   singleLine: "",
   sheet: "",
   area: "",
@@ -127,6 +130,7 @@ const MAPPING_LABELS = {
   panelSchedule: "Panel Schedule",
   planSheet: "Plan Sheet",
   planSheetNote: "Plan Sheet Note",
+  planSheetLink: "Link",
   singleLine: "Single Line",
   sheet: "Sheet",
   area: "Area",
@@ -161,6 +165,7 @@ const MAPPING_FIELD_ORDER = [
   "panelSchedule",
   "planSheet",
   "planSheetNote",
+  "planSheetLink",
   "singleLine",
   "sheet",
   "area",
@@ -201,6 +206,7 @@ const MAPPING_ALIASES = {
   panelSchedule: ["panel schedule", "pannel schedule", "schedule"],
   planSheet: ["plan sheet", "plansheet"],
   planSheetNote: ["plan sheet note", "plansheetnote", "plan note"],
+  planSheetLink: ["link", "plan sheet link", "plansheetlink", "url"],
   singleLine: ["single line", "singleline"],
   sheet: ["sheet"],
   area: ["area"],
@@ -706,8 +712,19 @@ const resolveConduitSizeFromRow = (row, mappedColumn, primaryColumn) => {
   return patternMatch ? normalizeText(patternMatch[1]) : "";
 };
 
-const CircuitCard = ({ circuitNumber, row, side = "left", conduitColor = null, expanded = false, onToggle = () => {} }) => {
+const CircuitCard = ({
+  circuitNumber,
+  row,
+  side = "left",
+  conduitColor = null,
+  expanded = false,
+  onToggle = () => {},
+  planSheetNote = "",
+  planSheetLink = "",
+}) => {
   const isRightSide = side === "right";
+  const planSheetNoteDisplay = normalizeText(planSheetNote);
+  const planSheetLinkDisplay = normalizeText(planSheetLink);
   const circuitPhase = getCircuitPhaseLabel(circuitNumber);
   const conduitIdDisplay = normalizeText(row?.conduitId) || "-";
   const resolvedConduitColor =
@@ -796,6 +813,15 @@ const CircuitCard = ({ circuitNumber, row, side = "left", conduitColor = null, e
           {hasFeederTo ? <p><label>Feeder to:</label> {feederToDisplay}</p> : null}
           {hasBranchFrom ? <p><label>From Branch Circuit Panel:</label> {fromBranchCircuitPanelDisplay}</p> : null}
           {hasToPullBox ? <p><label>To Pull Box:</label> {toPullBoxDisplay}</p> : null}
+          {planSheetNoteDisplay ? <p><label>Plan Sheet Note:</label> {planSheetNoteDisplay}</p> : null}
+          {planSheetLinkDisplay ? (
+            <p>
+              <label>Link:</label>{" "}
+              <a href={planSheetLinkDisplay} target="_blank" rel="noreferrer">
+                {planSheetLinkDisplay}
+              </a>
+            </p>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -833,6 +859,17 @@ const PanelSchedules = () => {
   const [editingBuildLinkPanelKey, setEditingBuildLinkPanelKey] = useState(null);
   const [manualCircuitAssignments, setManualCircuitAssignments] = useState({});
   const [draftMissingCircuitSelections, setDraftMissingCircuitSelections] = useState({});
+  const [rfiQuestions, setRfiQuestions] = useState([]);
+  const [expandedRfiQuestionId, setExpandedRfiQuestionId] = useState("");
+  const [rfiConduitSearch, setRfiConduitSearch] = useState("");
+  const [rfiAttachments, setRfiAttachments] = useState([]);
+  const [rfiForm, setRfiForm] = useState({
+    rfiNumber: "",
+    title: "",
+    description: "",
+    conduitIds: [],
+  });
+  const [savingRfi, setSavingRfi] = useState(false);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [canView, setCanView] = useState(false);
   const [canManage, setCanManage] = useState(false);
@@ -1004,6 +1041,35 @@ const PanelSchedules = () => {
     loadSchedules();
   }, [loadSchedules]);
 
+  const loadRfiQuestions = useCallback(async () => {
+    if (!id || !selectedProjectId) {
+      setRfiQuestions([]);
+      return;
+    }
+
+    try {
+      const questionsQuery = query(
+        collection(db, "churches", id, "panelScheduleQuestions"),
+        where("projectId", "==", selectedProjectId)
+      );
+      const snapshot = await getDocs(questionsQuery);
+      const rows = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      rows.sort((left, right) => {
+        const leftTime = left?.updatedAt?.seconds || left?.createdAt?.seconds || 0;
+        const rightTime = right?.updatedAt?.seconds || right?.createdAt?.seconds || 0;
+        return Number(rightTime) - Number(leftTime);
+      });
+      setRfiQuestions(rows);
+    } catch (error) {
+      console.error("Failed to load panel schedule RFIs:", error);
+      setRfiQuestions([]);
+    }
+  }, [id, selectedProjectId]);
+
+  useEffect(() => {
+    loadRfiQuestions();
+  }, [loadRfiQuestions]);
+
   const selectedSchedule = useMemo(
     () => schedules.find((entry) => entry.id === selectedScheduleId) || null,
     [schedules, selectedScheduleId]
@@ -1067,6 +1133,60 @@ const PanelSchedules = () => {
     setExpandedCircuitKey("");
     setSelectedScheduleId(nextSchedule.id);
   };
+
+  const projectConduitRows = useMemo(() => {
+    const previewRows = Array.isArray(importPreview?.circuits) ? importPreview.circuits : [];
+    const savedRows = schedules.flatMap((schedule) => Array.isArray(schedule?.circuits) ? schedule.circuits : []);
+    const missingRows = schedules.flatMap((schedule) => Array.isArray(schedule?.missingCircuitRows) ? schedule.missingCircuitRows : []);
+    return [...previewRows, ...savedRows, ...missingRows];
+  }, [importPreview, schedules]);
+
+  const conduitOptions = useMemo(() => {
+    const conduitValues = projectConduitRows
+      .map((row) => normalizeText(row?.conduitId))
+      .filter((value) => value && !isIgnoredPanelLabel(value));
+
+    return Array.from(new Set(conduitValues)).sort((left, right) =>
+      left.localeCompare(right, undefined, { sensitivity: "base", numeric: true })
+    );
+  }, [projectConduitRows]);
+
+  const filteredConduitOptions = useMemo(() => {
+    const normalizedSearch = normalizeText(rfiConduitSearch).toLowerCase();
+    return conduitOptions.filter((conduitId) => {
+      if (!normalizedSearch) return true;
+      return conduitId.toLowerCase().includes(normalizedSearch);
+    });
+  }, [conduitOptions, rfiConduitSearch]);
+
+  const activeConduitDetails = useMemo(() => {
+    const selectedConduitIds = Array.isArray(rfiForm.conduitIds) ? rfiForm.conduitIds : [];
+    if (!selectedConduitIds.length) return [];
+
+    return projectConduitRows.filter((row) => {
+      const conduitId = normalizeText(row?.conduitId);
+      return selectedConduitIds.some((selectedId) => normalizeText(selectedId) === conduitId);
+    });
+  }, [projectConduitRows, rfiForm.conduitIds]);
+
+  const selectedConduitAssociations = useMemo(() => {
+    return rfiForm.conduitIds.map((conduitId) => {
+      const matchingRows = activeConduitDetails.filter(
+        (row) => normalizeText(row?.conduitId) === normalizeText(conduitId)
+      );
+      const firstValue = (field) => normalizeText(matchingRows.find((row) => normalizeText(row?.[field]))?.[field]) || "-";
+
+      return {
+        conduitId,
+        panelNames: Array.from(new Set(matchingRows.map((row) => normalizeText(row?.panelName)).filter(Boolean))),
+        circuitNumbers: Array.from(new Set(matchingRows.map((row) => normalizeCircuitNumber(row?.number)).filter((value) => value !== null))).sort((left, right) => left - right),
+        conduitSize: firstValue("conduitSize"),
+        feederSupplyFrom: firstValue("feederSupplyFrom"),
+        feederTo: firstValue("feederTo"),
+        toPullBox: firstValue("toPullBox"),
+      };
+    });
+  }, [activeConduitDetails, rfiForm.conduitIds]);
 
   const activePanelHeaders = useMemo(
     () => importPreview?.panelHeaders || selectedSchedule?.panelHeaders || [],
@@ -1941,6 +2061,297 @@ const PanelSchedules = () => {
     setColumnMapping({ ...EMPTY_MAPPING });
   };
 
+  const buildNextRfiNumber = useCallback((existingQuestions = []) => {
+    const numericValues = (existingQuestions || [])
+      .map((question) => normalizeText(question?.rfiNumber || ""))
+      .map((value) => {
+        const match = value.match(/(\d+)/g);
+        if (!match) return null;
+        const lastToken = match[match.length - 1];
+        return Number(lastToken);
+      })
+      .filter((value) => Number.isFinite(value));
+
+    const nextNumber = numericValues.length ? Math.max(...numericValues) + 1 : 1;
+    return `RFI-${String(nextNumber).padStart(3, "0")}`;
+  }, []);
+
+  const handledGeneratedRfiNumber = useMemo(
+    () => buildNextRfiNumber(rfiQuestions),
+    [buildNextRfiNumber, rfiQuestions]
+  );
+
+  const handleRfiFormChange = (field, value) => {
+    setRfiForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  };
+
+  const handleToggleConduitSelection = (conduitId) => {
+    const safeValue = normalizeText(conduitId);
+    if (!safeValue) return;
+
+    setRfiForm((previous) => {
+      const currentSelection = Array.isArray(previous.conduitIds) ? previous.conduitIds : [];
+      const nextSelection = currentSelection.includes(safeValue)
+        ? currentSelection.filter((entry) => normalizeText(entry) !== safeValue)
+        : [...currentSelection, safeValue];
+
+      return {
+        ...previous,
+        conduitIds: nextSelection,
+      };
+    });
+  };
+
+  const handleSelectFilteredConduits = () => {
+    setRfiForm((previous) => {
+      const currentSelection = Array.isArray(previous.conduitIds) ? previous.conduitIds : [];
+      const currentByValue = new Set(currentSelection.map((entry) => normalizeText(entry)));
+      const nextSelection = [...currentSelection];
+
+      filteredConduitOptions.forEach((conduitId) => {
+        if (!currentByValue.has(conduitId)) {
+          nextSelection.push(conduitId);
+        }
+      });
+
+      return { ...previous, conduitIds: nextSelection };
+    });
+  };
+
+  const handleClearConduitSelection = () => {
+    setRfiForm((previous) => ({ ...previous, conduitIds: [] }));
+  };
+
+  const handleSaveRfiQuestion = async (event) => {
+    event.preventDefault();
+
+    if (!id || !selectedProjectId || !user?.uid) {
+      toast.error("Select a project before saving an RFI question.");
+      return;
+    }
+
+    const rfiNumber = normalizeText(rfiForm.rfiNumber) || handledGeneratedRfiNumber;
+    const title = normalizeText(rfiForm.title);
+    const description = normalizeText(rfiForm.description);
+    const conduitIds = Array.isArray(rfiForm.conduitIds)
+      ? rfiForm.conduitIds.map((entry) => normalizeText(entry)).filter(Boolean)
+      : [];
+
+    if (!title || !description || !conduitIds.length) {
+      toast.error("Enter a title, description, and at least one conduit ID to save the question.");
+      return;
+    }
+
+    if (rfiAttachments.length && !storage) {
+      toast.error("File storage is not available. Please try again later.");
+      return;
+    }
+
+    const matchingConduitRows = activeConduitDetails;
+    const conduitSummary = matchingConduitRows.length
+      ? {
+          panelNames: Array.from(new Set(matchingConduitRows.map((row) => normalizeText(row?.panelName)).filter(Boolean))).slice(0, 10),
+          circuitNumbers: Array.from(new Set(matchingConduitRows.map((row) => normalizeCircuitNumber(row?.number)).filter((value) => value !== null))).sort((left, right) => left - right),
+          conduitSize: normalizeText(matchingConduitRows.find((row) => normalizeText(row?.conduitSize))?.conduitSize) || "",
+          feederSupplyFrom: normalizeText(matchingConduitRows.find((row) => normalizeText(row?.feederSupplyFrom))?.feederSupplyFrom) || "",
+          feederTo: normalizeText(matchingConduitRows.find((row) => normalizeText(row?.feederTo))?.feederTo) || "",
+          fromBranchCircuitPanel: normalizeText(matchingConduitRows.find((row) => normalizeText(row?.fromBranchCircuitPanel))?.fromBranchCircuitPanel) || "",
+          toPullBox: normalizeText(matchingConduitRows.find((row) => normalizeText(row?.toPullBox))?.toPullBox) || "",
+        }
+      : {};
+
+    const entryId = doc(collection(db, "churches", id, "panelScheduleQuestions")).id;
+
+    try {
+      setSavingRfi(true);
+      const attachments = [];
+      for (const file of rfiAttachments) {
+        const safeFileName = normalizeText(file.name).replace(/[^a-zA-Z0-9._-]/g, "_") || "attachment";
+        const attachmentPath = `churches/${id}/panelScheduleQuestions/${entryId}/${Date.now()}-${safeFileName}`;
+        const attachmentRef = storageRef(storage, attachmentPath);
+        const uploadTask = uploadBytesResumable(attachmentRef, file, {
+          contentType: file.type || "application/octet-stream",
+        });
+
+        await new Promise((resolve, reject) => uploadTask.on("state_changed", null, reject, resolve));
+        attachments.push({
+          name: file.name || "Attachment",
+          contentType: file.type || "application/octet-stream",
+          size: Number(file.size || 0),
+          storagePath: attachmentPath,
+          url: await getDownloadURL(attachmentRef),
+        });
+      }
+
+      const payload = {
+        projectId: selectedProjectId,
+        projectName: selectedProject?.name || "",
+        scheduleId: selectedSchedule?.id || importPreview?.id || "",
+        scheduleName: selectedSchedule?.name || importPreview?.name || "",
+        sourceFileName: selectedSchedule?.sourceFileName || importPreview?.sourceFileName || "",
+        rfiNumber,
+        title,
+        description,
+        conduitIds,
+        conduitId: conduitIds[0] || "",
+        conduitDetails: selectedConduitAssociations,
+        conduitSummary,
+        attachments,
+        createdBy: user.uid,
+        updatedBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      await setDoc(doc(db, "churches", id, "panelScheduleQuestions", entryId), payload);
+      toast.success(`Saved RFI ${rfiNumber}.`);
+      setRfiForm({ rfiNumber: "", title: "", description: "", conduitIds: [] });
+      setRfiConduitSearch("");
+      setRfiAttachments([]);
+      await loadRfiQuestions();
+    } catch (error) {
+      console.error("Failed to save panel schedule RFI question:", error);
+      toast.error("Failed to save RFI question.");
+    } finally {
+      setSavingRfi(false);
+    }
+  };
+
+  const handleDeleteRfiQuestion = async (questionId) => {
+    if (!id || !questionId) return;
+
+    const confirmed = window.confirm("Delete this RFI question?");
+    if (!confirmed) return;
+
+    try {
+      await deleteDoc(doc(db, "churches", id, "panelScheduleQuestions", questionId));
+      setRfiQuestions((current) => current.filter((entry) => entry.id !== questionId));
+      toast.success("RFI question deleted.");
+    } catch (error) {
+      console.error("Failed to delete RFI question:", error);
+      toast.error("Failed to delete RFI question.");
+    }
+  };
+
+  const handleDownloadRfiPdf = async (question) => {
+    try {
+      const [jspdfModule, autoTableModule] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const JsPdfConstructor = jspdfModule.jsPDF || jspdfModule.default?.jsPDF || jspdfModule.default;
+      const autoTable = autoTableModule.default || autoTableModule;
+      if (typeof JsPdfConstructor !== "function" || typeof autoTable !== "function") {
+        throw new Error("PDF generation libraries did not load correctly.");
+      }
+
+    const pdf = new JsPdfConstructor({ orientation: "portrait", unit: "pt", format: "letter" });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const margin = 48;
+    const createdDate = formatDateTime(question.createdAt || question.updatedAt) || new Date().toLocaleString();
+    const conduitDetails = Array.isArray(question.conduitDetails) ? question.conduitDetails : [];
+    const savedConduitIds = Array.isArray(question.conduitIds)
+      ? question.conduitIds
+      : question.conduitId
+        ? [question.conduitId]
+        : [];
+
+    pdf.setFillColor(13, 50, 67);
+    pdf.rect(0, 0, pageWidth, 84, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(22);
+    pdf.text("REQUEST FOR INFORMATION", margin, 38);
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "normal");
+    pdf.text("PANEL SCHEDULE COORDINATION", margin, 57);
+
+    pdf.setTextColor(15, 23, 42);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(15);
+    pdf.text(question.rfiNumber || "RFI", margin, 116);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.text(`Date: ${createdDate}`, pageWidth - margin, 116, { align: "right" });
+
+    autoTable(pdf, {
+      startY: 132,
+      theme: "grid",
+      styles: { font: "helvetica", fontSize: 9, cellPadding: 7, textColor: [15, 23, 42] },
+      headStyles: { fillColor: [232, 248, 250], textColor: [13, 50, 67], fontStyle: "bold" },
+      body: [
+        ["Project", question.projectName || selectedProject?.name || "-"],
+        ["Panel Schedule", question.scheduleName || "-"],
+        ["Status", "Open"],
+      ],
+      columnStyles: { 0: { cellWidth: 116, fontStyle: "bold" } },
+      margin: { left: margin, right: margin },
+    });
+
+    let cursorY = (pdf.lastAutoTable?.finalY || 200) + 28;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text("REQUEST TITLE", margin, cursorY);
+    cursorY += 16;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(11);
+    const titleLines = pdf.splitTextToSize(question.title || "-", pageWidth - margin * 2);
+    pdf.text(titleLines, margin, cursorY);
+    cursorY += titleLines.length * 14 + 18;
+
+    pdf.setFont("helvetica", "bold");
+    pdf.text("QUESTION / DESCRIPTION", margin, cursorY);
+    cursorY += 16;
+    pdf.setFont("helvetica", "normal");
+    const descriptionLines = pdf.splitTextToSize(question.description || "-", pageWidth - margin * 2);
+    pdf.text(descriptionLines, margin, cursorY);
+    cursorY += descriptionLines.length * 14 + 20;
+
+    const conduitRows = conduitDetails.length
+      ? conduitDetails.map((association) => [
+          association.conduitId || "-",
+          association.panelNames?.join(", ") || "-",
+          association.circuitNumbers?.join(", ") || "-",
+          association.conduitSize || "-",
+          association.feederSupplyFrom || "-",
+          association.feederTo || "-",
+          association.toPullBox || "-",
+        ])
+      : savedConduitIds.map((conduitId) => [conduitId, "-", "-", "-", "-", "-", "-"]);
+
+    if (conduitRows.length) {
+      autoTable(pdf, {
+        startY: cursorY,
+        head: [["Conduit ID", "Panel", "Circuit", "Size", "Feeder From", "Feeder To", "Pull Box"]],
+        body: conduitRows,
+        theme: "grid",
+        styles: { font: "helvetica", fontSize: 7.5, cellPadding: 5, overflow: "linebreak" },
+        headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: "bold" },
+        margin: { left: margin, right: margin },
+      });
+    }
+
+    const pageCount = pdf.internal.getNumberOfPages();
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      pdf.setPage(pageNumber);
+      pdf.setDrawColor(203, 213, 225);
+      pdf.line(margin, 744, pageWidth - margin, 744);
+      pdf.setFontSize(8);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`RFI ${question.rfiNumber || ""} | Page ${pageNumber} of ${pageCount}`, margin, 758);
+    }
+
+    const safeNumber = normalizeText(question.rfiNumber || "rfi").replace(/[^a-z0-9]+/gi, "-");
+    pdf.save(`${safeNumber}-request-for-information.pdf`);
+    } catch (error) {
+      console.error("Failed to generate RFI PDF:", error);
+      toast.error("Failed to generate the RFI PDF.");
+    }
+  };
+
   const handleProjectChange = (event) => {
     const nextProjectId = normalizeText(event.target.value);
     setSelectedProjectId(nextProjectId);
@@ -2061,6 +2472,7 @@ const PanelSchedules = () => {
           panelSchedule: "",
           planSheet: "",
           planSheetNote: "",
+          planSheetLink: "",
           singleLine: "",
           sheet: "",
           area: "",
@@ -2507,6 +2919,21 @@ const PanelSchedules = () => {
             >
               Status Table
             </button>
+            <button
+              type="button"
+              onClick={() => setPageTab("rfi-questions")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "999px",
+                border: "1px solid #d0d7de",
+                background: pageTab === "rfi-questions" ? "#0f172a" : "#fff",
+                color: pageTab === "rfi-questions" ? "#fff" : "#0f172a",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              RFI Questions
+            </button>
           </div>
 
           {excelRows.length > 0 && !importPreview ? (
@@ -2540,6 +2967,275 @@ const PanelSchedules = () => {
                 <button type="button" onClick={clearExcelDraft}>Clear File</button>
               </div>
             </section>
+          ) : null}
+
+          {pageTab === "rfi-questions" ? (
+            <div style={{ display: "grid", gap: "16px", width: "100%" }}>
+              {!selectedProjectId ? (
+                <div className="panel-schedules-state">Choose a project to create and track RFIs.</div>
+              ) : (
+                <>
+                  <section className="panel-schedules-section" style={{ width: "100%" }}>
+                    <div className="panel-schedules-report-heading" style={{ marginBottom: "12px" }}>
+                      <h2>Create RFI Question</h2>
+                    </div>
+
+                    <form onSubmit={handleSaveRfiQuestion} style={{ display: "grid", gap: "12px" }}>
+                      <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                        <label style={{ display: "grid", gap: "6px", fontWeight: 600 }}>
+                          <span>RFI #</span>
+                          <div
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: "8px",
+                              border: "1px solid #d0d7de",
+                              background: "#f8fafc",
+                              minHeight: "42px",
+                              display: "flex",
+                              alignItems: "center",
+                            }}
+                          >
+                            {normalizeText(rfiForm.rfiNumber) || handledGeneratedRfiNumber}
+                          </div>
+                        </label>
+
+                        <label style={{ display: "grid", gap: "6px", fontWeight: 600, gridColumn: "1 / -1" }}>
+                          <span>Title</span>
+                          <input
+                            type="text"
+                            value={rfiForm.title}
+                            onChange={(event) => handleRfiFormChange("title", event.target.value)}
+                            placeholder="Conduit routing question"
+                            disabled={!canManage}
+                            style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid #d0d7de" }}
+                          />
+                        </label>
+
+                        <fieldset className="panel-schedules-conduit-picker" disabled={!canManage || !conduitOptions.length}>
+                          <legend>Associated conduit IDs</legend>
+                          <div className="panel-schedules-conduit-picker-heading">
+                            <span className="panel-schedules-conduit-picker-status">
+                              {rfiForm.conduitIds.length ? `${rfiForm.conduitIds.length} selected` : "No conduits selected"}
+                            </span>
+                            <div className="panel-schedules-conduit-picker-actions">
+                              <button type="button" onClick={handleSelectFilteredConduits} disabled={!filteredConduitOptions.length}>
+                                Select results
+                              </button>
+                              <button type="button" onClick={handleClearConduitSelection} disabled={!rfiForm.conduitIds.length}>
+                                Clear selection
+                              </button>
+                            </div>
+                          </div>
+                          <input
+                            className="panel-schedules-conduit-search"
+                            type="search"
+                            value={rfiConduitSearch}
+                            onChange={(event) => setRfiConduitSearch(event.target.value)}
+                            placeholder="Search imported conduit IDs"
+                            aria-label="Search conduit IDs"
+                          />
+                          {rfiForm.conduitIds.length ? (
+                            <div className="panel-schedules-conduit-chips" aria-label="Selected conduit IDs">
+                              {rfiForm.conduitIds.map((conduitId) => (
+                                <span key={conduitId} className="panel-schedules-conduit-chip">
+                                  {conduitId}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleConduitSelection(conduitId)}
+                                    aria-label={`Remove ${conduitId}`}
+                                    title={`Remove ${conduitId}`}
+                                  >
+                                    x
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="panel-schedules-conduit-options" role="group" aria-label="Available conduit IDs">
+                            {filteredConduitOptions.length ? (
+                              filteredConduitOptions.map((conduitId) => {
+                                const isSelected = rfiForm.conduitIds.some((selectedId) => normalizeText(selectedId) === conduitId);
+                                return (
+                                  <label key={conduitId} className={`panel-schedules-conduit-option${isSelected ? " is-selected" : ""}`}>
+                                    <input type="checkbox" checked={isSelected} onChange={() => handleToggleConduitSelection(conduitId)} />
+                                    <span>{conduitId}</span>
+                                  </label>
+                                );
+                              })
+                            ) : (
+                              <span className="panel-schedules-conduit-empty">No imported conduit IDs match your search.</span>
+                            )}
+                          </div>
+                        </fieldset>
+                      </div>
+
+                      <label style={{ display: "grid", gap: "6px", fontWeight: 600 }}>
+                        <span>Description</span>
+                        <textarea
+                          value={rfiForm.description}
+                          onChange={(event) => handleRfiFormChange("description", event.target.value)}
+                          placeholder="Clarify routing, sizing, or confirmation needed for this conduit."
+                          disabled={!canManage}
+                          rows={5}
+                          style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid #d0d7de", resize: "vertical" }}
+                        />
+                      </label>
+
+                      <label style={{ display: "grid", gap: "6px", fontWeight: 600 }}>
+                        <span>Attachments</span>
+                        <input
+                          type="file"
+                          multiple
+                          onChange={(event) => setRfiAttachments(Array.from(event.target.files || []))}
+                          disabled={!canManage || savingRfi}
+                          style={{ padding: "8px", border: "1px solid #d0d7de", borderRadius: "8px", background: "#fff" }}
+                        />
+                        <span style={{ color: "#64748b", fontSize: "13px", fontWeight: 400 }}>
+                          {rfiAttachments.length ? `${rfiAttachments.length} file(s) ready to attach` : "Attach documents or images to this RFI."}
+                        </span>
+                      </label>
+
+                      {selectedConduitAssociations.length ? (
+                        <div style={{ border: "1px solid #dfe3e8", borderRadius: "12px", background: "#f8fafc", padding: "12px" }}>
+                          <strong>Associated conduit details</strong>
+                          <div style={{ display: "grid", gap: "10px", marginTop: "8px" }}>
+                            {selectedConduitAssociations.map((association) => (
+                              <div key={association.conduitId} style={{ display: "grid", gap: "4px", padding: "10px", border: "1px solid #dfe3e8", borderRadius: "8px", background: "#fff" }}>
+                                <strong>Conduit ID: {association.conduitId}</strong>
+                                <span>Panel(s): {association.panelNames.join(", ") || "-"}</span>
+                                <span>Circuit(s): {association.circuitNumbers.join(", ") || "-"}</span>
+                                <span>Conduit Size: {association.conduitSize}</span>
+                                <span>Feeder Supply From: {association.feederSupplyFrom}</span>
+                                <span>Feeder To: {association.feederTo}</span>
+                                <span>To Pull Box: {association.toPullBox}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                        <button
+                          type="submit"
+                          disabled={!canManage || savingRfi}
+                          style={{
+                            padding: "10px 16px",
+                            borderRadius: "10px",
+                            border: "1px solid #0f172a",
+                            background: "#0f172a",
+                            color: "#fff",
+                            cursor: canManage && !savingRfi ? "pointer" : "not-allowed",
+                            opacity: canManage ? 1 : 0.5,
+                          }}
+                        >
+                          {savingRfi ? "Saving..." : "Save RFI Question"}
+                        </button>
+                      </div>
+                    </form>
+                  </section>
+
+                  <section className="panel-schedules-section" style={{ width: "100%" }}>
+                    <div className="panel-schedules-report-heading" style={{ marginBottom: "12px" }}>
+                      <h2>RFI Log ({rfiQuestions.length})</h2>
+                    </div>
+
+                    {rfiQuestions.length ? (
+                      <div style={{ display: "grid", gap: "12px" }}>
+                        {rfiQuestions.map((question) => {
+                          const isExpanded = expandedRfiQuestionId === question.id;
+                          const savedConduitIds = Array.isArray(question.conduitIds)
+                            ? question.conduitIds
+                            : question.conduitId
+                              ? [question.conduitId]
+                              : [];
+
+                          return (
+                          <article key={question.id} style={{ border: "1px solid #dfe3e8", borderRadius: "12px", padding: "12px", background: "#fff" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedRfiQuestionId((current) => current === question.id ? "" : question.id)}
+                                aria-expanded={isExpanded}
+                                style={{ display: "grid", flex: "1 1 280px", gap: "4px", minWidth: 0, padding: 0, border: "none", color: "#0f172a", background: "transparent", textAlign: "left", cursor: "pointer" }}
+                              >
+                                <strong>{question.rfiNumber || "RFI"}</strong>
+                                <span style={{ fontWeight: 600 }}>{question.title}</span>
+                                <span style={{ color: "#0f766e", fontSize: "13px", fontWeight: 700 }}>{isExpanded ? "Hide associated conduits" : "Show associated conduits"}</span>
+                              </button>
+                              {canManage ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRfiQuestion(question.id)}
+                                  style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #dc2626", background: "#fff", color: "#dc2626", cursor: "pointer" }}
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadRfiPdf(question)}
+                                style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #0f766e", background: "#fff", color: "#0f766e", cursor: "pointer" }}
+                              >
+                                Download PDF
+                              </button>
+                            </div>
+
+                            <p style={{ margin: "8px 0", color: "#334155" }}>{question.description}</p>
+                            {isExpanded ? (
+                              <div style={{ display: "grid", gap: "8px", paddingTop: "10px", borderTop: "1px solid #e2e8f0" }}>
+                                {Array.isArray(question.attachments) && question.attachments.length ? (
+                                  <div style={{ display: "grid", gap: "8px" }}>
+                                    <strong style={{ color: "#0f172a" }}>Attachments</strong>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                                      {question.attachments.map((attachment, index) => {
+                                        const isImage = normalizeText(attachment.contentType).startsWith("image/");
+                                        return (
+                                          <a
+                                            key={`${attachment.storagePath || attachment.url}-${index}`}
+                                            href={attachment.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{ display: "grid", gap: "6px", maxWidth: "220px", padding: "8px", border: "1px solid #dfe3e8", borderRadius: "8px", color: "#0f766e", background: "#fff", textDecoration: "none", fontSize: "13px" }}
+                                          >
+                                            {isImage ? <img src={attachment.url} alt={attachment.name || "RFI attachment"} style={{ display: "block", width: "100%", maxHeight: "150px", objectFit: "contain", background: "#f8fafc" }} /> : null}
+                                            <span style={{ overflowWrap: "anywhere", fontWeight: 700 }}>{attachment.name || "View attachment"}</span>
+                                          </a>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {Array.isArray(question.conduitDetails) && question.conduitDetails.length ? (
+                                  question.conduitDetails.map((association) => (
+                                    <div key={association.conduitId} style={{ display: "grid", gap: "3px", padding: "8px", borderLeft: "3px solid #0f766e", background: "#f8fafc", fontSize: "14px", color: "#475569" }}>
+                                      <strong style={{ color: "#0f172a" }}>Conduit ID: {association.conduitId}</strong>
+                                      <span>Panel(s): {association.panelNames?.join(", ") || "-"}</span>
+                                      <span>Circuit(s): {association.circuitNumbers?.join(", ") || "-"}</span>
+                                      <span>Conduit Size: {association.conduitSize || "-"}</span>
+                                      <span>Feeder Supply From: {association.feederSupplyFrom || "-"}</span>
+                                      <span>Feeder To: {association.feederTo || "-"}</span>
+                                      <span>To Pull Box: {association.toPullBox || "-"}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div style={{ padding: "8px", color: "#475569", background: "#f8fafc", fontSize: "14px" }}>
+                                    <strong style={{ color: "#0f172a" }}>Associated conduit ID(s): </strong>
+                                    {savedConduitIds.join(", ") || "No conduit details saved for this RFI."}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+                          </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p>No RFIs have been created for this project yet.</p>
+                    )}
+                  </section>
+                </>
+              )}
+            </div>
           ) : null}
 
           {pageTab === "status-table" ? (
@@ -3218,6 +3914,8 @@ const PanelSchedules = () => {
                                         conduitColor={
                                           conduitColorByIdentity.get(normalizePanelIdentity(oddCircuit?.conduitId || "")) || null
                                         }
+                                        planSheetNote={sectionPanel?.planSheetNote}
+                                        planSheetLink={sectionPanel?.planSheetLink}
                                       />
                                       <CircuitCard
                                         circuitNumber={evenCircuit?.number || baseNumber + 1}
@@ -3230,6 +3928,8 @@ const PanelSchedules = () => {
                                         conduitColor={
                                           conduitColorByIdentity.get(normalizePanelIdentity(evenCircuit?.conduitId || "")) || null
                                         }
+                                        planSheetNote={sectionPanel?.planSheetNote}
+                                        planSheetLink={sectionPanel?.planSheetLink}
                                       />
                                     </>
                                   );
