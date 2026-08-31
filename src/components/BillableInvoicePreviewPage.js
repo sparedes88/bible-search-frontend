@@ -191,9 +191,11 @@ const BillableInvoicePreviewPage = () => {
 
       mergedDocs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data() || {};
+        // Prefer First + Last Name, matching the naming convention used across Pay Everyone.
+        const firstLastName = [data.firstName, data.lastName].filter(Boolean).join(" ").trim();
         const fullName = String(
-          data.name
-          || [data.firstName, data.lastName].filter(Boolean).join(" ")
+          firstLastName
+          || data.name
           || data.displayName
           || data.email
           || snapshotDoc.id
@@ -1160,7 +1162,7 @@ const BillableInvoicePreviewPage = () => {
                   {Array.from(new Set([
                     ...organizationMembers,
                     ...effectiveUsers.map((userEntry) => userEntry.name),
-                    String(user?.name || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.displayName || user?.email || "").trim(),
+                    String([user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.name || user?.displayName || user?.email || "").trim(),
                   ].filter(Boolean))).sort((left, right) => left.localeCompare(right)).map((personName) => (
                     <option key={personName} value={personName} />
                   ))}
