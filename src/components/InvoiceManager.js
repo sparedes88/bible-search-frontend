@@ -4017,6 +4017,7 @@ const InvoiceManager = () => {
       paymentTerms: String(invoice.paymentTerms || "net30").trim().toLowerCase() || "net30",
       isPaid: invoice.isPaid || false,
       invoiceStatus: normalizeInvoiceStatus(invoice.invoiceStatus, invoice.total, invoice.invoiceNumber),
+      billingSource: normalizeBillingSource(invoice.billingSource),
     });
   };
 
@@ -4029,7 +4030,18 @@ const InvoiceManager = () => {
 
     const weekNumber = parseWeekNumber(editInvoiceDraft.weekNumber);
     const invoiceNumber = normalizeInvoiceNumber(editInvoiceDraft.invoiceNumber);
-    const total = parseMoney(editInvoiceDraft.total);
+    const billingSource = normalizeBillingSource(editInvoiceDraft.billingSource);
+    const editingRowHoursData = invoiceHoursById[editingInvoiceId] || {
+      totalRegularMilliseconds: 0,
+      totalOvertimeMilliseconds: 0,
+    };
+    const editingRowLaborCost = getLaborCostFromSplit(
+      editingRowHoursData.totalRegularMilliseconds,
+      editingRowHoursData.totalOvertimeMilliseconds
+    );
+    const total = billingSource === "main_system"
+      ? Number(editingRowLaborCost.totalCost.toFixed(2))
+      : parseMoney(editInvoiceDraft.total);
     const paymentTerms = String(editInvoiceDraft.paymentTerms || "net30").trim().toLowerCase() || "net30";
     const invoiceStatus = normalizeInvoiceStatus(editInvoiceDraft.invoiceStatus, total, invoiceNumber);
     const netDays = resolveNetDays(paymentTerms);
@@ -4113,6 +4125,7 @@ const InvoiceManager = () => {
         netDays,
         isPaid: editInvoiceDraft.isPaid,
         invoiceStatus,
+        billingSource,
         isPlaceholder: false,
         generatedFromWeek: null,
         updatedAt: serverTimestamp(),
@@ -5763,8 +5776,13 @@ const InvoiceManager = () => {
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    title="Invoice Total"
-                                    value={editInvoiceDraft.total}
+                                    title={normalizeBillingSource(editInvoiceDraft.billingSource) === "freshbooks" ? "Invoice Total" : "Total is calculated from Hours & Labor cost while Billing Source is Main System"}
+                                    value={
+                                      normalizeBillingSource(editInvoiceDraft.billingSource) === "freshbooks"
+                                        ? editInvoiceDraft.total
+                                        : rowLaborCost.totalCost.toFixed(2)
+                                    }
+                                    disabled={normalizeBillingSource(editInvoiceDraft.billingSource) !== "freshbooks"}
                                     onChange={(event) =>
                                       setEditInvoiceDraft((prev) => ({ ...prev, total: event.target.value }))
                                     }
@@ -5872,6 +5890,27 @@ const InvoiceManager = () => {
                                   }
                                   style={{ width: "18px", height: "18px", cursor: "pointer" }}
                                 />
+                              </td>
+                              <td style={tableBodyCellStyle}>
+                                <select
+                                  style={{ ...compactInputStyle, minWidth: "120px" }}
+                                  title="Billing Source"
+                                  value={normalizeBillingSource(editInvoiceDraft.billingSource)}
+                                  onChange={(event) => {
+                                    const nextSource = normalizeBillingSource(event.target.value);
+                                    setEditInvoiceDraft((prev) => ({
+                                      ...prev,
+                                      billingSource: nextSource,
+                                      total: nextSource === "main_system" ? rowLaborCost.totalCost.toFixed(2) : prev.total,
+                                    }));
+                                  }}
+                                >
+                                  {BILLING_SOURCE_OPTIONS.map((option) => (
+                                    <option key={`edit-billing-source-${invoice.id}-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
                               </td>
                               <td style={tableBodyCellStyle}>
                                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
