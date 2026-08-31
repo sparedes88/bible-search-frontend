@@ -1972,9 +1972,7 @@ const BillableInvoicePreviewPage = () => {
               .map((card) => {
                 const cardId = String(card.label || card.issueId || "").trim();
                 const cardTitle = getIssueTitleText(card);
-                const projectName = String(card.projectName || "").trim();
-                const idAndProject = projectName ? `${cardId || "TD"} (${projectName})` : (cardId || "TD");
-                return cardTitle ? `${idAndProject}: ${cardTitle}` : idAndProject;
+                return cardTitle ? `${cardId || "TD"}: ${cardTitle}` : cardId;
               })
               .filter(Boolean);
 
@@ -2105,14 +2103,13 @@ const BillableInvoicePreviewPage = () => {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 2.6fr)",
+                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2.6fr)",
                         width: "100%",
                         background: "#F8FAFC",
                         borderBottom: "1px solid #E5E7EB",
                       }}
                     >
                       <div style={tableHeaderCellStyle}>TD Card</div>
-                      <div style={tableHeaderCellStyle}>Project</div>
                       <div style={tableHeaderCellStyle}>Details</div>
                     </div>
                   )}
@@ -2121,14 +2118,13 @@ const BillableInvoicePreviewPage = () => {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 2.6fr)",
+                        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2.6fr)",
                         width: "100%",
                       }}
                     >
                       {cards.map((card, cardIndex) => (
                         <React.Fragment key={`work-summary-${userIndex}-card-${cardIndex}`}>
                           <div style={tableBodyCellStyle}>{card.issueId || card.label || "-"}</div>
-                          <div style={tableBodyCellStyle}>{card.projectName || "-"}</div>
                           <div style={tableBodyCellStyle}>{getIssueDetailsText(card) || "-"}</div>
                         </React.Fragment>
                       ))}
