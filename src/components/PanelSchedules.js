@@ -870,6 +870,9 @@ const PanelSchedules = () => {
     conduitIds: [],
   });
   const [savingRfi, setSavingRfi] = useState(false);
+  const [movingRfiQuestionId, setMovingRfiQuestionId] = useState("");
+  const [moveRfiTargetProjectId, setMoveRfiTargetProjectId] = useState("");
+  const [movingRfiInProgress, setMovingRfiInProgress] = useState(false);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [canView, setCanView] = useState(false);
   const [canManage, setCanManage] = useState(false);
@@ -2236,6 +2239,48 @@ const PanelSchedules = () => {
     }
   };
 
+  const startMovingRfiQuestion = (question) => {
+    setMovingRfiQuestionId(question.id);
+    setMoveRfiTargetProjectId("");
+  };
+
+  const cancelMovingRfiQuestion = () => {
+    setMovingRfiQuestionId("");
+    setMoveRfiTargetProjectId("");
+  };
+
+  const handleMoveRfiQuestion = async (questionId) => {
+    if (!id || !questionId || !moveRfiTargetProjectId) return;
+    if (moveRfiTargetProjectId === selectedProjectId) {
+      cancelMovingRfiQuestion();
+      return;
+    }
+
+    const targetProject = projects.find((project) => project.id === moveRfiTargetProjectId);
+    if (!targetProject) {
+      toast.error("Select a valid destination project.");
+      return;
+    }
+
+    setMovingRfiInProgress(true);
+    try {
+      await updateDoc(doc(db, "churches", id, "panelScheduleQuestions", questionId), {
+        projectId: targetProject.id,
+        projectName: targetProject.name || "",
+        updatedBy: user?.uid || "",
+        updatedAt: serverTimestamp(),
+      });
+      setRfiQuestions((current) => current.filter((entry) => entry.id !== questionId));
+      toast.success(`Moved RFI to ${targetProject.name || "the selected project"}.`);
+      cancelMovingRfiQuestion();
+    } catch (error) {
+      console.error("Failed to move RFI question:", error);
+      toast.error("Failed to move RFI question.");
+    } finally {
+      setMovingRfiInProgress(false);
+    }
+  };
+
   const handleDownloadRfiPdf = async (question) => {
     try {
       const [jspdfModule, autoTableModule] = await Promise.all([
@@ -3165,6 +3210,15 @@ const PanelSchedules = () => {
                               {canManage ? (
                                 <button
                                   type="button"
+                                  onClick={() => startMovingRfiQuestion(question)}
+                                  style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #2563eb", background: "#fff", color: "#2563eb", cursor: "pointer" }}
+                                >
+                                  Move to Project
+                                </button>
+                              ) : null}
+                              {canManage ? (
+                                <button
+                                  type="button"
                                   onClick={() => handleDeleteRfiQuestion(question.id)}
                                   style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #dc2626", background: "#fff", color: "#dc2626", cursor: "pointer" }}
                                 >
@@ -3179,6 +3233,44 @@ const PanelSchedules = () => {
                                 Download PDF
                               </button>
                             </div>
+
+                            {movingRfiQuestionId === question.id ? (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", marginTop: "10px", padding: "10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: "#334155", fontWeight: 700 }}>
+                                  Destination project
+                                  <select
+                                    value={moveRfiTargetProjectId}
+                                    onChange={(event) => setMoveRfiTargetProjectId(event.target.value)}
+                                    style={{ padding: "6px 8px", borderRadius: "8px", border: "1px solid #cbd5e1", minWidth: "220px" }}
+                                  >
+                                    <option value="">Select a project</option>
+                                    {projects
+                                      .filter((project) => project.id !== selectedProjectId)
+                                      .map((project) => (
+                                        <option key={project.id} value={project.id}>
+                                          {project.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveRfiQuestion(question.id)}
+                                  disabled={!moveRfiTargetProjectId || movingRfiInProgress}
+                                  style={{ padding: "8px 12px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: !moveRfiTargetProjectId || movingRfiInProgress ? "not-allowed" : "pointer", opacity: !moveRfiTargetProjectId || movingRfiInProgress ? 0.7 : 1 }}
+                                >
+                                  {movingRfiInProgress ? "Moving..." : "Confirm Move"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelMovingRfiQuestion}
+                                  disabled={movingRfiInProgress}
+                                  style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontWeight: 700, cursor: movingRfiInProgress ? "not-allowed" : "pointer" }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : null}
 
                             <p style={{ margin: "8px 0", color: "#334155" }}>{question.description}</p>
                             {isExpanded ? (
