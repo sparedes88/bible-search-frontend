@@ -856,6 +856,9 @@ const BillableInvoicePreviewPage = () => {
     const startedAt = new Date(`${entryFields.date}T${entryFields.startTime}`).getTime();
     const endedAt = new Date(`${entryFields.date}T${entryFields.endTime}`).getTime();
     const identity = resolveIdentityForPersonName(personName);
+    // Use whatever raw name this person's real Time Rotate logs already use most (if any),
+    // so the new entry shows up as the same person there instead of a differently-named one.
+    const registeredByName = preferredRegisteredByByCanonicalName[personName.toLowerCase()] || personName;
     const timeRotateLogPayload = {
       issueId: entryFields.issueId,
       issueLabel: entryFields.cardTitle,
@@ -863,7 +866,7 @@ const BillableInvoicePreviewPage = () => {
       projectName: entryFields.projectName,
       userId: identity.userId,
       userEmail: identity.userEmail,
-      registeredBy: personName,
+      registeredBy: registeredByName,
       startedAt,
       endedAt,
       durationMs: endedAt - startedAt,
@@ -1032,6 +1035,50 @@ const BillableInvoicePreviewPage = () => {
       })
       .sort((left, right) => right.lineTotal - left.lineTotal);
   }, [draftPayload, manualTimeEntries]);
+
+  // Keeps new time entries consistent with each person's established naming convention in
+  // Time Rotate (e.g. most of Salomon's real logs say "Salomon", not "Salomon Paredes") by
+  // picking the raw name variant used on the most hours for that person, instead of the
+  // longer display name shown in the summary.
+  const preferredRegisteredByByCanonicalName = useMemo(() => {
+    const baseUsers = Array.isArray(draftPayload?.users) ? draftPayload.users : [];
+
+    const canonicalNameByShortName = new Map();
+    const sortedByNameLength = [...baseUsers].sort((left, right) =>
+      String(right.name || "").trim().length - String(left.name || "").trim().length
+    );
+    sortedByNameLength.forEach((userEntry) => {
+      const fullName = String(userEntry.name || "").trim();
+      if (!fullName) return;
+      const firstWord = fullName.split(/\s+/)[0].toLowerCase();
+      if (firstWord && !canonicalNameByShortName.has(firstWord)) {
+        canonicalNameByShortName.set(firstWord, fullName);
+      }
+    });
+
+    const bestVariantByCanonicalKey = new Map();
+    baseUsers.forEach((userEntry) => {
+      const fullName = String(userEntry.name || "").trim();
+      if (!fullName) return;
+      const normalizedFullName = fullName.toLowerCase();
+      const isSingleWordName = !fullName.includes(" ");
+      const canonicalName = isSingleWordName ? canonicalNameByShortName.get(normalizedFullName) : null;
+      const resolvedName = (canonicalName && canonicalName.toLowerCase() !== normalizedFullName) ? canonicalName : fullName;
+      const canonicalKey = resolvedName.toLowerCase();
+
+      const hours = Number(userEntry.totalHours || 0);
+      const current = bestVariantByCanonicalKey.get(canonicalKey);
+      if (!current || hours > current.hours) {
+        bestVariantByCanonicalKey.set(canonicalKey, { name: fullName, hours });
+      }
+    });
+
+    const lookup = {};
+    bestVariantByCanonicalKey.forEach((entry, canonicalKey) => {
+      lookup[canonicalKey] = entry.name;
+    });
+    return lookup;
+  }, [draftPayload]);
 
   const effectiveTotals = useMemo(() => {
     const totals = effectiveUsers.reduce((accumulator, userEntry) => ({
