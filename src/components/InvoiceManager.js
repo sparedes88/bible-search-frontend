@@ -5652,7 +5652,7 @@ const InvoiceManager = () => {
                                     }
                                   />
                                 ) : (
-                                  <span title="Week Name or Number">{`Week ${editInvoiceDraft.weekNumber || "-"}`}</span>
+                                  <span title="Week Name or Number">{`#${editInvoiceDraft.weekNumber || "-"}`}</span>
                                 )}
                               </td>
                               <td style={tableBodyCellStyle}>
@@ -5886,7 +5886,7 @@ const InvoiceManager = () => {
                                     !
                                   </span>
                                 ) : null}
-                                <span>{`Week ${invoice.weekNumber}`}</span>
+                                <span>{`#${invoice.weekNumber}`}</span>
                               </div>
                               {weekGapInfo.hasGap ? (
                                 <button
