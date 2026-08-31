@@ -2076,7 +2076,7 @@ const BillableInvoicePreviewPage = () => {
                 }}
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
-                  {userEntry.name || "Unknown User"}
+                  {`Drafter #${userIndex + 1} — ${userEntry.name || "Unknown User"}`}
                 </div>
                 <div style={{ width: "100%", boxSizing: "border-box" }}>
                   {cards.length === 0 ? (
