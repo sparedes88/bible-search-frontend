@@ -1972,7 +1972,9 @@ const BillableInvoicePreviewPage = () => {
               .map((card) => {
                 const cardId = String(card.label || card.issueId || "").trim();
                 const cardTitle = getIssueTitleText(card);
-                return cardTitle ? `${cardId || "TD"}: ${cardTitle}` : cardId;
+                const projectName = String(card.projectName || "").trim();
+                const idAndProject = projectName ? `${cardId || "TD"} (${projectName})` : (cardId || "TD");
+                return cardTitle ? `${idAndProject}: ${cardTitle}` : idAndProject;
               })
               .filter(Boolean);
 
