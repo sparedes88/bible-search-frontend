@@ -7,6 +7,7 @@ import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import { getChurchData } from "../api/church";
 import { db } from "../firebase";
+import { useAuth } from "../contexts/AuthContext";
 
 const SECTION_DEFS = [
   { key: "companyHeader", label: "Company Header & Client" },
@@ -134,6 +135,7 @@ const blobToDataUrl = (blob) =>
 const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
+  const { user } = useAuth();
   const pdfContentRef = useRef(null);
   const [companyBranding, setCompanyBranding] = useState({ name: "", logo: "" });
   const [logoDataUrl, setLogoDataUrl] = useState("");
@@ -204,7 +206,6 @@ const BillableInvoicePreviewPage = () => {
         Array.from(nextMembersById.values()).sort((left, right) => left.localeCompare(right))
       );
     };
-
     const unsubscribers = userQueries.map((userQuery, queryIndex) => onSnapshot(userQuery, (snapshot) => {
       userQueryDocs[queryIndex] = snapshot.docs;
       buildMembersFromSnapshots();
@@ -1159,7 +1160,8 @@ const BillableInvoicePreviewPage = () => {
                   {Array.from(new Set([
                     ...organizationMembers,
                     ...effectiveUsers.map((userEntry) => userEntry.name),
-                  ])).sort((left, right) => left.localeCompare(right)).map((personName) => (
+                    String(user?.name || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.displayName || user?.email || "").trim(),
+                  ].filter(Boolean))).sort((left, right) => left.localeCompare(right)).map((personName) => (
                     <option key={personName} value={personName} />
                   ))}
                 </datalist>
