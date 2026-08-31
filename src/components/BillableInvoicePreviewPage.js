@@ -18,7 +18,7 @@ const SECTION_DEFS = [
 ];
 
 const DEFAULT_SECTION_VISIBILITY = SECTION_DEFS.reduce((acc, section) => {
-  acc[section.key] = section.key !== "issuesNotes";
+  acc[section.key] = section.key !== "issuesNotes" && section.key !== "workSummary";
   return acc;
 }, {});
 
