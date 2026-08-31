@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import * as html2pdfLib from "html2pdf.js";
-import { addDoc, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import { getChurchData } from "../api/church";
@@ -158,6 +158,60 @@ const BillableInvoicePreviewPage = () => {
 
     return () => {
       isMounted = false;
+    };
+  }, [id]);
+
+  // Loads every org member (any role, including global admins) so the "Add Person Time" form
+  // can suggest people even if they haven't logged hours on this invoice yet.
+  const [organizationMembers, setOrganizationMembers] = useState([]);
+
+  useEffect(() => {
+    if (!id) {
+      setOrganizationMembers([]);
+      return () => {};
+    }
+
+    const usersRef = collection(db, "users");
+    const numericId = Number(id);
+    const organizationIds = [id, Number.isFinite(numericId) ? numericId : null].filter(
+      (value, index, values) => value !== null && values.indexOf(value) === index
+    );
+    const userQueries = organizationIds.flatMap((organizationId) => [
+      query(usersRef, where("churchId", "==", organizationId)),
+      query(usersRef, where("churchID", "==", organizationId)),
+      query(usersRef, where("organizationId", "==", organizationId)),
+    ]);
+    const userQueryDocs = userQueries.map(() => []);
+
+    const buildMembersFromSnapshots = () => {
+      const mergedDocs = userQueryDocs.flat();
+      const nextMembersById = new Map();
+
+      mergedDocs.forEach((snapshotDoc) => {
+        const data = snapshotDoc.data() || {};
+        const fullName = String(
+          data.name
+          || [data.firstName, data.lastName].filter(Boolean).join(" ")
+          || data.displayName
+          || data.email
+          || snapshotDoc.id
+        ).trim();
+        if (!fullName) return;
+        nextMembersById.set(snapshotDoc.id, fullName);
+      });
+
+      setOrganizationMembers(
+        Array.from(nextMembersById.values()).sort((left, right) => left.localeCompare(right))
+      );
+    };
+
+    const unsubscribers = userQueries.map((userQuery, queryIndex) => onSnapshot(userQuery, (snapshot) => {
+      userQueryDocs[queryIndex] = snapshot.docs;
+      buildMembersFromSnapshots();
+    }));
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [id]);
 
@@ -1102,8 +1156,11 @@ const BillableInvoicePreviewPage = () => {
                   style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
                 />
                 <datalist id="billable-invoice-person-options">
-                  {effectiveUsers.map((userEntry) => (
-                    <option key={userEntry.name} value={userEntry.name} />
+                  {Array.from(new Set([
+                    ...organizationMembers,
+                    ...effectiveUsers.map((userEntry) => userEntry.name),
+                  ])).sort((left, right) => left.localeCompare(right)).map((personName) => (
+                    <option key={personName} value={personName} />
                   ))}
                 </datalist>
               </label>
