@@ -533,10 +533,211 @@ const BillableInvoicePreviewPage = () => {
     }
   };
 
+  const [manualTimeEntries, setManualTimeEntries] = useState([]);
+  const [isAddingManualEntry, setIsAddingManualEntry] = useState(false);
+  const [manualEntryDraft, setManualEntryDraft] = useState({
+    personName: "",
+    projectName: "",
+    issueId: "",
+    cardTitle: "",
+    date: "",
+    startTime: "",
+    endTime: "",
+  });
+  const [isSavingManualEntry, setIsSavingManualEntry] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSavedManualTimeEntries = async () => {
+      if (!invoiceDocRef) return;
+
+      try {
+        const invoiceSnap = await getDoc(invoiceDocRef);
+        const savedEntries = invoiceSnap.data()?.billableManualTimeEntries;
+        if (isMounted && Array.isArray(savedEntries)) {
+          setManualTimeEntries(savedEntries);
+        }
+      } catch (error) {
+        console.error("Failed to load saved manual time entries:", error);
+      }
+    };
+
+    loadSavedManualTimeEntries();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [invoiceDocRef]);
+
+  const persistManualTimeEntries = async (nextEntries) => {
+    setManualTimeEntries(nextEntries);
+    if (!invoiceDocRef) return;
+
+    setIsSavingManualEntry(true);
+    try {
+      await updateDoc(invoiceDocRef, {
+        billableManualTimeEntries: nextEntries,
+        billableManualTimeEntriesUpdatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Failed to save manual time entries:", error);
+      toast.error("Failed to save the added time entry.");
+    } finally {
+      setIsSavingManualEntry(false);
+    }
+  };
+
+  const getManualEntryHours = (entry) => {
+    if (!entry?.date || !entry?.startTime || !entry?.endTime) return 0;
+    const startMs = new Date(`${entry.date}T${entry.startTime}`).getTime();
+    const endMs = new Date(`${entry.date}T${entry.endTime}`).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+    return (endMs - startMs) / (1000 * 60 * 60);
+  };
+
+  const openAddManualEntryForm = () => {
+    setManualEntryDraft({
+      personName: "",
+      projectName: draftPayload?.projectName || "",
+      issueId: "",
+      cardTitle: "",
+      date: "",
+      startTime: "",
+      endTime: "",
+    });
+    setIsAddingManualEntry(true);
+  };
+
+  const handleAddManualTimeEntry = async () => {
+    const personName = String(manualEntryDraft.personName || "").trim();
+    const hours = getManualEntryHours(manualEntryDraft);
+
+    if (!personName) {
+      toast.error("Select or enter a person's name.");
+      return;
+    }
+
+    if (hours <= 0) {
+      toast.error("Enter a valid date with an end time after the start time.");
+      return;
+    }
+
+    const nextEntry = {
+      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      personName,
+      projectName: String(manualEntryDraft.projectName || "").trim(),
+      issueId: String(manualEntryDraft.issueId || "").trim(),
+      cardTitle: String(manualEntryDraft.cardTitle || "").trim(),
+      date: manualEntryDraft.date,
+      startTime: manualEntryDraft.startTime,
+      endTime: manualEntryDraft.endTime,
+    };
+
+    await persistManualTimeEntries([...manualTimeEntries, nextEntry]);
+    setIsAddingManualEntry(false);
+    toast.success(`Added ${hours.toFixed(2)} hrs for ${personName}.`);
+  };
+
+  const handleRemoveManualTimeEntry = async (entryId) => {
+    await persistManualTimeEntries(manualTimeEntries.filter((entry) => entry.id !== entryId));
+  };
+
+  // Merges manually added time on top of the invoice's original per-person hours, re-splitting
+  // regular/overtime using the same weekly threshold and rate so totals stay consistent.
+  const effectiveUsers = useMemo(() => {
+    if (!draftPayload) return [];
+
+    const overtimeThresholdHoursValue = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
+    const overtimeMultiplierValue = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
+    const baseRate = Number(draftPayload.overtimePolicy?.baseRate) || 0;
+
+    const usersByKey = new Map();
+    const baseUsers = Array.isArray(draftPayload.users) ? draftPayload.users : [];
+
+    baseUsers.forEach((userEntry) => {
+      const key = String(userEntry.name || "").trim().toLowerCase();
+      if (!key) return;
+      usersByKey.set(key, {
+        ...userEntry,
+        cards: Array.isArray(userEntry.cards) ? [...userEntry.cards] : [],
+        notes: Array.isArray(userEntry.notes) ? [...userEntry.notes] : [],
+        baseTotalHours: Number(userEntry.totalHours || 0),
+        manualHours: 0,
+      });
+    });
+
+    manualTimeEntries.forEach((entry) => {
+      const hours = getManualEntryHours(entry);
+      if (hours <= 0) return;
+
+      const key = String(entry.personName || "").trim().toLowerCase();
+      if (!key) return;
+
+      if (!usersByKey.has(key)) {
+        usersByKey.set(key, {
+          name: entry.personName.trim(),
+          cards: [],
+          notes: [],
+          baseTotalHours: 0,
+          manualHours: 0,
+        });
+      }
+
+      const userEntry = usersByKey.get(key);
+      userEntry.manualHours += hours;
+      userEntry.cards.push({
+        label: entry.issueId || entry.cardTitle || "Manual Entry",
+        projectName: entry.projectName || draftPayload.projectName || "",
+        issueId: entry.issueId || "",
+        title: entry.cardTitle || "",
+        description: entry.cardTitle || "",
+        taskIdentity: `manual-${entry.id}`,
+        hoursUsed: `${hours.toFixed(2)} hrs`,
+      });
+    });
+
+    return Array.from(usersByKey.values())
+      .map((userEntry) => {
+        const totalHours = Number((userEntry.baseTotalHours + userEntry.manualHours).toFixed(2));
+        const regularHours = Math.min(totalHours, overtimeThresholdHoursValue);
+        const overtimeHours = Math.max(0, totalHours - overtimeThresholdHoursValue);
+        const regularCost = regularHours * baseRate;
+        const overtimeCost = overtimeHours * baseRate * overtimeMultiplierValue;
+
+        return {
+          ...userEntry,
+          totalHours,
+          regularHours: Number(regularHours.toFixed(2)),
+          overtimeHours: Number(overtimeHours.toFixed(2)),
+          regularRate: baseRate,
+          overtimeRate: Number((baseRate * overtimeMultiplierValue).toFixed(2)),
+          lineTotal: Number((regularCost + overtimeCost).toFixed(2)),
+        };
+      })
+      .sort((left, right) => right.lineTotal - left.lineTotal);
+  }, [draftPayload, manualTimeEntries]);
+
+  const effectiveTotals = useMemo(() => {
+    const totals = effectiveUsers.reduce((accumulator, userEntry) => ({
+      totalRegularHours: accumulator.totalRegularHours + Number(userEntry.regularHours || 0),
+      totalOvertimeHours: accumulator.totalOvertimeHours + Number(userEntry.overtimeHours || 0),
+      totalHours: accumulator.totalHours + Number(userEntry.totalHours || 0),
+      totalAmount: accumulator.totalAmount + Number(userEntry.lineTotal || 0),
+    }), { totalRegularHours: 0, totalOvertimeHours: 0, totalHours: 0, totalAmount: 0 });
+
+    return {
+      totalRegularHours: Number(totals.totalRegularHours.toFixed(2)),
+      totalOvertimeHours: Number(totals.totalOvertimeHours.toFixed(2)),
+      totalHours: Number(totals.totalHours.toFixed(2)),
+      totalAmount: Number(totals.totalAmount.toFixed(2)),
+    };
+  }, [effectiveUsers]);
+
   const handleDownloadXlsx = () => {
     if (!draftPayload) return;
 
-    const users = Array.isArray(draftPayload.users) ? draftPayload.users : [];
+    const users = effectiveUsers;
       const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
       const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
       const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
@@ -606,10 +807,10 @@ const BillableInvoicePreviewPage = () => {
         ];
       }),
       [],
-      ["Totals", "Regular", Number(draftPayload.totals?.totalRegularHours || 0), "", "", "", ""],
-      ["Totals", "Overtime", Number(draftPayload.totals?.totalOvertimeHours || 0), "", "", "", ""],
-      ["Totals", "All Hours", Number(draftPayload.totals?.totalHours || 0), "", "", "", ""],
-      ["Totals", "Amount", "", "", Number(draftPayload.totals?.totalAmount || 0), "", ""],
+      ["Totals", "Regular", Number(effectiveTotals.totalRegularHours || 0), "", "", "", ""],
+      ["Totals", "Overtime", Number(effectiveTotals.totalOvertimeHours || 0), "", "", "", ""],
+      ["Totals", "All Hours", Number(effectiveTotals.totalHours || 0), "", "", "", ""],
+      ["Totals", "Amount", "", "", Number(effectiveTotals.totalAmount || 0), "", ""],
     ];
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetRows);
@@ -771,7 +972,7 @@ const BillableInvoicePreviewPage = () => {
     );
   }
 
-  const users = Array.isArray(draftPayload.users) ? draftPayload.users : [];
+  const users = effectiveUsers;
   const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
   const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
   const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
@@ -843,6 +1044,152 @@ const BillableInvoicePreviewPage = () => {
             {section.label}
           </label>
         ))}
+      </div>
+
+      <div style={{ ...cardStyle, marginTop: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+          <strong style={{ color: "#0F172A" }}>Add Person Time</strong>
+          {!isAddingManualEntry && (
+            <button
+              type="button"
+              onClick={openAddManualEntryForm}
+              style={{ border: "none", borderRadius: "8px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: "pointer" }}
+            >
+              + Add Time Entry
+            </button>
+          )}
+        </div>
+
+        {manualTimeEntries.length > 0 && (
+          <div style={{ marginTop: "12px", display: "grid", gap: "8px" }}>
+            {manualTimeEntries.map((entry) => {
+              const hours = getManualEntryHours(entry);
+              return (
+                <div key={entry.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "8px 12px", border: "1px solid #E2E8F0", borderRadius: "6px", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: "0.85rem", color: "#334155" }}>
+                    <strong>{entry.personName}</strong>
+                    {" — "}
+                    {entry.projectName || "No project"}
+                    {entry.issueId ? ` (${entry.issueId})` : ""}
+                    {" — "}
+                    {formatMonthDayYear(entry.date)}, {entry.startTime}–{entry.endTime} ({hours.toFixed(2)} hrs)
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveManualTimeEntry(entry.id)}
+                    disabled={isSavingManualEntry}
+                    style={{ border: "1px solid #DC2626", borderRadius: "6px", padding: "4px 10px", background: "#FFFFFF", color: "#DC2626", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer" }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {isAddingManualEntry && (
+          <div style={{ marginTop: "12px", padding: "12px", border: "1px solid #CBD5E1", borderRadius: "8px", background: "#F8FAFC", display: "grid", gap: "10px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px" }}>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Person
+                <input
+                  type="text"
+                  list="billable-invoice-person-options"
+                  value={manualEntryDraft.personName}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, personName: event.target.value }))}
+                  placeholder="Select or type a name"
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+                <datalist id="billable-invoice-person-options">
+                  {effectiveUsers.map((userEntry) => (
+                    <option key={userEntry.name} value={userEntry.name} />
+                  ))}
+                </datalist>
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Project
+                <input
+                  type="text"
+                  value={manualEntryDraft.projectName}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, projectName: event.target.value }))}
+                  placeholder="Project name"
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                TD / Issue ID
+                <input
+                  type="text"
+                  value={manualEntryDraft.issueId}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, issueId: event.target.value }))}
+                  placeholder="Card/Issue ID"
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Card Title / Description
+                <input
+                  type="text"
+                  value={manualEntryDraft.cardTitle}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, cardTitle: event.target.value }))}
+                  placeholder="What was worked on"
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Date
+                <input
+                  type="date"
+                  value={manualEntryDraft.date}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, date: event.target.value }))}
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Start Time
+                <input
+                  type="time"
+                  value={manualEntryDraft.startTime}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, startTime: event.target.value }))}
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                End Time
+                <input
+                  type="time"
+                  value={manualEntryDraft.endTime}
+                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, endTime: event.target.value }))}
+                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </label>
+              <div style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
+                Total Hours
+                <div style={{ padding: "8px", fontWeight: 700, color: "#0F172A" }}>
+                  {getManualEntryHours(manualEntryDraft).toFixed(2)} hrs
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={handleAddManualTimeEntry}
+                disabled={isSavingManualEntry}
+                style={{ border: "none", borderRadius: "6px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer", opacity: isSavingManualEntry ? 0.7 : 1 }}
+              >
+                {isSavingManualEntry ? "Saving..." : "Add Entry"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddingManualEntry(false)}
+                style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "8px 14px", background: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div
@@ -1189,19 +1536,19 @@ const BillableInvoicePreviewPage = () => {
           <div style={{ minWidth: "280px", border: "1px solid #E2E8F0", borderRadius: "0px", overflow: "hidden", breakInside: "avoid", pageBreakInside: "avoid" }}>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
               <span>Total Regular Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalRegularHours || 0).toFixed(2)}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalRegularHours || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
               <span>Total Overtime Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalOvertimeHours || 0).toFixed(2)}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalOvertimeHours || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155" }}>
               <span>Total Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalHours || 0).toFixed(2)}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalHours || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#0F172A", color: "#FFFFFF" }}>
               <span style={{ fontSize: "0.9rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>Total Due</span>
-              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(draftPayload.totals?.totalAmount || 0)}</span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</span>
             </div>
           </div>
         </div>
