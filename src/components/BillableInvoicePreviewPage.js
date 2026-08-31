@@ -1967,6 +1967,14 @@ const BillableInvoicePreviewPage = () => {
             const overtimeRate = Number(userEntry.overtimeRate || 0);
             const regularCost = regularHours * regularRate;
             const overtimeCost = overtimeHours * overtimeRate;
+            const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+            const cardSummaries = cards
+              .map((card) => {
+                const cardId = String(card.label || card.issueId || "").trim();
+                const cardTitle = getIssueTitleText(card);
+                return cardTitle ? `${cardId || "TD"}: ${cardTitle}` : cardId;
+              })
+              .filter(Boolean);
 
             return (
               <React.Fragment key={`${userEntry.name || "Unknown User"}-${index}`}>
@@ -1981,7 +1989,14 @@ const BillableInvoicePreviewPage = () => {
                   }}
                 >
                   <div style={tableBodyCellStyle}>
-                    {`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}
+                    <div>{`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
+                    {cardSummaries.length > 0 ? (
+                      <div style={{ marginTop: "4px", fontSize: "0.78rem", color: "#64748B" }}>
+                        {cardSummaries.map((summary, summaryIndex) => (
+                          <div key={`${index}-card-${summaryIndex}`}>{summary}</div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div style={numericBodyCellStyle}>{regularHours.toFixed(2)}</div>
                   <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
