@@ -2060,6 +2060,7 @@ const BillableInvoicePreviewPage = () => {
 
       {sectionVisibility.workSummary && (
       <div
+        data-html2canvas-ignore="true"
         style={{
           ...cardStyle,
           marginTop: "12px",
@@ -2138,7 +2139,7 @@ const BillableInvoicePreviewPage = () => {
       )}
 
       {sectionVisibility.issuesNotes && (
-      <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
+      <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
         <h2 style={sectionHeadingStyle}>Issues and Notes Included in This Invoice</h2>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", justifyItems: "stretch", alignItems: "stretch", gap: "12px", width: "100%" }}>
           {users.length === 0 ? (
