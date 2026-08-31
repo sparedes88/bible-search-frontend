@@ -222,6 +222,85 @@ const BillableInvoicePreviewPage = () => {
     };
   }, [id]);
 
+  // Loads all BIM project TD cards so the "Add Person Time" form can offer a TD/Issue ID dropdown
+  // instead of free text, same source used by Pay Everyone's edit-time card picker.
+  const [cardOptions, setCardOptions] = useState([]);
+  const [cardOptionsLoading, setCardOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!id) {
+      setCardOptions([]);
+      return () => {};
+    }
+
+    let isCancelled = false;
+
+    const findColumnByAliases = (rowData, aliases) => {
+      const normalizedAliases = aliases.map((alias) => alias.toLowerCase().replace(/[^a-z0-9]+/g, ""));
+      return Object.keys(rowData || {}).find((key) =>
+        normalizedAliases.includes(key.toLowerCase().replace(/[^a-z0-9]+/g, ""))
+      );
+    };
+
+    const loadCardOptions = async () => {
+      setCardOptionsLoading(true);
+      try {
+        const projectsSnapshot = await getDocs(collection(db, "churches", id, "bimProjects"));
+        const nextOptions = [];
+
+        for (const projectDoc of projectsSnapshot.docs) {
+          const projectData = projectDoc.data() || {};
+          const issuesSnapshot = await getDocs(collection(db, "churches", id, "bimProjects", projectDoc.id, "issues"));
+
+          issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
+            const rowData = issueDoc.data() || {};
+            const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
+            const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
+            const projectNameColumn = findColumnByAliases(rowData, ["project name", "project", "projectname"]);
+
+            const issueId = String((issueIdColumn ? rowData[issueIdColumn] : "") || rowIndex + 1).trim();
+            const projectName = String(
+              (projectNameColumn ? rowData[projectNameColumn] : "")
+              || projectData.projectName
+              || projectData.name
+              || ""
+            ).trim();
+            const issueLabel = String((titleColumn ? rowData[titleColumn] : "") || "").trim();
+
+            nextOptions.push({ issueId, projectName, issueLabel });
+          });
+        }
+
+        // A card id can repeat across projects, so keep issue id + project name unique together.
+        const uniqueOptions = [];
+        const seenKeys = new Set();
+        nextOptions.forEach((option) => {
+          const uniqueKey = `${option.issueId.toLowerCase()}||${option.projectName.toLowerCase()}`;
+          if (seenKeys.has(uniqueKey) || !option.issueId) return;
+          seenKeys.add(uniqueKey);
+          uniqueOptions.push({ ...option, value: uniqueKey });
+        });
+
+        uniqueOptions.sort((left, right) =>
+          left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId, undefined, { numeric: true })
+        );
+
+        if (!isCancelled) setCardOptions(uniqueOptions);
+      } catch (error) {
+        console.error("Error loading TD card options:", error);
+        if (!isCancelled) setCardOptions([]);
+      } finally {
+        if (!isCancelled) setCardOptionsLoading(false);
+      }
+    };
+
+    loadCardOptions();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [id]);
+
   // Inlines the logo as a data URL so html2canvas can always render it, regardless of CORS on the remote asset.
   // Tries a direct browser fetch first (works for hosts that already send permissive CORS headers,
   // e.g. Firebase Storage), then falls back to a server-side proxy Cloud Function for hosts that don't
@@ -596,10 +675,12 @@ const BillableInvoicePreviewPage = () => {
 
   const [manualTimeEntries, setManualTimeEntries] = useState([]);
   const [isAddingManualEntry, setIsAddingManualEntry] = useState(false);
+  const [manualCardMode, setManualCardMode] = useState(false);
   const [manualEntryDraft, setManualEntryDraft] = useState({
     personName: "",
     projectName: "",
     issueId: "",
+    cardValue: "",
     cardTitle: "",
     date: "",
     startTime: "",
@@ -662,11 +743,13 @@ const BillableInvoicePreviewPage = () => {
       personName: "",
       projectName: draftPayload?.projectName || "",
       issueId: "",
+      cardValue: "",
       cardTitle: "",
       date: "",
       startTime: "",
       endTime: "",
     });
+    setManualCardMode(false);
     setIsAddingManualEntry(true);
   };
 
@@ -1184,13 +1267,56 @@ const BillableInvoicePreviewPage = () => {
               </label>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 TD / Issue ID
-                <input
-                  type="text"
-                  value={manualEntryDraft.issueId}
-                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, issueId: event.target.value }))}
-                  placeholder="Card/Issue ID"
-                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
-                />
+                {!manualCardMode ? (
+                  <select
+                    value={manualEntryDraft.cardValue}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__manual__") {
+                        setManualCardMode(true);
+                        setManualEntryDraft((previous) => ({ ...previous, cardValue: "" }));
+                        return;
+                      }
+                      const selectedCard = cardOptions.find((option) => option.value === value);
+                      setManualEntryDraft((previous) => ({
+                        ...previous,
+                        cardValue: value,
+                        issueId: selectedCard?.issueId || "",
+                        projectName: selectedCard?.projectName || previous.projectName,
+                        cardTitle: selectedCard?.issueLabel || previous.cardTitle,
+                      }));
+                    }}
+                    style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                  >
+                    <option value="">{cardOptionsLoading ? "Loading TD cards..." : "Select a TD card"}</option>
+                    {cardOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {`${option.issueId} — ${option.projectName}${option.issueLabel ? ` (${option.issueLabel})` : ""}`}
+                      </option>
+                    ))}
+                    <option value="__manual__">Type manually / Not listed</option>
+                  </select>
+                ) : (
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <input
+                      type="text"
+                      value={manualEntryDraft.issueId}
+                      onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, issueId: event.target.value }))}
+                      placeholder="Card/Issue ID"
+                      style={{ flex: 1, padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualCardMode(false);
+                        setManualEntryDraft((previous) => ({ ...previous, issueId: "", cardValue: "" }));
+                      }}
+                      style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "0 10px", background: "#FFFFFF", color: "#334155", fontSize: "0.78rem", cursor: "pointer" }}
+                    >
+                      Use dropdown
+                    </button>
+                  </div>
+                )}
               </label>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 Card Title / Description
