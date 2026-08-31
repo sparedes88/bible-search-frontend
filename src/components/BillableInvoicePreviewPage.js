@@ -132,6 +132,18 @@ const blobToDataUrl = (blob) =>
     reader.readAsDataURL(blob);
   });
 
+// Some user docs only have "name" (first name) + "lastName", no separate "firstName" field.
+const resolveMemberDisplayName = (data = {}) => {
+  const firstNameValue = String(data.firstName || data.name || "").trim();
+  const lastNameValue = String(data.lastName || "").trim();
+  const nameAlreadyIncludesLastName = lastNameValue && firstNameValue.toLowerCase().includes(lastNameValue.toLowerCase());
+  const firstAndLastName = nameAlreadyIncludesLastName
+    ? firstNameValue
+    : [firstNameValue, lastNameValue].filter(Boolean).join(" ");
+
+  return String(firstAndLastName || data.displayName || data.email || "").trim();
+};
+
 const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
@@ -191,15 +203,7 @@ const BillableInvoicePreviewPage = () => {
 
       mergedDocs.forEach((snapshotDoc) => {
         const data = snapshotDoc.data() || {};
-        // Prefer First + Last Name, matching the naming convention used across Pay Everyone.
-        const firstLastName = [data.firstName, data.lastName].filter(Boolean).join(" ").trim();
-        const fullName = String(
-          firstLastName
-          || data.name
-          || data.displayName
-          || data.email
-          || snapshotDoc.id
-        ).trim();
+        const fullName = resolveMemberDisplayName(data) || snapshotDoc.id;
         if (!fullName) return;
         nextMembersById.set(snapshotDoc.id, fullName);
       });
@@ -1162,7 +1166,7 @@ const BillableInvoicePreviewPage = () => {
                   {Array.from(new Set([
                     ...organizationMembers,
                     ...effectiveUsers.map((userEntry) => userEntry.name),
-                    String([user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.name || user?.displayName || user?.email || "").trim(),
+                    resolveMemberDisplayName(user || {}),
                   ].filter(Boolean))).sort((left, right) => left.localeCompare(right)).map((personName) => (
                     <option key={personName} value={personName} />
                   ))}
