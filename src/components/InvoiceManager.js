@@ -24,6 +24,38 @@ import { db, storage } from "../firebase";
 import ChurchHeader from "./ChurchHeader";
 import commonStyles from "../pages/commonStyles";
 import { canManageModule } from "../utils/enhancedPermissions";
+import { getChurchData } from "../api/church";
+
+const FIREBASE_FUNCTIONS_BASE_URL =
+  typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "/firebase-api"
+    : "https://us-central1-igletechv1.cloudfunctions.net";
+
+const blobToDataUrl = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+const getOrganizationLogoDataUrl = async (churchId) => {
+  const churchData = await getChurchData(churchId);
+  const logoUrl = String(churchData?.logo || "").trim();
+  if (!logoUrl) return "";
+
+  try {
+    const response = await fetch(logoUrl, { mode: "cors" });
+    if (!response.ok) throw new Error(`Logo fetch failed with status ${response.status}`);
+    return await blobToDataUrl(await response.blob());
+  } catch (directFetchError) {
+    const proxyUrl = `${FIREBASE_FUNCTIONS_BASE_URL}/fetchRemoteImageAsDataUrl?url=${encodeURIComponent(logoUrl)}`;
+    const proxyResponse = await fetch(proxyUrl);
+    if (!proxyResponse.ok) throw directFetchError;
+    const proxyPayload = await proxyResponse.json();
+    return String(proxyPayload?.dataUrl || "");
+  }
+};
 
 const cardStyle = {
   background: "#FFFFFF",
@@ -4345,13 +4377,24 @@ const InvoiceManager = () => {
       const pdf = new JsPdfConstructor({ orientation: "landscape", unit: "pt", format: "letter" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const margin = 40;
+      let logoDataUrl = "";
+
+      try {
+        logoDataUrl = await getOrganizationLogoDataUrl(id);
+      } catch (logoError) {
+        console.warn("Unable to load organization logo for invoice status report:", logoError);
+      }
+
+      if (logoDataUrl) {
+        pdf.addImage(logoDataUrl, margin, 24, 80, 40);
+      }
 
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(16);
-      pdf.text("Invoice Status Report", margin, 40);
+      pdf.text("Invoice Status Report", logoDataUrl ? 132 : margin, 40);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
-      pdf.text(`Project: ${projectName}`, margin, 58);
+      pdf.text(`Project: ${projectName}`, logoDataUrl ? 132 : margin, 58);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, 58, { align: "right" });
 
       const sortedInvoices = [...invoices].sort(
@@ -4372,7 +4415,7 @@ const InvoiceManager = () => {
       });
 
       autoTable(pdf, {
-        startY: 76,
+        startY: 88,
         theme: "grid",
         head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source"]],
         body: rows,
