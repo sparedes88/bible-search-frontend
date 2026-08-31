@@ -186,11 +186,17 @@ const emptyInvoiceDraft = {
   isPaid: false,
   invoiceStatus: "budgeted",
   billingSource: "main_system",
+  apStatus: "draft",
 };
 
 const BILLING_SOURCE_OPTIONS = [
   { value: "main_system", label: "Main System" },
   { value: "freshbooks", label: "FreshBooks" },
+];
+
+const AP_STATUS_OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "sent_by_email", label: "Sent by Email" },
 ];
 
 const PAYMENT_TERM_OPTIONS = [
@@ -283,6 +289,14 @@ const getBillingSourceLabel = (value) => {
   const normalized = normalizeBillingSource(value);
   return normalized === "freshbooks" ? "FreshBooks" : "Main System";
 };
+
+const normalizeApStatus = (value) => (
+  String(value || "").trim().toLowerCase() === "sent_by_email" ? "sent_by_email" : "draft"
+);
+
+const getApStatusLabel = (value) => (
+  normalizeApStatus(value) === "sent_by_email" ? "Sent by Email" : "Draft"
+);
 const normalizeProjectNameKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
 const normalizeTimeRotateProjectNames = (value) => {
@@ -4071,6 +4085,7 @@ const InvoiceManager = () => {
       isPaid: invoice.isPaid || false,
       invoiceStatus: normalizeInvoiceStatus(invoice.invoiceStatus, invoice.total, invoice.invoiceNumber),
       billingSource: normalizeBillingSource(invoice.billingSource),
+      apStatus: normalizeApStatus(invoice.apStatus),
     });
   };
 
@@ -4154,6 +4169,7 @@ const InvoiceManager = () => {
             paymentTerms: String(currentInvoice?.paymentTerms || "").trim().toLowerCase(),
             isPaid: Boolean(currentInvoice?.isPaid),
             invoiceStatus: normalizeInvoiceStatus(currentInvoice?.invoiceStatus, currentInvoice?.total, currentInvoice?.invoiceNumber),
+            apStatus: normalizeApStatus(currentInvoice?.apStatus),
           },
           after: {
             weekNumber,
@@ -4164,6 +4180,7 @@ const InvoiceManager = () => {
             paymentTerms,
             isPaid: Boolean(editInvoiceDraft.isPaid),
             invoiceStatus,
+            apStatus: normalizeApStatus(editInvoiceDraft.apStatus),
           },
         },
       });
@@ -4179,6 +4196,7 @@ const InvoiceManager = () => {
         isPaid: editInvoiceDraft.isPaid,
         invoiceStatus,
         billingSource,
+        apStatus: normalizeApStatus(editInvoiceDraft.apStatus),
         isPlaceholder: false,
         generatedFromWeek: null,
         updatedAt: serverTimestamp(),
@@ -4266,6 +4284,42 @@ const InvoiceManager = () => {
     } catch (error) {
       console.error("Error updating billing source:", error);
       toast.error("Failed to update billing source.");
+    }
+  };
+
+  const handleUpdateApStatus = async (invoice, nextStatusValue) => {
+    if (!canManageInvoices || !selectedProjectId || !invoice?.id) {
+      return;
+    }
+
+    const apStatus = normalizeApStatus(nextStatusValue);
+    const currentApStatus = normalizeApStatus(invoice.apStatus);
+    if (apStatus === currentApStatus) {
+      return;
+    }
+
+    try {
+      const existingChangeLog = Array.isArray(invoice.changeLog) ? invoice.changeLog : [];
+      await updateDoc(doc(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices", invoice.id), {
+        apStatus,
+        updatedAt: serverTimestamp(),
+        updatedByUid: user?.uid || "",
+        changeLog: [
+          ...existingChangeLog,
+          buildInvoiceLogEntry({
+            action: "AP Status Updated",
+            note: "AP status changed from Invoice Table.",
+            changes: {
+              before: { apStatus: currentApStatus },
+              after: { apStatus },
+            },
+          }),
+        ],
+      });
+      toast.success(`AP status marked as ${getApStatusLabel(apStatus)}.`);
+    } catch (error) {
+      console.error("Error updating AP status:", error);
+      toast.error("Failed to update AP status.");
     }
   };
 
@@ -5716,6 +5770,7 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>Invoice Status</th>
                         <th style={tableHeaderCellStyle}>Paid Status</th>
                         <th style={tableHeaderCellStyle}>Billing Source</th>
+                        <th style={tableHeaderCellStyle}>AP Status</th>
                         <th style={tableHeaderCellStyle}>Actions</th>
                       </tr>
                     </thead>
@@ -5971,6 +6026,22 @@ const InvoiceManager = () => {
                                 </select>
                               </td>
                               <td style={tableBodyCellStyle}>
+                                <select
+                                  style={{ ...compactInputStyle, minWidth: "120px" }}
+                                  title="AP Status"
+                                  value={normalizeApStatus(editInvoiceDraft.apStatus)}
+                                  onChange={(event) =>
+                                    setEditInvoiceDraft((prev) => ({ ...prev, apStatus: event.target.value }))
+                                  }
+                                >
+                                  {AP_STATUS_OPTIONS.map((option) => (
+                                    <option key={`edit-ap-status-${invoice.id}-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td style={tableBodyCellStyle}>
                                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                                   <button
                                     type="button"
@@ -6198,6 +6269,19 @@ const InvoiceManager = () => {
                               >
                                 {BILLING_SOURCE_OPTIONS.map((option) => (
                                   <option key={`billing-source-${invoice.id}-${option.value}`} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={tableBodyCellStyle}>
+                              <select
+                                style={{ ...compactInputStyle, minWidth: "120px" }}
+                                value={normalizeApStatus(invoice.apStatus)}
+                                onChange={(event) => handleUpdateApStatus(invoice, event.target.value)}
+                              >
+                                {AP_STATUS_OPTIONS.map((option) => (
+                                  <option key={`ap-status-${invoice.id}-${option.value}`} value={option.value}>
                                     {option.label}
                                   </option>
                                 ))}
