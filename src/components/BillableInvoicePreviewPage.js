@@ -985,6 +985,8 @@ const BillableInvoicePreviewPage = () => {
           cards: Array.isArray(userEntry.cards) ? [...userEntry.cards] : [],
           notes: Array.isArray(userEntry.notes) ? [...userEntry.notes] : [],
           baseTotalHours: Number(userEntry.totalHours || 0),
+          baseRegularHours: Number(userEntry.regularHours || 0),
+          baseOvertimeHours: Number(userEntry.overtimeHours || 0),
           manualHours: 0,
         });
         return;
@@ -994,6 +996,8 @@ const BillableInvoicePreviewPage = () => {
       existing.cards.push(...(Array.isArray(userEntry.cards) ? userEntry.cards : []));
       existing.notes.push(...(Array.isArray(userEntry.notes) ? userEntry.notes : []));
       existing.baseTotalHours += Number(userEntry.totalHours || 0);
+      existing.baseRegularHours += Number(userEntry.regularHours || 0);
+      existing.baseOvertimeHours += Number(userEntry.overtimeHours || 0);
     });
 
     const draftGeneratedAt = Number(draftPayload.generatedAt || 0);
@@ -1020,6 +1024,8 @@ const BillableInvoicePreviewPage = () => {
           cards: [],
           notes: [],
           baseTotalHours: 0,
+          baseRegularHours: 0,
+          baseOvertimeHours: 0,
           manualHours: 0,
         });
       }
@@ -1040,8 +1046,14 @@ const BillableInvoicePreviewPage = () => {
     return Array.from(usersByKey.values())
       .map((userEntry) => {
         const totalHours = Number((userEntry.baseTotalHours + userEntry.manualHours).toFixed(2));
-        const regularHours = Math.min(totalHours, overtimeThresholdHoursValue);
-        const overtimeHours = Math.max(0, totalHours - overtimeThresholdHoursValue);
+        // Preserve the regular/overtime split already computed in InvoiceManager, which accounts
+        // for a person's OTHER project hours that week consuming part of their 40h regular quota.
+        // Recomputing min(total,40)/max(0,total-40) here in isolation would wrongly reclassify
+        // overtime hours as regular whenever this invoice isn't their only project that week.
+        const baseRegularHours = Number(userEntry.baseRegularHours || 0);
+        const baseOvertimeHours = Number(userEntry.baseOvertimeHours || 0);
+        const regularHours = Math.min(baseRegularHours, totalHours);
+        const overtimeHours = Math.max(0, totalHours - regularHours);
         const regularCost = regularHours * baseRate;
         const overtimeCost = overtimeHours * baseRate * overtimeMultiplierValue;
 
