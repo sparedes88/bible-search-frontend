@@ -1938,106 +1938,73 @@ const BillableInvoicePreviewPage = () => {
       {sectionVisibility.summary && (
       <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
         <h2 style={sectionHeadingStyle}>Billable Summary by Person</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", justifyItems: "stretch", alignItems: "stretch", gap: "12px", width: "100%" }}>
-          {users.map((userEntry, index) => {
-            const personName = userEntry.name || "Unknown User";
-            const regularHours = Number(userEntry.regularHours || 0);
-            const overtimeHours = Number(userEntry.overtimeHours || 0);
-            const regularRate = Number(userEntry.regularRate || 0);
-            const overtimeRate = Number(userEntry.overtimeRate || 0);
-            const regularCost = regularHours * regularRate;
-            const overtimeCost = overtimeHours * overtimeRate;
-
-            return (
-              <div
-                key={`${personName}-${index}`}
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  border: "1px solid #CBD5E1",
-                  borderRadius: "0px",
-                  overflow: "hidden",
-                  background: "#FFFFFF",
-                  breakInside: "avoid",
-                  pageBreakInside: "avoid",
-                }}
-              >
-                <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
-                  <div>{`BIM Coordinator #${index + 1}`}</div>
-                  <div style={{ marginTop: "8px" }}>
-                    <div style={{ fontWeight: 800, fontSize: "0.82rem", letterSpacing: "0.03em", textTransform: "uppercase" }}>
-                      BIM Coordinator / Detailer
-                    </div>
-                    <div style={{ marginTop: "4px", fontWeight: 400, fontSize: "0.82rem", color: "#334155", lineHeight: 1.4 }}>
-                      {`Provide weekly BIM Services, including drafting, coordination, and BIM assistance for project "${draftPayload.projectName || "Unknown Project"}". Drafting services include Revit, Revizto, Navisworks and Electrical BIM Coordination.`}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ width: "100%", boxSizing: "border-box" }}>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
-                      width: "100%",
-                      background: "#F8FAFC",
-                      borderBottom: "1px solid #E5E7EB",
-                    }}
-                  >
-                    <div style={tableHeaderCellStyle}>Line Item</div>
-                    <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Hours</div>
-                    <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Rate</div>
-                    <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Line Cost</div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
-                      width: "100%",
-                    }}
-                  >
-                    <div style={tableBodyCellStyle}>Regular (&lt;= {overtimeThresholdHours}h)</div>
-                    <div style={numericBodyCellStyle}>{regularHours.toFixed(2)}</div>
-                    <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
-                    <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div>
-
-                    {overtimeHours > 0 && (
-                      <>
-                        <div style={tableBodyCellStyle}>Overtime (&gt; {overtimeThresholdHours}h)</div>
-                        <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
-                        <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
-                        <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
-                      </>
-                    )}
-
-                    <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Person Total</div>
-                    <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{Number(userEntry.totalHours || 0).toFixed(2)}</div>
-                    <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
-                    <div style={{ ...numericBodyCellStyle, fontWeight: 800, background: "#F8FAFC" }}>{formatCurrency(userEntry.lineTotal || 0)}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ marginBottom: "12px", fontSize: "0.82rem", color: "#334155", lineHeight: 1.4 }}>
+          {`BIM Coordinator / Detailer services: weekly BIM Services, including drafting, coordination, and BIM assistance for project "${draftPayload.projectName || "Unknown Project"}". Drafting services include Revit, Revizto, Navisworks and Electrical BIM Coordination.`}
         </div>
 
-        <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
-          <div style={{ minWidth: "280px", border: "1px solid #E2E8F0", borderRadius: "0px", overflow: "hidden", breakInside: "avoid", pageBreakInside: "avoid" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
-              <span>Total Regular Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalRegularHours || 0).toFixed(2)}</span>
+        <div style={{ width: "100%", boxSizing: "border-box", border: "1px solid #CBD5E1", overflow: "hidden" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              width: "100%",
+              background: "#F8FAFC",
+              borderBottom: "1px solid #E5E7EB",
+            }}
+          >
+            <div style={tableHeaderCellStyle}>Description</div>
+            <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Hours</div>
+            <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Rate</div>
+            <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Amount</div>
+          </div>
+
+          {users.map((userEntry, index) => (
+            <div
+              key={`${userEntry.name || "Unknown User"}-${index}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+                width: "100%",
+                breakInside: "avoid",
+                pageBreakInside: "avoid",
+              }}
+            >
+              <div style={tableBodyCellStyle}>
+                {`BIM Coordinator Services — ${userEntry.name || "Unknown User"}`}
+              </div>
+              <div style={numericBodyCellStyle}>{Number(userEntry.totalHours || 0).toFixed(2)}</div>
+              <div style={numericBodyCellStyle}>{formatCurrency(userEntry.regularRate || 0)}</div>
+              <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(userEntry.lineTotal || 0)}</div>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
-              <span>Total Overtime Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalOvertimeHours || 0).toFixed(2)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155" }}>
-              <span>Total Hours</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(effectiveTotals.totalHours || 0).toFixed(2)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "#0F172A", color: "#FFFFFF" }}>
-              <span style={{ fontSize: "0.9rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>Total Due</span>
-              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</span>
+          ))}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              width: "100%",
+              borderTop: "1px solid #CBD5E1",
+            }}
+          >
+            <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Subtotal (Regular + Overtime Hours)</div>
+            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{Number(effectiveTotals.totalHours || 0).toFixed(2)}</div>
+            <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
+            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              width: "100%",
+              background: "#0F172A",
+              color: "#FFFFFF",
+            }}
+          >
+            <div style={{ padding: "12px 14px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", fontSize: "0.9rem" }}>Total Due</div>
+            <div style={{ padding: "12px 14px" }}></div>
+            <div style={{ padding: "12px 14px" }}></div>
+            <div style={{ padding: "12px 14px", textAlign: "right", fontWeight: 800, fontSize: "1.15rem", fontVariantNumeric: "tabular-nums" }}>
+              {formatCurrency(effectiveTotals.totalAmount || 0)}
             </div>
           </div>
         </div>
