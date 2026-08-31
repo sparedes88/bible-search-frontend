@@ -5558,6 +5558,69 @@ const InvoiceManager = () => {
                 </button>
               </div>
 
+              {editingInvoiceId ? (() => {
+                const activeInvoice = invoices.find((invoice) => invoice.id === editingInvoiceId);
+                if (!activeInvoice) return null;
+
+                const activeRowHoursData = invoiceHoursById[activeInvoice.id] || {
+                  totalMilliseconds: 0,
+                  totalRegularMilliseconds: 0,
+                  totalOvertimeMilliseconds: 0,
+                  users: [],
+                };
+                const activeRowUsersHours = Array.isArray(activeRowHoursData.users) ? activeRowHoursData.users : [];
+
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "12px", borderBottom: "1px solid #E5E7EB", background: "#F8FAFC" }}>
+                    <strong style={{ color: "#0F172A", fontSize: "0.85rem" }}>
+                      {`Actions for #${activeInvoice.weekNumber || "-"}:`}
+                    </strong>
+                    <button
+                      type="button"
+                      style={{ ...compactButtonStyle, background: "#0F766E" }}
+                      onClick={() => setInvoiceLogModalInvoice(activeInvoice)}
+                    >
+                      Log
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...compactButtonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === activeInvoice.id ? 0.7 : 1 }}
+                      onClick={() => handleSelectExternalPdf(activeInvoice.id)}
+                      disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === activeInvoice.id}
+                    >
+                      {uploadingExternalPdfInvoiceId === activeInvoice.id ? "Uploading PDF..." : "Upload External PDF"}
+                    </button>
+                    {activeInvoice.externalPdf?.url ? (
+                      <a
+                        href={activeInvoice.externalPdf.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ ...compactButtonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
+                        title={activeInvoice.externalPdf.name || "View external invoice PDF"}
+                      >
+                        View External PDF
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      style={{ ...compactButtonStyle, background: "#1D4ED8" }}
+                      onClick={() => handleExportBillableInvoice(activeInvoice, activeRowHoursData)}
+                      disabled={activeRowUsersHours.length === 0}
+                      title={activeRowUsersHours.length === 0 ? "No user hours available" : "View billable invoice"}
+                    >
+                      View Billable Invoice
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...compactButtonStyle, background: "#DC2626" }}
+                      onClick={() => handleDeleteInvoice(activeInvoice.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                );
+              })() : null}
+
               {loadingInvoices ? (
                 <p style={{ color: "#6B7280", margin: 0 }}>Loading invoices...</p>
               ) : invoices.length === 0 ? (
@@ -5829,48 +5892,6 @@ const InvoiceManager = () => {
                                   >
                                     Cancel
                                   </button>
-                                  <button
-                                    type="button"
-                                    style={{ ...compactButtonStyle, background: "#0F766E" }}
-                                    onClick={() => setInvoiceLogModalInvoice(invoice)}
-                                  >
-                                    Log
-                                  </button>
-                                  <button
-                                    type="button"
-                                    style={{ ...compactButtonStyle, background: "#1D4ED8" }}
-                                    onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
-                                    disabled={rowUsersHours.length === 0}
-                                    title={rowUsersHours.length === 0 ? "No user hours available" : "Download per-person billable invoice"}
-                                  >
-                                    Billable Invoice
-                                  </button>
-                                  <button
-                                    type="button"
-                                    style={{ ...compactButtonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === invoice.id ? 0.7 : 1 }}
-                                    onClick={() => handleSelectExternalPdf(invoice.id)}
-                                    disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === invoice.id}
-                                  >
-                                    {uploadingExternalPdfInvoiceId === invoice.id ? "Uploading PDF..." : "Upload External PDF"}
-                                  </button>
-                                  {invoice.externalPdf?.url ? (
-                                    <a
-                                      href={invoice.externalPdf.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      style={{ ...compactButtonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
-                                      title={invoice.externalPdf.name || "View external invoice PDF"}
-                                    >
-                                      View External PDF
-                                    </a>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    style={{ ...compactButtonStyle, background: "#DC2626" }}
-                                    onClick={() => handleDeleteInvoice(invoice.id)}
-                                  >
-                                    Delete
-                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -6093,6 +6114,15 @@ const InvoiceManager = () => {
                                   onClick={() => startInvoiceEdit(invoice)}
                                 >
                                   Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonStyle, background: "#1D4ED8" }}
+                                  onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
+                                  disabled={rowUsersHours.length === 0}
+                                  title={rowUsersHours.length === 0 ? "No user hours available" : "View billable invoice"}
+                                >
+                                  View
                                 </button>
                               </div>
                             </td>
