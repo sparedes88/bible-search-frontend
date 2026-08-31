@@ -1283,7 +1283,7 @@ const InvoiceManager = () => {
       return [];
     }
 
-    return timeRotateLogs
+    const mappedLogs = timeRotateLogs
       .map((log) => {
         const eventTimestamp = Number(log.startedAt) || Number(log.endedAt) || 0;
         const rawDurationMs = Number(log.durationMs);
@@ -1306,7 +1306,33 @@ const InvoiceManager = () => {
           userLabel: getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly),
         };
       })
+      .filter(Boolean);
+
+    // Safety net: if a person's logs ended up split between a short name and their fuller name
+    // (e.g. "Salomon" vs "Salomon Paredes"), merge them under the fuller name here so weekly
+    // overtime allocation and hour totals are computed against their true combined hours,
+    // matching the billable invoice preview instead of under-counting overtime per variant.
+    const canonicalNameByShortName = new Map();
+    const sortedLabelsByLength = Array.from(new Set(mappedLogs.map((log) => log.userLabel)))
       .filter(Boolean)
+      .sort((left, right) => right.length - left.length);
+    sortedLabelsByLength.forEach((label) => {
+      const firstWord = label.split(/\s+/)[0].toLowerCase();
+      if (firstWord && !canonicalNameByShortName.has(firstWord)) {
+        canonicalNameByShortName.set(firstWord, label);
+      }
+    });
+
+    return mappedLogs
+      .map((log) => {
+        const isSingleWordName = log.userLabel && !log.userLabel.includes(" ");
+        const canonicalName = isSingleWordName ? canonicalNameByShortName.get(log.userLabel.toLowerCase()) : null;
+        const resolvedLabel = (canonicalName && canonicalName.toLowerCase() !== log.userLabel.toLowerCase())
+          ? canonicalName
+          : log.userLabel;
+
+        return resolvedLabel === log.userLabel ? log : { ...log, userLabel: resolvedLabel };
+      })
       .sort((left, right) => {
         const timeDelta = left.eventTimestamp - right.eventTimestamp;
         if (timeDelta !== 0) return timeDelta;
