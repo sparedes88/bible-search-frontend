@@ -5725,27 +5725,6 @@ const InvoiceManager = () => {
                                 </span>
                                 <div style={{ marginTop: "4px", fontSize: "0.74rem", color: "#0C4A6E", fontWeight: 700 }}>
                                   Cost: {formatCurrency(rowLaborCost.totalCost)}
-                                  {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${OVERTIME_RATE}/h)` : ""}
-                                </div>
-                                <div style={{ marginTop: "2px", fontSize: "0.72rem", color: "#0F766E", fontWeight: 700 }}>
-                                  {OVERTIME_POLICY_LABEL}
-                                </div>
-                                <div style={{ marginTop: "6px", display: "grid", gap: "2px" }}>
-                                  {rowUsersHours.length === 0 ? (
-                                    <span style={{ fontSize: "0.74rem", color: "#64748B" }}>No user hours</span>
-                                  ) : (
-                                    rowUsersHours.map((userEntry) => {
-                                      const userLaborCost = getLaborCostFromSplit(
-                                        userEntry.regularMilliseconds,
-                                        userEntry.overtimeMilliseconds
-                                      );
-                                      return (
-                                        <div key={`edit-hours-${invoice.id}-${userEntry.name}`} style={{ fontSize: "0.74rem", color: "#334155" }}>
-                                          {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} (Reg {userLaborCost.regularHours.toFixed(2)}h / OT {userLaborCost.overtimeHours.toFixed(2)}h) | {formatCurrency(userLaborCost.totalCost)}
-                                        </div>
-                                      );
-                                    })
-                                  )}
                                 </div>
                               </td>
                               <td style={tableBodyCellStyle}>
@@ -5996,27 +5975,6 @@ const InvoiceManager = () => {
                               </span>
                               <div style={{ marginTop: "4px", fontSize: "0.74rem", color: "#0C4A6E", fontWeight: 700 }}>
                                 Cost: {formatCurrency(rowLaborCost.totalCost)}
-                                {rowLaborCost.overtimeHours > 0 ? ` (OT ${rowLaborCost.overtimeHours.toFixed(2)}h @ $${OVERTIME_RATE}/h)` : ""}
-                              </div>
-                              <div style={{ marginTop: "2px", fontSize: "0.72rem", color: "#0F766E", fontWeight: 700 }}>
-                                {OVERTIME_POLICY_LABEL}
-                              </div>
-                              <div style={{ marginTop: "6px", display: "grid", gap: "2px" }}>
-                                {rowUsersHours.length === 0 ? (
-                                  <span style={{ fontSize: "0.74rem", color: "#64748B" }}>No user hours</span>
-                                ) : (
-                                  rowUsersHours.map((userEntry) => {
-                                    const userLaborCost = getLaborCostFromSplit(
-                                      userEntry.regularMilliseconds,
-                                      userEntry.overtimeMilliseconds
-                                    );
-                                    return (
-                                      <div key={`view-hours-${invoice.id}-${userEntry.name}`} style={{ fontSize: "0.74rem", color: "#334155" }}>
-                                        {userEntry.name}: {formatHoursUsed(userEntry.milliseconds)} (Reg {userLaborCost.regularHours.toFixed(2)}h / OT {userLaborCost.overtimeHours.toFixed(2)}h) | {formatCurrency(userLaborCost.totalCost)}
-                                      </div>
-                                    );
-                                  })
-                                )}
                               </div>
                             </td>
                             <td style={tableBodyCellStyle}>
