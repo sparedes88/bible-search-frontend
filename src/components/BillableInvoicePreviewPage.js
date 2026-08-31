@@ -895,6 +895,12 @@ const BillableInvoicePreviewPage = () => {
     return Array.from(uniqueProjectNames.values()).sort((left, right) => left.localeCompare(right));
   }, [cardOptions, draftPayload?.projectName]);
 
+  const filteredCardOptions = useMemo(() => {
+    const selectedProjectName = String(manualEntryDraft.projectName || "").trim().toLowerCase();
+    if (!selectedProjectName) return cardOptions;
+    return cardOptions.filter((option) => option.projectName.toLowerCase() === selectedProjectName);
+  }, [cardOptions, manualEntryDraft.projectName]);
+
   const handleDownloadXlsx = () => {
     if (!draftPayload) return;
 
@@ -1284,7 +1290,11 @@ const BillableInvoicePreviewPage = () => {
                         setManualEntryDraft((previous) => ({ ...previous, projectName: "" }));
                         return;
                       }
-                      setManualEntryDraft((previous) => ({ ...previous, projectName: value }));
+                      setManualEntryDraft((previous) => ({
+                        ...previous,
+                        projectName: value,
+                        ...(manualCardMode ? {} : { cardValue: "", issueId: "" }),
+                      }));
                     }}
                     style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
                   >
@@ -1299,7 +1309,11 @@ const BillableInvoicePreviewPage = () => {
                     <input
                       type="text"
                       value={manualEntryDraft.projectName}
-                      onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, projectName: event.target.value }))}
+                      onChange={(event) => setManualEntryDraft((previous) => ({
+                        ...previous,
+                        projectName: event.target.value,
+                        ...(manualCardMode ? {} : { cardValue: "", issueId: "" }),
+                      }))}
                       placeholder="Project name"
                       style={{ flex: 1, padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
                     />
@@ -1328,7 +1342,7 @@ const BillableInvoicePreviewPage = () => {
                         setManualEntryDraft((previous) => ({ ...previous, cardValue: "" }));
                         return;
                       }
-                      const selectedCard = cardOptions.find((option) => option.value === value);
+                      const selectedCard = filteredCardOptions.find((option) => option.value === value);
                       setManualEntryDraft((previous) => ({
                         ...previous,
                         cardValue: value,
@@ -1339,8 +1353,14 @@ const BillableInvoicePreviewPage = () => {
                     }}
                     style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
                   >
-                    <option value="">{cardOptionsLoading ? "Loading TD cards..." : "Select a TD card"}</option>
-                    {cardOptions.map((option) => (
+                    <option value="">
+                      {cardOptionsLoading
+                        ? "Loading TD cards..."
+                        : manualEntryDraft.projectName
+                          ? "Select a TD card"
+                          : "Select a project first"}
+                    </option>
+                    {filteredCardOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {`${option.issueId} — ${option.projectName}${option.issueLabel ? ` (${option.issueLabel})` : ""}`}
                       </option>
