@@ -903,6 +903,37 @@ const InvoiceManager = () => {
   });
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  const INVOICE_TABLE_COLUMN_DEFS = [
+    { key: "dueDate", label: "Due Date" },
+    { key: "dueDay", label: "Due Day" },
+    { key: "countdown", label: "Countdown" },
+  ];
+  const getInvoiceTableColumnsStorageKey = () => `invoiceManager:tableColumns:${id}`;
+
+  const [visibleInvoiceTableColumns, setVisibleInvoiceTableColumns] = useState(() => {
+    const defaults = { dueDate: false, dueDay: false, countdown: false };
+    if (typeof window === "undefined") return defaults;
+    try {
+      const raw = window.localStorage.getItem(`invoiceManager:tableColumns:${id}`);
+      return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
+    } catch (error) {
+      return defaults;
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(getInvoiceTableColumnsStorageKey(), JSON.stringify(visibleInvoiceTableColumns));
+    } catch (error) {
+      // Ignore storage write failures (e.g. private browsing quota).
+    }
+  }, [visibleInvoiceTableColumns, id]);
+
+  const toggleInvoiceTableColumn = (columnKey) => {
+    setVisibleInvoiceTableColumns((previous) => ({ ...previous, [columnKey]: !previous[columnKey] }));
+  };
   const [projectTotalsById, setProjectTotalsById] = useState({});
   const [projectDueTotalsById, setProjectDueTotalsById] = useState({});
   const [projectBudgetedTotalsById, setProjectBudgetedTotalsById] = useState({});
@@ -5499,7 +5530,20 @@ const InvoiceManager = () => {
                 </small>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "flex-end", padding: "12px", borderBottom: "1px solid #E5E7EB" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", padding: "12px", borderBottom: "1px solid #E5E7EB", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+                  <strong style={{ color: "#0F172A", fontSize: "0.85rem" }}>Columns:</strong>
+                  {INVOICE_TABLE_COLUMN_DEFS.map((column) => (
+                    <label key={column.key} style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.85rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(visibleInvoiceTableColumns[column.key])}
+                        onChange={() => toggleInvoiceTableColumn(column.key)}
+                      />
+                      {column.label}
+                    </label>
+                  ))}
+                </div>
                 <button
                   type="button"
                   onClick={handleDownloadInvoiceStatusReportPdf}
@@ -5536,9 +5580,9 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>Total</th>
                         <th style={tableHeaderCellStyle}>Hours &amp; Labor (OT &gt; {OVERTIME_THRESHOLD_HOURS}h)</th>
                         <th style={tableHeaderCellStyle}>Invoice #</th>
-                        <th style={tableHeaderCellStyle}>Due Date</th>
-                        <th style={tableHeaderCellStyle}>Due Day</th>
-                        <th style={tableHeaderCellStyle}>Countdown</th>
+                        {visibleInvoiceTableColumns.dueDate ? <th style={tableHeaderCellStyle}>Due Date</th> : null}
+                        {visibleInvoiceTableColumns.dueDay ? <th style={tableHeaderCellStyle}>Due Day</th> : null}
+                        {visibleInvoiceTableColumns.countdown ? <th style={tableHeaderCellStyle}>Countdown</th> : null}
                         <th style={tableHeaderCellStyle}>Terms</th>
                         <th style={tableHeaderCellStyle}>Invoice Status</th>
                         <th style={tableHeaderCellStyle}>Paid Status</th>
@@ -5714,35 +5758,41 @@ const InvoiceManager = () => {
                                   }
                                 />
                               </td>
-                              <td style={tableBodyCellStyle}>
-                                <span title="Calculated Due Date">{editDueDate ? formatDisplayDate(editDueDate) : "-"}</span>
-                              </td>
-                              <td style={tableBodyCellStyle}>
-                                <span title="Due Day">{editDueDate ? formatWeekdayName(editDueDate) : "-"}</span>
-                              </td>
-                              <td style={tableBodyCellStyle}>
-                                {editDueDate ? (() => {
-                                  const editCountdown = getDueCountdownMeta(editDueDate);
+                              {visibleInvoiceTableColumns.dueDate ? (
+                                <td style={tableBodyCellStyle}>
+                                  <span title="Calculated Due Date">{editDueDate ? formatDisplayDate(editDueDate) : "-"}</span>
+                                </td>
+                              ) : null}
+                              {visibleInvoiceTableColumns.dueDay ? (
+                                <td style={tableBodyCellStyle}>
+                                  <span title="Due Day">{editDueDate ? formatWeekdayName(editDueDate) : "-"}</span>
+                                </td>
+                              ) : null}
+                              {visibleInvoiceTableColumns.countdown ? (
+                                <td style={tableBodyCellStyle}>
+                                  {editDueDate ? (() => {
+                                    const editCountdown = getDueCountdownMeta(editDueDate);
 
-                                  return (
-                                    <span
-                                      title="Countdown"
-                                      style={{
-                                        display: "inline-block",
-                                        padding: "4px 8px",
-                                        borderRadius: "999px",
-                                        background: editCountdown.bgColor,
-                                        color: editCountdown.textColor,
-                                        fontSize: "0.8rem",
-                                        fontWeight: 600,
-                                        whiteSpace: "nowrap",
-                                      }}
-                                    >
-                                      {editCountdown.label}
-                                    </span>
-                                  );
-                                })() : "-"}
-                              </td>
+                                    return (
+                                      <span
+                                        title="Countdown"
+                                        style={{
+                                          display: "inline-block",
+                                          padding: "4px 8px",
+                                          borderRadius: "999px",
+                                          background: editCountdown.bgColor,
+                                          color: editCountdown.textColor,
+                                          fontSize: "0.8rem",
+                                          fontWeight: 600,
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {editCountdown.label}
+                                      </span>
+                                    );
+                                  })() : "-"}
+                                </td>
+                              ) : null}
                               <td style={tableBodyCellStyle}>
                                 <select
                                   style={compactInputStyle}
@@ -5972,28 +6022,34 @@ const InvoiceManager = () => {
                             <td style={tableBodyCellStyle}>
                               {(invoice.invoiceNumber || "").toUpperCase() || "-"}
                             </td>
-                            <td style={tableBodyCellStyle}>
-                              {formatDisplayDate(invoice.dueDate)}
-                            </td>
-                            <td style={tableBodyCellStyle}>
-                              {formatWeekdayName(invoice.dueDate)}
-                            </td>
-                            <td style={tableBodyCellStyle}>
-                              <span
-                                style={{
-                                  display: "inline-block",
-                                  padding: "4px 8px",
-                                  borderRadius: "999px",
-                                  background: dueCountdown.bgColor,
-                                  color: dueCountdown.textColor,
-                                  fontSize: "0.8rem",
-                                  fontWeight: 600,
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {dueCountdown.label}
-                              </span>
-                            </td>
+                            {visibleInvoiceTableColumns.dueDate ? (
+                              <td style={tableBodyCellStyle}>
+                                {formatDisplayDate(invoice.dueDate)}
+                              </td>
+                            ) : null}
+                            {visibleInvoiceTableColumns.dueDay ? (
+                              <td style={tableBodyCellStyle}>
+                                {formatWeekdayName(invoice.dueDate)}
+                              </td>
+                            ) : null}
+                            {visibleInvoiceTableColumns.countdown ? (
+                              <td style={tableBodyCellStyle}>
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    padding: "4px 8px",
+                                    borderRadius: "999px",
+                                    background: dueCountdown.bgColor,
+                                    color: dueCountdown.textColor,
+                                    fontSize: "0.8rem",
+                                    fontWeight: 600,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {dueCountdown.label}
+                                </span>
+                              </td>
+                            ) : null}
                             <td style={tableBodyCellStyle}>
                               {getPaymentTermLabel(invoice.paymentTerms, invoice.netDays)}
                             </td>
