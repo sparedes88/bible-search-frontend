@@ -676,6 +676,7 @@ const BillableInvoicePreviewPage = () => {
   const [manualTimeEntries, setManualTimeEntries] = useState([]);
   const [isAddingManualEntry, setIsAddingManualEntry] = useState(false);
   const [manualCardMode, setManualCardMode] = useState(false);
+  const [manualProjectMode, setManualProjectMode] = useState(false);
   const [manualEntryDraft, setManualEntryDraft] = useState({
     personName: "",
     projectName: "",
@@ -750,6 +751,7 @@ const BillableInvoicePreviewPage = () => {
       endTime: "",
     });
     setManualCardMode(false);
+    setManualProjectMode(false);
     setIsAddingManualEntry(true);
   };
 
@@ -877,6 +879,21 @@ const BillableInvoicePreviewPage = () => {
       totalAmount: Number(totals.totalAmount.toFixed(2)),
     };
   }, [effectiveUsers]);
+
+  const projectNameOptions = useMemo(() => {
+    const uniqueProjectNames = new Map();
+    cardOptions.forEach((option) => {
+      const projectName = String(option.projectName || "").trim();
+      if (!projectName) return;
+      const key = projectName.toLowerCase();
+      if (!uniqueProjectNames.has(key)) uniqueProjectNames.set(key, projectName);
+    });
+    if (draftPayload?.projectName) {
+      const key = String(draftPayload.projectName).trim().toLowerCase();
+      if (key && !uniqueProjectNames.has(key)) uniqueProjectNames.set(key, draftPayload.projectName);
+    }
+    return Array.from(uniqueProjectNames.values()).sort((left, right) => left.localeCompare(right));
+  }, [cardOptions, draftPayload?.projectName]);
 
   const handleDownloadXlsx = () => {
     if (!draftPayload) return;
@@ -1257,13 +1274,47 @@ const BillableInvoicePreviewPage = () => {
               </label>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 Project
-                <input
-                  type="text"
-                  value={manualEntryDraft.projectName}
-                  onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, projectName: event.target.value }))}
-                  placeholder="Project name"
-                  style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
-                />
+                {!manualProjectMode ? (
+                  <select
+                    value={projectNameOptions.includes(manualEntryDraft.projectName) ? manualEntryDraft.projectName : ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__manual__") {
+                        setManualProjectMode(true);
+                        setManualEntryDraft((previous) => ({ ...previous, projectName: "" }));
+                        return;
+                      }
+                      setManualEntryDraft((previous) => ({ ...previous, projectName: value }));
+                    }}
+                    style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                  >
+                    <option value="">Select a project</option>
+                    {projectNameOptions.map((projectName) => (
+                      <option key={projectName} value={projectName}>{projectName}</option>
+                    ))}
+                    <option value="__manual__">Type manually / Not listed</option>
+                  </select>
+                ) : (
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <input
+                      type="text"
+                      value={manualEntryDraft.projectName}
+                      onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, projectName: event.target.value }))}
+                      placeholder="Project name"
+                      style={{ flex: 1, padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualProjectMode(false);
+                        setManualEntryDraft((previous) => ({ ...previous, projectName: "" }));
+                      }}
+                      style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "0 10px", background: "#FFFFFF", color: "#334155", fontSize: "0.78rem", cursor: "pointer" }}
+                    >
+                      Use dropdown
+                    </button>
+                  </div>
+                )}
               </label>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 TD / Issue ID
