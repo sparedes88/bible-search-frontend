@@ -5725,11 +5725,6 @@ const InvoiceManager = () => {
                         const dueCountdown = getDueCountdownMeta(invoice.dueDate);
                         const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
                         const weekGapInfo = getWeekSequenceGapInfo(invoice.weekNumber, invoice.mondayDate, invoices, invoice.id);
-                        const isMissingInvoiceTotal = !invoice.total;
-                        const invoiceTotalValue = parseAmountValue(invoice.total);
-                        const hasUpdatedInvoiceTotal = invoiceTotalValue !== null && invoiceTotalValue > 0;
-                        const hasPlaceholderInvoiceNumber = isPlaceholderInvoiceNumber(invoice.invoiceNumber);
-                        const shouldHighlightPendingInvoiceNumber = hasUpdatedInvoiceTotal && hasPlaceholderInvoiceNumber;
                         const rowHoursData = invoiceHoursById[invoice.id] || {
                           totalMilliseconds: 0,
                           totalRegularMilliseconds: 0,
@@ -5741,6 +5736,16 @@ const InvoiceManager = () => {
                           rowHoursData.totalRegularMilliseconds,
                           rowHoursData.totalOvertimeMilliseconds
                         );
+                        // Main System billing always tracks the live Hours & Labor cost instead of
+                        // whatever total was last saved, so the two never drift out of sync.
+                        const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
+                          ? rowLaborCost.totalCost
+                          : invoice.total;
+                        const isMissingInvoiceTotal = !effectiveInvoiceTotal;
+                        const invoiceTotalValue = parseAmountValue(effectiveInvoiceTotal);
+                        const hasUpdatedInvoiceTotal = invoiceTotalValue !== null && invoiceTotalValue > 0;
+                        const hasPlaceholderInvoiceNumber = isPlaceholderInvoiceNumber(invoice.invoiceNumber);
+                        const shouldHighlightPendingInvoiceNumber = hasUpdatedInvoiceTotal && hasPlaceholderInvoiceNumber;
                         const isMasterInvoice = invoice.isPlaceholder !== true && invoices.some(
                           (linkedInvoice) =>
                             linkedInvoice.id !== invoice.id
@@ -6086,7 +6091,7 @@ const InvoiceManager = () => {
                                     !
                                   </span>
                                 ) : null}
-                                <span>{formatCurrency(invoice.total)}</span>
+                                <span>{formatCurrency(effectiveInvoiceTotal)}</span>
                                 {isMissingInvoiceTotal ? (
                                   <span
                                     style={{
