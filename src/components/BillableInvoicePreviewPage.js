@@ -78,6 +78,14 @@ const formatCurrency = (value) => {
   }).format(numericValue);
 };
 
+// Formats decimal hours as H:MM (60-minute clock format) instead of a decimal fraction.
+const formatHoursClock = (value) => {
+  const totalMinutes = Math.round((Number(value) || 0) * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}`;
+};
+
 const formatMonthDayYear = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "-";
@@ -2012,7 +2020,7 @@ const BillableInvoicePreviewPage = () => {
                       </div>
                     ) : null}
                   </div>
-                  <div style={numericBodyCellStyle}>{regularHours.toFixed(2)}</div>
+                  <div style={numericBodyCellStyle}>{formatHoursClock(regularHours)}</div>
                   <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
                   <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div>
                 </div>
@@ -2030,7 +2038,7 @@ const BillableInvoicePreviewPage = () => {
                     <div style={tableBodyCellStyle}>
                       {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
                     </div>
-                    <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
+                    <div style={numericBodyCellStyle}>{formatHoursClock(overtimeHours)}</div>
                     <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
                     <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
                   </div>
@@ -2048,7 +2056,7 @@ const BillableInvoicePreviewPage = () => {
             }}
           >
             <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Subtotal (Regular + Overtime Hours)</div>
-            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{Number(effectiveTotals.totalHours || 0).toFixed(2)}</div>
+            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatHoursClock(effectiveTotals.totalHours || 0)}</div>
             <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
             <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
           </div>
