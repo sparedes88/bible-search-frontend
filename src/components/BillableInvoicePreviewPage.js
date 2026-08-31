@@ -52,7 +52,7 @@ const numericBodyCellStyle = {
 const cardStyle = {
   background: "#FFFFFF",
   border: "1px solid #E2E8F0",
-  borderRadius: "4px",
+  borderRadius: "0px",
   padding: "16px",
 };
 
@@ -118,12 +118,26 @@ const getIssueTitleText = (entry = {}) => {
   return String(entry.title || "").trim();
 };
 
+const FIREBASE_FUNCTIONS_BASE_URL =
+  typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "/firebase-api"
+    : "https://us-central1-igletechv1.cloudfunctions.net";
+
+const blobToDataUrl = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
 const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
   const pdfContentRef = useRef(null);
   const [companyBranding, setCompanyBranding] = useState({ name: "", logo: "" });
   const [logoDataUrl, setLogoDataUrl] = useState("");
+  const [logoStatus, setLogoStatus] = useState("idle"); // idle | loading | ready | unavailable
   const [sectionVisibility, setSectionVisibility] = useState(DEFAULT_SECTION_VISIBILITY);
 
   useEffect(() => {
@@ -148,29 +162,55 @@ const BillableInvoicePreviewPage = () => {
   }, [id]);
 
   // Inlines the logo as a data URL so html2canvas can always render it, regardless of CORS on the remote asset.
+  // Tries a direct browser fetch first (works for hosts that already send permissive CORS headers,
+  // e.g. Firebase Storage), then falls back to a server-side proxy Cloud Function for hosts that don't
+  // (e.g. the e2api image server), since server-to-server requests aren't subject to browser CORS rules.
   useEffect(() => {
     let isMounted = true;
+    const logoUrl = companyBranding.logo;
 
     const convertLogoToDataUrl = async () => {
-      if (!companyBranding.logo) {
-        setLogoDataUrl("");
+      if (!logoUrl) {
+        if (isMounted) {
+          setLogoDataUrl("");
+          setLogoStatus("unavailable");
+        }
         return;
       }
 
-      try {
-        const response = await fetch(companyBranding.logo, { mode: "cors" });
-        const blob = await response.blob();
-        const dataUrl = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
+      if (isMounted) setLogoStatus("loading");
 
-        if (isMounted) setLogoDataUrl(dataUrl);
-      } catch (error) {
-        console.warn("Could not inline invoice logo as a data URL, falling back to remote URL:", error);
-        if (isMounted) setLogoDataUrl("");
+      try {
+        const response = await fetch(logoUrl, { mode: "cors" });
+        if (!response.ok) throw new Error(`Logo fetch failed with status ${response.status}`);
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        if (isMounted) {
+          setLogoDataUrl(dataUrl);
+          setLogoStatus("ready");
+        }
+        return;
+      } catch (directFetchError) {
+        console.warn("Direct logo fetch blocked (likely CORS), falling back to server proxy:", directFetchError);
+      }
+
+      try {
+        const proxyUrl = `${FIREBASE_FUNCTIONS_BASE_URL}/fetchRemoteImageAsDataUrl?url=${encodeURIComponent(logoUrl)}`;
+        const proxyResponse = await fetch(proxyUrl);
+        if (!proxyResponse.ok) throw new Error(`Logo proxy failed with status ${proxyResponse.status}`);
+        const proxyPayload = await proxyResponse.json();
+        if (!proxyPayload?.dataUrl) throw new Error("Logo proxy returned no data");
+
+        if (isMounted) {
+          setLogoDataUrl(proxyPayload.dataUrl);
+          setLogoStatus("ready");
+        }
+      } catch (proxyError) {
+        console.warn("Could not inline invoice logo via proxy, PDF export will show a placeholder box:", proxyError);
+        if (isMounted) {
+          setLogoDataUrl("");
+          setLogoStatus("unavailable");
+        }
       }
     };
 
@@ -701,7 +741,10 @@ const BillableInvoicePreviewPage = () => {
           format: "a4",
           orientation: "portrait",
         },
-        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+        // "avoid-all" treats every nested block as unsplittable, which can cascade whole
+        // sections onto the next page over a small height change. "css" only breaks where
+        // we explicitly mark break-inside/break-before below, so pages fill up naturally.
+        pagebreak: { mode: ["css", "legacy"] },
       };
 
       await html2pdf().set(options).from(containerElement).save();
@@ -816,13 +859,35 @@ const BillableInvoicePreviewPage = () => {
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "20px", flexWrap: "wrap" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-                {companyBranding.logo ? (
-                  <img
-                    src={logoDataUrl || companyBranding.logo}
-                    alt={`${companyBranding.name || "Company"} logo`}
-                    style={{ height: "52px", width: "auto", objectFit: "contain" }}
-                  />
-                ) : null}
+                <div
+                  style={{
+                    height: "52px",
+                    width: logoStatus === "ready" ? "auto" : "160px",
+                    minWidth: logoStatus === "ready" ? "0" : "160px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: logoStatus === "ready" ? "flex-start" : "center",
+                    border: logoStatus === "ready" ? "none" : "1px dashed #CBD5E1",
+                    background: logoStatus === "ready" ? "transparent" : "#F8FAFC",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {logoStatus === "ready" ? (
+                    <img
+                      src={logoDataUrl}
+                      alt={`${companyBranding.name || "Company"} logo`}
+                      style={{ height: "52px", width: "auto", objectFit: "contain" }}
+                    />
+                  ) : logoStatus === "loading" ? (
+                    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#94A3B8", letterSpacing: "0.04em" }}>
+                      Loading logo…
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#94A3B8", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                      Logo
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -1049,9 +1114,11 @@ const BillableInvoicePreviewPage = () => {
                   width: "100%",
                   boxSizing: "border-box",
                   border: "1px solid #CBD5E1",
-                  borderRadius: "4px",
+                  borderRadius: "0px",
                   overflow: "hidden",
                   background: "#FFFFFF",
+                  breakInside: "avoid",
+                  pageBreakInside: "avoid",
                 }}
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
@@ -1119,7 +1186,7 @@ const BillableInvoicePreviewPage = () => {
         </div>
 
         <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
-          <div style={{ minWidth: "280px", border: "1px solid #E2E8F0", borderRadius: "4px", overflow: "hidden" }}>
+          <div style={{ minWidth: "280px", border: "1px solid #E2E8F0", borderRadius: "0px", overflow: "hidden", breakInside: "avoid", pageBreakInside: "avoid" }}>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", fontSize: "0.85rem", color: "#334155", borderBottom: "1px solid #F1F5F9" }}>
               <span>Total Regular Hours</span>
               <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(draftPayload.totals?.totalRegularHours || 0).toFixed(2)}</span>
@@ -1166,9 +1233,11 @@ const BillableInvoicePreviewPage = () => {
                   width: "100%",
                   boxSizing: "border-box",
                   border: "1px solid #CBD5E1",
-                  borderRadius: "4px",
+                  borderRadius: "0px",
                   overflow: "hidden",
                   background: "#FFFFFF",
+                  breakInside: "avoid",
+                  pageBreakInside: "avoid",
                 }}
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
@@ -1253,9 +1322,11 @@ const BillableInvoicePreviewPage = () => {
                   width: "100%",
                   boxSizing: "border-box",
                   border: "1px solid #CBD5E1",
-                  borderRadius: "4px",
+                  borderRadius: "0px",
                   overflow: "hidden",
                   background: "#FFFFFF",
+                  breakInside: "avoid",
+                  pageBreakInside: "avoid",
                 }}
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>

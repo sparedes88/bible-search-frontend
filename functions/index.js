@@ -4696,3 +4696,61 @@ exports.getMemberCommitmentSummary = functions.https.onRequest(async (req, res) 
     return res.status(500).json({ success: false, error: "Unexpected error loading commitment summary." });
   }
 });
+
+// Fetches a remote image server-side (not subject to browser CORS restrictions) and
+// returns it as a base64 data URL so clients can embed logos/images into canvases
+// (e.g. html2canvas/jsPDF exports) even when the source host doesn't send CORS headers.
+const ALLOWED_IMAGE_PROXY_HOSTS = [
+  "iglesia-tech-api.e2api.com",
+  "firebasestorage.googleapis.com",
+  "storage.googleapis.com",
+];
+
+exports.fetchRemoteImageAsDataUrl = functions.https.onRequest(async (req, res) => {
+  if (handleCors(req, res)) return;
+
+  if (req.method !== "GET") {
+    return res.status(405).json({ success: false, error: "Only GET is allowed" });
+  }
+
+  const imageUrl = normalizeValue(req.query.url);
+  if (!imageUrl) {
+    return res.status(400).json({ success: false, error: "Missing url query parameter" });
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(imageUrl);
+  } catch (error) {
+    return res.status(400).json({ success: false, error: "Invalid url" });
+  }
+
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    return res.status(400).json({ success: false, error: "Only http/https urls are allowed" });
+  }
+
+  if (!ALLOWED_IMAGE_PROXY_HOSTS.includes(parsedUrl.hostname)) {
+    return res.status(403).json({ success: false, error: "This image host is not allowed" });
+  }
+
+  try {
+    const response = await axios.get(parsedUrl.toString(), {
+      responseType: "arraybuffer",
+      timeout: 15000,
+      maxContentLength: 8 * 1024 * 1024,
+      maxBodyLength: 8 * 1024 * 1024,
+    });
+
+    const contentType = normalizeValue(response.headers?.["content-type"]) || "image/png";
+    const base64Data = Buffer.from(response.data).toString("base64");
+
+    return res.status(200).json({
+      success: true,
+      contentType,
+      dataUrl: `data:${contentType};base64,${base64Data}`,
+    });
+  } catch (error) {
+    console.error("fetchRemoteImageAsDataUrl error:", error.message);
+    return res.status(502).json({ success: false, error: "Failed to fetch the remote image" });
+  }
+});
