@@ -1958,25 +1958,54 @@ const BillableInvoicePreviewPage = () => {
             <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Amount</div>
           </div>
 
-          {users.map((userEntry, index) => (
-            <div
-              key={`${userEntry.name || "Unknown User"}-${index}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
-                width: "100%",
-                breakInside: "avoid",
-                pageBreakInside: "avoid",
-              }}
-            >
-              <div style={tableBodyCellStyle}>
-                {`BIM Coordinator Services — ${userEntry.name || "Unknown User"}`}
-              </div>
-              <div style={numericBodyCellStyle}>{Number(userEntry.totalHours || 0).toFixed(2)}</div>
-              <div style={numericBodyCellStyle}>{formatCurrency(userEntry.regularRate || 0)}</div>
-              <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(userEntry.lineTotal || 0)}</div>
-            </div>
-          ))}
+          {users.map((userEntry, index) => {
+            const personName = userEntry.name || "Unknown User";
+            const regularHours = Number(userEntry.regularHours || 0);
+            const overtimeHours = Number(userEntry.overtimeHours || 0);
+            const regularRate = Number(userEntry.regularRate || 0);
+            const overtimeRate = Number(userEntry.overtimeRate || 0);
+            const regularCost = regularHours * regularRate;
+            const overtimeCost = overtimeHours * overtimeRate;
+
+            return (
+              <React.Fragment key={`${personName}-${index}`}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+                    width: "100%",
+                    breakInside: "avoid",
+                    pageBreakInside: "avoid",
+                  }}
+                >
+                  <div style={tableBodyCellStyle}>
+                    {`BIM Coordinator Services — ${personName} (Regular, <= ${overtimeThresholdHours}h)`}
+                  </div>
+                  <div style={numericBodyCellStyle}>{regularHours.toFixed(2)}</div>
+                  <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
+                  <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div>
+                </div>
+                {overtimeHours > 0 ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+                      width: "100%",
+                      breakInside: "avoid",
+                      pageBreakInside: "avoid",
+                    }}
+                  >
+                    <div style={tableBodyCellStyle}>
+                      {`BIM Coordinator Services — ${personName} (Overtime, > ${overtimeThresholdHours}h)`}
+                    </div>
+                    <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
+                    <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
+                    <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
+                  </div>
+                ) : null}
+              </React.Fragment>
+            );
+          })}
 
           <div
             style={{
