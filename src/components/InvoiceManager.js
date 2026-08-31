@@ -5831,6 +5831,41 @@ const InvoiceManager = () => {
                                   </button>
                                   <button
                                     type="button"
+                                    style={{ ...compactButtonStyle, background: "#0F766E" }}
+                                    onClick={() => setInvoiceLogModalInvoice(invoice)}
+                                  >
+                                    Log
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{ ...compactButtonStyle, background: "#1D4ED8" }}
+                                    onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
+                                    disabled={rowUsersHours.length === 0}
+                                    title={rowUsersHours.length === 0 ? "No user hours available" : "Download per-person billable invoice"}
+                                  >
+                                    Billable Invoice
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{ ...compactButtonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === invoice.id ? 0.7 : 1 }}
+                                    onClick={() => handleSelectExternalPdf(invoice.id)}
+                                    disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === invoice.id}
+                                  >
+                                    {uploadingExternalPdfInvoiceId === invoice.id ? "Uploading PDF..." : "Upload External PDF"}
+                                  </button>
+                                  {invoice.externalPdf?.url ? (
+                                    <a
+                                      href={invoice.externalPdf.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      style={{ ...compactButtonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
+                                      title={invoice.externalPdf.name || "View external invoice PDF"}
+                                    >
+                                      View External PDF
+                                    </a>
+                                  ) : null}
+                                  <button
+                                    type="button"
                                     style={{ ...compactButtonStyle, background: "#DC2626" }}
                                     onClick={() => handleDeleteInvoice(invoice.id)}
                                   >
@@ -6058,48 +6093,6 @@ const InvoiceManager = () => {
                                   onClick={() => startInvoiceEdit(invoice)}
                                 >
                                   Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonStyle, background: "#0F766E" }}
-                                  onClick={() => setInvoiceLogModalInvoice(invoice)}
-                                >
-                                  Log
-                                </button>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonStyle, background: "#1D4ED8" }}
-                                  onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
-                                  disabled={rowUsersHours.length === 0}
-                                  title={rowUsersHours.length === 0 ? "No user hours available" : "Download per-person billable invoice"}
-                                >
-                                  Billable Invoice
-                                </button>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === invoice.id ? 0.7 : 1 }}
-                                  onClick={() => handleSelectExternalPdf(invoice.id)}
-                                  disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === invoice.id}
-                                >
-                                  {uploadingExternalPdfInvoiceId === invoice.id ? "Uploading PDF..." : "Upload External PDF"}
-                                </button>
-                                {invoice.externalPdf?.url ? (
-                                  <a
-                                    href={invoice.externalPdf.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ ...buttonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
-                                    title={invoice.externalPdf.name || "View external invoice PDF"}
-                                  >
-                                    View External PDF
-                                  </a>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  style={{ ...buttonStyle, background: "#DC2626" }}
-                                  onClick={() => handleDeleteInvoice(invoice.id)}
-                                >
-                                  Delete
                                 </button>
                               </div>
                             </td>
