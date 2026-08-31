@@ -360,7 +360,7 @@ const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds) => {
 const normalizeIdentityValue = (value) => String(value || "").trim().toLowerCase();
 
 // Prefers a person's full name (first + last) from the org user directory over whatever short name was logged.
-const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}) => {
+const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}, fullNameByFirstNameOnly = {}) => {
   const aliasMatches = [log.userId, log.userEmail, log.registeredBy]
     .map(normalizeIdentityValue)
     .filter(Boolean);
@@ -368,6 +368,13 @@ const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}) => {
   for (const alias of aliasMatches) {
     const fullName = fullNameByIdentityAlias[alias];
     if (fullName) return fullName;
+  }
+
+  // Some historical logs only stored a first name with no userId/email; if exactly one org
+  // member shares that first name, merge into their full name instead of creating a duplicate row.
+  const registeredByNormalized = normalizeIdentityValue(log.registeredBy);
+  if (registeredByNormalized && fullNameByFirstNameOnly[registeredByNormalized]) {
+    return fullNameByFirstNameOnly[registeredByNormalized];
   }
 
   const byName = String(log.registeredBy || "").trim();
@@ -1188,6 +1195,7 @@ const InvoiceManager = () => {
           return {
             userId: userDoc.id,
             label,
+            firstName,
             aliases: [userDoc.id, email, displayName, data.name]
               .map(normalizeIdentityValue)
               .filter(Boolean),
@@ -1210,6 +1218,25 @@ const InvoiceManager = () => {
       userEntry.aliases.forEach((alias) => {
         lookup[alias] = userEntry.label;
       });
+    });
+    return lookup;
+  }, [organizationUserDirectory]);
+
+  // Maps a normalized first name to a full label, but only when exactly one org member has
+  // that first name — ambiguous first names are left out to avoid merging different people.
+  const fullNameByFirstNameOnly = useMemo(() => {
+    const countByFirstName = new Map();
+    organizationUserDirectory.forEach((userEntry) => {
+      const key = normalizeIdentityValue(userEntry.firstName);
+      if (!key) return;
+      countByFirstName.set(key, (countByFirstName.get(key) || 0) + 1);
+    });
+
+    const lookup = {};
+    organizationUserDirectory.forEach((userEntry) => {
+      const key = normalizeIdentityValue(userEntry.firstName);
+      if (!key || countByFirstName.get(key) !== 1) return;
+      lookup[key] = userEntry.label;
     });
     return lookup;
   }, [organizationUserDirectory]);
@@ -1276,7 +1303,7 @@ const InvoiceManager = () => {
           eventTimestamp,
           safeDuration,
           weekKey,
-          userLabel: getTimeLogUserLabel(log, fullNameByIdentityAlias),
+          userLabel: getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly),
         };
       })
       .filter(Boolean)
@@ -1285,7 +1312,7 @@ const InvoiceManager = () => {
         if (timeDelta !== 0) return timeDelta;
         return String(left.id || "").localeCompare(String(right.id || ""));
       });
-  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias]);
+  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
 
   useEffect(() => {
     let active = true;

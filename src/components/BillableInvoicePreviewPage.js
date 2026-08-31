@@ -843,16 +843,48 @@ const BillableInvoicePreviewPage = () => {
     const usersByKey = new Map();
     const baseUsers = Array.isArray(draftPayload.users) ? draftPayload.users : [];
 
+    // Safety net for invoices generated before names were consistently resolved: if one person's
+    // name is just the first word of another person's full name (e.g. "Salomon" vs "Salomon
+    // Paredes"), treat them as the same person and merge their hours under the fuller name.
+    const canonicalNameByShortName = new Map();
+    const sortedByNameLength = [...baseUsers].sort((left, right) =>
+      String(right.name || "").trim().length - String(left.name || "").trim().length
+    );
+    sortedByNameLength.forEach((userEntry) => {
+      const fullName = String(userEntry.name || "").trim();
+      if (!fullName) return;
+      const firstWord = fullName.split(/\s+/)[0].toLowerCase();
+      if (firstWord && !canonicalNameByShortName.has(firstWord)) {
+        canonicalNameByShortName.set(firstWord, fullName);
+      }
+    });
+
     baseUsers.forEach((userEntry) => {
-      const key = String(userEntry.name || "").trim().toLowerCase();
+      const fullName = String(userEntry.name || "").trim();
+      const normalizedFullName = fullName.toLowerCase();
+      const isSingleWordName = fullName && !fullName.includes(" ");
+      const canonicalName = isSingleWordName ? canonicalNameByShortName.get(normalizedFullName) : null;
+      const resolvedName = (canonicalName && canonicalName.toLowerCase() !== normalizedFullName) ? canonicalName : fullName;
+      const key = resolvedName.toLowerCase();
       if (!key) return;
-      usersByKey.set(key, {
-        ...userEntry,
-        cards: Array.isArray(userEntry.cards) ? [...userEntry.cards] : [],
-        notes: Array.isArray(userEntry.notes) ? [...userEntry.notes] : [],
-        baseTotalHours: Number(userEntry.totalHours || 0),
-        manualHours: 0,
-      });
+
+      const existing = usersByKey.get(key);
+      if (!existing) {
+        usersByKey.set(key, {
+          ...userEntry,
+          name: resolvedName,
+          cards: Array.isArray(userEntry.cards) ? [...userEntry.cards] : [],
+          notes: Array.isArray(userEntry.notes) ? [...userEntry.notes] : [],
+          baseTotalHours: Number(userEntry.totalHours || 0),
+          manualHours: 0,
+        });
+        return;
+      }
+
+      // Merge a short-name duplicate into the already-registered full-name entry.
+      existing.cards.push(...(Array.isArray(userEntry.cards) ? userEntry.cards : []));
+      existing.notes.push(...(Array.isArray(userEntry.notes) ? userEntry.notes : []));
+      existing.baseTotalHours += Number(userEntry.totalHours || 0);
     });
 
     manualTimeEntries.forEach((entry) => {
