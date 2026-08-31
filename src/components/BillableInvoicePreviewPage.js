@@ -805,7 +805,12 @@ const BillableInvoicePreviewPage = () => {
     const hours = getManualEntryHours(manualEntryDraft);
 
     if (!personName) {
-      toast.error("Select or enter a person's name.");
+      toast.error("Select a person.");
+      return;
+    }
+
+    if (!personNameOptions.some((option) => option.toLowerCase() === personName.toLowerCase())) {
+      toast.error("Select a person from the list so their hours match the correct user.");
       return;
     }
 
@@ -1034,6 +1039,16 @@ const BillableInvoicePreviewPage = () => {
     }
     return Array.from(uniqueProjectNames.values()).sort((left, right) => left.localeCompare(right));
   }, [cardOptions, draftPayload?.projectName]);
+
+  // Restricting to this exact list (instead of free text) prevents typos/near-duplicate names
+  // (e.g. "Salomon" vs "Salomon Paredes") from registering as a different person.
+  const personNameOptions = useMemo(() => {
+    return Array.from(new Set([
+      ...organizationMembers.map((member) => member.label),
+      ...effectiveUsers.map((userEntry) => userEntry.name),
+      resolveMemberDisplayName(user || {}),
+    ].filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  }, [organizationMembers, effectiveUsers, user]);
 
   const filteredCardOptions = useMemo(() => {
     const selectedProjectName = String(manualEntryDraft.projectName || "").trim().toLowerCase();
@@ -1410,23 +1425,16 @@ const BillableInvoicePreviewPage = () => {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px" }}>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 Person
-                <input
-                  type="text"
-                  list="billable-invoice-person-options"
+                <select
                   value={manualEntryDraft.personName}
                   onChange={(event) => setManualEntryDraft((previous) => ({ ...previous, personName: event.target.value }))}
-                  placeholder="Select or type a name"
                   style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
-                />
-                <datalist id="billable-invoice-person-options">
-                  {Array.from(new Set([
-                    ...organizationMembers.map((member) => member.label),
-                    ...effectiveUsers.map((userEntry) => userEntry.name),
-                    resolveMemberDisplayName(user || {}),
-                  ].filter(Boolean))).sort((left, right) => left.localeCompare(right)).map((personName) => (
-                    <option key={personName} value={personName} />
+                >
+                  <option value="">Select a person</option>
+                  {personNameOptions.map((personName) => (
+                    <option key={personName} value={personName}>{personName}</option>
                   ))}
-                </datalist>
+                </select>
               </label>
               <label style={{ display: "grid", gap: "4px", fontSize: "0.8rem", color: "#334155" }}>
                 Project
