@@ -1959,7 +1959,7 @@ const BillableInvoicePreviewPage = () => {
           </div>
 
           {users.map((userEntry, index) => {
-            const personName = userEntry.name || "Unknown User";
+            const drafterLabel = `Drafter #${index + 1}`;
             const regularHours = Number(userEntry.regularHours || 0);
             const overtimeHours = Number(userEntry.overtimeHours || 0);
             const regularRate = Number(userEntry.regularRate || 0);
@@ -1968,7 +1968,7 @@ const BillableInvoicePreviewPage = () => {
             const overtimeCost = overtimeHours * overtimeRate;
 
             return (
-              <React.Fragment key={`${personName}-${index}`}>
+              <React.Fragment key={`${userEntry.name || "Unknown User"}-${index}`}>
                 <div
                   style={{
                     display: "grid",
@@ -1979,7 +1979,7 @@ const BillableInvoicePreviewPage = () => {
                   }}
                 >
                   <div style={tableBodyCellStyle}>
-                    {`BIM Coordinator Services — ${personName} (Regular, <= ${overtimeThresholdHours}h)`}
+                    {`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}
                   </div>
                   <div style={numericBodyCellStyle}>{regularHours.toFixed(2)}</div>
                   <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
@@ -1996,7 +1996,7 @@ const BillableInvoicePreviewPage = () => {
                     }}
                   >
                     <div style={tableBodyCellStyle}>
-                      {`BIM Coordinator Services — ${personName} (Overtime, > ${overtimeThresholdHours}h)`}
+                      {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
                     </div>
                     <div style={numericBodyCellStyle}>{overtimeHours.toFixed(2)}</div>
                     <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
