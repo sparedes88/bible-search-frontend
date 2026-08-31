@@ -851,6 +851,9 @@ const BillableInvoicePreviewPage = () => {
       date: manualEntryDraft.date,
       startTime: manualEntryDraft.startTime,
       endTime: manualEntryDraft.endTime,
+      // Tracks when this entry's real Time Rotate log was (re)written, so we can tell whether a
+      // regenerated invoice draft already includes these hours and avoid double-counting them.
+      syncedAt: Date.now(),
     };
 
     const startedAt = new Date(`${entryFields.date}T${entryFields.startTime}`).getTime();
@@ -985,9 +988,20 @@ const BillableInvoicePreviewPage = () => {
       existing.baseTotalHours += Number(userEntry.totalHours || 0);
     });
 
+    const draftGeneratedAt = Number(draftPayload.generatedAt || 0);
+
     manualTimeEntries.forEach((entry) => {
       const hours = getManualEntryHours(entry);
       if (hours <= 0) return;
+
+      // Once an entry's real Time Rotate log was written before this draft was generated, its
+      // hours and card are already included in baseUsers via the normal aggregation — adding
+      // them again here would double-count. Only overlay entries not yet reflected in the draft.
+      const alreadyReflectedInDraft = Boolean(entry.timeRotateLogId)
+        && draftGeneratedAt > 0
+        && Number(entry.syncedAt || 0) > 0
+        && Number(entry.syncedAt) <= draftGeneratedAt;
+      if (alreadyReflectedInDraft) return;
 
       const key = String(entry.personName || "").trim().toLowerCase();
       if (!key) return;
