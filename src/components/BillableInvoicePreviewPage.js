@@ -144,6 +144,30 @@ const resolveMemberDisplayName = (data = {}) => {
   return String(firstAndLastName || data.displayName || data.email || "").trim();
 };
 
+// Collapses name variants that are just a first-name-only version of a fuller name
+// (e.g. "Salomon" vs "Salomon Paredes") down to the fuller name, so the same person
+// never shows twice in a selection list.
+const mergeNameVariants = (names) => {
+  const uniqueNames = Array.from(new Set(names.filter(Boolean).map((name) => name.trim())));
+  const longestByFirstWord = new Map();
+
+  uniqueNames.forEach((name) => {
+    const firstWord = name.split(/\s+/)[0].toLowerCase();
+    const current = longestByFirstWord.get(firstWord);
+    if (!current || name.length > current.length) longestByFirstWord.set(firstWord, name);
+  });
+
+  const merged = new Set();
+  uniqueNames.forEach((name) => {
+    const isSingleWord = !name.includes(" ");
+    const firstWord = name.split(/\s+/)[0].toLowerCase();
+    const longestMatch = longestByFirstWord.get(firstWord);
+    merged.add(isSingleWord && longestMatch && longestMatch !== name ? longestMatch : name);
+  });
+
+  return Array.from(merged).sort((left, right) => left.localeCompare(right));
+};
+
 const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
@@ -1043,11 +1067,11 @@ const BillableInvoicePreviewPage = () => {
   // Restricting to this exact list (instead of free text) prevents typos/near-duplicate names
   // (e.g. "Salomon" vs "Salomon Paredes") from registering as a different person.
   const personNameOptions = useMemo(() => {
-    return Array.from(new Set([
+    return mergeNameVariants([
       ...organizationMembers.map((member) => member.label),
       ...effectiveUsers.map((userEntry) => userEntry.name),
       resolveMemberDisplayName(user || {}),
-    ].filter(Boolean))).sort((left, right) => left.localeCompare(right));
+    ]);
   }, [organizationMembers, effectiveUsers, user]);
 
   const filteredCardOptions = useMemo(() => {
