@@ -2066,8 +2066,6 @@ const BillableInvoicePreviewPage = () => {
           marginTop: "12px",
           width: "100%",
           boxSizing: "border-box",
-          pageBreakBefore: "always",
-          breakBefore: "page",
         }}
       >
         <h2 style={sectionHeadingStyle}>Work Summary per User</h2>
