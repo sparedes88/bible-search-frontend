@@ -1917,11 +1917,6 @@ const BillableInvoicePreviewPage = () => {
               >
                 <div style={{ padding: "10px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0", fontWeight: 800, color: "#0F172A" }}>
                   <div>{`BIM Coordinator #${index + 1}`}</div>
-                  <div style={{ marginTop: "4px", fontWeight: 600, fontSize: "0.85rem", color: "#334155" }}>
-                    <div><strong>Week:</strong> Week {draftPayload.weekNumber || "-"}</div>
-                    <div><strong>Start of Week:</strong> {formatMonthDayYear(draftPayload.mondayDate)}</div>
-                    <div><strong>End of Week:</strong> {formatMonthDayYear(draftPayload.weekEndDate)}</div>
-                  </div>
                   <div style={{ marginTop: "8px" }}>
                     <div style={{ fontWeight: 800, fontSize: "0.82rem", letterSpacing: "0.03em", textTransform: "uppercase" }}>
                       BIM Coordinator / Detailer
