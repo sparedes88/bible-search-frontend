@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import * as html2pdfLib from "html2pdf.js";
-import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import { getChurchData } from "../api/church";
@@ -205,11 +205,15 @@ const BillableInvoicePreviewPage = () => {
         const data = snapshotDoc.data() || {};
         const fullName = resolveMemberDisplayName(data) || snapshotDoc.id;
         if (!fullName) return;
-        nextMembersById.set(snapshotDoc.id, fullName);
+        nextMembersById.set(snapshotDoc.id, {
+          id: snapshotDoc.id,
+          label: fullName,
+          email: String(data.email || "").trim(),
+        });
       });
 
       setOrganizationMembers(
-        Array.from(nextMembersById.values()).sort((left, right) => left.localeCompare(right))
+        Array.from(nextMembersById.values()).sort((left, right) => left.label.localeCompare(right.label))
       );
     };
     const unsubscribers = userQueries.map((userQuery, queryIndex) => onSnapshot(userQuery, (snapshot) => {
@@ -740,6 +744,23 @@ const BillableInvoicePreviewPage = () => {
     return (endMs - startMs) / (1000 * 60 * 60);
   };
 
+  // Resolves the actual org member behind a typed/selected name so the real Time Rotate log
+  // we create carries a userId/email, matching Pay Everyone's identity resolution.
+  const resolveIdentityForPersonName = (personName) => {
+    const normalized = String(personName || "").trim().toLowerCase();
+    if (!normalized) return { userId: "", userEmail: "" };
+
+    const currentUserLabel = resolveMemberDisplayName(user || {}).toLowerCase();
+    if (currentUserLabel && currentUserLabel === normalized) {
+      return { userId: user?.uid || "", userEmail: user?.email || "" };
+    }
+
+    const matchedMember = organizationMembers.find((member) => member.label.toLowerCase() === normalized);
+    if (matchedMember) return { userId: matchedMember.id, userEmail: matchedMember.email };
+
+    return { userId: "", userEmail: "" };
+  };
+
   const openAddManualEntryForm = () => {
     setEditingManualEntryId("");
     setManualEntryDraft({
@@ -803,6 +824,42 @@ const BillableInvoicePreviewPage = () => {
       endTime: manualEntryDraft.endTime,
     };
 
+    const startedAt = new Date(`${entryFields.date}T${entryFields.startTime}`).getTime();
+    const endedAt = new Date(`${entryFields.date}T${entryFields.endTime}`).getTime();
+    const identity = resolveIdentityForPersonName(personName);
+    const timeRotateLogPayload = {
+      issueId: entryFields.issueId,
+      issueLabel: entryFields.cardTitle,
+      issueTitle: entryFields.cardTitle,
+      projectName: entryFields.projectName,
+      userId: identity.userId,
+      userEmail: identity.userEmail,
+      registeredBy: personName,
+      startedAt,
+      endedAt,
+      durationMs: endedAt - startedAt,
+      logType: "manual",
+      requiresSaveConfirmation: false,
+      createdViaBillableInvoice: true,
+    };
+
+    const existingEntry = editingManualEntryId
+      ? manualTimeEntries.find((entry) => entry.id === editingManualEntryId)
+      : null;
+
+    try {
+      if (existingEntry?.timeRotateLogId) {
+        await updateDoc(doc(db, "churches", id, "timeRotateLogs", existingEntry.timeRotateLogId), timeRotateLogPayload);
+        entryFields.timeRotateLogId = existingEntry.timeRotateLogId;
+      } else {
+        const createdLogRef = await addDoc(collection(db, "churches", id, "timeRotateLogs"), timeRotateLogPayload);
+        entryFields.timeRotateLogId = createdLogRef.id;
+      }
+    } catch (error) {
+      console.error("Failed to register manual time entry in Time Rotate:", error);
+      toast.error("Saved to the invoice, but failed to register this time in Pay Everyone.");
+    }
+
     if (editingManualEntryId) {
       await persistManualTimeEntries(
         manualTimeEntries.map((entry) => (entry.id === editingManualEntryId ? { ...entry, ...entryFields } : entry))
@@ -824,6 +881,15 @@ const BillableInvoicePreviewPage = () => {
   };
 
   const handleRemoveManualTimeEntry = async (entryId) => {
+    const entryToRemove = manualTimeEntries.find((entry) => entry.id === entryId);
+    if (entryToRemove?.timeRotateLogId) {
+      try {
+        await deleteDoc(doc(db, "churches", id, "timeRotateLogs", entryToRemove.timeRotateLogId));
+      } catch (error) {
+        console.error("Failed to remove the linked Time Rotate log:", error);
+      }
+    }
+
     await persistManualTimeEntries(manualTimeEntries.filter((entry) => entry.id !== entryId));
     if (editingManualEntryId === entryId) {
       setEditingManualEntryId("");
@@ -1354,7 +1420,7 @@ const BillableInvoicePreviewPage = () => {
                 />
                 <datalist id="billable-invoice-person-options">
                   {Array.from(new Set([
-                    ...organizationMembers,
+                    ...organizationMembers.map((member) => member.label),
                     ...effectiveUsers.map((userEntry) => userEntry.name),
                     resolveMemberDisplayName(user || {}),
                   ].filter(Boolean))).sort((left, right) => left.localeCompare(right)).map((personName) => (
