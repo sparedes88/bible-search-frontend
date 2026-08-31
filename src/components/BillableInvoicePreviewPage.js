@@ -677,6 +677,7 @@ const BillableInvoicePreviewPage = () => {
   const [isAddingManualEntry, setIsAddingManualEntry] = useState(false);
   const [manualCardMode, setManualCardMode] = useState(false);
   const [manualProjectMode, setManualProjectMode] = useState(false);
+  const [editingManualEntryId, setEditingManualEntryId] = useState("");
   const [manualEntryDraft, setManualEntryDraft] = useState({
     personName: "",
     projectName: "",
@@ -740,6 +741,7 @@ const BillableInvoicePreviewPage = () => {
   };
 
   const openAddManualEntryForm = () => {
+    setEditingManualEntryId("");
     setManualEntryDraft({
       personName: "",
       projectName: draftPayload?.projectName || "",
@@ -751,6 +753,28 @@ const BillableInvoicePreviewPage = () => {
       endTime: "",
     });
     setManualCardMode(false);
+    setManualProjectMode(false);
+    setIsAddingManualEntry(true);
+  };
+
+  const openEditManualEntryForm = (entry) => {
+    const matchingCard = cardOptions.find((option) =>
+      option.issueId.toLowerCase() === String(entry.issueId || "").trim().toLowerCase()
+      && option.projectName.toLowerCase() === String(entry.projectName || "").trim().toLowerCase()
+    );
+
+    setEditingManualEntryId(entry.id);
+    setManualEntryDraft({
+      personName: entry.personName || "",
+      projectName: entry.projectName || "",
+      issueId: entry.issueId || "",
+      cardValue: matchingCard?.value || "",
+      cardTitle: entry.cardTitle || "",
+      date: entry.date || "",
+      startTime: entry.startTime || "",
+      endTime: entry.endTime || "",
+    });
+    setManualCardMode(Boolean(entry.issueId) && !matchingCard);
     setManualProjectMode(false);
     setIsAddingManualEntry(true);
   };
@@ -769,8 +793,7 @@ const BillableInvoicePreviewPage = () => {
       return;
     }
 
-    const nextEntry = {
-      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    const entryFields = {
       personName,
       projectName: String(manualEntryDraft.projectName || "").trim(),
       issueId: String(manualEntryDraft.issueId || "").trim(),
@@ -780,6 +803,21 @@ const BillableInvoicePreviewPage = () => {
       endTime: manualEntryDraft.endTime,
     };
 
+    if (editingManualEntryId) {
+      await persistManualTimeEntries(
+        manualTimeEntries.map((entry) => (entry.id === editingManualEntryId ? { ...entry, ...entryFields } : entry))
+      );
+      setEditingManualEntryId("");
+      setIsAddingManualEntry(false);
+      toast.success(`Updated ${hours.toFixed(2)} hrs for ${personName}.`);
+      return;
+    }
+
+    const nextEntry = {
+      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ...entryFields,
+    };
+
     await persistManualTimeEntries([...manualTimeEntries, nextEntry]);
     setIsAddingManualEntry(false);
     toast.success(`Added ${hours.toFixed(2)} hrs for ${personName}.`);
@@ -787,6 +825,10 @@ const BillableInvoicePreviewPage = () => {
 
   const handleRemoveManualTimeEntry = async (entryId) => {
     await persistManualTimeEntries(manualTimeEntries.filter((entry) => entry.id !== entryId));
+    if (editingManualEntryId === entryId) {
+      setEditingManualEntryId("");
+      setIsAddingManualEntry(false);
+    }
   };
 
   // Merges manually added time on top of the invoice's original per-person hours, re-splitting
@@ -1241,14 +1283,24 @@ const BillableInvoicePreviewPage = () => {
                     {" — "}
                     {formatMonthDayYear(entry.date)}, {entry.startTime}–{entry.endTime} ({hours.toFixed(2)} hrs)
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveManualTimeEntry(entry.id)}
-                    disabled={isSavingManualEntry}
-                    style={{ border: "1px solid #DC2626", borderRadius: "6px", padding: "4px 10px", background: "#FFFFFF", color: "#DC2626", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer" }}
-                  >
-                    Remove
-                  </button>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      type="button"
+                      onClick={() => openEditManualEntryForm(entry)}
+                      disabled={isSavingManualEntry}
+                      style={{ border: "1px solid #0F766E", borderRadius: "6px", padding: "4px 10px", background: "#FFFFFF", color: "#0F766E", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer" }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveManualTimeEntry(entry.id)}
+                      disabled={isSavingManualEntry}
+                      style={{ border: "1px solid #DC2626", borderRadius: "6px", padding: "4px 10px", background: "#FFFFFF", color: "#DC2626", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -1440,11 +1492,14 @@ const BillableInvoicePreviewPage = () => {
                 disabled={isSavingManualEntry}
                 style={{ border: "none", borderRadius: "6px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isSavingManualEntry ? "not-allowed" : "pointer", opacity: isSavingManualEntry ? 0.7 : 1 }}
               >
-                {isSavingManualEntry ? "Saving..." : "Add Entry"}
+                {isSavingManualEntry ? "Saving..." : editingManualEntryId ? "Save Changes" : "Add Entry"}
               </button>
               <button
                 type="button"
-                onClick={() => setIsAddingManualEntry(false)}
+                onClick={() => {
+                  setIsAddingManualEntry(false);
+                  setEditingManualEntryId("");
+                }}
                 style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "8px 14px", background: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
               >
                 Cancel
