@@ -1960,6 +1960,7 @@ const BillableInvoicePreviewPage = () => {
 
           {users.map((userEntry, index) => {
             const drafterLabel = `Drafter #${index + 1}`;
+            const rowBackground = index % 2 === 0 ? "#F1F5F9" : "#FFFFFF";
             const regularHours = Number(userEntry.regularHours || 0);
             const overtimeHours = Number(userEntry.overtimeHours || 0);
             const regularRate = Number(userEntry.regularRate || 0);
@@ -1974,6 +1975,7 @@ const BillableInvoicePreviewPage = () => {
                     display: "grid",
                     gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
                     width: "100%",
+                    background: rowBackground,
                     breakInside: "avoid",
                     pageBreakInside: "avoid",
                   }}
@@ -1991,6 +1993,7 @@ const BillableInvoicePreviewPage = () => {
                       display: "grid",
                       gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
                       width: "100%",
+                      background: rowBackground,
                       breakInside: "avoid",
                       pageBreakInside: "avoid",
                     }}
