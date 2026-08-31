@@ -5578,7 +5578,7 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>Start of Week</th>
                         <th style={tableHeaderCellStyle}>End of Week</th>
                         <th style={tableHeaderCellStyle}>Total</th>
-                        <th style={tableHeaderCellStyle}>Hours &amp; Labor (OT &gt; {OVERTIME_THRESHOLD_HOURS}h)</th>
+                        <th style={tableHeaderCellStyle}>Hours &amp; Labor</th>
                         <th style={tableHeaderCellStyle}>Invoice #</th>
                         {visibleInvoiceTableColumns.dueDate ? <th style={tableHeaderCellStyle}>Due Date</th> : null}
                         {visibleInvoiceTableColumns.dueDay ? <th style={tableHeaderCellStyle}>Due Day</th> : null}
