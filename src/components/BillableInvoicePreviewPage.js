@@ -1004,11 +1004,11 @@ const BillableInvoicePreviewPage = () => {
 
       // Once an entry's real Time Rotate log was written before this draft was generated, its
       // hours and card are already included in baseUsers via the normal aggregation — adding
-      // them again here would double-count. Only overlay entries not yet reflected in the draft.
+      // them again here would double-count. Entries synced before this fix have no syncedAt
+      // recorded, so treat that as "long ago" rather than skip the check entirely.
       const alreadyReflectedInDraft = Boolean(entry.timeRotateLogId)
         && draftGeneratedAt > 0
-        && Number(entry.syncedAt || 0) > 0
-        && Number(entry.syncedAt) <= draftGeneratedAt;
+        && Number(entry.syncedAt || 1) <= draftGeneratedAt;
       if (alreadyReflectedInDraft) return;
 
       const key = String(entry.personName || "").trim().toLowerCase();
