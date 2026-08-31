@@ -39,6 +39,14 @@ const blobToDataUrl = (blob) =>
     reader.readAsDataURL(blob);
   });
 
+const getImageDimensions = (dataUrl) =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+
 const getOrganizationLogoDataUrl = async (churchId) => {
   const churchData = await getChurchData(churchId);
   const logoUrl = String(churchData?.logo || "").trim();
@@ -4386,7 +4394,16 @@ const InvoiceManager = () => {
       }
 
       if (logoDataUrl) {
-        pdf.addImage(logoDataUrl, margin, 24, 80, 40);
+        try {
+          const { width, height } = await getImageDimensions(logoDataUrl);
+          const scale = Math.min(80 / width, 40 / height);
+          const logoWidth = width * scale;
+          const logoHeight = height * scale;
+          pdf.addImage(logoDataUrl, margin, 24 + ((40 - logoHeight) / 2), logoWidth, logoHeight);
+        } catch (logoError) {
+          console.warn("Unable to size organization logo for invoice status report:", logoError);
+          logoDataUrl = "";
+        }
       }
 
       pdf.setFont("helvetica", "bold");
@@ -4411,13 +4428,14 @@ const InvoiceManager = () => {
           (invoice.invoiceNumber || "-").toString().toUpperCase(),
           getInvoiceStatusLabel(invoice.invoiceStatus),
           getBillingSourceLabel(invoice.billingSource),
+          getApStatusLabel(invoice.apStatus),
         ];
       });
 
       autoTable(pdf, {
         startY: 88,
         theme: "grid",
-        head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source"]],
+        head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source", "AP Status"]],
         body: rows,
         styles: { font: "helvetica", fontSize: 9, cellPadding: 6 },
         headStyles: { fillColor: [29, 78, 216], textColor: [255, 255, 255], fontStyle: "bold" },
