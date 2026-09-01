@@ -4648,11 +4648,22 @@ const InvoiceManager = () => {
 
       const rows = sortedInvoices.map((invoice) => {
         const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
+        const rowHoursData = invoiceHoursById[invoice.id] || {
+          totalRegularMilliseconds: 0,
+          totalOvertimeMilliseconds: 0,
+        };
+        const rowLaborCost = getLaborCostFromSplit(
+          rowHoursData.totalRegularMilliseconds,
+          rowHoursData.totalOvertimeMilliseconds
+        );
+        const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
+          ? rowLaborCost.totalCost
+          : invoice.total;
         return [
           invoice.weekNumber ? `Week ${invoice.weekNumber}` : "-",
           formatDisplayDate(invoice.mondayDate) || "-",
           formatDisplayDate(weekEndDate) || "-",
-          formatCurrency(invoice.total || 0),
+          formatCurrency(effectiveInvoiceTotal || 0),
           (invoice.invoiceNumber || "-").toString().toUpperCase(),
           getInvoiceStatusLabel(invoice.invoiceStatus),
           getBillingSourceLabel(invoice.billingSource),
