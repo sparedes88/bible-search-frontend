@@ -1523,6 +1523,51 @@ const BillableInvoicePreviewPage = () => {
   const users = effectiveUsers;
   const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
   const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
+        <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <strong style={{ color: "#0F172A" }}>Drafter Names:</strong>
+          {users.map((userEntry, index) => {
+            const drafterLabel = `Drafter #${index + 1}`;
+            const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
+            const drafterRowKey = `drafter-${index + 1}`;
+            const selectedDrafterName = String(
+              drafterNamesByUser[drafterRowKey]
+              || drafterNamesByUser[userKey]
+              || ""
+            ).trim();
+
+            return (
+              <label key={drafterRowKey} style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                {drafterLabel}
+                <select
+                  value={selectedDrafterName}
+                  disabled={isSavingDocumentSettings}
+                  onChange={(event) => handleDocumentSettingsChange(
+                    documentType,
+                    showDocumentTotals,
+                    documentInfoVisibility,
+                    includeWorkSummaryInPdf,
+                    clientWorkOrderNumber,
+                    showClientWorkOrderNumber,
+                    roundHoursUp,
+                    true,
+                    {
+                      ...drafterNamesByUser,
+                      [drafterRowKey]: event.target.value,
+                      [userKey]: event.target.value,
+                    },
+                    showRegularOvertimeLabels
+                  )}
+                  style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "190px" }}
+                >
+                  <option value="">Select name</option>
+                  {personNameOptions.map((personName) => (
+                    <option key={`${drafterRowKey}-${personName}`} value={personName}>{personName}</option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+        </div>
   const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
   const documentTypeLabel = documentType === "work_order"
     ? "Work Order"
@@ -2324,34 +2369,6 @@ const BillableInvoicePreviewPage = () => {
 
             return (
               <React.Fragment key={`${userEntry.name || "Unknown User"}-${index}`}>
-                <div data-html2canvas-ignore="true" style={{ marginTop: index === 0 ? 0 : "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  <label style={{ color: "#334155", fontSize: "0.82rem", fontWeight: 700 }}>{drafterLabel} Name</label>
-                  <select
-                    value={selectedDrafterName}
-                    disabled={isSavingDocumentSettings}
-                    onChange={(event) => handleDocumentSettingsChange(
-                      documentType,
-                      showDocumentTotals,
-                      documentInfoVisibility,
-                      includeWorkSummaryInPdf,
-                      clientWorkOrderNumber,
-                      showClientWorkOrderNumber,
-                      roundHoursUp,
-                      true,
-                      {
-                        ...drafterNamesByUser,
-                        [drafterRowKey]: event.target.value,
-                        [userKey]: event.target.value,
-                      }
-                    )}
-                    style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
-                  >
-                    <option value="">Select drafter name</option>
-                    {personNameOptions.map((personName) => (
-                      <option key={`${userKey}-${personName}`} value={personName}>{personName}</option>
-                    ))}
-                  </select>
-                </div>
                 <div
                   style={{
                     display: "grid",
