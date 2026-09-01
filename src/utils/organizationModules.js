@@ -376,6 +376,14 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
+        id: "floor-planner",
+        title: "Floor Planner",
+        description: "Plan project floors and assign cards across production work",
+        icon: "⌖",
+        buildPath: (organizationId) => `/organization/${organizationId}/time-rotate-notes?view=floor-planner`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
         id: "time-tracker",
         title: "Time Tracker",
         description: "Track time and manage tasks with daily progress",
