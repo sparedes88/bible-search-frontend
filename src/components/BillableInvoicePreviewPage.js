@@ -686,6 +686,8 @@ const BillableInvoicePreviewPage = () => {
   const [clientWorkOrderNumber, setClientWorkOrderNumber] = useState("");
   const [showClientWorkOrderNumber, setShowClientWorkOrderNumber] = useState(false);
   const [roundHoursUp, setRoundHoursUp] = useState(false);
+  const [showDrafterNames, setShowDrafterNames] = useState(false);
+  const [drafterNamesByUser, setDrafterNamesByUser] = useState({});
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
     period: true,
@@ -738,6 +740,8 @@ const BillableInvoicePreviewPage = () => {
         setClientWorkOrderNumber(String(settings.clientWorkOrderNumber || ""));
         setShowClientWorkOrderNumber(settings.showClientWorkOrderNumber === true);
         setRoundHoursUp(settings.roundHoursUp === true);
+        setShowDrafterNames(settings.showDrafterNames === true);
+        setDrafterNamesByUser(settings.drafterNamesByUser || {});
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
@@ -758,7 +762,9 @@ const BillableInvoicePreviewPage = () => {
     nextIncludeWorkSummaryInPdf = includeWorkSummaryInPdf,
     nextClientWorkOrderNumber = clientWorkOrderNumber,
     nextShowClientWorkOrderNumber = showClientWorkOrderNumber,
-    nextRoundHoursUp = roundHoursUp
+    nextRoundHoursUp = roundHoursUp,
+    nextShowDrafterNames = showDrafterNames,
+    nextDrafterNamesByUser = drafterNamesByUser
   ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
@@ -767,6 +773,8 @@ const BillableInvoicePreviewPage = () => {
     setClientWorkOrderNumber(nextClientWorkOrderNumber);
     setShowClientWorkOrderNumber(nextShowClientWorkOrderNumber);
     setRoundHoursUp(nextRoundHoursUp);
+    setShowDrafterNames(nextShowDrafterNames);
+    setDrafterNamesByUser(nextDrafterNamesByUser);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -780,6 +788,8 @@ const BillableInvoicePreviewPage = () => {
           clientWorkOrderNumber: nextClientWorkOrderNumber,
           showClientWorkOrderNumber: nextShowClientWorkOrderNumber,
           roundHoursUp: nextRoundHoursUp,
+          showDrafterNames: nextShowDrafterNames,
+          drafterNamesByUser: nextDrafterNamesByUser,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1643,6 +1653,25 @@ const BillableInvoicePreviewPage = () => {
           />
           Round hours up to 30 minutes
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={showDrafterNames}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              includeWorkSummaryInPdf,
+              clientWorkOrderNumber,
+              showClientWorkOrderNumber,
+              roundHoursUp,
+              event.target.checked,
+              drafterNamesByUser
+            )}
+          />
+          Show Drafter Names
+        </label>
         {[
           { key: "week", label: "Show Week" },
           { key: "period", label: "Show Period" },
@@ -2245,6 +2274,11 @@ const BillableInvoicePreviewPage = () => {
 
           {users.map((userEntry, index) => {
             const drafterLabel = `Drafter #${index + 1}`;
+            const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
+            const selectedDrafterName = String(drafterNamesByUser[userKey] || "").trim();
+            const summaryDrafterLabel = showDrafterNames && selectedDrafterName
+              ? `${drafterLabel} - ${selectedDrafterName}`
+              : drafterLabel;
             const rowBackground = index % 2 === 0 ? "#F1F5F9" : "#FFFFFF";
             const regularHours = Number(userEntry.regularHours || 0);
             const overtimeHours = Number(userEntry.overtimeHours || 0);
@@ -2263,6 +2297,30 @@ const BillableInvoicePreviewPage = () => {
 
             return (
               <React.Fragment key={`${userEntry.name || "Unknown User"}-${index}`}>
+                <div data-html2canvas-ignore="true" style={{ marginTop: index === 0 ? 0 : "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <label style={{ color: "#334155", fontSize: "0.82rem", fontWeight: 700 }}>{drafterLabel} Name</label>
+                  <select
+                    value={selectedDrafterName}
+                    disabled={isSavingDocumentSettings}
+                    onChange={(event) => handleDocumentSettingsChange(
+                      documentType,
+                      showDocumentTotals,
+                      documentInfoVisibility,
+                      includeWorkSummaryInPdf,
+                      clientWorkOrderNumber,
+                      showClientWorkOrderNumber,
+                      roundHoursUp,
+                      showDrafterNames,
+                      { ...drafterNamesByUser, [userKey]: event.target.value }
+                    )}
+                    style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
+                  >
+                    <option value="">Select drafter name</option>
+                    {personNameOptions.map((personName) => (
+                      <option key={`${userKey}-${personName}`} value={personName}>{personName}</option>
+                    ))}
+                  </select>
+                </div>
                 <div
                   style={{
                     display: "grid",
@@ -2274,7 +2332,7 @@ const BillableInvoicePreviewPage = () => {
                   }}
                 >
                   <div style={tableBodyCellStyle}>
-                    <div>{`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
+                    <div>{`BIM Coordinator Services — ${summaryDrafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
                     {cardSummaries.length > 0 ? (
                       <div style={{ marginTop: "4px", fontSize: "0.78rem", color: "#64748B" }}>
                         {cardSummaries.map((summary, summaryIndex) => (
@@ -2299,7 +2357,7 @@ const BillableInvoicePreviewPage = () => {
                     }}
                   >
                     <div style={tableBodyCellStyle}>
-                      {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
+                      {`BIM Coordinator Services — ${summaryDrafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
                     </div>
                     <div style={numericBodyCellStyle}>{formatHoursClock(overtimeHours)}</div>
                     {showDocumentTotals ? <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div> : null}
