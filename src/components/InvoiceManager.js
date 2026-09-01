@@ -339,18 +339,6 @@ const getApStatusLabel = (value) => (
 );
 const normalizeProjectNameKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
-const getTimeRotateCardKey = (log = {}) => {
-  const taskIdentity = String(log.taskIdentity || "").trim();
-  if (taskIdentity) return taskIdentity;
-
-  return [log.projectDocId, log.issueId, log.title]
-    .map((value) => String(value || "").trim())
-    .join("::");
-};
-
-const normalizeExcludedTimeRotateCardKeys = (value) =>
-  Array.from(new Set((Array.isArray(value) ? value : []).map((key) => String(key || "").trim()).filter(Boolean)));
-
 const normalizeTimeRotateProjectNames = (value) => {
   const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
   const dedupedByKey = new Map();
@@ -1012,9 +1000,9 @@ const InvoiceManager = () => {
   const [projectBudgetedTotalsById, setProjectBudgetedTotalsById] = useState({});
   const [projectFinalTotalsById, setProjectFinalTotalsById] = useState({});
 
-  const [projectDraft, setProjectDraft] = useState({ name: "", description: "", timeRotateProjectNames: [], excludedTimeRotateCardKeys: [] });
+  const [projectDraft, setProjectDraft] = useState({ name: "", description: "", timeRotateProjectNames: [] });
   const [editingProjectId, setEditingProjectId] = useState("");
-  const [editProjectDraft, setEditProjectDraft] = useState({ name: "", description: "", timeRotateProjectNames: [], excludedTimeRotateCardKeys: [] });
+  const [editProjectDraft, setEditProjectDraft] = useState({ name: "", description: "", timeRotateProjectNames: [] });
 
   const [invoiceDraft, setInvoiceDraft] = useState({ ...emptyInvoiceDraft });
   const [editingInvoiceId, setEditingInvoiceId] = useState("");
@@ -1316,42 +1304,28 @@ const InvoiceManager = () => {
     return normalizeTimeRotateProjectNames(allValues).sort((left, right) => left.localeCompare(right));
   }, [projects, timeRotateLogs]);
 
-  const timeRotateCardOptions = useMemo(() => {
-    const cardsByKey = new Map();
-    timeRotateLogs.forEach((log) => {
-      const key = getTimeRotateCardKey(log);
-      const projectName = String(log.projectName || "").trim();
-      const issueId = String(log.issueId || "").trim();
-      if (!key || (!projectName && !issueId)) return;
-      if (!cardsByKey.has(key)) {
-        cardsByKey.set(key, {
-          key,
-          label: [projectName || "Unknown Project", issueId || "TD Card", String(log.title || "").trim()]
-            .filter(Boolean)
-            .join(" | "),
-        });
-      }
-    });
-    return Array.from(cardsByKey.values()).sort((left, right) => left.label.localeCompare(right.label));
-  }, [timeRotateLogs]);
-
   const selectedInvoiceProject = useMemo(() => {
     return projects.find((project) => project.id === selectedProjectId) || null;
   }, [projects, selectedProjectId]);
 
   const selectedTimeRotateProjectNameKeys = useMemo(() => {
-    const names = normalizeTimeRotateProjectNames(selectedInvoiceProject?.timeRotateProjectNames);
+    const names = normalizeTimeRotateProjectNames(
+      selectedInvoiceProject?.timeRotateProjectNames?.length > 0
+        ? selectedInvoiceProject.timeRotateProjectNames
+        : [selectedInvoiceProject?.name]
+    );
     return new Set(names.map((name) => normalizeProjectNameKey(name)).filter(Boolean));
   }, [selectedInvoiceProject]);
-
-  const selectedExcludedTimeRotateCardKeys = useMemo(() => (
-    new Set(normalizeExcludedTimeRotateCardKeys(selectedInvoiceProject?.excludedTimeRotateCardKeys))
-  ), [selectedInvoiceProject]);
 
   const associatedTimeRotateProjectNameKeysByProjectId = useMemo(() => {
     return Object.fromEntries(
       projects.map((project) => {
-        const keys = normalizeTimeRotateProjectNames(project?.timeRotateProjectNames)
+        const associatedProjectNames = normalizeTimeRotateProjectNames(
+          project?.timeRotateProjectNames?.length > 0
+            ? project.timeRotateProjectNames
+            : [project?.name]
+        );
+        const keys = associatedProjectNames
           .map((name) => normalizeProjectNameKey(name))
           .filter(Boolean);
         return [project.id, new Set(keys)];
@@ -1684,7 +1658,6 @@ const InvoiceManager = () => {
 
         billableTimeRotateLogs.forEach((log) => {
           if (!selectedTimeRotateProjectNameKeys.has(log.projectNameKey)) return;
-          if (selectedExcludedTimeRotateCardKeys.has(getTimeRotateCardKey(log))) return;
           if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
 
           const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
@@ -1843,7 +1816,6 @@ const InvoiceManager = () => {
     issueTitleByIdentity,
     issueTitleByIssueId,
     projectIssuesByProjectNameKey,
-    selectedExcludedTimeRotateCardKeys,
     selectedTimeRotateProjectNameKeys,
     weeklyOvertimeAllocationByLogId,
   ]);
@@ -3209,7 +3181,6 @@ const InvoiceManager = () => {
     const name = String(projectDraft.name || "").trim();
     const description = String(projectDraft.description || "").trim();
     const timeRotateProjectNames = normalizeTimeRotateProjectNames(projectDraft.timeRotateProjectNames);
-    const excludedTimeRotateCardKeys = normalizeExcludedTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys);
 
     if (!name) {
       toast.error("Project name is required.");
@@ -3221,14 +3192,13 @@ const InvoiceManager = () => {
         name,
         description,
         timeRotateProjectNames,
-        excludedTimeRotateCardKeys,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdByUid: user?.uid || "",
         createdByEmail: user?.email || "",
       });
 
-      setProjectDraft({ name: "", description: "", timeRotateProjectNames: [], excludedTimeRotateCardKeys: [] });
+      setProjectDraft({ name: "", description: "", timeRotateProjectNames: [] });
       setSelectedProjectId(created.id);
       toast.success("Project created.");
     } catch (error) {
@@ -3243,7 +3213,6 @@ const InvoiceManager = () => {
       name: String(project.name || ""),
       description: String(project.description || ""),
       timeRotateProjectNames: normalizeTimeRotateProjectNames(project.timeRotateProjectNames),
-      excludedTimeRotateCardKeys: normalizeExcludedTimeRotateCardKeys(project.excludedTimeRotateCardKeys),
     });
   };
 
@@ -3257,7 +3226,6 @@ const InvoiceManager = () => {
     const name = String(editProjectDraft.name || "").trim();
     const description = String(editProjectDraft.description || "").trim();
     const timeRotateProjectNames = normalizeTimeRotateProjectNames(editProjectDraft.timeRotateProjectNames);
-    const excludedTimeRotateCardKeys = normalizeExcludedTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys);
 
     if (!name) {
       toast.error("Project name is required.");
@@ -3269,13 +3237,12 @@ const InvoiceManager = () => {
         name,
         description,
         timeRotateProjectNames,
-        excludedTimeRotateCardKeys,
         updatedAt: serverTimestamp(),
         updatedByUid: user?.uid || "",
       });
 
       setEditingProjectId("");
-      setEditProjectDraft({ name: "", description: "", timeRotateProjectNames: [], excludedTimeRotateCardKeys: [] });
+      setEditProjectDraft({ name: "", description: "", timeRotateProjectNames: [] });
       toast.success("Project updated.");
     } catch (error) {
       console.error("Error updating project:", error);
@@ -5341,27 +5308,6 @@ const InvoiceManager = () => {
               </select>
               <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
             </div>
-            <div>
-              <label style={fieldLabelStyle}>Exclude TD Cards from This Invoice Project</label>
-              <select
-                multiple
-                style={{ ...inputStyle, minHeight: "96px" }}
-                value={normalizeExcludedTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys)}
-                onChange={(event) => {
-                  const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                  setProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: selectedValues }));
-                }}
-              >
-                {timeRotateCardOptions.length === 0 ? (
-                  <option value="" disabled>No Time Rotate TD cards found yet.</option>
-                ) : (
-                  timeRotateCardOptions.map((card) => (
-                    <option key={`create-excluded-card-${card.key}`} value={card.key}>{card.label}</option>
-                  ))
-                )}
-              </select>
-              <small style={fieldHintStyle}>Excluded cards remain available to be linked to another invoice project.</small>
-            </div>
             <button
               type="submit"
               style={{ ...buttonStyle, background: "#2563EB", justifySelf: "start" }}
@@ -5432,27 +5378,6 @@ const InvoiceManager = () => {
                             )}
                           </select>
                           <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
-                        </div>
-                        <div>
-                          <label style={fieldLabelStyle}>Exclude TD Cards from This Invoice Project</label>
-                          <select
-                            multiple
-                            style={{ ...inputStyle, minHeight: "96px" }}
-                            value={normalizeExcludedTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys)}
-                            onChange={(event) => {
-                              const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                              setEditProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: selectedValues }));
-                            }}
-                          >
-                            {timeRotateCardOptions.length === 0 ? (
-                              <option value="" disabled>No Time Rotate TD cards found yet.</option>
-                            ) : (
-                              timeRotateCardOptions.map((card) => (
-                                <option key={`edit-excluded-card-${project.id}-${card.key}`} value={card.key}>{card.label}</option>
-                              ))
-                            )}
-                          </select>
-                          <small style={fieldHintStyle}>Excluded cards remain available to be linked to another invoice project.</small>
                         </div>
                         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                           <button type="submit" style={{ ...buttonStyle, background: "#16A34A" }}>
