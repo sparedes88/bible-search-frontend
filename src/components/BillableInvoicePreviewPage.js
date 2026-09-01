@@ -104,6 +104,21 @@ const formatMonthDayYear = (value) => {
   }).format(parsed);
 };
 
+const formatWorkDateRange = (firstUsedAt, lastUsedAt) => {
+  const firstDate = Number(firstUsedAt) > 0 ? new Date(Number(firstUsedAt)) : null;
+  const lastDate = Number(lastUsedAt) > 0 ? new Date(Number(lastUsedAt)) : null;
+  if (!firstDate || Number.isNaN(firstDate.getTime())) return "-";
+
+  const formatDate = (date) => new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+  const firstLabel = formatDate(firstDate);
+  const lastLabel = lastDate && !Number.isNaN(lastDate.getTime()) ? formatDate(lastDate) : firstLabel;
+  return firstLabel === lastLabel ? firstLabel : `${firstLabel} - ${lastLabel}`;
+};
+
 const DEFAULT_OVERTIME_THRESHOLD_HOURS = 40;
 const DEFAULT_OVERTIME_MULTIPLIER = 1.5;
 
@@ -1478,6 +1493,15 @@ const BillableInvoicePreviewPage = () => {
   const summaryGridColumns = showDocumentTotals
     ? "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)"
     : "minmax(0, 3fr) minmax(0, 1fr)";
+  const workTimestampRange = users
+    .flatMap((userEntry) => Array.isArray(userEntry.cards) ? userEntry.cards : [])
+    .reduce((range, card) => {
+      const firstUsedAt = Number(card.firstUsedAt) || 0;
+      const lastUsedAt = Number(card.lastUsedAt) || firstUsedAt;
+      if (firstUsedAt > 0 && (!range.firstUsedAt || firstUsedAt < range.firstUsedAt)) range.firstUsedAt = firstUsedAt;
+      if (lastUsedAt > range.lastUsedAt) range.lastUsedAt = lastUsedAt;
+      return range;
+    }, { firstUsedAt: 0, lastUsedAt: 0 });
 
   const pageContainerStyle = {
     ...commonStyles.fullWidthContainer,
@@ -2072,7 +2096,7 @@ const BillableInvoicePreviewPage = () => {
           {[
             documentInfoVisibility.week && ["Week", `Week ${draftPayload.weekNumber || "-"}`],
             documentInfoVisibility.period && ["Period", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
-            documentInfoVisibility.dateOfWork && ["Date of Work", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
+            documentInfoVisibility.dateOfWork && ["Date of Work", formatWorkDateRange(workTimestampRange.firstUsedAt, workTimestampRange.lastUsedAt)],
             documentInfoVisibility.dueDate && ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
             documentInfoVisibility.terms && ["Terms", draftPayload.paymentTermsLabel || "-"],
           ].filter(Boolean).map(([label, value]) => (

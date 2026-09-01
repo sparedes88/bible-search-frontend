@@ -1863,8 +1863,17 @@ const InvoiceManager = () => {
             description: String(log.description || "").trim(),
             taskIdentity: resolvedTaskIdentity,
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
+            firstUsedAt: 0,
+            lastUsedAt: 0,
           };
           existingCard.milliseconds += log.safeDuration;
+          const logUsedAt = Number(log.eventTimestamp) || 0;
+          if (logUsedAt > 0 && (!existingCard.firstUsedAt || logUsedAt < existingCard.firstUsedAt)) {
+            existingCard.firstUsedAt = logUsedAt;
+          }
+          if (logUsedAt > existingCard.lastUsedAt) {
+            existingCard.lastUsedAt = logUsedAt;
+          }
           if (!existingCard.projectDocId) {
             existingCard.projectDocId = String(log.projectDocId || "").trim();
           }
@@ -3860,6 +3869,8 @@ const InvoiceManager = () => {
           description: String(card.description || "").trim(),
           taskIdentity: String(card.taskIdentity || "").trim(),
           projectDocId: String(card.projectDocId || "").trim(),
+          firstUsedAt: Number(card.firstUsedAt) || 0,
+          lastUsedAt: Number(card.lastUsedAt) || 0,
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({
