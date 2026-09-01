@@ -1426,20 +1426,25 @@ const InvoiceManager = () => {
         const nextBimProjectNames = [];
 
         snapshots.forEach(({ projectDocId, issuesSnapshot }) => {
+          const projectData = projectsSnapshot.docs.find((projectDoc) => projectDoc.id === projectDocId)?.data() || {};
+          const projectName = String(projectData.name || projectData.projectName || "").trim();
+          if (projectName) {
+            nextBimProjectNames.push(projectName);
+          }
+
           issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
             const rowData = issueDoc.data() || {};
 
             const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
             const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
             const projectNameColumn = findColumnByAliases(rowData, ["project name", "projectname"]);
-            const projectName = String(
+            const issueProjectName = String(
               (projectNameColumn ? rowData[projectNameColumn] : "")
               || rowData.projectName
               || ""
             ).trim();
-
-            if (projectName) {
-              nextBimProjectNames.push(projectName);
+            if (issueProjectName) {
+              nextBimProjectNames.push(issueProjectName);
             }
 
             const issueId = String(
