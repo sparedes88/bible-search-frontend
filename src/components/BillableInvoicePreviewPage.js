@@ -687,6 +687,7 @@ const BillableInvoicePreviewPage = () => {
   const [showClientWorkOrderNumber, setShowClientWorkOrderNumber] = useState(false);
   const [roundHoursUp, setRoundHoursUp] = useState(false);
   const [showDrafterNames, setShowDrafterNames] = useState(false);
+  const [showRegularOvertimeLabels, setShowRegularOvertimeLabels] = useState(true);
   const [drafterNamesByUser, setDrafterNamesByUser] = useState({});
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
@@ -741,6 +742,7 @@ const BillableInvoicePreviewPage = () => {
         setShowClientWorkOrderNumber(settings.showClientWorkOrderNumber === true);
         setRoundHoursUp(settings.roundHoursUp === true);
         setShowDrafterNames(settings.showDrafterNames === true);
+        setShowRegularOvertimeLabels(settings.showRegularOvertimeLabels !== false);
         setDrafterNamesByUser(settings.drafterNamesByUser || {});
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
@@ -764,7 +766,8 @@ const BillableInvoicePreviewPage = () => {
     nextShowClientWorkOrderNumber = showClientWorkOrderNumber,
     nextRoundHoursUp = roundHoursUp,
     nextShowDrafterNames = showDrafterNames,
-    nextDrafterNamesByUser = drafterNamesByUser
+    nextDrafterNamesByUser = drafterNamesByUser,
+    nextShowRegularOvertimeLabels = showRegularOvertimeLabels
   ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
@@ -775,6 +778,7 @@ const BillableInvoicePreviewPage = () => {
     setRoundHoursUp(nextRoundHoursUp);
     setShowDrafterNames(nextShowDrafterNames);
     setDrafterNamesByUser(nextDrafterNamesByUser);
+    setShowRegularOvertimeLabels(nextShowRegularOvertimeLabels);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -790,6 +794,7 @@ const BillableInvoicePreviewPage = () => {
           roundHoursUp: nextRoundHoursUp,
           showDrafterNames: nextShowDrafterNames,
           drafterNamesByUser: nextDrafterNamesByUser,
+          showRegularOvertimeLabels: nextShowRegularOvertimeLabels,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1672,6 +1677,26 @@ const BillableInvoicePreviewPage = () => {
           />
           Show Drafter Names
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={showRegularOvertimeLabels}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              includeWorkSummaryInPdf,
+              clientWorkOrderNumber,
+              showClientWorkOrderNumber,
+              roundHoursUp,
+              showDrafterNames,
+              drafterNamesByUser,
+              event.target.checked
+            )}
+          />
+          Show Regular / Overtime Labels
+        </label>
         {[
           { key: "week", label: "Show Week" },
           { key: "period", label: "Show Period" },
@@ -2338,7 +2363,7 @@ const BillableInvoicePreviewPage = () => {
                   }}
                 >
                   <div style={tableBodyCellStyle}>
-                    <div>{`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
+                    <div>{`BIM Coordinator Services — ${drafterLabel}${showRegularOvertimeLabels ? ` (Regular, <= ${overtimeThresholdHours}h)` : ""}`}</div>
                     {showDrafterNames && selectedDrafterName ? (
                       <div style={{ marginTop: "3px", fontSize: "0.84rem", fontWeight: 700, color: "#0F172A" }}>
                         {`Drafter Name: ${selectedDrafterName}`}
@@ -2368,7 +2393,7 @@ const BillableInvoicePreviewPage = () => {
                     }}
                   >
                     <div style={tableBodyCellStyle}>
-                      {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
+                      {`BIM Coordinator Services — ${drafterLabel}${showRegularOvertimeLabels ? ` (Overtime, > ${overtimeThresholdHours}h)` : ""}`}
                       {showDrafterNames && selectedDrafterName ? (
                         <div style={{ marginTop: "3px", fontSize: "0.84rem", fontWeight: 700, color: "#0F172A" }}>
                           {`Drafter Name: ${selectedDrafterName}`}
