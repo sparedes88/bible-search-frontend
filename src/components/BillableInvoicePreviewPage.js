@@ -687,8 +687,8 @@ const BillableInvoicePreviewPage = () => {
   const [showClientWorkOrderNumber, setShowClientWorkOrderNumber] = useState(false);
   const [roundHoursUp, setRoundHoursUp] = useState(false);
   const [showDrafterNames, setShowDrafterNames] = useState(false);
-  const [showRegularOvertimeLabels, setShowRegularOvertimeLabels] = useState(true);
   const [drafterNamesByUser, setDrafterNamesByUser] = useState({});
+  const [showRegularOvertimeLabels, setShowRegularOvertimeLabels] = useState(true);
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
     period: true,
@@ -742,8 +742,8 @@ const BillableInvoicePreviewPage = () => {
         setShowClientWorkOrderNumber(settings.showClientWorkOrderNumber === true);
         setRoundHoursUp(settings.roundHoursUp === true);
         setShowDrafterNames(settings.showDrafterNames === true);
-        setShowRegularOvertimeLabels(settings.showRegularOvertimeLabels !== false);
         setDrafterNamesByUser(settings.drafterNamesByUser || {});
+        setShowRegularOvertimeLabels(settings.showRegularOvertimeLabels !== false);
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
@@ -1769,47 +1769,6 @@ const BillableInvoicePreviewPage = () => {
         </label>
       </div>
 
-      <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-        <strong style={{ color: "#0F172A" }}>Drafter Names:</strong>
-        {users.map((userEntry, index) => {
-          const drafterLabel = `Drafter #${index + 1}`;
-          const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
-          const drafterRowKey = `drafter-${index + 1}`;
-          const selectedDrafterName = String(drafterNamesByUser[drafterRowKey] || drafterNamesByUser[userKey] || "").trim();
-          const drafterNameOptions = Array.from(new Set([
-            String(userEntry.name || "").trim(),
-            ...personNameOptions,
-          ].filter(Boolean)));
-
-          return (
-            <label key={drafterRowKey} style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
-              {drafterLabel}
-              <select
-                value={selectedDrafterName}
-                onChange={(event) => handleDocumentSettingsChange(
-                  documentType,
-                  showDocumentTotals,
-                  documentInfoVisibility,
-                  includeWorkSummaryInPdf,
-                  clientWorkOrderNumber,
-                  showClientWorkOrderNumber,
-                  roundHoursUp,
-                  true,
-                  { ...drafterNamesByUser, [drafterRowKey]: event.target.value, [userKey]: event.target.value },
-                  showRegularOvertimeLabels
-                )}
-                style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "190px" }}
-              >
-                <option value="">Select name</option>
-                {drafterNameOptions.map((personName) => (
-                  <option key={`${drafterRowKey}-${personName}`} value={personName}>{personName}</option>
-                ))}
-              </select>
-            </label>
-          );
-        })}
-      </div>
-
       <div style={{ ...cardStyle, marginTop: "12px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
           <strong style={{ color: "#0F172A" }}>Add Person Time</strong>
@@ -2365,6 +2324,34 @@ const BillableInvoicePreviewPage = () => {
 
             return (
               <React.Fragment key={`${userEntry.name || "Unknown User"}-${index}`}>
+                <div data-html2canvas-ignore="true" style={{ marginTop: index === 0 ? 0 : "8px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <label style={{ color: "#334155", fontSize: "0.82rem", fontWeight: 700 }}>{drafterLabel} Name</label>
+                  <select
+                    value={selectedDrafterName}
+                    disabled={isSavingDocumentSettings}
+                    onChange={(event) => handleDocumentSettingsChange(
+                      documentType,
+                      showDocumentTotals,
+                      documentInfoVisibility,
+                      includeWorkSummaryInPdf,
+                      clientWorkOrderNumber,
+                      showClientWorkOrderNumber,
+                      roundHoursUp,
+                      true,
+                      {
+                        ...drafterNamesByUser,
+                        [drafterRowKey]: event.target.value,
+                        [userKey]: event.target.value,
+                      }
+                    )}
+                    style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
+                  >
+                    <option value="">Select drafter name</option>
+                    {personNameOptions.map((personName) => (
+                      <option key={`${userKey}-${personName}`} value={personName}>{personName}</option>
+                    ))}
+                  </select>
+                </div>
                 <div
                   style={{
                     display: "grid",
