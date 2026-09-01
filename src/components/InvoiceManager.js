@@ -415,6 +415,9 @@ const normalizeIdentityValue = (value) => String(value || "").trim().toLowerCase
 const buildTaskDetailsDocId = (taskIdentity) => (
   String(taskIdentity || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "") || "unknown-task"
 );
+const getTimeRotateTaskIdentity = (log = {}) => (
+  String(log.taskIdentity || `${log.projectDocId || ""}::${log.issueId || log.id || ""}`).trim()
+);
 
 // Prefers a person's full name (first + last) from the org user directory over whatever short name was logged.
 const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}, fullNameByFirstNameOnly = {}) => {
@@ -1381,13 +1384,13 @@ const InvoiceManager = () => {
 
   const projectNamesWithExplicitTdMatches = useMemo(() => new Set(
     timeRotateLogs
-      .filter((log) => tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()])
+      .filter((log) => tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)])
       .map((log) => log.projectNameKey)
       .filter(Boolean)
   ), [tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
   const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => {
-    const explicitProjectId = tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()];
+    const explicitProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)];
     if (explicitProjectId) return explicitProjectId === invoiceProjectId;
     if (projectNamesWithExplicitTdMatches.has(log.projectNameKey)) return false;
     return associatedTimeRotateProjectNameKeysByProjectId[invoiceProjectId]?.has(log.projectNameKey) || false;
@@ -1398,7 +1401,7 @@ const InvoiceManager = () => {
 
     timeRotateLogs.forEach((log) => {
       const projectName = String(log.projectName || "").trim();
-      const identity = String(log.taskIdentity || `${log.projectDocId || ""}::${log.issueId || log.id}`).trim();
+      const identity = getTimeRotateTaskIdentity(log);
       if (!identity) return;
       const resolvedTitle = String(
         log.title
@@ -1473,7 +1476,7 @@ const InvoiceManager = () => {
         const weekKey = getIsoWeekStartDateKeyFromTimestamp(eventTimestamp);
 
         if (log.logType === "completion") return null;
-        const explicitProjectId = tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()];
+        const explicitProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)];
         if (!explicitProjectId && !allAssociatedTimeRotateProjectNameKeys.has(log.projectNameKey)) return null;
         if (!Number.isFinite(eventTimestamp) || eventTimestamp <= 0) return null;
         if (!Number.isFinite(safeDuration) || safeDuration <= 0) return null;
