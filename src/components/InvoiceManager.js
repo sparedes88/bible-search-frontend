@@ -362,6 +362,16 @@ const getTimeRotateCardKey = (entry = {}) => {
   return projectDocId && issueId ? `${projectDocId}::${issueId}` : issueId;
 };
 
+const getTimeRotateTaskIdentityKeys = (entry = {}) => {
+  const taskIdentity = String(entry.taskIdentity || "").trim();
+  const projectDocId = String(entry.projectDocId || "").trim();
+  const issueId = String(entry.issueId || "").trim();
+  return Array.from(new Set([
+    taskIdentity,
+    projectDocId && issueId ? `${projectDocId}::${issueId}` : "",
+  ].filter(Boolean).map((key) => key.toLowerCase())));
+};
+
 const normalizeTimeRotateCardKeys = (value) => Array.from(new Set(
   (Array.isArray(value) ? value : (value ? [value] : []))
     .map((entry) => String(entry || "").trim())
@@ -1258,7 +1268,7 @@ const InvoiceManager = () => {
           const taskIdentity = String(data.taskIdentity || "").trim();
           const projectName = String(data.projectNameOverride || data.projectName || "").trim();
           if (taskIdentity && projectName) {
-            overrides[taskIdentity] = projectName;
+            overrides[taskIdentity.toLowerCase()] = projectName;
           }
         });
         setTimeRotateProjectNameOverrides(overrides);
@@ -1404,8 +1414,10 @@ const InvoiceManager = () => {
 
     const mappedLogs = timeRotateLogs
       .map((log) => {
-        const taskIdentity = String(log.taskIdentity || "").trim();
-        const projectName = String(timeRotateProjectNameOverrides[taskIdentity] || log.projectName || "").trim();
+        const overrideProjectName = getTimeRotateTaskIdentityKeys(log)
+          .map((key) => timeRotateProjectNameOverrides[key])
+          .find(Boolean);
+        const projectName = String(overrideProjectName || log.projectName || "").trim();
         const eventTimestamp = Number(log.startedAt) || Number(log.endedAt) || 0;
         const rawDurationMs = Number(log.durationMs);
         const safeDuration = Number.isFinite(rawDurationMs) && rawDurationMs > 0
