@@ -1064,6 +1064,7 @@ const InvoiceManager = () => {
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
+  const [tdMatcherCandidates, setTdMatcherCandidates] = useState([]);
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
   const [tdInvoiceProjectIdByIdentity, setTdInvoiceProjectIdByIdentity] = useState({});
   const externalPdfInputRef = useRef(null);
@@ -1399,6 +1400,16 @@ const InvoiceManager = () => {
   const tdMatcherRows = useMemo(() => {
     const rowsByIdentity = new Map();
 
+    tdMatcherCandidates.forEach((candidate) => {
+      rowsByIdentity.set(candidate.identity, {
+        ...candidate,
+        milliseconds: 0,
+        firstUsedAt: 0,
+        lastUsedAt: 0,
+        users: new Set(),
+      });
+    });
+
     timeRotateLogs.forEach((log) => {
       const projectName = String(log.projectName || "").trim();
       const identity = getTimeRotateTaskIdentity(log);
@@ -1459,7 +1470,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
@@ -1529,6 +1540,7 @@ const InvoiceManager = () => {
 
     if (!id) {
       setIssueTitleByIdentity({});
+      setTdMatcherCandidates([]);
       return () => {
         active = false;
       };
@@ -1551,6 +1563,7 @@ const InvoiceManager = () => {
 
         const nextIssueTitleByIdentity = {};
         const titlesByIssueIdSet = {};
+        const nextTdMatcherCandidates = [];
 
         snapshots.forEach(({ projectDocId, issuesSnapshot }) => {
           issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
@@ -1558,6 +1571,7 @@ const InvoiceManager = () => {
 
             const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
             const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
+            const projectNameColumn = findColumnByAliases(rowData, ["project name", "project", "projectname"]);
 
             const issueId = String(
               (issueIdColumn ? rowData[issueIdColumn] : "")
@@ -1576,6 +1590,19 @@ const InvoiceManager = () => {
 
             nextIssueTitleByIdentity[`${projectDocId}::${issueId}`] = issueTitle;
 
+            if (/^TD[-\s]?/i.test(issueId)) {
+              nextTdMatcherCandidates.push({
+                identity: `${projectDocId}::${issueId}`,
+                issueId,
+                title: issueTitle,
+                projectName: String(
+                  (projectNameColumn ? rowData[projectNameColumn] : "")
+                  || rowData.projectName
+                  || ""
+                ).trim(),
+              });
+            }
+
             if (!titlesByIssueIdSet[issueId]) {
               titlesByIssueIdSet[issueId] = new Set();
             }
@@ -1591,11 +1618,13 @@ const InvoiceManager = () => {
 
         setIssueTitleByIdentity(nextIssueTitleByIdentity);
         setIssueTitleByIssueId(nextIssueTitleByIssueId);
+        setTdMatcherCandidates(nextTdMatcherCandidates);
       } catch (error) {
         console.error("Error loading issue titles for billable invoices:", error);
         if (active) {
           setIssueTitleByIdentity({});
           setIssueTitleByIssueId({});
+          setTdMatcherCandidates([]);
         }
       }
     };
