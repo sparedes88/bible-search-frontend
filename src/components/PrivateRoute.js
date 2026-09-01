@@ -241,6 +241,12 @@ const PrivateRoute = ({ children, roles = [], moduleId = '' }) => {
     const canonicalPath = routeType === 'church'
       ? `/organization/${churchId}/${pathParts.slice(3).join('/')}`
       : location.pathname;
+    const isFloorPlannerView = canonicalPath === `/organization/${churchId}/time-rotate-notes`
+      && new URLSearchParams(location.search).get('view') === 'floor-planner';
+
+    if (isFloorPlannerView) {
+      return 'floor-planner';
+    }
 
     const aliasMatch = MODULE_PATH_ALIASES.find((entry) => entry.match.test(canonicalPath));
     if (aliasMatch) {
@@ -257,7 +263,7 @@ const PrivateRoute = ({ children, roles = [], moduleId = '' }) => {
     }
 
     return '';
-  }, [churchId, location.pathname, pathParts, routeType]);
+  }, [churchId, location.pathname, location.search, pathParts, routeType]);
 
   const targetModuleId = String(moduleId || autoDetectedModuleId || '').trim();
 
