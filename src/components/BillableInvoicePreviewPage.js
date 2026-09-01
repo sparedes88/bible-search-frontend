@@ -665,6 +665,14 @@ const BillableInvoicePreviewPage = () => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [documentType, setDocumentType] = useState("invoice");
   const [showDocumentTotals, setShowDocumentTotals] = useState(true);
+  const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
+    week: true,
+    period: true,
+    dueDate: true,
+    terms: true,
+    dateOfWork: false,
+    overtimePolicy: true,
+  });
   const [isSavingDocumentSettings, setIsSavingDocumentSettings] = useState(false);
 
   useEffect(() => {
@@ -705,6 +713,7 @@ const BillableInvoicePreviewPage = () => {
           ? settings.documentType
           : "invoice");
         setShowDocumentTotals(settings.showTotals !== false);
+        setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
       }
@@ -717,9 +726,10 @@ const BillableInvoicePreviewPage = () => {
     };
   }, [invoiceDocRef]);
 
-  const handleDocumentSettingsChange = async (nextDocumentType, nextShowTotals) => {
+  const handleDocumentSettingsChange = async (nextDocumentType, nextShowTotals, nextInfoVisibility = documentInfoVisibility) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
+    setDocumentInfoVisibility(nextInfoVisibility);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -728,6 +738,7 @@ const BillableInvoicePreviewPage = () => {
         billableDocumentSettings: {
           documentType: nextDocumentType,
           showTotals: nextShowTotals,
+          infoVisibility: nextInfoVisibility,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1559,6 +1570,27 @@ const BillableInvoicePreviewPage = () => {
           />
           Show Totals
         </label>
+        {[
+          { key: "week", label: "Show Week" },
+          { key: "period", label: "Show Period" },
+          { key: "dateOfWork", label: "Show Date of Work" },
+          { key: "dueDate", label: "Show Due Date" },
+          { key: "terms", label: "Show Terms" },
+          { key: "overtimePolicy", label: "Show OT Policy" },
+        ].map((option) => (
+          <label key={option.key} style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={Boolean(documentInfoVisibility[option.key])}
+              disabled={isSavingDocumentSettings}
+              onChange={(event) => handleDocumentSettingsChange(documentType, showDocumentTotals, {
+                ...documentInfoVisibility,
+                [option.key]: event.target.checked,
+              })}
+            />
+            {option.label}
+          </label>
+        ))}
       </div>
 
       <div style={{ ...cardStyle, marginTop: "12px" }}>
@@ -2038,11 +2070,12 @@ const BillableInvoicePreviewPage = () => {
       <div style={{ ...cardStyle, marginTop: sectionVisibility.companyHeader ? "12px" : 0, padding: "16px 24px" }}>
         <div style={{ display: "grid", gap: "16px", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
           {[
-            ["Week", `Week ${draftPayload.weekNumber || "-"}`],
-            ["Period", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
-            ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
-            ["Terms", draftPayload.paymentTermsLabel || "-"],
-          ].map(([label, value]) => (
+            documentInfoVisibility.week && ["Week", `Week ${draftPayload.weekNumber || "-"}`],
+            documentInfoVisibility.period && ["Period", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
+            documentInfoVisibility.dateOfWork && ["Date of Work", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
+            documentInfoVisibility.dueDate && ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
+            documentInfoVisibility.terms && ["Terms", draftPayload.paymentTermsLabel || "-"],
+          ].filter(Boolean).map(([label, value]) => (
             <div key={label}>
               <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#94A3B8" }}>
                 {label}
@@ -2053,7 +2086,9 @@ const BillableInvoicePreviewPage = () => {
             </div>
           ))}
         </div>
-        <div style={{ marginTop: "12px", fontSize: "0.78rem", color: "#64748B" }}>{overtimePolicyLabel}</div>
+        {documentInfoVisibility.overtimePolicy ? (
+          <div style={{ marginTop: "12px", fontSize: "0.78rem", color: "#64748B" }}>{overtimePolicyLabel}</div>
+        ) : null}
       </div>
       )}
 
