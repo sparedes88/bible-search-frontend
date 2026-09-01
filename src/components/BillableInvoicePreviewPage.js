@@ -663,6 +663,9 @@ const BillableInvoicePreviewPage = () => {
 
   const [isSavingNoteOverrides, setIsSavingNoteOverrides] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [documentType, setDocumentType] = useState("invoice");
+  const [showDocumentTotals, setShowDocumentTotals] = useState(true);
+  const [isSavingDocumentSettings, setIsSavingDocumentSettings] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -687,6 +690,54 @@ const BillableInvoicePreviewPage = () => {
       isMounted = false;
     };
   }, [invoiceDocRef]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDocumentSettings = async () => {
+      if (!invoiceDocRef) return;
+
+      try {
+        const invoiceSnap = await getDoc(invoiceDocRef);
+        const settings = invoiceSnap.data()?.billableDocumentSettings || {};
+        if (!isMounted) return;
+        setDocumentType(["invoice", "work_order", "change_order"].includes(settings.documentType)
+          ? settings.documentType
+          : "invoice");
+        setShowDocumentTotals(settings.showTotals !== false);
+      } catch (error) {
+        console.error("Failed to load billable document settings:", error);
+      }
+    };
+
+    loadDocumentSettings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [invoiceDocRef]);
+
+  const handleDocumentSettingsChange = async (nextDocumentType, nextShowTotals) => {
+    setDocumentType(nextDocumentType);
+    setShowDocumentTotals(nextShowTotals);
+    if (!invoiceDocRef) return;
+
+    setIsSavingDocumentSettings(true);
+    try {
+      await updateDoc(invoiceDocRef, {
+        billableDocumentSettings: {
+          documentType: nextDocumentType,
+          showTotals: nextShowTotals,
+        },
+        billableDocumentSettingsUpdatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Failed to save billable document settings:", error);
+      toast.error("Failed to save document settings.");
+    } finally {
+      setIsSavingDocumentSettings(false);
+    }
+  };
 
   const handleSaveNoteOverrides = async () => {
     if (!invoiceDocRef) {
@@ -1403,6 +1454,19 @@ const BillableInvoicePreviewPage = () => {
   const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
   const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
   const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
+  const documentTypeLabel = documentType === "work_order"
+    ? "Work Order"
+    : documentType === "change_order"
+      ? "Change Order"
+      : "Invoice";
+  const documentReferenceLabel = documentType === "work_order"
+    ? "Work Order #"
+    : documentType === "change_order"
+      ? "Change Order #"
+      : "Invoice #";
+  const summaryGridColumns = showDocumentTotals
+    ? "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)"
+    : "minmax(0, 3fr) minmax(0, 1fr)";
 
   const pageContainerStyle = {
     ...commonStyles.fullWidthContainer,
@@ -1471,6 +1535,30 @@ const BillableInvoicePreviewPage = () => {
             {section.label}
           </label>
         ))}
+      </div>
+
+      <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        <strong style={{ color: "#0F172A" }}>Document Type:</strong>
+        {[{ value: "invoice", label: "Invoice" }, { value: "work_order", label: "Work Order" }, { value: "change_order", label: "Change Order" }].map((option) => (
+          <label key={option.value} style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={documentType === option.value}
+              disabled={isSavingDocumentSettings}
+              onChange={() => handleDocumentSettingsChange(option.value, showDocumentTotals)}
+            />
+            {option.label}
+          </label>
+        ))}
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={showDocumentTotals}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(documentType, event.target.checked)}
+          />
+          Show Totals
+        </label>
       </div>
 
       <div style={{ ...cardStyle, marginTop: "12px" }}>
@@ -1833,9 +1921,9 @@ const BillableInvoicePreviewPage = () => {
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#0F172A", letterSpacing: "0.08em" }}>INVOICE</div>
+              <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#0F172A", letterSpacing: "0.08em" }}>{documentTypeLabel.toUpperCase()}</div>
               <div style={{ fontSize: "0.9rem", color: "#64748B", marginTop: "4px" }}>
-                {`Invoice #${draftPayload.invoiceNumber || "-"}`}
+                {`${documentReferenceLabel}${draftPayload.invoiceNumber || "-"}`}
               </div>
             </div>
           </div>
@@ -1980,7 +2068,7 @@ const BillableInvoicePreviewPage = () => {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              gridTemplateColumns: summaryGridColumns,
               width: "100%",
               background: "#F8FAFC",
               borderBottom: "1px solid #E5E7EB",
@@ -1988,8 +2076,8 @@ const BillableInvoicePreviewPage = () => {
           >
             <div style={tableHeaderCellStyle}>Description</div>
             <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Hours</div>
-            <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Rate</div>
-            <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Amount</div>
+            {showDocumentTotals ? <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Rate</div> : null}
+            {showDocumentTotals ? <div style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Amount</div> : null}
           </div>
 
           {users.map((userEntry, index) => {
@@ -2015,7 +2103,7 @@ const BillableInvoicePreviewPage = () => {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+                    gridTemplateColumns: summaryGridColumns,
                     width: "100%",
                     background: rowBackground,
                     breakInside: "avoid",
@@ -2033,14 +2121,14 @@ const BillableInvoicePreviewPage = () => {
                     ) : null}
                   </div>
                   <div style={numericBodyCellStyle}>{formatHoursClock(regularHours)}</div>
-                  <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div>
-                  <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div>
+                  {showDocumentTotals ? <div style={numericBodyCellStyle}>{formatCurrency(regularRate)}</div> : null}
+                  {showDocumentTotals ? <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(regularCost)}</div> : null}
                 </div>
                 {overtimeHours > 0 ? (
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+                      gridTemplateColumns: summaryGridColumns,
                       width: "100%",
                       background: rowBackground,
                       breakInside: "avoid",
@@ -2051,18 +2139,18 @@ const BillableInvoicePreviewPage = () => {
                       {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
                     </div>
                     <div style={numericBodyCellStyle}>{formatHoursClock(overtimeHours)}</div>
-                    <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div>
-                    <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div>
+                    {showDocumentTotals ? <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div> : null}
+                    {showDocumentTotals ? <div style={{ ...numericBodyCellStyle, fontWeight: 700 }}>{formatCurrency(overtimeCost)}</div> : null}
                   </div>
                 ) : null}
               </React.Fragment>
             );
           })}
 
-          <div
+          {showDocumentTotals ? <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              gridTemplateColumns: summaryGridColumns,
               width: "100%",
               borderTop: "1px solid #CBD5E1",
             }}
@@ -2071,11 +2159,11 @@ const BillableInvoicePreviewPage = () => {
             <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatHoursClock(effectiveTotals.totalHours || 0)}</div>
             <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
             <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
-          </div>
-          <div
+          </div> : null}
+          {showDocumentTotals ? <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)",
+              gridTemplateColumns: summaryGridColumns,
               width: "100%",
               background: "#0F172A",
               color: "#FFFFFF",
@@ -2087,7 +2175,7 @@ const BillableInvoicePreviewPage = () => {
             <div style={{ padding: "12px 14px", textAlign: "right", fontWeight: 800, fontSize: "1.15rem", fontVariantNumeric: "tabular-nums" }}>
               {formatCurrency(effectiveTotals.totalAmount || 0)}
             </div>
-          </div>
+          </div> : null}
         </div>
       </div>
       )}
