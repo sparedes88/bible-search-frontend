@@ -1395,9 +1395,19 @@ const InvoiceManager = () => {
         title: String(log.title || "").trim(),
         projectName,
         milliseconds: 0,
+        firstUsedAt: 0,
+        lastUsedAt: 0,
         users: new Set(),
       };
       existing.milliseconds += Math.max(0, Number(log.durationMs) || (Number(log.endedAt) - Number(log.startedAt)) || 0);
+      const logStartAt = Number(log.startedAt) || Number(log.endedAt) || 0;
+      const logEndAt = Number(log.endedAt) || logStartAt;
+      if (logStartAt > 0 && (!existing.firstUsedAt || logStartAt < existing.firstUsedAt)) {
+        existing.firstUsedAt = logStartAt;
+      }
+      if (logEndAt > existing.lastUsedAt) {
+        existing.lastUsedAt = logEndAt;
+      }
       const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
       if (userLabel) existing.users.add(userLabel);
       rowsByIdentity.set(identity, existing);
@@ -7245,13 +7255,15 @@ const InvoiceManager = () => {
                       <th style={tableHeaderCellStyle}>Title</th>
                       <th style={tableHeaderCellStyle}>TimeRotate Project</th>
                       <th style={tableHeaderCellStyle}>Logged Hours</th>
+                      <th style={tableHeaderCellStyle}>First Used</th>
+                      <th style={tableHeaderCellStyle}>Last Used</th>
                       <th style={tableHeaderCellStyle}>Users</th>
                       <th style={tableHeaderCellStyle}>Invoice Project Match</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tdMatcherRows.length === 0 ? (
-                      <tr><td style={tableBodyCellStyle} colSpan={6}>No TimeRotate Technical Details match this search.</td></tr>
+                      <tr><td style={tableBodyCellStyle} colSpan={8}>No TimeRotate Technical Details match this search.</td></tr>
                     ) : tdMatcherRows.map((row) => {
                       const matchedProjectIds = row.matchedProjects.map((project) => project.id);
                       const selectedMatch = matchedProjectIds.length === 1 ? matchedProjectIds[0] : "";
@@ -7261,6 +7273,8 @@ const InvoiceManager = () => {
                           <td style={tableBodyCellStyle}>{row.title || "-"}</td>
                           <td style={tableBodyCellStyle}>{row.projectName || "Missing project name"}</td>
                           <td style={tableBodyCellStyle}>{formatHoursUsed(row.milliseconds)}</td>
+                          <td style={tableBodyCellStyle}>{formatLogTimestamp(row.firstUsedAt)}</td>
+                          <td style={tableBodyCellStyle}>{formatLogTimestamp(row.lastUsedAt)}</td>
                           <td style={tableBodyCellStyle}>{row.users.join(", ") || "Unknown"}</td>
                           <td style={tableBodyCellStyle}>
                             <select
