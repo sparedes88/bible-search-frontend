@@ -2310,7 +2310,7 @@ const BillableInvoicePreviewPage = () => {
                       clientWorkOrderNumber,
                       showClientWorkOrderNumber,
                       roundHoursUp,
-                      showDrafterNames,
+                      true,
                       { ...drafterNamesByUser, [userKey]: event.target.value }
                     )}
                     style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
