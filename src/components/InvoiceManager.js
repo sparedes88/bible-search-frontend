@@ -4681,6 +4681,36 @@ const InvoiceManager = () => {
         margin: { left: margin, right: margin },
       });
 
+      const summaryStartY = (pdf.lastAutoTable?.finalY || 88) + 24;
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("Project Totals", margin, summaryStartY);
+
+      autoTable(pdf, {
+        startY: summaryStartY + 8,
+        theme: "grid",
+        head: [["Invoice Amounts", "Hours & Labor", "Overtime Policy"]],
+        body: [[
+          [
+            `Final: ${formatCurrency(invoiceTableTotals.totalFinalInvoiceAmount)}`,
+            `Budgeted: ${formatCurrency(invoiceTableTotals.totalBudgetedInvoiceAmount)}`,
+            `Subtotal: ${formatCurrency(invoiceTableTotals.subtotalInvoiceAmount)}`,
+          ].join("\n"),
+          [
+            `Total Hours: ${formatHoursUsed(invoiceTableTotals.totalMilliseconds)}`,
+            `Labor Cost: ${formatCurrency(invoiceTableTotals.totalLaborCost)}`,
+            `Overtime: ${invoiceTableTotals.totalOvertimeHours.toFixed(2)}h`,
+          ].join("\n"),
+          OVERTIME_POLICY_LABEL,
+        ]],
+        styles: { font: "helvetica", fontSize: 9, cellPadding: 7, valign: "top" },
+        headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: "bold" },
+        columnStyles: { 0: { cellWidth: 220 }, 1: { cellWidth: 220 }, 2: { cellWidth: 232 } },
+        margin: { left: margin, right: margin },
+      });
+      pdf.setTextColor(0, 0, 0);
+
       const safeProjectName = projectName.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "project";
       pdf.save(`${safeProjectName}-invoice-status-report.pdf`);
     } catch (error) {
