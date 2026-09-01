@@ -1776,13 +1776,16 @@ const BillableInvoicePreviewPage = () => {
           const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
           const drafterRowKey = `drafter-${index + 1}`;
           const selectedDrafterName = String(drafterNamesByUser[drafterRowKey] || drafterNamesByUser[userKey] || "").trim();
+          const drafterNameOptions = Array.from(new Set([
+            String(userEntry.name || "").trim(),
+            ...personNameOptions,
+          ].filter(Boolean)));
 
           return (
             <label key={drafterRowKey} style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
               {drafterLabel}
               <select
                 value={selectedDrafterName}
-                disabled={isSavingDocumentSettings}
                 onChange={(event) => handleDocumentSettingsChange(
                   documentType,
                   showDocumentTotals,
@@ -1798,7 +1801,7 @@ const BillableInvoicePreviewPage = () => {
                 style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "190px" }}
               >
                 <option value="">Select name</option>
-                {personNameOptions.map((personName) => (
+                {drafterNameOptions.map((personName) => (
                   <option key={`${drafterRowKey}-${personName}`} value={personName}>{personName}</option>
                 ))}
               </select>
