@@ -681,6 +681,8 @@ const BillableInvoicePreviewPage = () => {
   const [documentType, setDocumentType] = useState("invoice");
   const [showDocumentTotals, setShowDocumentTotals] = useState(true);
   const [includeWorkSummaryInPdf, setIncludeWorkSummaryInPdf] = useState(false);
+  const [clientWorkOrderNumber, setClientWorkOrderNumber] = useState("");
+  const [showClientWorkOrderNumber, setShowClientWorkOrderNumber] = useState(false);
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
     period: true,
@@ -730,6 +732,8 @@ const BillableInvoicePreviewPage = () => {
           : "invoice");
         setShowDocumentTotals(settings.showTotals !== false);
         setIncludeWorkSummaryInPdf(settings.includeWorkSummaryInPdf === true);
+        setClientWorkOrderNumber(String(settings.clientWorkOrderNumber || ""));
+        setShowClientWorkOrderNumber(settings.showClientWorkOrderNumber === true);
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
@@ -747,12 +751,16 @@ const BillableInvoicePreviewPage = () => {
     nextDocumentType,
     nextShowTotals,
     nextInfoVisibility = documentInfoVisibility,
-    nextIncludeWorkSummaryInPdf = includeWorkSummaryInPdf
+    nextIncludeWorkSummaryInPdf = includeWorkSummaryInPdf,
+    nextClientWorkOrderNumber = clientWorkOrderNumber,
+    nextShowClientWorkOrderNumber = showClientWorkOrderNumber
   ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
     setDocumentInfoVisibility(nextInfoVisibility);
     setIncludeWorkSummaryInPdf(nextIncludeWorkSummaryInPdf);
+    setClientWorkOrderNumber(nextClientWorkOrderNumber);
+    setShowClientWorkOrderNumber(nextShowClientWorkOrderNumber);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -763,6 +771,8 @@ const BillableInvoicePreviewPage = () => {
           showTotals: nextShowTotals,
           infoVisibility: nextInfoVisibility,
           includeWorkSummaryInPdf: nextIncludeWorkSummaryInPdf,
+          clientWorkOrderNumber: nextClientWorkOrderNumber,
+          showClientWorkOrderNumber: nextShowClientWorkOrderNumber,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1641,6 +1651,41 @@ const BillableInvoicePreviewPage = () => {
           />
           Include Work Summary in PDF
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={showClientWorkOrderNumber}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              includeWorkSummaryInPdf,
+              clientWorkOrderNumber,
+              event.target.checked
+            )}
+          />
+          Show Client Work Order #
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.9rem" }}>
+          Client Work Order #
+          <input
+            type="text"
+            value={clientWorkOrderNumber}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => setClientWorkOrderNumber(event.target.value)}
+            onBlur={() => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              includeWorkSummaryInPdf,
+              clientWorkOrderNumber,
+              showClientWorkOrderNumber
+            )}
+            placeholder="Enter client number"
+            style={{ width: "180px", padding: "7px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.9rem" }}
+          />
+        </label>
       </div>
 
       <div style={{ ...cardStyle, marginTop: "12px" }}>
@@ -2007,6 +2052,11 @@ const BillableInvoicePreviewPage = () => {
               <div style={{ fontSize: "0.9rem", color: "#64748B", marginTop: "4px" }}>
                 {`${documentReferenceLabel}${draftPayload.invoiceNumber || "-"}`}
               </div>
+              {showClientWorkOrderNumber && clientWorkOrderNumber.trim() ? (
+                <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: "4px", fontWeight: 700 }}>
+                  {`Client Work Order #${clientWorkOrderNumber.trim()}`}
+                </div>
+              ) : null}
             </div>
           </div>
           <div style={{ marginTop: "18px", paddingTop: "14px", borderTop: "1px solid #E2E8F0" }}>
