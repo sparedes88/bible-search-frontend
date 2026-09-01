@@ -339,6 +339,18 @@ const getApStatusLabel = (value) => (
 );
 const normalizeProjectNameKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 
+const getTimeRotateCardKey = (log = {}) => {
+  const taskIdentity = String(log.taskIdentity || "").trim();
+  if (taskIdentity) return taskIdentity;
+
+  return [log.projectDocId, log.issueId, log.title]
+    .map((value) => String(value || "").trim())
+    .join("::");
+};
+
+const normalizeExcludedTimeRotateCardKeys = (value) =>
+  Array.from(new Set((Array.isArray(value) ? value : []).map((key) => String(key || "").trim()).filter(Boolean)));
+
 const normalizeTimeRotateProjectNames = (value) => {
   const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
   const dedupedByKey = new Map();
@@ -352,31 +364,6 @@ const normalizeTimeRotateProjectNames = (value) => {
 
   return Array.from(dedupedByKey.values());
 };
-
-const getTimeRotateCardKey = (entry = {}) => {
-  const taskIdentity = String(entry.taskIdentity || "").trim();
-  if (taskIdentity) return taskIdentity;
-
-  const projectDocId = String(entry.projectDocId || "").trim();
-  const issueId = String(entry.issueId || "").trim();
-  return projectDocId && issueId ? `${projectDocId}::${issueId}` : issueId;
-};
-
-const getTimeRotateTaskIdentityKeys = (entry = {}) => {
-  const taskIdentity = String(entry.taskIdentity || "").trim();
-  const projectDocId = String(entry.projectDocId || "").trim();
-  const issueId = String(entry.issueId || "").trim();
-  return Array.from(new Set([
-    taskIdentity,
-    projectDocId && issueId ? `${projectDocId}::${issueId}` : "",
-  ].filter(Boolean).map((key) => key.toLowerCase())));
-};
-
-const normalizeTimeRotateCardKeys = (value) => Array.from(new Set(
-  (Array.isArray(value) ? value : (value ? [value] : []))
-    .map((entry) => String(entry || "").trim())
-    .filter(Boolean)
-));
 
 const formatHoursUsed = (milliseconds) => {
   const safeMilliseconds = Number(milliseconds);
@@ -1067,8 +1054,6 @@ const InvoiceManager = () => {
   const [downloadingInvoiceStatusReport, setDownloadingInvoiceStatusReport] = useState(false);
   const [uploadingExternalPdfInvoiceId, setUploadingExternalPdfInvoiceId] = useState("");
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
-  const [timeRotateProjectNameOverrides, setTimeRotateProjectNameOverrides] = useState({});
-  const [bimCardProjectNames, setBimCardProjectNames] = useState([]);
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
@@ -1253,34 +1238,6 @@ const InvoiceManager = () => {
     return unsubscribe;
   }, [id]);
 
-  useEffect(() => {
-    if (!id) {
-      setTimeRotateProjectNameOverrides({});
-      return undefined;
-    }
-
-    const unsubscribe = onSnapshot(
-      collection(db, "churches", id, "timeRotateTaskDetails"),
-      (snapshot) => {
-        const overrides = {};
-        snapshot.docs.forEach((taskDoc) => {
-          const data = taskDoc.data() || {};
-          const taskIdentity = String(data.taskIdentity || "").trim();
-          const projectName = String(data.projectNameOverride || data.projectName || "").trim();
-          if (taskIdentity && projectName) {
-            overrides[taskIdentity.toLowerCase()] = projectName;
-          }
-        });
-        setTimeRotateProjectNameOverrides(overrides);
-      },
-      (error) => {
-        console.error("Error loading Time Rotate project name overrides for invoices:", error);
-      }
-    );
-
-    return unsubscribe;
-  }, [id]);
-
   // Loads org members so invoices can display each person's full name instead of whatever short name was logged.
   useEffect(() => {
     if (!id) {
@@ -1353,29 +1310,28 @@ const InvoiceManager = () => {
   const timeRotateProjectOptions = useMemo(() => {
     const allValues = [
       ...timeRotateLogs.map((log) => String(log.projectName || "").trim()),
-      ...Object.values(timeRotateProjectNameOverrides),
-      ...bimCardProjectNames,
       ...projects.flatMap((project) => normalizeTimeRotateProjectNames(project?.timeRotateProjectNames)),
     ];
 
     return normalizeTimeRotateProjectNames(allValues).sort((left, right) => left.localeCompare(right));
-  }, [bimCardProjectNames, projects, timeRotateLogs, timeRotateProjectNameOverrides]);
+  }, [projects, timeRotateLogs]);
 
   const timeRotateCardOptions = useMemo(() => {
     const cardsByKey = new Map();
-
     timeRotateLogs.forEach((log) => {
       const key = getTimeRotateCardKey(log);
-      if (!key || cardsByKey.has(key)) return;
-
+      const projectName = String(log.projectName || "").trim();
       const issueId = String(log.issueId || "").trim();
-      const title = String(log.title || "").trim();
-      cardsByKey.set(key, {
-        key,
-        label: [issueId || "TD Card", title].filter(Boolean).join(" - "),
-      });
+      if (!key || (!projectName && !issueId)) return;
+      if (!cardsByKey.has(key)) {
+        cardsByKey.set(key, {
+          key,
+          label: [projectName || "Unknown Project", issueId || "TD Card", String(log.title || "").trim()]
+            .filter(Boolean)
+            .join(" | "),
+        });
+      }
     });
-
     return Array.from(cardsByKey.values()).sort((left, right) => left.label.localeCompare(right.label));
   }, [timeRotateLogs]);
 
@@ -1387,6 +1343,10 @@ const InvoiceManager = () => {
     const names = normalizeTimeRotateProjectNames(selectedInvoiceProject?.timeRotateProjectNames);
     return new Set(names.map((name) => normalizeProjectNameKey(name)).filter(Boolean));
   }, [selectedInvoiceProject]);
+
+  const selectedExcludedTimeRotateCardKeys = useMemo(() => (
+    new Set(normalizeExcludedTimeRotateCardKeys(selectedInvoiceProject?.excludedTimeRotateCardKeys))
+  ), [selectedInvoiceProject]);
 
   const associatedTimeRotateProjectNameKeysByProjectId = useMemo(() => {
     return Object.fromEntries(
@@ -1414,10 +1374,6 @@ const InvoiceManager = () => {
 
     const mappedLogs = timeRotateLogs
       .map((log) => {
-        const overrideProjectName = getTimeRotateTaskIdentityKeys(log)
-          .map((key) => timeRotateProjectNameOverrides[key])
-          .find(Boolean);
-        const projectName = String(overrideProjectName || log.projectName || "").trim();
         const eventTimestamp = Number(log.startedAt) || Number(log.endedAt) || 0;
         const rawDurationMs = Number(log.durationMs);
         const safeDuration = Number.isFinite(rawDurationMs) && rawDurationMs > 0
@@ -1433,9 +1389,6 @@ const InvoiceManager = () => {
 
         return {
           ...log,
-          projectName,
-          projectNameKey: normalizeProjectNameKey(projectName),
-          associatedProjectName: projectName,
           eventTimestamp,
           safeDuration,
           weekKey,
@@ -1474,14 +1427,13 @@ const InvoiceManager = () => {
         if (timeDelta !== 0) return timeDelta;
         return String(left.id || "").localeCompare(String(right.id || ""));
       });
-  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, timeRotateProjectNameOverrides, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
+  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
 
   useEffect(() => {
     let active = true;
 
     if (!id) {
       setIssueTitleByIdentity({});
-      setBimCardProjectNames([]);
       return () => {
         active = false;
       };
@@ -1504,7 +1456,6 @@ const InvoiceManager = () => {
 
         const nextIssueTitleByIdentity = {};
         const titlesByIssueIdSet = {};
-        const nextBimCardProjectNames = [];
 
         snapshots.forEach(({ projectDocId, issuesSnapshot }) => {
           issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
@@ -1512,16 +1463,6 @@ const InvoiceManager = () => {
 
             const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
             const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
-            const projectNameColumn = findColumnByAliases(rowData, ["project name", "projectname"]);
-            const projectName = String(
-              (projectNameColumn ? rowData[projectNameColumn] : "")
-              || rowData.projectName
-              || ""
-            ).trim();
-
-            if (projectName) {
-              nextBimCardProjectNames.push(projectName);
-            }
 
             const issueId = String(
               (issueIdColumn ? rowData[issueIdColumn] : "")
@@ -1555,13 +1496,11 @@ const InvoiceManager = () => {
 
         setIssueTitleByIdentity(nextIssueTitleByIdentity);
         setIssueTitleByIssueId(nextIssueTitleByIssueId);
-        setBimCardProjectNames(normalizeTimeRotateProjectNames(nextBimCardProjectNames));
       } catch (error) {
         console.error("Error loading issue titles for billable invoices:", error);
         if (active) {
           setIssueTitleByIdentity({});
           setIssueTitleByIssueId({});
-          setBimCardProjectNames([]);
         }
       }
     };
@@ -1745,10 +1684,8 @@ const InvoiceManager = () => {
 
         billableTimeRotateLogs.forEach((log) => {
           if (!selectedTimeRotateProjectNameKeys.has(log.projectNameKey)) return;
+          if (selectedExcludedTimeRotateCardKeys.has(getTimeRotateCardKey(log))) return;
           if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
-
-          const excludedCardKeys = new Set(normalizeTimeRotateCardKeys(selectedInvoiceProject?.excludedTimeRotateCardKeys));
-          if (excludedCardKeys.has(getTimeRotateCardKey(log))) return;
 
           const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
             regularMilliseconds: log.safeDuration,
@@ -1906,7 +1843,7 @@ const InvoiceManager = () => {
     issueTitleByIdentity,
     issueTitleByIssueId,
     projectIssuesByProjectNameKey,
-    selectedInvoiceProject,
+    selectedExcludedTimeRotateCardKeys,
     selectedTimeRotateProjectNameKeys,
     weeklyOvertimeAllocationByLogId,
   ]);
@@ -3272,7 +3209,7 @@ const InvoiceManager = () => {
     const name = String(projectDraft.name || "").trim();
     const description = String(projectDraft.description || "").trim();
     const timeRotateProjectNames = normalizeTimeRotateProjectNames(projectDraft.timeRotateProjectNames);
-    const excludedTimeRotateCardKeys = normalizeTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys);
+    const excludedTimeRotateCardKeys = normalizeExcludedTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys);
 
     if (!name) {
       toast.error("Project name is required.");
@@ -3306,7 +3243,7 @@ const InvoiceManager = () => {
       name: String(project.name || ""),
       description: String(project.description || ""),
       timeRotateProjectNames: normalizeTimeRotateProjectNames(project.timeRotateProjectNames),
-      excludedTimeRotateCardKeys: normalizeTimeRotateCardKeys(project.excludedTimeRotateCardKeys),
+      excludedTimeRotateCardKeys: normalizeExcludedTimeRotateCardKeys(project.excludedTimeRotateCardKeys),
     });
   };
 
@@ -3320,7 +3257,7 @@ const InvoiceManager = () => {
     const name = String(editProjectDraft.name || "").trim();
     const description = String(editProjectDraft.description || "").trim();
     const timeRotateProjectNames = normalizeTimeRotateProjectNames(editProjectDraft.timeRotateProjectNames);
-    const excludedTimeRotateCardKeys = normalizeTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys);
+    const excludedTimeRotateCardKeys = normalizeExcludedTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys);
 
     if (!name) {
       toast.error("Project name is required.");
@@ -5405,21 +5342,25 @@ const InvoiceManager = () => {
               <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
             </div>
             <div>
-              <label style={fieldLabelStyle}>Exclude TD Cards</label>
+              <label style={fieldLabelStyle}>Exclude TD Cards from This Invoice Project</label>
               <select
                 multiple
                 style={{ ...inputStyle, minHeight: "96px" }}
-                value={normalizeTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys)}
+                value={normalizeExcludedTimeRotateCardKeys(projectDraft.excludedTimeRotateCardKeys)}
                 onChange={(event) => {
                   const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                  setProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: normalizeTimeRotateCardKeys(selectedValues) }));
+                  setProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: selectedValues }));
                 }}
               >
-                {timeRotateCardOptions.map((card) => (
-                  <option key={`create-excluded-card-${card.key}`} value={card.key}>{card.label}</option>
-                ))}
+                {timeRotateCardOptions.length === 0 ? (
+                  <option value="" disabled>No Time Rotate TD cards found yet.</option>
+                ) : (
+                  timeRotateCardOptions.map((card) => (
+                    <option key={`create-excluded-card-${card.key}`} value={card.key}>{card.label}</option>
+                  ))
+                )}
               </select>
-              <small style={fieldHintStyle}>Excluded cards do not add hours to this invoice project and remain available for other projects.</small>
+              <small style={fieldHintStyle}>Excluded cards remain available to be linked to another invoice project.</small>
             </div>
             <button
               type="submit"
@@ -5493,21 +5434,25 @@ const InvoiceManager = () => {
                           <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
                         </div>
                         <div>
-                          <label style={fieldLabelStyle}>Exclude TD Cards</label>
+                          <label style={fieldLabelStyle}>Exclude TD Cards from This Invoice Project</label>
                           <select
                             multiple
                             style={{ ...inputStyle, minHeight: "96px" }}
-                            value={normalizeTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys)}
+                            value={normalizeExcludedTimeRotateCardKeys(editProjectDraft.excludedTimeRotateCardKeys)}
                             onChange={(event) => {
                               const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                              setEditProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: normalizeTimeRotateCardKeys(selectedValues) }));
+                              setEditProjectDraft((prev) => ({ ...prev, excludedTimeRotateCardKeys: selectedValues }));
                             }}
                           >
-                            {timeRotateCardOptions.map((card) => (
-                              <option key={`edit-excluded-card-${project.id}-${card.key}`} value={card.key}>{card.label}</option>
-                            ))}
+                            {timeRotateCardOptions.length === 0 ? (
+                              <option value="" disabled>No Time Rotate TD cards found yet.</option>
+                            ) : (
+                              timeRotateCardOptions.map((card) => (
+                                <option key={`edit-excluded-card-${project.id}-${card.key}`} value={card.key}>{card.label}</option>
+                              ))
+                            )}
                           </select>
-                          <small style={fieldHintStyle}>Excluded cards do not add hours to this invoice project and remain available for other projects.</small>
+                          <small style={fieldHintStyle}>Excluded cards remain available to be linked to another invoice project.</small>
                         </div>
                         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                           <button type="submit" style={{ ...buttonStyle, background: "#16A34A" }}>
@@ -5518,7 +5463,7 @@ const InvoiceManager = () => {
                             style={{ ...buttonStyle, background: "#6B7280" }}
                             onClick={() => {
                               setEditingProjectId("");
-                              setEditProjectDraft({ name: "", description: "", timeRotateProjectNames: [], excludedTimeRotateCardKeys: [] });
+                              setEditProjectDraft({ name: "", description: "", timeRotateProjectNames: [] });
                             }}
                           >
                             Cancel
