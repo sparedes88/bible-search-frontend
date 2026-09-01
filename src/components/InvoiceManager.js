@@ -616,6 +616,10 @@ const getMissingInSystemAssignmentKey = (row = {}) => [
 
 const toIsoStringFromValue = (value) => {
   if (!value) return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
   if (typeof value === "string") {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
@@ -629,6 +633,14 @@ const toIsoStringFromValue = (value) => {
   }
 
   return "";
+};
+
+const toMillisecondsFromValue = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value?.toMillis === "function") return Number(value.toMillis()) || 0;
+  if (typeof value?.toDate === "function") return value.toDate().getTime() || 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const formatLogTimestamp = (value) => {
@@ -1193,8 +1205,8 @@ const InvoiceManager = () => {
             projectNameKey: normalizeProjectNameKey(data.projectName),
             logType: String(data.logType || "").trim().toLowerCase(),
             durationMs: Number(data.durationMs) || 0,
-            startedAt: Number(data.startedAt) || 0,
-            endedAt: Number(data.endedAt) || 0,
+            startedAt: toMillisecondsFromValue(data.startedAt),
+            endedAt: toMillisecondsFromValue(data.endedAt),
             registeredBy: String(data.registeredBy || "").trim(),
             userEmail: String(data.userEmail || "").trim(),
             userId: String(data.userId || "").trim(),
@@ -1388,17 +1400,25 @@ const InvoiceManager = () => {
       const projectName = String(log.projectName || "").trim();
       const identity = String(log.taskIdentity || `${log.projectDocId || ""}::${log.issueId || log.id}`).trim();
       if (!identity) return;
+      const resolvedTitle = String(
+        log.title
+        || issueTitleByIdentity[`${String(log.projectDocId || "").trim()}::${String(log.issueId || "").trim()}`]
+        || issueTitleByIdentity[identity]
+        || issueTitleByIssueId[String(log.issueId || "").trim()]
+        || ""
+      ).trim();
 
       const existing = rowsByIdentity.get(identity) || {
         identity,
         issueId: String(log.issueId || "").trim(),
-        title: String(log.title || "").trim(),
+        title: resolvedTitle,
         projectName,
         milliseconds: 0,
         firstUsedAt: 0,
         lastUsedAt: 0,
         users: new Set(),
       };
+      if (!existing.title && resolvedTitle) existing.title = resolvedTitle;
       existing.milliseconds += Math.max(0, Number(log.durationMs) || (Number(log.endedAt) - Number(log.startedAt)) || 0);
       const logStartAt = Number(log.startedAt) || Number(log.endedAt) || 0;
       const logEndAt = Number(log.endedAt) || logStartAt;
@@ -1436,7 +1456,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, projects, tdInvoiceProjectIdByIdentity, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherSearch, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
