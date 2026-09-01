@@ -1047,6 +1047,7 @@ const InvoiceManager = () => {
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
+  const [tdInvoiceProjectIdByIdentity, setTdInvoiceProjectIdByIdentity] = useState({});
   const externalPdfInputRef = useRef(null);
 
   const handleInvoicesTabChange = (tabKey, { replace = false } = {}) => {
@@ -1227,6 +1228,27 @@ const InvoiceManager = () => {
     return unsubscribe;
   }, [id]);
 
+  useEffect(() => {
+    if (!id) {
+      setTdInvoiceProjectIdByIdentity({});
+      return undefined;
+    }
+
+    return onSnapshot(collection(db, "churches", id, "timeRotateTaskDetails"), (snapshot) => {
+      const nextMatches = {};
+      snapshot.forEach((taskDoc) => {
+        const taskData = taskDoc.data() || {};
+        const taskIdentity = String(taskData.taskIdentity || "").trim();
+        const invoiceProjectId = String(taskData.invoiceProjectId || "").trim();
+        if (taskIdentity && invoiceProjectId) nextMatches[taskIdentity] = invoiceProjectId;
+      });
+      setTdInvoiceProjectIdByIdentity(nextMatches);
+    }, (error) => {
+      console.error("Error loading TD invoice matches:", error);
+      setTdInvoiceProjectIdByIdentity({});
+    });
+  }, [id]);
+
   // Loads org members so invoices can display each person's full name instead of whatever short name was logged.
   useEffect(() => {
     if (!id) {
@@ -1342,6 +1364,20 @@ const InvoiceManager = () => {
     return keys;
   }, [associatedTimeRotateProjectNameKeysByProjectId]);
 
+  const projectNamesWithExplicitTdMatches = useMemo(() => new Set(
+    timeRotateLogs
+      .filter((log) => tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()])
+      .map((log) => log.projectNameKey)
+      .filter(Boolean)
+  ), [tdInvoiceProjectIdByIdentity, timeRotateLogs]);
+
+  const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => {
+    const explicitProjectId = tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()];
+    if (explicitProjectId) return explicitProjectId === invoiceProjectId;
+    if (projectNamesWithExplicitTdMatches.has(log.projectNameKey)) return false;
+    return associatedTimeRotateProjectNameKeysByProjectId[invoiceProjectId]?.has(log.projectNameKey) || false;
+  };
+
   const tdMatcherRows = useMemo(() => {
     const rowsByIdentity = new Map();
 
@@ -1366,14 +1402,17 @@ const InvoiceManager = () => {
 
     return Array.from(rowsByIdentity.values())
       .map((row) => {
+        const explicitProjectId = tdInvoiceProjectIdByIdentity[row.identity];
         const projectNameKey = normalizeProjectNameKey(row.projectName);
-        const matchedProjects = projects.filter((project) => {
+        const matchedProjects = explicitProjectId
+          ? projects.filter((project) => project.id === explicitProjectId)
+          : projects.filter((project) => {
           const associatedNames = normalizeTimeRotateProjectNames(
             project?.timeRotateProjectNames?.length > 0 ? project.timeRotateProjectNames : [project?.name]
           );
           return associatedNames.some((name) => normalizeProjectNameKey(name) === projectNameKey);
         });
-        return { ...row, users: Array.from(row.users).sort((left, right) => left.localeCompare(right)), matchedProjects };
+        return { ...row, explicitProjectId, users: Array.from(row.users).sort((left, right) => left.localeCompare(right)), matchedProjects };
       })
       .filter((row) => {
         const search = tdMatcherSearch.trim().toLowerCase();
@@ -1384,7 +1423,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, projects, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, projects, tdInvoiceProjectIdByIdentity, tdMatcherSearch, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
@@ -1401,7 +1440,8 @@ const InvoiceManager = () => {
         const weekKey = getIsoWeekStartDateKeyFromTimestamp(eventTimestamp);
 
         if (log.logType === "completion") return null;
-        if (!allAssociatedTimeRotateProjectNameKeys.has(log.projectNameKey)) return null;
+        const explicitProjectId = tdInvoiceProjectIdByIdentity[String(log.taskIdentity || "").trim()];
+        if (!explicitProjectId && !allAssociatedTimeRotateProjectNameKeys.has(log.projectNameKey)) return null;
         if (!Number.isFinite(eventTimestamp) || eventTimestamp <= 0) return null;
         if (!Number.isFinite(safeDuration) || safeDuration <= 0) return null;
         if (!weekKey) return null;
@@ -1446,7 +1486,7 @@ const InvoiceManager = () => {
         if (timeDelta !== 0) return timeDelta;
         return String(left.id || "").localeCompare(String(right.id || ""));
       });
-  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
+  }, [allAssociatedTimeRotateProjectNameKeys, tdInvoiceProjectIdByIdentity, timeRotateLogs, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
 
   useEffect(() => {
     let active = true;
@@ -1702,7 +1742,7 @@ const InvoiceManager = () => {
         let totalOvertimeMilliseconds = 0;
 
         billableTimeRotateLogs.forEach((log) => {
-          if (!selectedTimeRotateProjectNameKeys.has(log.projectNameKey)) return;
+          if (!isLogMatchedToInvoiceProject(log, invoice.id)) return;
           if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
 
           const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
@@ -1862,6 +1902,9 @@ const InvoiceManager = () => {
     issueTitleByIssueId,
     projectIssuesByProjectNameKey,
     selectedTimeRotateProjectNameKeys,
+    associatedTimeRotateProjectNameKeysByProjectId,
+    tdInvoiceProjectIdByIdentity,
+    projectNamesWithExplicitTdMatches,
     weeklyOvertimeAllocationByLogId,
   ]);
 
@@ -4381,12 +4424,13 @@ const InvoiceManager = () => {
     }
   };
 
-  const handleMatchTdToInvoiceProject = async (timeRotateProjectName, targetProjectId) => {
+  const handleMatchTdToInvoiceProject = async (tdIdentity, timeRotateProjectName, targetProjectId) => {
     if (!canManageInvoices || !targetProjectId) return;
 
     const targetProject = projects.find((project) => project.id === targetProjectId);
+    const normalizedTdIdentity = String(tdIdentity || "").trim();
     const normalizedProjectName = String(timeRotateProjectName || "").trim();
-    if (!targetProject || !normalizedProjectName) return;
+    if (!targetProject || !normalizedTdIdentity || !normalizedProjectName) return;
 
     try {
       const normalizedProjectNameKey = normalizeProjectNameKey(normalizedProjectName);
@@ -4397,11 +4441,9 @@ const InvoiceManager = () => {
         const withoutCurrentMatch = existingNames.filter(
           (name) => normalizeProjectNameKey(name) !== normalizedProjectNameKey
         );
-        const timeRotateProjectNames = project.id === targetProjectId
-          ? normalizeTimeRotateProjectNames([...withoutCurrentMatch, normalizedProjectName])
-          : withoutCurrentMatch;
+        const timeRotateProjectNames = withoutCurrentMatch;
 
-        if (timeRotateProjectNames.length !== existingNames.length || project.id === targetProjectId) {
+        if (timeRotateProjectNames.length !== existingNames.length) {
           batch.update(doc(db, "churches", id, "invoiceProjects", project.id), {
             timeRotateProjectNames,
             updatedAt: serverTimestamp(),
@@ -4409,8 +4451,15 @@ const InvoiceManager = () => {
           });
         }
       });
+      batch.set(doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(normalizedTdIdentity)), {
+        taskIdentity: normalizedTdIdentity,
+        invoiceProjectId: targetProjectId,
+        updatedAt: Date.now(),
+        updatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+        updatedByUid: user?.uid || "",
+      }, { merge: true });
       await batch.commit();
-      toast.success(`${normalizedProjectName} is now matched to ${targetProject.name}.`);
+      toast.success(`TD is now matched to ${targetProject.name}.`);
     } catch (error) {
       console.error("Error matching TD project to invoice project:", error);
       toast.error("Failed to save the TD match.");
@@ -7213,7 +7262,7 @@ const InvoiceManager = () => {
                           <td style={tableBodyCellStyle}>
                             <select
                               value={selectedMatch}
-                              onChange={(event) => handleMatchTdToInvoiceProject(row.projectName, event.target.value)}
+                              onChange={(event) => handleMatchTdToInvoiceProject(row.identity, row.projectName, event.target.value)}
                               disabled={!row.projectName || !canManageInvoices}
                               style={{ ...compactInputStyle, minWidth: "220px" }}
                             >
