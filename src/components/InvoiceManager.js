@@ -3637,6 +3637,17 @@ const InvoiceManager = () => {
     const weekEndDate = shiftDateInputValue(mondayDate, 6);
     const dueDate = toDateInputValue(invoice.dueDate);
     const projectName = String(selectedInvoiceProject?.name || "Unknown Project").trim();
+    const workRangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
+    const workRangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
+    const workTimestampRange = billableTimeRotateLogs.reduce((range, log) => {
+      if (!isLogMatchedToInvoiceProject(log, selectedProjectId)) return range;
+      if (log.eventTimestamp < workRangeStart || log.eventTimestamp > workRangeEnd) return range;
+      const firstUsedAt = Number(log.eventTimestamp) || 0;
+      const lastUsedAt = Number(log.endedAt) || firstUsedAt;
+      if (firstUsedAt > 0 && (!range.firstUsedAt || firstUsedAt < range.firstUsedAt)) range.firstUsedAt = firstUsedAt;
+      if (lastUsedAt > range.lastUsedAt) range.lastUsedAt = lastUsedAt;
+      return range;
+    }, { firstUsedAt: 0, lastUsedAt: 0 });
 
     const sortedUsers = users
       .map((userEntry) => {
@@ -3838,6 +3849,7 @@ const InvoiceManager = () => {
       weekEndDate,
       dueDate,
       paymentTermsLabel: getPaymentTermLabel(invoice.paymentTerms, invoice.netDays),
+      workTimestampRange,
       overtimePolicy: {
         thresholdHours: OVERTIME_THRESHOLD_HOURS,
         baseRate: BASE_HOURLY_RATE,

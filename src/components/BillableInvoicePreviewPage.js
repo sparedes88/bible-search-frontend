@@ -1493,7 +1493,7 @@ const BillableInvoicePreviewPage = () => {
   const summaryGridColumns = showDocumentTotals
     ? "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)"
     : "minmax(0, 3fr) minmax(0, 1fr)";
-  const workTimestampRange = users
+  const cardWorkTimestampRange = users
     .flatMap((userEntry) => Array.isArray(userEntry.cards) ? userEntry.cards : [])
     .reduce((range, card) => {
       const firstUsedAt = Number(card.firstUsedAt) || 0;
@@ -1502,6 +1502,9 @@ const BillableInvoicePreviewPage = () => {
       if (lastUsedAt > range.lastUsedAt) range.lastUsedAt = lastUsedAt;
       return range;
     }, { firstUsedAt: 0, lastUsedAt: 0 });
+  const workTimestampRange = Number(draftPayload.workTimestampRange?.firstUsedAt) > 0
+    ? draftPayload.workTimestampRange
+    : cardWorkTimestampRange;
 
   const pageContainerStyle = {
     ...commonStyles.fullWidthContainer,
