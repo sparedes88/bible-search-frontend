@@ -86,6 +86,8 @@ const formatHoursClock = (value) => {
   return `${hours}:${String(minutes).padStart(2, "0")}`;
 };
 
+const roundHoursUpToHalfHour = (value) => Math.ceil((Number(value) || 0) * 2) / 2;
+
 const formatMonthDayYear = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "-";
@@ -683,6 +685,7 @@ const BillableInvoicePreviewPage = () => {
   const [includeWorkSummaryInPdf, setIncludeWorkSummaryInPdf] = useState(false);
   const [clientWorkOrderNumber, setClientWorkOrderNumber] = useState("");
   const [showClientWorkOrderNumber, setShowClientWorkOrderNumber] = useState(false);
+  const [roundHoursUp, setRoundHoursUp] = useState(false);
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
     period: true,
@@ -734,6 +737,7 @@ const BillableInvoicePreviewPage = () => {
         setIncludeWorkSummaryInPdf(settings.includeWorkSummaryInPdf === true);
         setClientWorkOrderNumber(String(settings.clientWorkOrderNumber || ""));
         setShowClientWorkOrderNumber(settings.showClientWorkOrderNumber === true);
+        setRoundHoursUp(settings.roundHoursUp === true);
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
@@ -753,7 +757,8 @@ const BillableInvoicePreviewPage = () => {
     nextInfoVisibility = documentInfoVisibility,
     nextIncludeWorkSummaryInPdf = includeWorkSummaryInPdf,
     nextClientWorkOrderNumber = clientWorkOrderNumber,
-    nextShowClientWorkOrderNumber = showClientWorkOrderNumber
+    nextShowClientWorkOrderNumber = showClientWorkOrderNumber,
+    nextRoundHoursUp = roundHoursUp
   ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
@@ -761,6 +766,7 @@ const BillableInvoicePreviewPage = () => {
     setIncludeWorkSummaryInPdf(nextIncludeWorkSummaryInPdf);
     setClientWorkOrderNumber(nextClientWorkOrderNumber);
     setShowClientWorkOrderNumber(nextShowClientWorkOrderNumber);
+    setRoundHoursUp(nextRoundHoursUp);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -773,6 +779,7 @@ const BillableInvoicePreviewPage = () => {
           includeWorkSummaryInPdf: nextIncludeWorkSummaryInPdf,
           clientWorkOrderNumber: nextClientWorkOrderNumber,
           showClientWorkOrderNumber: nextShowClientWorkOrderNumber,
+          roundHoursUp: nextRoundHoursUp,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1148,14 +1155,17 @@ const BillableInvoicePreviewPage = () => {
         // overtime hours as regular whenever this invoice isn't their only project that week.
         const baseRegularHours = Number(userEntry.baseRegularHours || 0);
         const baseOvertimeHours = Number(userEntry.baseOvertimeHours || 0);
-        const regularHours = Math.min(baseRegularHours, totalHours);
-        const overtimeHours = Math.max(0, totalHours - regularHours);
+        const unroundedRegularHours = Math.min(baseRegularHours, totalHours);
+        const unroundedOvertimeHours = Math.max(0, totalHours - unroundedRegularHours);
+        const regularHours = roundHoursUp ? roundHoursUpToHalfHour(unroundedRegularHours) : unroundedRegularHours;
+        const overtimeHours = roundHoursUp ? roundHoursUpToHalfHour(unroundedOvertimeHours) : unroundedOvertimeHours;
+        const billedTotalHours = regularHours + overtimeHours;
         const regularCost = regularHours * baseRate;
         const overtimeCost = overtimeHours * baseRate * overtimeMultiplierValue;
 
         return {
           ...userEntry,
-          totalHours,
+          totalHours: Number(billedTotalHours.toFixed(2)),
           regularHours: Number(regularHours.toFixed(2)),
           overtimeHours: Number(overtimeHours.toFixed(2)),
           regularRate: baseRate,
@@ -1164,7 +1174,7 @@ const BillableInvoicePreviewPage = () => {
         };
       })
       .sort((left, right) => right.lineTotal - left.lineTotal);
-  }, [draftPayload, manualTimeEntries]);
+  }, [draftPayload, manualTimeEntries, roundHoursUp]);
 
   // Keeps new time entries consistent with each person's established naming convention in
   // Time Rotate (e.g. most of Salomon's real logs say "Salomon", not "Salomon Paredes") by
@@ -1615,6 +1625,23 @@ const BillableInvoicePreviewPage = () => {
             onChange={(event) => handleDocumentSettingsChange(documentType, event.target.checked)}
           />
           Show Totals
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={roundHoursUp}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              includeWorkSummaryInPdf,
+              clientWorkOrderNumber,
+              showClientWorkOrderNumber,
+              event.target.checked
+            )}
+          />
+          Round hours up to 30 minutes
         </label>
         {[
           { key: "week", label: "Show Week" },
