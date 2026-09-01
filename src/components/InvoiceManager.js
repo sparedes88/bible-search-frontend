@@ -6621,30 +6621,28 @@ const InvoiceManager = () => {
                           </tr>
                         );
                       })}
-                      <tr style={{ background: "#E2E8F0" }}>
-                        <td style={{ ...tableBodyCellStyle, fontWeight: 800, color: "#0F172A" }} colSpan={3}>
-                          Totals
+                      <tr style={{ background: "#F8FAFC" }}>
+                        <td style={{ ...tableBodyCellStyle, padding: "16px" }} colSpan={14}>
+                          <div style={{ color: "#0F172A", fontSize: "0.95rem", fontWeight: 800, marginBottom: "10px" }}>Project Totals</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px" }}>
+                            <div style={{ border: "1px solid #BFDBFE", background: "#EFF6FF", padding: "12px" }}>
+                              <div style={{ color: "#1E3A8A", fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Invoice Amounts</div>
+                              <div style={{ marginTop: "7px", color: "#0F172A", fontSize: "0.86rem" }}>Final: <strong>{formatCurrency(invoiceTableTotals.totalFinalInvoiceAmount)}</strong></div>
+                              <div style={{ marginTop: "4px", color: "#0F172A", fontSize: "0.86rem" }}>Budgeted: <strong>{formatCurrency(invoiceTableTotals.totalBudgetedInvoiceAmount)}</strong></div>
+                              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #BFDBFE", color: "#1D4ED8", fontSize: "0.95rem", fontWeight: 800 }}>Subtotal: {formatCurrency(invoiceTableTotals.subtotalInvoiceAmount)}</div>
+                            </div>
+                            <div style={{ border: "1px solid #99F6E4", background: "#F0FDFA", padding: "12px" }}>
+                              <div style={{ color: "#115E59", fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Hours &amp; Labor</div>
+                              <div style={{ marginTop: "7px", color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{formatHoursUsed(invoiceTableTotals.totalMilliseconds)}</div>
+                              <div style={{ marginTop: "4px", color: "#0F172A", fontSize: "0.86rem" }}>Labor Cost: <strong>{formatCurrency(invoiceTableTotals.totalLaborCost)}</strong></div>
+                              <div style={{ marginTop: "4px", color: "#0F766E", fontSize: "0.82rem", fontWeight: 700 }}>Overtime: {invoiceTableTotals.totalOvertimeHours.toFixed(2)}h</div>
+                            </div>
+                            <div style={{ border: "1px solid #E2E8F0", background: "#FFFFFF", padding: "12px" }}>
+                              <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Overtime Policy</div>
+                              <div style={{ marginTop: "7px", color: "#334155", fontSize: "0.86rem", lineHeight: 1.4 }}>{OVERTIME_POLICY_LABEL}</div>
+                            </div>
+                          </div>
                         </td>
-                        <td style={{ ...tableBodyCellStyle, fontWeight: 800, color: "#0F172A" }}>
-                          <div>Total Final: {formatCurrency(invoiceTableTotals.totalFinalInvoiceAmount)}</div>
-                          <div style={{ marginTop: "2px", fontSize: "0.78rem" }}>
-                            Total Budgeted: {formatCurrency(invoiceTableTotals.totalBudgetedInvoiceAmount)}
-                          </div>
-                          <div style={{ marginTop: "2px", fontSize: "0.78rem" }}>
-                            Subtotal: {formatCurrency(invoiceTableTotals.subtotalInvoiceAmount)}
-                          </div>
-                        </td>
-                        <td style={{ ...tableBodyCellStyle, fontWeight: 800, color: "#0F172A" }}>
-                          <div>{formatHoursUsed(invoiceTableTotals.totalMilliseconds)}</div>
-                          <div style={{ marginTop: "2px", fontSize: "0.78rem" }}>
-                            Cost Total: {formatCurrency(invoiceTableTotals.totalLaborCost)}
-                            {invoiceTableTotals.totalOvertimeHours > 0 ? ` (OT ${invoiceTableTotals.totalOvertimeHours.toFixed(2)}h)` : ""}
-                          </div>
-                          <div style={{ marginTop: "2px", fontSize: "0.74rem", color: "#0F766E" }}>
-                            {OVERTIME_POLICY_LABEL}
-                          </div>
-                        </td>
-                        <td style={tableBodyCellStyle} colSpan={9} />
                       </tr>
                       <tr>
                         <td style={{ ...tableBodyCellStyle, textAlign: "center", padding: "14px" }} colSpan={14}>
