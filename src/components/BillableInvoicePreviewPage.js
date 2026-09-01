@@ -1721,10 +1721,10 @@ const BillableInvoicePreviewPage = () => {
               event.target.checked
             )}
           />
-          Show Client Work Order #
+          Show Client Work Order
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.9rem" }}>
-          Client Work Order #
+          Client Work Order
           <input
             type="text"
             value={clientWorkOrderNumber}
@@ -2110,7 +2110,7 @@ const BillableInvoicePreviewPage = () => {
               </div>
               {showClientWorkOrderNumber && clientWorkOrderNumber.trim() ? (
                 <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: "4px", fontWeight: 700 }}>
-                  {`Client Work Order #${clientWorkOrderNumber.trim()}`}
+                  {`Client Work Order ${clientWorkOrderNumber.trim()}`}
                 </div>
               ) : null}
             </div>
