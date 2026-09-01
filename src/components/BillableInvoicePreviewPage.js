@@ -680,6 +680,7 @@ const BillableInvoicePreviewPage = () => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [documentType, setDocumentType] = useState("invoice");
   const [showDocumentTotals, setShowDocumentTotals] = useState(true);
+  const [includeWorkSummaryInPdf, setIncludeWorkSummaryInPdf] = useState(false);
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
     period: true,
@@ -728,6 +729,7 @@ const BillableInvoicePreviewPage = () => {
           ? settings.documentType
           : "invoice");
         setShowDocumentTotals(settings.showTotals !== false);
+        setIncludeWorkSummaryInPdf(settings.includeWorkSummaryInPdf === true);
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
         console.error("Failed to load billable document settings:", error);
@@ -741,10 +743,16 @@ const BillableInvoicePreviewPage = () => {
     };
   }, [invoiceDocRef]);
 
-  const handleDocumentSettingsChange = async (nextDocumentType, nextShowTotals, nextInfoVisibility = documentInfoVisibility) => {
+  const handleDocumentSettingsChange = async (
+    nextDocumentType,
+    nextShowTotals,
+    nextInfoVisibility = documentInfoVisibility,
+    nextIncludeWorkSummaryInPdf = includeWorkSummaryInPdf
+  ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
     setDocumentInfoVisibility(nextInfoVisibility);
+    setIncludeWorkSummaryInPdf(nextIncludeWorkSummaryInPdf);
     if (!invoiceDocRef) return;
 
     setIsSavingDocumentSettings(true);
@@ -754,6 +762,7 @@ const BillableInvoicePreviewPage = () => {
           documentType: nextDocumentType,
           showTotals: nextShowTotals,
           infoVisibility: nextInfoVisibility,
+          includeWorkSummaryInPdf: nextIncludeWorkSummaryInPdf,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
       });
@@ -1618,6 +1627,20 @@ const BillableInvoicePreviewPage = () => {
             {option.label}
           </label>
         ))}
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", color: "#334155", fontSize: "0.9rem" }}>
+          <input
+            type="checkbox"
+            checked={includeWorkSummaryInPdf}
+            disabled={isSavingDocumentSettings}
+            onChange={(event) => handleDocumentSettingsChange(
+              documentType,
+              showDocumentTotals,
+              documentInfoVisibility,
+              event.target.checked
+            )}
+          />
+          Include Work Summary in PDF
+        </label>
       </div>
 
       <div style={{ ...cardStyle, marginTop: "12px" }}>
@@ -2245,7 +2268,7 @@ const BillableInvoicePreviewPage = () => {
 
       {sectionVisibility.workSummary && (
       <div
-        data-html2canvas-ignore="true"
+        data-html2canvas-ignore={includeWorkSummaryInPdf ? undefined : "true"}
         style={{
           ...cardStyle,
           marginTop: "12px",
