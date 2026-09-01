@@ -1057,6 +1057,7 @@ const InvoiceManager = () => {
   const [downloadingInvoiceStatusReport, setDownloadingInvoiceStatusReport] = useState(false);
   const [uploadingExternalPdfInvoiceId, setUploadingExternalPdfInvoiceId] = useState("");
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
+  const [timeRotateProjectNameOverrides, setTimeRotateProjectNameOverrides] = useState({});
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
@@ -1241,6 +1242,34 @@ const InvoiceManager = () => {
     return unsubscribe;
   }, [id]);
 
+  useEffect(() => {
+    if (!id) {
+      setTimeRotateProjectNameOverrides({});
+      return undefined;
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, "churches", id, "timeRotateTaskDetails"),
+      (snapshot) => {
+        const overrides = {};
+        snapshot.docs.forEach((taskDoc) => {
+          const data = taskDoc.data() || {};
+          const taskIdentity = String(data.taskIdentity || "").trim();
+          const projectName = String(data.projectNameOverride || data.projectName || "").trim();
+          if (taskIdentity && projectName) {
+            overrides[taskIdentity] = projectName;
+          }
+        });
+        setTimeRotateProjectNameOverrides(overrides);
+      },
+      (error) => {
+        console.error("Error loading Time Rotate project name overrides for invoices:", error);
+      }
+    );
+
+    return unsubscribe;
+  }, [id]);
+
   // Loads org members so invoices can display each person's full name instead of whatever short name was logged.
   useEffect(() => {
     if (!id) {
@@ -1313,11 +1342,12 @@ const InvoiceManager = () => {
   const timeRotateProjectOptions = useMemo(() => {
     const allValues = [
       ...timeRotateLogs.map((log) => String(log.projectName || "").trim()),
+      ...Object.values(timeRotateProjectNameOverrides),
       ...projects.flatMap((project) => normalizeTimeRotateProjectNames(project?.timeRotateProjectNames)),
     ];
 
     return normalizeTimeRotateProjectNames(allValues).sort((left, right) => left.localeCompare(right));
-  }, [projects, timeRotateLogs]);
+  }, [projects, timeRotateLogs, timeRotateProjectNameOverrides]);
 
   const timeRotateCardOptions = useMemo(() => {
     const cardsByKey = new Map();
@@ -1372,6 +1402,8 @@ const InvoiceManager = () => {
 
     const mappedLogs = timeRotateLogs
       .map((log) => {
+        const taskIdentity = String(log.taskIdentity || "").trim();
+        const projectName = String(timeRotateProjectNameOverrides[taskIdentity] || log.projectName || "").trim();
         const eventTimestamp = Number(log.startedAt) || Number(log.endedAt) || 0;
         const rawDurationMs = Number(log.durationMs);
         const safeDuration = Number.isFinite(rawDurationMs) && rawDurationMs > 0
@@ -1387,6 +1419,9 @@ const InvoiceManager = () => {
 
         return {
           ...log,
+          projectName,
+          projectNameKey: normalizeProjectNameKey(projectName),
+          associatedProjectName: projectName,
           eventTimestamp,
           safeDuration,
           weekKey,
@@ -1425,7 +1460,7 @@ const InvoiceManager = () => {
         if (timeDelta !== 0) return timeDelta;
         return String(left.id || "").localeCompare(String(right.id || ""));
       });
-  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
+  }, [allAssociatedTimeRotateProjectNameKeys, timeRotateLogs, timeRotateProjectNameOverrides, fullNameByIdentityAlias, fullNameByFirstNameOnly]);
 
   useEffect(() => {
     let active = true;
