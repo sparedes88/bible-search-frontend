@@ -2275,10 +2275,12 @@ const BillableInvoicePreviewPage = () => {
           {users.map((userEntry, index) => {
             const drafterLabel = `Drafter #${index + 1}`;
             const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
-            const selectedDrafterName = String(drafterNamesByUser[userKey] || "").trim();
-            const summaryDrafterLabel = showDrafterNames && selectedDrafterName
-              ? `${drafterLabel} - ${selectedDrafterName}`
-              : drafterLabel;
+            const drafterRowKey = `drafter-${index + 1}`;
+            const selectedDrafterName = String(
+              drafterNamesByUser[drafterRowKey]
+              || drafterNamesByUser[userKey]
+              || ""
+            ).trim();
             const rowBackground = index % 2 === 0 ? "#F1F5F9" : "#FFFFFF";
             const regularHours = Number(userEntry.regularHours || 0);
             const overtimeHours = Number(userEntry.overtimeHours || 0);
@@ -2311,7 +2313,11 @@ const BillableInvoicePreviewPage = () => {
                       showClientWorkOrderNumber,
                       roundHoursUp,
                       true,
-                      { ...drafterNamesByUser, [userKey]: event.target.value }
+                      {
+                        ...drafterNamesByUser,
+                        [drafterRowKey]: event.target.value,
+                        [userKey]: event.target.value,
+                      }
                     )}
                     style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
                   >
@@ -2332,7 +2338,12 @@ const BillableInvoicePreviewPage = () => {
                   }}
                 >
                   <div style={tableBodyCellStyle}>
-                    <div>{`BIM Coordinator Services — ${summaryDrafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
+                    <div>{`BIM Coordinator Services — ${drafterLabel} (Regular, <= ${overtimeThresholdHours}h)`}</div>
+                    {showDrafterNames && selectedDrafterName ? (
+                      <div style={{ marginTop: "3px", fontSize: "0.84rem", fontWeight: 700, color: "#0F172A" }}>
+                        {`Drafter Name: ${selectedDrafterName}`}
+                      </div>
+                    ) : null}
                     {cardSummaries.length > 0 ? (
                       <div style={{ marginTop: "4px", fontSize: "0.78rem", color: "#64748B" }}>
                         {cardSummaries.map((summary, summaryIndex) => (
@@ -2357,7 +2368,12 @@ const BillableInvoicePreviewPage = () => {
                     }}
                   >
                     <div style={tableBodyCellStyle}>
-                      {`BIM Coordinator Services — ${summaryDrafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
+                      {`BIM Coordinator Services — ${drafterLabel} (Overtime, > ${overtimeThresholdHours}h)`}
+                      {showDrafterNames && selectedDrafterName ? (
+                        <div style={{ marginTop: "3px", fontSize: "0.84rem", fontWeight: 700, color: "#0F172A" }}>
+                          {`Drafter Name: ${selectedDrafterName}`}
+                        </div>
+                      ) : null}
                     </div>
                     <div style={numericBodyCellStyle}>{formatHoursClock(overtimeHours)}</div>
                     {showDocumentTotals ? <div style={numericBodyCellStyle}>{formatCurrency(overtimeRate)}</div> : null}
