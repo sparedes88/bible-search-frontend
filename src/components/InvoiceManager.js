@@ -4645,6 +4645,13 @@ const InvoiceManager = () => {
       const sortedInvoices = [...invoices].sort(
         (left, right) => (parseWeekNumber(left.weekNumber) || 0) - (parseWeekNumber(right.weekNumber) || 0)
       );
+      const reportTotals = {
+        finalAmount: 0,
+        budgetedAmount: 0,
+        totalMilliseconds: 0,
+        totalLaborCost: 0,
+        totalOvertimeHours: 0,
+      };
 
       const rows = sortedInvoices.map((invoice) => {
         const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
@@ -4659,13 +4666,23 @@ const InvoiceManager = () => {
         const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
           ? rowLaborCost.totalCost
           : invoice.total;
+        const effectiveTotalAmount = Number(effectiveInvoiceTotal) || 0;
+        const invoiceStatus = normalizeInvoiceStatus(invoice.invoiceStatus, effectiveTotalAmount, invoice.invoiceNumber);
+        if (invoiceStatus === "final") {
+          reportTotals.finalAmount += effectiveTotalAmount;
+        } else {
+          reportTotals.budgetedAmount += effectiveTotalAmount;
+        }
+        reportTotals.totalMilliseconds += Number(rowHoursData.totalMilliseconds) || 0;
+        reportTotals.totalLaborCost += Number(rowLaborCost.totalCost) || 0;
+        reportTotals.totalOvertimeHours += Number(rowLaborCost.overtimeHours) || 0;
         return [
           invoice.weekNumber ? `Week ${invoice.weekNumber}` : "-",
           formatDisplayDate(invoice.mondayDate) || "-",
           formatDisplayDate(weekEndDate) || "-",
           formatCurrency(effectiveInvoiceTotal || 0),
           (invoice.invoiceNumber || "-").toString().toUpperCase(),
-          getInvoiceStatusLabel(invoice.invoiceStatus),
+          getInvoiceStatusLabel(invoiceStatus),
           getBillingSourceLabel(invoice.billingSource),
           getApStatusLabel(invoice.apStatus),
         ];
@@ -4693,14 +4710,14 @@ const InvoiceManager = () => {
         head: [["Invoice Amounts", "Hours & Labor", "Overtime Policy"]],
         body: [[
           [
-            `Final: ${formatCurrency(invoiceTableTotals.totalFinalInvoiceAmount)}`,
-            `Budgeted: ${formatCurrency(invoiceTableTotals.totalBudgetedInvoiceAmount)}`,
-            `Subtotal: ${formatCurrency(invoiceTableTotals.subtotalInvoiceAmount)}`,
+            `Final: ${formatCurrency(reportTotals.finalAmount)}`,
+            `Budgeted: ${formatCurrency(reportTotals.budgetedAmount)}`,
+            `Subtotal: ${formatCurrency(reportTotals.finalAmount + reportTotals.budgetedAmount)}`,
           ].join("\n"),
           [
-            `Total Hours: ${formatHoursUsed(invoiceTableTotals.totalMilliseconds)}`,
-            `Labor Cost: ${formatCurrency(invoiceTableTotals.totalLaborCost)}`,
-            `Overtime: ${invoiceTableTotals.totalOvertimeHours.toFixed(2)}h`,
+            `Total Hours: ${formatHoursUsed(reportTotals.totalMilliseconds)}`,
+            `Labor Cost: ${formatCurrency(reportTotals.totalLaborCost)}`,
+            `Overtime: ${reportTotals.totalOvertimeHours.toFixed(2)}h`,
           ].join("\n"),
           OVERTIME_POLICY_LABEL,
         ]],
