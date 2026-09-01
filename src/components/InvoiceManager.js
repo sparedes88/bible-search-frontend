@@ -1058,6 +1058,7 @@ const InvoiceManager = () => {
   const [uploadingExternalPdfInvoiceId, setUploadingExternalPdfInvoiceId] = useState("");
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
   const [timeRotateProjectNameOverrides, setTimeRotateProjectNameOverrides] = useState({});
+  const [bimCardProjectNames, setBimCardProjectNames] = useState([]);
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
   const [issueTitleByIdentity, setIssueTitleByIdentity] = useState({});
   const [issueTitleByIssueId, setIssueTitleByIssueId] = useState({});
@@ -1343,11 +1344,12 @@ const InvoiceManager = () => {
     const allValues = [
       ...timeRotateLogs.map((log) => String(log.projectName || "").trim()),
       ...Object.values(timeRotateProjectNameOverrides),
+      ...bimCardProjectNames,
       ...projects.flatMap((project) => normalizeTimeRotateProjectNames(project?.timeRotateProjectNames)),
     ];
 
     return normalizeTimeRotateProjectNames(allValues).sort((left, right) => left.localeCompare(right));
-  }, [projects, timeRotateLogs, timeRotateProjectNameOverrides]);
+  }, [bimCardProjectNames, projects, timeRotateLogs, timeRotateProjectNameOverrides]);
 
   const timeRotateCardOptions = useMemo(() => {
     const cardsByKey = new Map();
@@ -1467,6 +1469,7 @@ const InvoiceManager = () => {
 
     if (!id) {
       setIssueTitleByIdentity({});
+      setBimCardProjectNames([]);
       return () => {
         active = false;
       };
@@ -1489,6 +1492,7 @@ const InvoiceManager = () => {
 
         const nextIssueTitleByIdentity = {};
         const titlesByIssueIdSet = {};
+        const nextBimCardProjectNames = [];
 
         snapshots.forEach(({ projectDocId, issuesSnapshot }) => {
           issuesSnapshot.docs.forEach((issueDoc, rowIndex) => {
@@ -1496,6 +1500,16 @@ const InvoiceManager = () => {
 
             const issueIdColumn = findColumnByAliases(rowData, ["issue id", "id", "task id", "card id", "row id"]);
             const titleColumn = findColumnByAliases(rowData, ["title", "issue title", "task title", "name"]);
+            const projectNameColumn = findColumnByAliases(rowData, ["project name", "projectname"]);
+            const projectName = String(
+              (projectNameColumn ? rowData[projectNameColumn] : "")
+              || rowData.projectName
+              || ""
+            ).trim();
+
+            if (projectName) {
+              nextBimCardProjectNames.push(projectName);
+            }
 
             const issueId = String(
               (issueIdColumn ? rowData[issueIdColumn] : "")
@@ -1529,11 +1543,13 @@ const InvoiceManager = () => {
 
         setIssueTitleByIdentity(nextIssueTitleByIdentity);
         setIssueTitleByIssueId(nextIssueTitleByIssueId);
+        setBimCardProjectNames(normalizeTimeRotateProjectNames(nextBimCardProjectNames));
       } catch (error) {
         console.error("Error loading issue titles for billable invoices:", error);
         if (active) {
           setIssueTitleByIdentity({});
           setIssueTitleByIssueId({});
+          setBimCardProjectNames([]);
         }
       }
     };
