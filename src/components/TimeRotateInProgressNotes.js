@@ -2599,6 +2599,27 @@ const TimeRotateInProgressNotes = () => {
           Locked: assigned to {assignment.projectName}
         </div>
       ) : null}
+      {isUnassignedTabActive && selectedPlannerProject?.floors?.length > 0 && !isLockedToAnotherProject ? (
+        <div style={{ marginTop: "8px" }}>
+          <select
+            defaultValue=""
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              const floorId = event.target.value;
+              if (!floorId) return;
+              moveCardToFloor(card.id, floorId);
+              setSelectedFloorId(floorId);
+            }}
+            style={{ ...plannerInputStyle, width: "100%" }}
+            title="Assign this card to a floor"
+          >
+            <option value="">Assign to floor</option>
+            {selectedPlannerProject.floors.map((floor) => (
+              <option key={`${card.id}-assign-${floor.id}`} value={floor.id}>{floor.name}</option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       <div style={{ marginTop: "8px", fontSize: "0.82rem", color: "#475569" }}>
         <div><strong>In progress:</strong></div>
         {Array.isArray(card.inProgressUsers) && card.inProgressUsers.length > 0 ? (
