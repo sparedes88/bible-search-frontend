@@ -1775,7 +1775,7 @@ const InvoiceManager = () => {
         let totalOvertimeMilliseconds = 0;
 
         billableTimeRotateLogs.forEach((log) => {
-          if (!isLogMatchedToInvoiceProject(log, invoice.id)) return;
+          if (!isLogMatchedToInvoiceProject(log, selectedProjectId)) return;
           if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
 
           const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
@@ -1934,6 +1934,7 @@ const InvoiceManager = () => {
     issueTitleByIdentity,
     issueTitleByIssueId,
     projectIssuesByProjectNameKey,
+    selectedProjectId,
     selectedTimeRotateProjectNameKeys,
     associatedTimeRotateProjectNameKeysByProjectId,
     tdInvoiceProjectIdByIdentity,
