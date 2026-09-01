@@ -178,7 +178,7 @@ const BI_PIE_CHART_COLORS = [
   "#6366F1",
 ];
 
-const INVOICE_TAB_KEYS = ["table", "reconciliation", "business-intelligence", "quick-paid"];
+const INVOICE_TAB_KEYS = ["table", "reconciliation", "td-matcher", "business-intelligence", "quick-paid"];
 const DEFAULT_INVOICE_TAB = "business-intelligence";
 
 const normalizeInvoiceTabKey = (value) => {
@@ -1014,6 +1014,7 @@ const InvoiceManager = () => {
   const [insertingWeekInvoiceId, setInsertingWeekInvoiceId] = useState(null);
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
+  const [tdMatcherSearch, setTdMatcherSearch] = useState("");
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
   const [quickPaidSavingByInvoiceKey, setQuickPaidSavingByInvoiceKey] = useState({});
   const [allProjectInvoices, setAllProjectInvoices] = useState([]);
@@ -1340,6 +1341,50 @@ const InvoiceManager = () => {
     });
     return keys;
   }, [associatedTimeRotateProjectNameKeysByProjectId]);
+
+  const tdMatcherRows = useMemo(() => {
+    const rowsByIdentity = new Map();
+
+    timeRotateLogs.forEach((log) => {
+      const projectName = String(log.projectName || "").trim();
+      const identity = String(log.taskIdentity || `${log.projectDocId || ""}::${log.issueId || log.id}`).trim();
+      if (!identity) return;
+
+      const existing = rowsByIdentity.get(identity) || {
+        identity,
+        issueId: String(log.issueId || "").trim(),
+        title: String(log.title || "").trim(),
+        projectName,
+        milliseconds: 0,
+        users: new Set(),
+      };
+      existing.milliseconds += Math.max(0, Number(log.durationMs) || (Number(log.endedAt) - Number(log.startedAt)) || 0);
+      const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
+      if (userLabel) existing.users.add(userLabel);
+      rowsByIdentity.set(identity, existing);
+    });
+
+    return Array.from(rowsByIdentity.values())
+      .map((row) => {
+        const projectNameKey = normalizeProjectNameKey(row.projectName);
+        const matchedProjects = projects.filter((project) => {
+          const associatedNames = normalizeTimeRotateProjectNames(
+            project?.timeRotateProjectNames?.length > 0 ? project.timeRotateProjectNames : [project?.name]
+          );
+          return associatedNames.some((name) => normalizeProjectNameKey(name) === projectNameKey);
+        });
+        return { ...row, users: Array.from(row.users).sort((left, right) => left.localeCompare(right)), matchedProjects };
+      })
+      .filter((row) => {
+        const search = tdMatcherSearch.trim().toLowerCase();
+        if (!search) return true;
+        return [row.issueId, row.title, row.projectName, ...row.users]
+          .join(" ")
+          .toLowerCase()
+          .includes(search);
+      })
+      .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, projects, tdMatcherSearch, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
@@ -4336,6 +4381,42 @@ const InvoiceManager = () => {
     }
   };
 
+  const handleMatchTdToInvoiceProject = async (timeRotateProjectName, targetProjectId) => {
+    if (!canManageInvoices || !targetProjectId) return;
+
+    const targetProject = projects.find((project) => project.id === targetProjectId);
+    const normalizedProjectName = String(timeRotateProjectName || "").trim();
+    if (!targetProject || !normalizedProjectName) return;
+
+    try {
+      const normalizedProjectNameKey = normalizeProjectNameKey(normalizedProjectName);
+      const batch = writeBatch(db);
+
+      projects.forEach((project) => {
+        const existingNames = normalizeTimeRotateProjectNames(project.timeRotateProjectNames);
+        const withoutCurrentMatch = existingNames.filter(
+          (name) => normalizeProjectNameKey(name) !== normalizedProjectNameKey
+        );
+        const timeRotateProjectNames = project.id === targetProjectId
+          ? normalizeTimeRotateProjectNames([...withoutCurrentMatch, normalizedProjectName])
+          : withoutCurrentMatch;
+
+        if (timeRotateProjectNames.length !== existingNames.length || project.id === targetProjectId) {
+          batch.update(doc(db, "churches", id, "invoiceProjects", project.id), {
+            timeRotateProjectNames,
+            updatedAt: serverTimestamp(),
+            updatedByUid: user?.uid || "",
+          });
+        }
+      });
+      await batch.commit();
+      toast.success(`${normalizedProjectName} is now matched to ${targetProject.name}.`);
+    } catch (error) {
+      console.error("Error matching TD project to invoice project:", error);
+      toast.error("Failed to save the TD match.");
+    }
+  };
+
   const handleUpdateApStatus = async (invoice, nextStatusValue) => {
     if (!canManageInvoices || !selectedProjectId || !invoice?.id) {
       return;
@@ -5497,6 +5578,16 @@ const InvoiceManager = () => {
             </button>
             <button
               type="button"
+              onClick={() => handleInvoicesTabChange("td-matcher")}
+              style={{
+                ...buttonStyle,
+                background: activeInvoicesTab === "td-matcher" ? "#1D4ED8" : "#94A3B8",
+              }}
+            >
+              TD Matcher
+            </button>
+            <button
+              type="button"
               onClick={() => handleInvoicesTabChange("business-intelligence")}
               style={{
                 ...buttonStyle,
@@ -5521,6 +5612,7 @@ const InvoiceManager = () => {
             <a href={getInvoiceTabHref("business-intelligence")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>BI Link</a>
             <a href={getInvoiceTabHref("table")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Invoice Table Link</a>
             <a href={getInvoiceTabHref("reconciliation")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Reconciliation Link</a>
+            <a href={getInvoiceTabHref("td-matcher")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>TD Matcher Link</a>
             <a href={getInvoiceTabHref("quick-paid")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Quick Paid Link</a>
           </div>
 
@@ -7080,6 +7172,70 @@ const InvoiceManager = () => {
                   </div>
                 </div>
               )}
+            </div>
+          ) : activeInvoicesTab === "td-matcher" ? (
+            <div style={{ ...tableShellStyle, padding: "12px" }}>
+              <div style={{ marginBottom: "10px", color: "#334155", fontSize: "0.9rem" }}>
+                Match each Technical Detail's actual TimeRotate project name to its invoice project. This is the source of weekly hours and billing totals.
+              </div>
+              <input
+                type="search"
+                value={tdMatcherSearch}
+                onChange={(event) => setTdMatcherSearch(event.target.value)}
+                placeholder="Search TD ID, title, TimeRotate project, or user"
+                style={{ ...inputStyle, maxWidth: "480px", marginBottom: "12px" }}
+              />
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "940px" }}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeaderCellStyle}>TD / Issue</th>
+                      <th style={tableHeaderCellStyle}>Title</th>
+                      <th style={tableHeaderCellStyle}>TimeRotate Project</th>
+                      <th style={tableHeaderCellStyle}>Logged Hours</th>
+                      <th style={tableHeaderCellStyle}>Users</th>
+                      <th style={tableHeaderCellStyle}>Invoice Project Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tdMatcherRows.length === 0 ? (
+                      <tr><td style={tableBodyCellStyle} colSpan={6}>No TimeRotate Technical Details match this search.</td></tr>
+                    ) : tdMatcherRows.map((row) => {
+                      const matchedProjectIds = row.matchedProjects.map((project) => project.id);
+                      const selectedMatch = matchedProjectIds.length === 1 ? matchedProjectIds[0] : "";
+                      return (
+                        <tr key={row.identity} style={{ background: row.matchedProjects.length === 1 ? "#F0FDF4" : "#FFFBEB" }}>
+                          <td style={tableBodyCellStyle}>{row.issueId || "-"}</td>
+                          <td style={tableBodyCellStyle}>{row.title || "-"}</td>
+                          <td style={tableBodyCellStyle}>{row.projectName || "Missing project name"}</td>
+                          <td style={tableBodyCellStyle}>{formatHoursUsed(row.milliseconds)}</td>
+                          <td style={tableBodyCellStyle}>{row.users.join(", ") || "Unknown"}</td>
+                          <td style={tableBodyCellStyle}>
+                            <select
+                              value={selectedMatch}
+                              onChange={(event) => handleMatchTdToInvoiceProject(row.projectName, event.target.value)}
+                              disabled={!row.projectName || !canManageInvoices}
+                              style={{ ...compactInputStyle, minWidth: "220px" }}
+                            >
+                              <option value="">
+                                {row.matchedProjects.length > 1 ? "Multiple matches - choose one" : "Unmatched - choose invoice project"}
+                              </option>
+                              {projects.map((project) => (
+                                <option key={`${row.identity}-${project.id}`} value={project.id}>{project.name}</option>
+                              ))}
+                            </select>
+                            {row.matchedProjects.length > 1 ? (
+                              <div style={{ marginTop: "4px", color: "#B45309", fontSize: "0.75rem", fontWeight: 700 }}>
+                                Currently matches: {row.matchedProjects.map((project) => project.name).join(", ")}
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : activeInvoicesTab === "business-intelligence" ? (
             <div style={{ ...tableShellStyle, padding: "12px" }}>
