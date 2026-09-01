@@ -412,6 +412,9 @@ const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds) => {
 };
 
 const normalizeIdentityValue = (value) => String(value || "").trim().toLowerCase();
+const buildTaskDetailsDocId = (taskIdentity) => (
+  String(taskIdentity || "unknown-task").trim().replace(/[\\/#?\[\]]/g, "_") || "unknown-task"
+);
 
 // Prefers a person's full name (first + last) from the org user directory over whatever short name was logged.
 const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}, fullNameByFirstNameOnly = {}) => {
