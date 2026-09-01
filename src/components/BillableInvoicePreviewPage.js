@@ -2102,6 +2102,7 @@ const BillableInvoicePreviewPage = () => {
             documentInfoVisibility.dateOfWork && ["Date of Work", formatWorkDateRange(workTimestampRange.firstUsedAt, workTimestampRange.lastUsedAt)],
             documentInfoVisibility.dueDate && ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
             documentInfoVisibility.terms && ["Terms", draftPayload.paymentTermsLabel || "-"],
+            documentType === "work_order" && ["Total Hours", formatHoursClock(effectiveTotals.totalHours || 0)],
           ].filter(Boolean).map(([label, value]) => (
             <div key={label}>
               <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#94A3B8" }}>
