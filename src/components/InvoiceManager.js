@@ -1594,6 +1594,16 @@ const InvoiceManager = () => {
       .sort((left, right) => left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId));
   }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditTdIdentity, hoursAuditWeekNumber, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
+  const hoursAuditTotals = useMemo(() => hoursAuditRows.reduce((totals, row) => ({
+    timeRotateMilliseconds: totals.timeRotateMilliseconds + (Number(row.timeRotateMilliseconds) || 0),
+    payEveryoneMilliseconds: totals.payEveryoneMilliseconds + (Number(row.payEveryoneMilliseconds) || 0),
+    invoiceMilliseconds: totals.invoiceMilliseconds + (Number(row.invoiceMilliseconds) || 0),
+  }), {
+    timeRotateMilliseconds: 0,
+    payEveryoneMilliseconds: 0,
+    invoiceMilliseconds: 0,
+  }), [hoursAuditRows]);
+
   const billableTimeRotateLogs = useMemo(() => {
     if (
       timeRotateLogs.length === 0
@@ -6852,6 +6862,23 @@ const InvoiceManager = () => {
                       </tr>
                     </tbody>
                   </table>
+                  <div style={{ marginTop: "12px", padding: "12px", border: "1px solid #BFDBFE", background: "#EFF6FF" }}>
+                    <div style={{ color: "#1E3A8A", fontWeight: 800, marginBottom: "8px" }}>Filtered Hours Totals</div>
+                    <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                      <div style={{ background: "#FFFFFF", border: "1px solid #DBEAFE", padding: "9px" }}>
+                        <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>TIME ROTATE</div>
+                        <div style={{ color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{formatHoursUsed(hoursAuditTotals.timeRotateMilliseconds)}</div>
+                      </div>
+                      <div style={{ background: "#FFFFFF", border: "1px solid #DBEAFE", padding: "9px" }}>
+                        <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>PAY EVERYONE</div>
+                        <div style={{ color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{formatHoursUsed(hoursAuditTotals.payEveryoneMilliseconds)}</div>
+                      </div>
+                      <div style={{ background: "#FFFFFF", border: "1px solid #DBEAFE", padding: "9px" }}>
+                        <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>INVOICE INCLUDED</div>
+                        <div style={{ color: "#0F172A", fontSize: "1.05rem", fontWeight: 800 }}>{formatHoursUsed(hoursAuditTotals.invoiceMilliseconds)}</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
               </div>
