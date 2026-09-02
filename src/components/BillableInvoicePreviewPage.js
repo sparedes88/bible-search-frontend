@@ -2422,33 +2422,35 @@ const BillableInvoicePreviewPage = () => {
             );
           })}
 
-          {showDocumentTotals ? <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: summaryGridColumns,
-              width: "100%",
-              borderTop: "1px solid #CBD5E1",
-            }}
-          >
-            <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Subtotal (Regular + Overtime Hours)</div>
-            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatHoursClock(effectiveTotals.totalHours || 0)}</div>
-            <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
-            <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
-          </div> : null}
-          {showDocumentTotals ? <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: summaryGridColumns,
-              width: "100%",
-              background: "#0F172A",
-              color: "#FFFFFF",
-            }}
-          >
-            <div style={{ padding: "12px 14px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", fontSize: "0.9rem" }}>Total Due</div>
-            <div style={{ padding: "12px 14px" }}></div>
-            <div style={{ padding: "12px 14px" }}></div>
-            <div style={{ padding: "12px 14px", textAlign: "right", fontWeight: 800, fontSize: "1.15rem", fontVariantNumeric: "tabular-nums" }}>
-              {formatCurrency(effectiveTotals.totalAmount || 0)}
+          {showDocumentTotals ? <div style={{ width: "100%", breakInside: "avoid", pageBreakInside: "avoid" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: summaryGridColumns,
+                width: "100%",
+                borderTop: "1px solid #CBD5E1",
+              }}
+            >
+              <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Subtotal (Regular + Overtime Hours)</div>
+              <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatHoursClock(effectiveTotals.totalHours || 0)}</div>
+              <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
+              <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: summaryGridColumns,
+                width: "100%",
+                background: "#0F172A",
+                color: "#FFFFFF",
+              }}
+            >
+              <div style={{ padding: "12px 14px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", fontSize: "0.9rem" }}>Total Due</div>
+              <div style={{ padding: "12px 14px" }}></div>
+              <div style={{ padding: "12px 14px" }}></div>
+              <div style={{ padding: "12px 14px", textAlign: "right", fontWeight: 800, fontSize: "1.15rem", fontVariantNumeric: "tabular-nums" }}>
+                {formatCurrency(effectiveTotals.totalAmount || 0)}
+              </div>
             </div>
           </div> : null}
         </div>
