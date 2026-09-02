@@ -4084,6 +4084,19 @@ const InvoiceManager = () => {
     const safeProjectName = projectName.replace(/[^A-Z0-9_-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "project";
     const fileName = `${safeProjectName}-${safeInvoiceNumber}-billable-invoice.xlsx`;
     const draftStorageKey = `billable-invoice-preview:${id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const separatelyBilledDays = normalizeInvoicePeriodType(invoice.periodType) === "day"
+      ? []
+      : invoices
+        .filter((candidate) => (
+          normalizeInvoicePeriodType(candidate.periodType) === "day"
+          && Number(candidate.weekNumber) === Number(invoice.weekNumber)
+        ))
+        .map((candidate) => ({
+          invoiceNumber: normalizeInvoiceNumber(candidate.invoiceNumber),
+          date: toDateInputValue(candidate.mondayDate),
+          hoursUsed: formatHoursUsed((invoiceHoursById[candidate.id] || {}).totalMilliseconds || 0),
+        }))
+        .sort((left, right) => String(left.date).localeCompare(String(right.date)));
     const previewPayload = {
       fileName,
       generatedAt: Date.now(),
@@ -4097,6 +4110,7 @@ const InvoiceManager = () => {
       dueDate,
       paymentTermsLabel: getPaymentTermLabel(invoice.paymentTerms, invoice.netDays),
       workTimestampRange,
+      separatelyBilledDays,
       overtimePolicy: {
         thresholdHours: OVERTIME_THRESHOLD_HOURS,
         baseRate: BASE_HOURLY_RATE,

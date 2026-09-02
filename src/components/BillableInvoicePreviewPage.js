@@ -2312,6 +2312,23 @@ const BillableInvoicePreviewPage = () => {
         {documentInfoVisibility.overtimePolicy ? (
           <div style={{ marginTop: "12px", fontSize: "0.78rem", color: "#64748B" }}>{overtimePolicyLabel}</div>
         ) : null}
+        {Array.isArray(draftPayload.separatelyBilledDays) && draftPayload.separatelyBilledDays.length > 0 ? (
+          <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #E2E8F0" }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#94A3B8" }}>
+              Days Billed Separately
+            </div>
+            <div style={{ marginTop: "4px", fontSize: "0.84rem", color: "#334155" }}>
+              {draftPayload.separatelyBilledDays.map((day, dayIndex) => (
+                <div key={`separately-billed-${dayIndex}`}>
+                  {`${documentReferenceLabel}${day.invoiceNumber || "-"} — ${formatMonthDayYear(day.date)} (${day.hoursUsed || "0h 00m"})`}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: "4px", fontSize: "0.76rem", color: "#64748B" }}>
+              These hours are invoiced on their own documents and are not included in this total.
+            </div>
+          </div>
+        ) : null}
       </div>
       )}
 
