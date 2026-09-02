@@ -1440,6 +1440,10 @@ const BillableInvoicePreviewPage = () => {
 
   const handleDownloadPdf = async () => {
     if (!draftPayload || !pdfContentRef.current) return;
+    if (companyBranding.logo && logoStatus !== "ready") {
+      toast.error("The organization logo is still loading. Please wait a moment and export again.");
+      return;
+    }
 
     const html2pdf = typeof html2pdfLib === "function"
       ? html2pdfLib
@@ -1584,10 +1588,10 @@ const BillableInvoicePreviewPage = () => {
           <button
             type="button"
             onClick={handleDownloadPdf}
-            disabled={isGeneratingPdf}
-            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isGeneratingPdf ? "not-allowed" : "pointer", opacity: isGeneratingPdf ? 0.7 : 1 }}
+            disabled={isGeneratingPdf || (Boolean(companyBranding.logo) && logoStatus !== "ready")}
+            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isGeneratingPdf || (companyBranding.logo && logoStatus !== "ready") ? "not-allowed" : "pointer", opacity: isGeneratingPdf || (companyBranding.logo && logoStatus !== "ready") ? 0.7 : 1 }}
           >
-            {isGeneratingPdf ? "Generating PDF..." : "Export PDF"}
+            {isGeneratingPdf ? "Generating PDF..." : logoStatus === "loading" ? "Loading Logo..." : "Export PDF"}
           </button>
           <button
             type="button"
