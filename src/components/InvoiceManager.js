@@ -2891,12 +2891,8 @@ const InvoiceManager = () => {
       const status = normalizeInvoiceStatus(invoice?.invoiceStatus, invoice?.total, invoice?.invoiceNumber);
       if (status !== "budgeted") return;
 
-      const associatedProjectKeys = associatedTimeRotateProjectNameKeysByProjectId[projectId] || new Set();
-      if (associatedProjectKeys.size === 0) {
-        if (!Object.prototype.hasOwnProperty.call(totalsByProjectId, projectId)) {
-          totalsByProjectId[projectId] = 0;
-        }
-        return;
+      if (!Object.prototype.hasOwnProperty.call(totalsByProjectId, projectId)) {
+        totalsByProjectId[projectId] = 0;
       }
 
       const mondayDate = toDateInputValue(invoice?.mondayDate);
@@ -2909,7 +2905,7 @@ const InvoiceManager = () => {
       let rowOvertimeMilliseconds = 0;
 
       billableTimeRotateLogs.forEach((log) => {
-        if (!associatedProjectKeys.has(log.projectNameKey)) return;
+        if (!isLogMatchedToInvoiceProject(log, projectId)) return;
         if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
 
         const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
@@ -2942,7 +2938,6 @@ const InvoiceManager = () => {
     return projects.map((project) => {
       const projectId = String(project?.id || "").trim();
       const projectInvoices = (allProjectInvoices || []).filter((invoice) => String(invoice?.projectId || "") === projectId);
-      const associatedProjectKeys = associatedTimeRotateProjectNameKeysByProjectId[projectId] || new Set();
 
       const invoiceAmountTotal = projectInvoices.reduce((sum, invoice) => sum + (Number(invoice?.total || 0) || 0), 0);
       const budgetedInvoiceAmount = projectInvoices.reduce((sum, invoice) => {
@@ -2958,29 +2953,27 @@ const InvoiceManager = () => {
       let totalRegularMilliseconds = 0;
       let totalOvertimeMilliseconds = 0;
 
-      if (associatedProjectKeys.size > 0) {
-        projectInvoices.forEach((invoice) => {
-          const mondayDate = toDateInputValue(invoice?.mondayDate);
-          const weekEndDate = shiftDateInputValue(mondayDate, 6);
-          const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
-          const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
-          if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return;
+      projectInvoices.forEach((invoice) => {
+        const mondayDate = toDateInputValue(invoice?.mondayDate);
+        const weekEndDate = shiftDateInputValue(mondayDate, 6);
+        const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
+        const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
+        if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return;
 
-          billableTimeRotateLogs.forEach((log) => {
-            if (!associatedProjectKeys.has(log.projectNameKey)) return;
-            if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
+        billableTimeRotateLogs.forEach((log) => {
+          if (!isLogMatchedToInvoiceProject(log, projectId)) return;
+          if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
 
-            const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
-              regularMilliseconds: log.safeDuration,
-              overtimeMilliseconds: 0,
-            };
+          const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
+            regularMilliseconds: log.safeDuration,
+            overtimeMilliseconds: 0,
+          };
 
-            totalHoursMilliseconds += log.safeDuration;
-            totalRegularMilliseconds += allocation.regularMilliseconds;
-            totalOvertimeMilliseconds += allocation.overtimeMilliseconds;
-          });
+          totalHoursMilliseconds += log.safeDuration;
+          totalRegularMilliseconds += allocation.regularMilliseconds;
+          totalOvertimeMilliseconds += allocation.overtimeMilliseconds;
         });
-      }
+      });
 
       const laborCost = getLaborCostFromSplit(totalRegularMilliseconds, totalOvertimeMilliseconds);
       const variance = invoiceAmountTotal - laborCost.totalCost;
@@ -4679,28 +4672,11 @@ const InvoiceManager = () => {
     const normalizedTdIdentities = (Array.isArray(tdIdentities) ? tdIdentities : [tdIdentities])
       .map((identity) => String(identity || "").trim())
       .filter(Boolean);
-    const normalizedProjectName = String(timeRotateProjectName || "").trim();
     if (!targetProject || normalizedTdIdentities.length === 0) return;
 
     try {
-      const normalizedProjectNameKey = normalizeProjectNameKey(normalizedProjectName);
       const batch = writeBatch(db);
 
-      projects.forEach((project) => {
-        const existingNames = normalizeTimeRotateProjectNames(project.timeRotateProjectNames);
-        const withoutCurrentMatch = existingNames.filter(
-          (name) => normalizeProjectNameKey(name) !== normalizedProjectNameKey
-        );
-        const timeRotateProjectNames = withoutCurrentMatch;
-
-        if (timeRotateProjectNames.length !== existingNames.length) {
-          batch.update(doc(db, "churches", id, "invoiceProjects", project.id), {
-            timeRotateProjectNames,
-            updatedAt: serverTimestamp(),
-            updatedByUid: user?.uid || "",
-          });
-        }
-      });
       normalizedTdIdentities.forEach((taskIdentity) => {
         batch.set(doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(taskIdentity)), {
           taskIdentity,
@@ -5726,27 +5702,9 @@ const InvoiceManager = () => {
               }
             />
             <div>
-              <label style={fieldLabelStyle}>Associated Time Rotate Projects</label>
-              <select
-                multiple
-                style={{ ...inputStyle, minHeight: "96px" }}
-                value={normalizeTimeRotateProjectNames(projectDraft.timeRotateProjectNames)}
-                onChange={(event) => {
-                  const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                  setProjectDraft((prev) => ({ ...prev, timeRotateProjectNames: normalizeTimeRotateProjectNames(selectedValues) }));
-                }}
-              >
-                {timeRotateProjectOptions.length === 0 ? (
-                  <option value="" disabled>No Time Rotate project names found yet.</option>
-                ) : (
-                  timeRotateProjectOptions.map((projectName) => (
-                    <option key={`create-time-rotate-${projectName}`} value={projectName}>
-                      {projectName}
-                    </option>
-                  ))
-                )}
-              </select>
-              <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
+              <small style={fieldHintStyle}>
+                Hours are assigned to this project in the TD Matcher tab.
+              </small>
             </div>
             <button
               type="submit"
@@ -5797,27 +5755,9 @@ const InvoiceManager = () => {
                           }
                         />
                         <div>
-                          <label style={fieldLabelStyle}>Associated Time Rotate Projects</label>
-                          <select
-                            multiple
-                            style={{ ...inputStyle, minHeight: "96px" }}
-                            value={normalizeTimeRotateProjectNames(editProjectDraft.timeRotateProjectNames)}
-                            onChange={(event) => {
-                              const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-                              setEditProjectDraft((prev) => ({ ...prev, timeRotateProjectNames: normalizeTimeRotateProjectNames(selectedValues) }));
-                            }}
-                          >
-                            {timeRotateProjectOptions.length === 0 ? (
-                              <option value="" disabled>No Time Rotate project names found yet.</option>
-                            ) : (
-                              timeRotateProjectOptions.map((projectName) => (
-                                <option key={`edit-time-rotate-${project.id}-${projectName}`} value={projectName}>
-                                  {projectName}
-                                </option>
-                              ))
-                            )}
-                          </select>
-                          <small style={fieldHintStyle}>Hold Ctrl/Cmd to select multiple.</small>
+                          <small style={fieldHintStyle}>
+                            Hours are assigned to this project in the TD Matcher tab.
+                          </small>
                         </div>
                         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                           <button type="submit" style={{ ...buttonStyle, background: "#16A34A" }}>
@@ -5873,11 +5813,6 @@ const InvoiceManager = () => {
                           </div>
                           <div style={{ marginTop: "4px", color: "#7C2D12", fontSize: "0.82rem", fontWeight: 700 }}>
                             Total Due: {formatCurrency(projectDueTotal)}
-                          </div>
-                          <div style={{ marginTop: "4px", color: "#334155", fontSize: "0.8rem" }}>
-                            Time Rotate Linked: {normalizeTimeRotateProjectNames(project.timeRotateProjectNames).length > 0
-                              ? normalizeTimeRotateProjectNames(project.timeRotateProjectNames).join(", ")
-                              : "None"}
                           </div>
                         </button>
 
