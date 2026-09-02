@@ -1038,6 +1038,7 @@ const InvoiceManager = () => {
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
+  const [tdMatcherProjectFilter, setTdMatcherProjectFilter] = useState("");
   const [showUnmatchedTdsOnly, setShowUnmatchedTdsOnly] = useState(false);
   const [hoursAuditTimeRotateProject, setHoursAuditTimeRotateProject] = useState("");
   const [hoursAuditTdIdentity, setHoursAuditTdIdentity] = useState("");
@@ -1494,6 +1495,8 @@ const InvoiceManager = () => {
       })
       .filter((row) => {
         if (showUnmatchedTdsOnly && row.explicitProjectId) return false;
+        if (tdMatcherProjectFilter === "__unmatched__" && row.explicitProjectId) return false;
+        if (tdMatcherProjectFilter && tdMatcherProjectFilter !== "__unmatched__" && row.explicitProjectId !== tdMatcherProjectFilter) return false;
         const search = tdMatcherSearch.trim().toLowerCase();
         if (!search) return true;
         return [row.issueId, row.title, row.projectName, ...row.users]
@@ -1502,7 +1505,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, showUnmatchedTdsOnly, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, showUnmatchedTdsOnly, tdInvoiceProjectIdByIdentity, tdInvoiceProjectIdByIssueId, tdMatcherCandidates, tdMatcherProjectFilter, tdMatcherSearch, timeRotateLogs]);
 
   const tdMatcherHoursAudit = useMemo(() => {
     const finalizedLogs = timeRotateLogs.filter((log) => (
@@ -7659,8 +7662,20 @@ const InvoiceManager = () => {
                   value={tdMatcherSearch}
                   onChange={(event) => setTdMatcherSearch(event.target.value)}
                   placeholder="Search TD ID, title, TimeRotate project, or user"
-                  style={{ ...inputStyle, maxWidth: "480px" }}
+                  style={{ ...inputStyle, maxWidth: "420px" }}
                 />
+                <select
+                  value={tdMatcherProjectFilter}
+                  onChange={(event) => setTdMatcherProjectFilter(event.target.value)}
+                  title="Filter by Invoice Project Match"
+                  style={{ ...inputStyle, maxWidth: "260px" }}
+                >
+                  <option value="">All Invoice Project Matches</option>
+                  <option value="__unmatched__">Unmatched TDs</option>
+                  {projects.map((project) => (
+                    <option key={`td-matcher-filter-${project.id}`} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
                 <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.85rem", fontWeight: 700, cursor: "pointer" }}>
                   <input
                     type="checkbox"
