@@ -1521,6 +1521,7 @@ const InvoiceManager = () => {
     timeRotateLogs.forEach((log) => {
       if (log.logType === "completion") return;
       const durationMs = getTimeRotateLogDurationMs(log);
+      const usedAt = Number(log.startedAt) || Number(log.endedAt) || 0;
       if (durationMs <= 0) return;
 
       const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
@@ -1539,21 +1540,33 @@ const InvoiceManager = () => {
         timeRotateMilliseconds: 0,
         payEveryoneMilliseconds: 0,
         invoiceMilliseconds: 0,
+        invoiceWeeks: new Set(),
         logCount: 0,
       };
       existing.timeRotateMilliseconds += durationMs;
       existing.payEveryoneMilliseconds += durationMs;
       if (isLogMatchedToInvoiceProject(log, selectedProjectId)) {
-        existing.invoiceMilliseconds += durationMs;
+        let isCoveredByInvoiceWeek = false;
+        invoices.forEach((invoice) => {
+          const mondayDate = toDateInputValue(invoice.mondayDate);
+          const weekEndDate = shiftDateInputValue(mondayDate, 6);
+          const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
+          const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
+          if (usedAt >= rangeStart && usedAt <= rangeEnd) {
+            existing.invoiceWeeks.add(`Week ${invoice.weekNumber || "-"}`);
+            isCoveredByInvoiceWeek = true;
+          }
+        });
+        if (isCoveredByInvoiceWeek) existing.invoiceMilliseconds += durationMs;
       }
       existing.logCount += 1;
       groupedRows.set(key, existing);
     });
 
-    return Array.from(groupedRows.values()).sort((left, right) => (
-      left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId)
-    ));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
+    return Array.from(groupedRows.values())
+      .map((row) => ({ ...row, invoiceWeeks: Array.from(row.invoiceWeeks).sort() }))
+      .sort((left, right) => left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId));
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (
@@ -7483,13 +7496,14 @@ const InvoiceManager = () => {
                         <th style={tableHeaderCellStyle}>TimeRotate</th>
                         <th style={tableHeaderCellStyle}>Pay Everyone</th>
                         <th style={tableHeaderCellStyle}>Invoice Included</th>
+                        <th style={tableHeaderCellStyle}>Invoice Week</th>
                         <th style={tableHeaderCellStyle}>Difference</th>
                         <th style={tableHeaderCellStyle}>Logs</th>
                       </tr>
                     </thead>
                     <tbody>
                       {hoursAuditRows.length === 0 ? (
-                        <tr><td style={tableBodyCellStyle} colSpan={7}>No finalized TimeRotate hours are available for this audit.</td></tr>
+                        <tr><td style={tableBodyCellStyle} colSpan={8}>No finalized TimeRotate hours are available for this audit.</td></tr>
                       ) : hoursAuditRows.map((row) => {
                         const difference = row.timeRotateMilliseconds - row.invoiceMilliseconds;
                         return (
@@ -7502,6 +7516,9 @@ const InvoiceManager = () => {
                             <td style={tableBodyCellStyle}>{formatHoursUsed(row.timeRotateMilliseconds)}</td>
                             <td style={tableBodyCellStyle}>{formatHoursUsed(row.payEveryoneMilliseconds)}</td>
                             <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>{formatHoursUsed(row.invoiceMilliseconds)}</td>
+                            <td style={{ ...tableBodyCellStyle, color: row.invoiceWeeks.length > 0 ? "#166534" : "#B45309", fontWeight: 700 }}>
+                              {row.invoiceWeeks.length > 0 ? row.invoiceWeeks.join(", ") : "Not caught by an invoice week"}
+                            </td>
                             <td style={{ ...tableBodyCellStyle, color: difference > 0 ? "#B45309" : "#166534", fontWeight: 800 }}>
                               {difference > 0 ? `${formatHoursUsed(difference)} excluded` : "Matched"}
                             </td>
