@@ -1558,10 +1558,14 @@ const InvoiceManager = () => {
         payEveryoneMilliseconds: 0,
         invoiceMilliseconds: 0,
         invoiceWeeks: new Set(),
+        registeredDates: new Set(),
         logCount: 0,
       };
       existing.timeRotateMilliseconds += durationMs;
       existing.payEveryoneMilliseconds += durationMs;
+      if (usedAt > 0) {
+        existing.registeredDates.add(new Date(usedAt).toISOString().slice(0, 10));
+      }
       if (isLogMatchedToInvoiceProject(log, selectedProjectId)) {
         let isCoveredByInvoiceWeek = false;
         invoices.forEach((invoice) => {
@@ -1581,7 +1585,11 @@ const InvoiceManager = () => {
     });
 
     return Array.from(groupedRows.values())
-      .map((row) => ({ ...row, invoiceWeeks: Array.from(row.invoiceWeeks).sort() }))
+      .map((row) => ({
+        ...row,
+        invoiceWeeks: Array.from(row.invoiceWeeks).sort(),
+        registeredDates: Array.from(row.registeredDates).sort(),
+      }))
       .sort((left, right) => left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId));
   }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditTdIdentity, hoursAuditWeekNumber, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
@@ -7560,7 +7568,14 @@ const InvoiceManager = () => {
                         const difference = row.timeRotateMilliseconds - row.invoiceMilliseconds;
                         return (
                           <tr key={`${row.userLabel}-${row.tdId}`} style={{ background: difference > 0 ? "#FFFBEB" : "#F0FDF4" }}>
-                            <td style={tableBodyCellStyle}>{row.userLabel || "Unknown"}</td>
+                            <td style={tableBodyCellStyle}>
+                              <div style={{ fontWeight: 700 }}>{row.userLabel || "Unknown"}</div>
+                              <div style={{ marginTop: "3px", color: "#64748B", fontSize: "0.76rem" }}>
+                                Registered: {row.registeredDates.length > 0
+                                  ? row.registeredDates.map((date) => formatDisplayDate(date)).join(", ")
+                                  : "-"}
+                              </div>
+                            </td>
                             <td style={tableBodyCellStyle}>
                               <div style={{ fontWeight: 700 }}>{row.tdId}</div>
                               {row.tdTitle ? <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.8rem" }}>{row.tdTitle}</div> : null}
