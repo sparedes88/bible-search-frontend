@@ -178,7 +178,7 @@ const BI_PIE_CHART_COLORS = [
   "#6366F1",
 ];
 
-const INVOICE_TAB_KEYS = ["table", "reconciliation", "td-matcher", "business-intelligence", "quick-paid"];
+const INVOICE_TAB_KEYS = ["table", "reconciliation", "td-matcher", "hours-audit", "business-intelligence", "quick-paid"];
 const DEFAULT_INVOICE_TAB = "business-intelligence";
 
 const normalizeInvoiceTabKey = (value) => {
@@ -1038,6 +1038,7 @@ const InvoiceManager = () => {
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
+  const [hoursAuditWeekInvoiceId, setHoursAuditWeekInvoiceId] = useState("");
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
   const [quickPaidSavingByInvoiceKey, setQuickPaidSavingByInvoiceKey] = useState({});
   const [allProjectInvoices, setAllProjectInvoices] = useState([]);
@@ -1513,6 +1514,66 @@ const InvoiceManager = () => {
       unassignedToSelectedProjectMilliseconds: Math.max(0, loggedMilliseconds - selectedProjectMilliseconds),
     };
   }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId, projectNamesWithExplicitTdMatches]);
+
+  const hoursAuditInvoiceOptions = useMemo(() => (
+    [...invoices].sort((left, right) => (
+      String(left.mondayDate || "").localeCompare(String(right.mondayDate || ""))
+    ))
+  ), [invoices]);
+
+  const selectedHoursAuditInvoice = useMemo(() => (
+    hoursAuditInvoiceOptions.find((invoice) => invoice.id === hoursAuditWeekInvoiceId)
+    || hoursAuditInvoiceOptions[0]
+    || null
+  ), [hoursAuditInvoiceOptions, hoursAuditWeekInvoiceId]);
+
+  const hoursAuditRows = useMemo(() => {
+    if (!selectedHoursAuditInvoice || !selectedProjectId) return [];
+
+    const mondayDate = toDateInputValue(selectedHoursAuditInvoice.mondayDate);
+    const weekEndDate = shiftDateInputValue(mondayDate, 6);
+    const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
+    const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
+    if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return [];
+
+    const groupedRows = new Map();
+    timeRotateLogs.forEach((log) => {
+      if (log.logType === "completion") return;
+      const durationMs = getTimeRotateLogDurationMs(log);
+      const usedAt = Number(log.startedAt) || Number(log.endedAt) || 0;
+      if (durationMs <= 0 || usedAt < rangeStart || usedAt > rangeEnd) return;
+
+      const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
+      const tdId = String(log.issueId || "Unspecified TD").trim();
+      const tdTitle = String(
+        log.title
+        || issueTitleByIdentity[`${String(log.projectDocId || "").trim()}::${tdId}`]
+        || issueTitleByIssueId[tdId]
+        || ""
+      ).trim();
+      const key = `${userLabel.toLowerCase()}::${getTimeRotateTaskIdentity(log)}`;
+      const existing = groupedRows.get(key) || {
+        userLabel,
+        tdId,
+        tdTitle,
+        timeRotateMilliseconds: 0,
+        payEveryoneMilliseconds: 0,
+        invoiceMilliseconds: 0,
+        logCount: 0,
+      };
+      existing.timeRotateMilliseconds += durationMs;
+      existing.payEveryoneMilliseconds += durationMs;
+      if (isLogMatchedToInvoiceProject(log, selectedProjectId)) {
+        existing.invoiceMilliseconds += durationMs;
+      }
+      existing.logCount += 1;
+      groupedRows.set(key, existing);
+    });
+
+    return Array.from(groupedRows.values()).sort((left, right) => (
+      left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId)
+    ));
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditWeekInvoiceId, issueTitleByIdentity, issueTitleByIssueId, selectedHoursAuditInvoice, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (
@@ -5831,6 +5892,16 @@ const InvoiceManager = () => {
             </button>
             <button
               type="button"
+              onClick={() => handleInvoicesTabChange("hours-audit")}
+              style={{
+                ...buttonStyle,
+                background: activeInvoicesTab === "hours-audit" ? "#1D4ED8" : "#94A3B8",
+              }}
+            >
+              Hours Audit
+            </button>
+            <button
+              type="button"
               onClick={() => handleInvoicesTabChange("business-intelligence")}
               style={{
                 ...buttonStyle,
@@ -5856,6 +5927,7 @@ const InvoiceManager = () => {
             <a href={getInvoiceTabHref("table")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Invoice Table Link</a>
             <a href={getInvoiceTabHref("reconciliation")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Reconciliation Link</a>
             <a href={getInvoiceTabHref("td-matcher")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>TD Matcher Link</a>
+            <a href={getInvoiceTabHref("hours-audit")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Hours Audit Link</a>
             <a href={getInvoiceTabHref("quick-paid")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Quick Paid Link</a>
           </div>
 
@@ -7411,6 +7483,68 @@ const InvoiceManager = () => {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+            </div>
+          ) : activeInvoicesTab === "hours-audit" ? (
+            <div style={{ ...tableShellStyle, padding: "12px" }}>
+              <div style={{ color: "#334155", fontSize: "0.9rem", marginBottom: "12px" }}>
+                Compare finalized time for one invoice week. TimeRotate and Pay Everyone use the same finalized logs; Invoice shows only the hours included by this invoice project's TD matches.
+              </div>
+              <label style={{ display: "grid", gap: "5px", maxWidth: "360px", color: "#334155", fontSize: "0.85rem", fontWeight: 700, marginBottom: "12px" }}>
+                Invoice Week
+                <select
+                  value={selectedHoursAuditInvoice?.id || ""}
+                  onChange={(event) => setHoursAuditWeekInvoiceId(event.target.value)}
+                  style={inputStyle}
+                >
+                  {hoursAuditInvoiceOptions.map((invoice) => (
+                    <option key={invoice.id} value={invoice.id}>
+                      {`Week ${invoice.weekNumber || "-"}: ${formatDisplayDate(invoice.mondayDate)} - ${formatDisplayDate(shiftDateInputValue(invoice.mondayDate, 6))}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!selectedInvoiceProject || !selectedHoursAuditInvoice ? (
+                <p style={{ color: "#64748B", margin: 0 }}>Select an invoice project and invoice week to run the audit.</p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1080px" }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeaderCellStyle}>User</th>
+                        <th style={tableHeaderCellStyle}>TD Card</th>
+                        <th style={tableHeaderCellStyle}>TimeRotate</th>
+                        <th style={tableHeaderCellStyle}>Pay Everyone</th>
+                        <th style={tableHeaderCellStyle}>Invoice Included</th>
+                        <th style={tableHeaderCellStyle}>Difference</th>
+                        <th style={tableHeaderCellStyle}>Logs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hoursAuditRows.length === 0 ? (
+                        <tr><td style={tableBodyCellStyle} colSpan={7}>No finalized TimeRotate hours were recorded during this invoice week.</td></tr>
+                      ) : hoursAuditRows.map((row) => {
+                        const difference = row.timeRotateMilliseconds - row.invoiceMilliseconds;
+                        return (
+                          <tr key={`${row.userLabel}-${row.tdId}`} style={{ background: difference > 0 ? "#FFFBEB" : "#F0FDF4" }}>
+                            <td style={tableBodyCellStyle}>{row.userLabel || "Unknown"}</td>
+                            <td style={tableBodyCellStyle}>
+                              <div style={{ fontWeight: 700 }}>{row.tdId}</div>
+                              {row.tdTitle ? <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.8rem" }}>{row.tdTitle}</div> : null}
+                            </td>
+                            <td style={tableBodyCellStyle}>{formatHoursUsed(row.timeRotateMilliseconds)}</td>
+                            <td style={tableBodyCellStyle}>{formatHoursUsed(row.payEveryoneMilliseconds)}</td>
+                            <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>{formatHoursUsed(row.invoiceMilliseconds)}</td>
+                            <td style={{ ...tableBodyCellStyle, color: difference > 0 ? "#B45309" : "#166534", fontWeight: 800 }}>
+                              {difference > 0 ? `${formatHoursUsed(difference)} excluded` : "Matched"}
+                            </td>
+                            <td style={tableBodyCellStyle}>{row.logCount}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
