@@ -4007,12 +4007,12 @@ const InvoiceManager = () => {
       },
       users: sortedUsers.map((userEntry) => ({
         name: userEntry.name,
-        regularHours: Number(userEntry.regularHours.toFixed(2)),
-        overtimeHours: Number(userEntry.overtimeHours.toFixed(2)),
-        totalHours: Number(userEntry.totalHours.toFixed(2)),
-        regularRate: Number(userEntry.regularRate.toFixed(2)),
-        overtimeRate: Number(userEntry.overtimeRate.toFixed(2)),
-        lineTotal: Number(userEntry.lineTotal.toFixed(2)),
+        regularHours: Number(userEntry.regularHours || 0),
+        overtimeHours: Number(userEntry.overtimeHours || 0),
+        totalHours: Number(userEntry.totalHours || 0),
+        regularRate: Number(userEntry.regularRate || 0),
+        overtimeRate: Number(userEntry.overtimeRate || 0),
+        lineTotal: Number(userEntry.lineTotal || 0),
         issueSummary: userEntry.issueSummary,
         notesSummary: userEntry.notesSummary,
         cards: (Array.isArray(userEntry.cards) ? userEntry.cards : []).map((card) => ({

@@ -1163,7 +1163,7 @@ const BillableInvoicePreviewPage = () => {
 
     return Array.from(usersByKey.values())
       .map((userEntry) => {
-        const totalHours = Number((userEntry.baseTotalHours + userEntry.manualHours).toFixed(2));
+        const totalHours = Number(userEntry.baseTotalHours + userEntry.manualHours) || 0;
         // Preserve the regular/overtime split already computed in InvoiceManager, which accounts
         // for a person's OTHER project hours that week consuming part of their 40h regular quota.
         // Recomputing min(total,40)/max(0,total-40) here in isolation would wrongly reclassify
@@ -1180,12 +1180,12 @@ const BillableInvoicePreviewPage = () => {
 
         return {
           ...userEntry,
-          totalHours: Number(billedTotalHours.toFixed(2)),
-          regularHours: Number(regularHours.toFixed(2)),
-          overtimeHours: Number(overtimeHours.toFixed(2)),
+          totalHours: billedTotalHours,
+          regularHours,
+          overtimeHours,
           regularRate: baseRate,
-          overtimeRate: Number((baseRate * overtimeMultiplierValue).toFixed(2)),
-          lineTotal: Number((regularCost + overtimeCost).toFixed(2)),
+          overtimeRate: baseRate * overtimeMultiplierValue,
+          lineTotal: regularCost + overtimeCost,
         };
       })
       .sort((left, right) => right.lineTotal - left.lineTotal);
