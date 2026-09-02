@@ -6446,7 +6446,29 @@ const InvoiceManager = () => {
                         const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
                           ? rowLaborCost.totalCost
                           : invoice.total;
-                        const isMissingInvoiceTotal = !effectiveInvoiceTotal;
+                        // A week whose days were billed on their own rows carries no hours of its own,
+                        // so surface that split instead of flagging the week as missing a total.
+                        const childDayInvoices = normalizeInvoicePeriodType(invoice.periodType) === "day"
+                          ? []
+                          : invoices.filter((candidate) => (
+                            normalizeInvoicePeriodType(candidate.periodType) === "day"
+                            && Number(candidate.weekNumber) === Number(invoice.weekNumber)
+                          ));
+                        const childDayTotal = childDayInvoices.reduce((sum, dayInvoice) => {
+                          const dayHours = invoiceHoursById[dayInvoice.id] || {
+                            totalRegularMilliseconds: 0,
+                            totalOvertimeMilliseconds: 0,
+                          };
+                          const dayCost = getLaborCostFromSplit(
+                            dayHours.totalRegularMilliseconds,
+                            dayHours.totalOvertimeMilliseconds
+                          );
+                          const dayTotal = normalizeBillingSource(dayInvoice.billingSource) === "main_system"
+                            ? dayCost.totalCost
+                            : dayInvoice.total;
+                          return sum + (Number(dayTotal) || 0);
+                        }, 0);
+                        const isMissingInvoiceTotal = !effectiveInvoiceTotal && childDayInvoices.length === 0;
                         const invoiceTotalValue = parseAmountValue(effectiveInvoiceTotal);
                         const hasUpdatedInvoiceTotal = invoiceTotalValue !== null && invoiceTotalValue > 0;
                         const hasPlaceholderInvoiceNumber = isPlaceholderInvoiceNumber(invoice.invoiceNumber);
@@ -6793,7 +6815,7 @@ const InvoiceManager = () => {
                             </td>
                             <td style={tableBodyCellStyle}>
                               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                {!invoice.total ? (
+                                {!invoice.total && childDayInvoices.length === 0 ? (
                                   <span
                                     title="Invoice amount not entered"
                                     style={{
@@ -6831,6 +6853,19 @@ const InvoiceManager = () => {
                                   </span>
                                 ) : null}
                               </div>
+                              {childDayInvoices.length > 0 ? (
+                                <div style={{ marginTop: "4px", fontSize: "0.72rem", color: "#0F766E", fontWeight: 700 }}>
+                                  {`+ ${formatCurrency(childDayTotal)} billed on ${childDayInvoices.length} day invoice${childDayInvoices.length === 1 ? "" : "s"}`}
+                                  <div style={{ marginTop: "2px", color: "#475569", fontWeight: 600 }}>
+                                    {childDayInvoices
+                                      .map((dayInvoice) => `#${getInvoicePeriodLabel(dayInvoice)}`)
+                                      .join(", ")}
+                                  </div>
+                                  <div style={{ marginTop: "2px", color: "#0F172A", fontWeight: 800 }}>
+                                    {`Week combined: ${formatCurrency((Number(effectiveInvoiceTotal) || 0) + childDayTotal)}`}
+                                  </div>
+                                </div>
+                              ) : null}
                             </td>
                             <td style={tableBodyCellStyle}>
                               <span
