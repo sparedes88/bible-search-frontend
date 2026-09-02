@@ -241,26 +241,20 @@ const normalizeInvoicePeriodType = (value) => (
 
 const getInvoicePeriodDayCount = (value) => (normalizeInvoicePeriodType(value) === "day" ? 0 : 6);
 
-const getInvoicePeriodRange = (invoice = {}) => {
-  const startDate = toDateInputValue(invoice?.mondayDate);
-  if (!startDate) return null;
-  const endDate = shiftDateInputValue(startDate, getInvoicePeriodDayCount(invoice?.periodType));
-  const start = Date.parse(`${startDate}T00:00:00`);
-  const end = Date.parse(`${endDate}T23:59:59.999`);
-  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+const getDayOffsetBetweenDates = (startDate, endDate) => {
+  const start = Date.parse(`${String(startDate || "").trim()}T00:00:00`);
+  const end = Date.parse(`${String(endDate || "").trim()}T00:00:00`);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return -1;
+  return Math.round((end - start) / (24 * 60 * 60 * 1000));
 };
 
-// Overlapping periods would bill the same logged hours on more than one row.
-const findOverlappingInvoice = (invoice, otherInvoices = []) => {
-  const range = getInvoicePeriodRange(invoice);
-  if (!range) return null;
-
-  return otherInvoices.find((otherInvoice) => {
-    if (!otherInvoice || otherInvoice.id === invoice.id) return null;
-    const otherRange = getInvoicePeriodRange(otherInvoice);
-    if (!otherRange) return false;
-    return range.start <= otherRange.end && otherRange.start <= range.end;
-  }) || null;
+// Single-day rows belong to a week, so they display as week.day (e.g. 1.1 for that week's Monday).
+const getInvoicePeriodLabel = (invoice = {}) => {
+  const weekNumber = invoice.weekNumber || "-";
+  const dayIndex = Number(invoice.dayIndex) || 0;
+  return normalizeInvoicePeriodType(invoice.periodType) === "day" && dayIndex > 0
+    ? `${weekNumber}.${dayIndex}`
+    : `${weekNumber}`;
 };
 
 const BILLING_SOURCE_OPTIONS = [
@@ -3699,7 +3693,20 @@ const InvoiceManager = () => {
     const suggestion = getNextWeekSuggestion(invoices);
     const periodType = normalizeInvoicePeriodType(invoiceDraft.periodType);
     const isSingleDayInvoice = periodType === "day";
-    const weekNumber = parseWeekNumber(invoiceDraft.weekNumber) || parseWeekNumber(suggestion.weekNumber);
+    const singleDayDate = toDateInputValue(invoiceDraft.mondayDate);
+    const parentWeekInvoice = isSingleDayInvoice
+      ? invoices.find((invoice) => {
+        if (normalizeInvoicePeriodType(invoice.periodType) === "day") return false;
+        const offset = getDayOffsetBetweenDates(toDateInputValue(invoice.mondayDate), singleDayDate);
+        return offset >= 0 && offset <= 6;
+      })
+      : null;
+    const dayIndex = parentWeekInvoice
+      ? getDayOffsetBetweenDates(toDateInputValue(parentWeekInvoice.mondayDate), singleDayDate) + 1
+      : 0;
+    const weekNumber = isSingleDayInvoice
+      ? parseWeekNumber(parentWeekInvoice?.weekNumber)
+      : parseWeekNumber(invoiceDraft.weekNumber) || parseWeekNumber(suggestion.weekNumber);
     const invoiceNumber = normalizeInvoiceNumber(invoiceDraft.invoiceNumber);
     const total = parseMoney(invoiceDraft.total);
     const paymentTerms = String(invoiceDraft.paymentTerms || "net30").trim().toLowerCase() || "net30";
@@ -3738,14 +3745,6 @@ const InvoiceManager = () => {
       return;
     }
 
-    const overlappingInvoice = findOverlappingInvoice({ mondayDate, periodType }, invoices);
-    if (overlappingInvoice) {
-      toast.error(
-        `This period overlaps Week ${overlappingInvoice.weekNumber || "-"} (${formatDisplayDate(overlappingInvoice.mondayDate)}). Overlapping rows would bill the same hours twice.`
-      );
-      return;
-    }
-
     try {
       const invoiceCollectionRef = collection(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices");
       const existingSnapshot = await getDocs(invoiceCollectionRef);
@@ -3758,7 +3757,7 @@ const InvoiceManager = () => {
       const missingRows = isSingleDayInvoice
         ? [{
           weekNumber,
-          weekLabel: `Day ${formatDisplayDate(mondayDate)}`,
+          weekLabel: `Week ${weekNumber}.${dayIndex}`,
           invoiceNumber,
           total,
           mondayDate,
@@ -3794,6 +3793,7 @@ const InvoiceManager = () => {
             paymentTerms: row.paymentTerms,
             netDays: row.netDays,
             periodType,
+            dayIndex: isSingleDayInvoice ? dayIndex : 0,
             isPaid: false,
             invoiceStatus: normalizeInvoiceStatus("", row.total, row.invoiceNumber),
             isPlaceholder: Boolean(row.isPlaceholder),
@@ -4528,6 +4528,7 @@ const InvoiceManager = () => {
       billingSource: normalizeBillingSource(invoice.billingSource),
       apStatus: normalizeApStatus(invoice.apStatus),
       periodType: normalizeInvoicePeriodType(invoice.periodType),
+      dayIndex: Number(invoice.dayIndex) || 0,
     });
   };
 
@@ -4583,9 +4584,13 @@ const InvoiceManager = () => {
       return;
     }
 
-    const duplicateWeek = invoices.find(
-      (invoice) => invoice.id !== editingInvoiceId && Number(invoice.weekNumber) === weekNumber
-    );
+    const duplicateWeek = normalizeInvoicePeriodType(editInvoiceDraft.periodType) === "day"
+      ? null
+      : invoices.find(
+        (invoice) => invoice.id !== editingInvoiceId
+          && normalizeInvoicePeriodType(invoice.periodType) !== "day"
+          && Number(invoice.weekNumber) === weekNumber
+      );
 
     if (duplicateWeek) {
       toast.error(`Week ${weekNumber} already exists for this project.`);
@@ -4640,6 +4645,7 @@ const InvoiceManager = () => {
         billingSource,
         apStatus: normalizeApStatus(editInvoiceDraft.apStatus),
         periodType: normalizeInvoicePeriodType(editInvoiceDraft.periodType),
+        dayIndex: Number(editInvoiceDraft.dayIndex) || 0,
         isPlaceholder: false,
         generatedFromWeek: null,
         updatedAt: serverTimestamp(),
@@ -6328,7 +6334,9 @@ const InvoiceManager = () => {
                         const isEditing = editingInvoiceId === invoice.id;
                         const dueCountdown = getDueCountdownMeta(invoice.dueDate);
                         const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
-                        const weekGapInfo = getWeekSequenceGapInfo(invoice.weekNumber, invoice.mondayDate, invoices, invoice.id);
+                        const weekGapInfo = normalizeInvoicePeriodType(invoice.periodType) === "day"
+                          ? { hasGap: false }
+                          : getWeekSequenceGapInfo(invoice.weekNumber, invoice.mondayDate, invoices, invoice.id);
                         const rowHoursData = invoiceHoursById[invoice.id] || {
                           totalMilliseconds: 0,
                           totalRegularMilliseconds: 0,
@@ -6356,7 +6364,6 @@ const InvoiceManager = () => {
                             && linkedInvoice.isPlaceholder === true
                             && Number(linkedInvoice.generatedFromWeek) === Number(invoice.weekNumber)
                         );
-                        const overlappingInvoice = findOverlappingInvoice(invoice, invoices);
                         const rowBg = isMissingInvoiceTotal
                           ? (index % 2 === 0 ? "#FEE2E2" : "#FECACA")
                           : shouldHighlightPendingInvoiceNumber
@@ -6391,7 +6398,7 @@ const InvoiceManager = () => {
                                     }
                                   />
                                 ) : (
-                                  <span title="Week Name or Number">{`#${editInvoiceDraft.weekNumber || "-"}`}</span>
+                                  <span title="Week Name or Number">{`#${getInvoicePeriodLabel(editInvoiceDraft)}`}</span>
                                 )}
                               </td>
                               <td style={tableBodyCellStyle}>
@@ -6660,29 +6667,8 @@ const InvoiceManager = () => {
                                     !
                                   </span>
                                 ) : null}
-                                <span>{`#${invoice.weekNumber}`}</span>
-                                {normalizeInvoicePeriodType(invoice.periodType) === "day" ? (
-                                  <span
-                                    title="Single day invoice"
-                                    style={{
-                                      padding: "2px 6px",
-                                      borderRadius: "999px",
-                                      background: "#E0F2FE",
-                                      color: "#0C4A6E",
-                                      fontSize: "0.68rem",
-                                      fontWeight: 800,
-                                      whiteSpace: "nowrap",
-                                    }}
-                                  >
-                                    DAY
-                                  </span>
-                                ) : null}
+                                <span>{`#${getInvoicePeriodLabel(invoice)}`}</span>
                               </div>
-                              {overlappingInvoice ? (
-                                <div style={{ marginTop: "4px", color: "#B91C1C", fontSize: "0.72rem", fontWeight: 700 }}>
-                                  Overlaps #{overlappingInvoice.weekNumber || "-"}: same hours may bill twice.
-                                </div>
-                              ) : null}
                               {weekGapInfo.hasGap ? (
                                 <button
                                   type="button"
