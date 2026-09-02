@@ -241,6 +241,28 @@ const normalizeInvoicePeriodType = (value) => (
 
 const getInvoicePeriodDayCount = (value) => (normalizeInvoicePeriodType(value) === "day" ? 0 : 6);
 
+const getInvoicePeriodRange = (invoice = {}) => {
+  const startDate = toDateInputValue(invoice?.mondayDate);
+  if (!startDate) return null;
+  const endDate = shiftDateInputValue(startDate, getInvoicePeriodDayCount(invoice?.periodType));
+  const start = Date.parse(`${startDate}T00:00:00`);
+  const end = Date.parse(`${endDate}T23:59:59.999`);
+  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+};
+
+// Overlapping periods would bill the same logged hours on more than one row.
+const findOverlappingInvoice = (invoice, otherInvoices = []) => {
+  const range = getInvoicePeriodRange(invoice);
+  if (!range) return null;
+
+  return otherInvoices.find((otherInvoice) => {
+    if (!otherInvoice || otherInvoice.id === invoice.id) return null;
+    const otherRange = getInvoicePeriodRange(otherInvoice);
+    if (!otherRange) return false;
+    return range.start <= otherRange.end && otherRange.start <= range.end;
+  }) || null;
+};
+
 const BILLING_SOURCE_OPTIONS = [
   { value: "main_system", label: "Main System" },
   { value: "freshbooks", label: "FreshBooks" },
@@ -3716,6 +3738,14 @@ const InvoiceManager = () => {
       return;
     }
 
+    const overlappingInvoice = findOverlappingInvoice({ mondayDate, periodType }, invoices);
+    if (overlappingInvoice) {
+      toast.error(
+        `This period overlaps Week ${overlappingInvoice.weekNumber || "-"} (${formatDisplayDate(overlappingInvoice.mondayDate)}). Overlapping rows would bill the same hours twice.`
+      );
+      return;
+    }
+
     try {
       const invoiceCollectionRef = collection(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices");
       const existingSnapshot = await getDocs(invoiceCollectionRef);
@@ -6326,6 +6356,7 @@ const InvoiceManager = () => {
                             && linkedInvoice.isPlaceholder === true
                             && Number(linkedInvoice.generatedFromWeek) === Number(invoice.weekNumber)
                         );
+                        const overlappingInvoice = findOverlappingInvoice(invoice, invoices);
                         const rowBg = isMissingInvoiceTotal
                           ? (index % 2 === 0 ? "#FEE2E2" : "#FECACA")
                           : shouldHighlightPendingInvoiceNumber
@@ -6630,7 +6661,28 @@ const InvoiceManager = () => {
                                   </span>
                                 ) : null}
                                 <span>{`#${invoice.weekNumber}`}</span>
+                                {normalizeInvoicePeriodType(invoice.periodType) === "day" ? (
+                                  <span
+                                    title="Single day invoice"
+                                    style={{
+                                      padding: "2px 6px",
+                                      borderRadius: "999px",
+                                      background: "#E0F2FE",
+                                      color: "#0C4A6E",
+                                      fontSize: "0.68rem",
+                                      fontWeight: 800,
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    DAY
+                                  </span>
+                                ) : null}
                               </div>
+                              {overlappingInvoice ? (
+                                <div style={{ marginTop: "4px", color: "#B91C1C", fontSize: "0.72rem", fontWeight: 700 }}>
+                                  Overlaps #{overlappingInvoice.weekNumber || "-"}: same hours may bill twice.
+                                </div>
+                              ) : null}
                               {weekGapInfo.hasGap ? (
                                 <button
                                   type="button"
