@@ -227,7 +227,19 @@ const emptyInvoiceDraft = {
   invoiceStatus: "budgeted",
   billingSource: "main_system",
   apStatus: "draft",
+  periodType: "week",
 };
+
+const INVOICE_PERIOD_OPTIONS = [
+  { value: "week", label: "Weekly (Mon-Sun)" },
+  { value: "day", label: "Single Day" },
+];
+
+const normalizeInvoicePeriodType = (value) => (
+  String(value || "").trim().toLowerCase() === "day" ? "day" : "week"
+);
+
+const getInvoicePeriodDayCount = (value) => (normalizeInvoicePeriodType(value) === "day" ? 0 : 6);
 
 const BILLING_SOURCE_OPTIONS = [
   { value: "main_system", label: "Main System" },
@@ -1556,7 +1568,7 @@ const InvoiceManager = () => {
       if (selectedWeekInvoices.length > 0) {
         const isInSelectedWeek = selectedWeekInvoices.some((invoice) => {
           const mondayDate = toDateInputValue(invoice.mondayDate);
-          const weekEndDate = shiftDateInputValue(mondayDate, 6);
+          const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice?.periodType));
           const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
           const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
           return usedAt >= rangeStart && usedAt <= rangeEnd;
@@ -1601,7 +1613,7 @@ const InvoiceManager = () => {
         let isCoveredByInvoiceWeek = false;
         invoices.forEach((invoice) => {
           const mondayDate = toDateInputValue(invoice.mondayDate);
-          const weekEndDate = shiftDateInputValue(mondayDate, 6);
+          const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice?.periodType));
           const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
           const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
           if (usedAt >= rangeStart && usedAt <= rangeEnd) {
@@ -1950,7 +1962,7 @@ const InvoiceManager = () => {
     return Object.fromEntries(
       invoices.map((invoice) => {
         const mondayDate = toDateInputValue(invoice.mondayDate);
-        const weekEndDate = shiftDateInputValue(mondayDate, 6);
+        const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice.periodType));
         const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
         const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
 
@@ -2899,7 +2911,7 @@ const InvoiceManager = () => {
       }
 
       const mondayDate = toDateInputValue(invoice?.mondayDate);
-      const weekEndDate = shiftDateInputValue(mondayDate, 6);
+      const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice?.periodType));
       const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
       const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
       if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return;
@@ -2958,7 +2970,7 @@ const InvoiceManager = () => {
 
       projectInvoices.forEach((invoice) => {
         const mondayDate = toDateInputValue(invoice?.mondayDate);
-        const weekEndDate = shiftDateInputValue(mondayDate, 6);
+        const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice?.periodType));
         const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
         const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
         if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return;
@@ -3663,16 +3675,20 @@ const InvoiceManager = () => {
     }
 
     const suggestion = getNextWeekSuggestion(invoices);
+    const periodType = normalizeInvoicePeriodType(invoiceDraft.periodType);
+    const isSingleDayInvoice = periodType === "day";
     const weekNumber = parseWeekNumber(invoiceDraft.weekNumber) || parseWeekNumber(suggestion.weekNumber);
     const invoiceNumber = normalizeInvoiceNumber(invoiceDraft.invoiceNumber);
     const total = parseMoney(invoiceDraft.total);
     const paymentTerms = String(invoiceDraft.paymentTerms || "net30").trim().toLowerCase() || "net30";
     const netDays = resolveNetDays(paymentTerms);
-    const mondayDate = getExpectedWeekMondayDate(
-      weekNumber,
-      invoices,
-      invoiceDraft.mondayDate || suggestion.mondayDate
-    );
+    const mondayDate = isSingleDayInvoice
+      ? toDateInputValue(invoiceDraft.mondayDate)
+      : getExpectedWeekMondayDate(
+        weekNumber,
+        invoices,
+        invoiceDraft.mondayDate || suggestion.mondayDate
+      );
     const dueDate = mondayDate ? shiftDateInputValue(mondayDate, netDays) : "";
 
     if (!weekNumber) {
@@ -3709,14 +3725,27 @@ const InvoiceManager = () => {
           .map((invoice) => [Number(invoice.weekNumber), invoice])
       );
 
-      const missingRows = buildMissingWeekInvoices(weekNumber, existingByWeek, {
-        invoiceNumber,
-        total,
-        mondayDate,
-        dueDate,
-        paymentTerms,
-        netDays,
-      });
+      const missingRows = isSingleDayInvoice
+        ? [{
+          weekNumber,
+          weekLabel: `Day ${formatDisplayDate(mondayDate)}`,
+          invoiceNumber,
+          total,
+          mondayDate,
+          dueDate,
+          paymentTerms,
+          netDays,
+          isPlaceholder: false,
+          generatedFromWeek: null,
+        }]
+        : buildMissingWeekInvoices(weekNumber, existingByWeek, {
+          invoiceNumber,
+          total,
+          mondayDate,
+          dueDate,
+          paymentTerms,
+          netDays,
+        });
 
       if (missingRows.length === 0) {
         toast.error(`Week ${weekNumber} already exists for this project.`);
@@ -3734,6 +3763,7 @@ const InvoiceManager = () => {
             dueDate: row.dueDate,
             paymentTerms: row.paymentTerms,
             netDays: row.netDays,
+            periodType,
             isPaid: false,
             invoiceStatus: normalizeInvoiceStatus("", row.total, row.invoiceNumber),
             isPlaceholder: Boolean(row.isPlaceholder),
@@ -3789,7 +3819,7 @@ const InvoiceManager = () => {
 
     const invoiceNumber = String(invoice.invoiceNumber || `W${String(invoice.weekNumber || "").padStart(2, "0")}`).trim();
     const mondayDate = toDateInputValue(invoice.mondayDate);
-    const weekEndDate = shiftDateInputValue(mondayDate, 6);
+    const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice.periodType));
     const dueDate = toDateInputValue(invoice.dueDate);
     const projectName = String(selectedInvoiceProject?.name || "Unknown Project").trim();
     const workRangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
@@ -4467,6 +4497,7 @@ const InvoiceManager = () => {
       invoiceStatus: normalizeInvoiceStatus(invoice.invoiceStatus, invoice.total, invoice.invoiceNumber),
       billingSource: normalizeBillingSource(invoice.billingSource),
       apStatus: normalizeApStatus(invoice.apStatus),
+      periodType: normalizeInvoicePeriodType(invoice.periodType),
     });
   };
 
@@ -4578,6 +4609,7 @@ const InvoiceManager = () => {
         invoiceStatus,
         billingSource,
         apStatus: normalizeApStatus(editInvoiceDraft.apStatus),
+        periodType: normalizeInvoicePeriodType(editInvoiceDraft.periodType),
         isPlaceholder: false,
         generatedFromWeek: null,
         updatedAt: serverTimestamp(),
@@ -4796,7 +4828,7 @@ const InvoiceManager = () => {
       };
 
       const rows = sortedInvoices.map((invoice) => {
-        const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
+        const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
         const rowHoursData = invoiceHoursById[invoice.id] || {
           totalRegularMilliseconds: 0,
           totalOvertimeMilliseconds: 0,
@@ -5983,11 +6015,26 @@ const InvoiceManager = () => {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1.05fr 1fr 0.9fr 1fr 0.95fr 1fr auto",
+                    gridTemplateColumns: "0.95fr 1.05fr 1fr 0.9fr 1fr 0.95fr 1fr auto",
                     gap: "8px",
                     alignItems: "end",
                   }}
                 >
+                  <div>
+                    <label style={fieldLabelStyle}>Period</label>
+                    <select
+                      style={compactInputStyle}
+                      value={normalizeInvoicePeriodType(invoiceDraft.periodType)}
+                      onChange={(event) =>
+                        setInvoiceDraft((prev) => ({ ...prev, periodType: event.target.value }))
+                      }
+                      onInput={() => setIsInvoiceDraftDirty(true)}
+                    >
+                      {INVOICE_PERIOD_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div>
                     <label style={fieldLabelStyle}>Week</label>
                     <input
@@ -6029,7 +6076,9 @@ const InvoiceManager = () => {
                     />
                   </div>
                   <div>
-                    <label style={fieldLabelStyle}>Monday</label>
+                    <label style={fieldLabelStyle}>
+                      {normalizeInvoicePeriodType(invoiceDraft.periodType) === "day" ? "Date" : "Monday"}
+                    </label>
                     <input
                       style={compactInputStyle}
                       type="date"
@@ -6248,7 +6297,7 @@ const InvoiceManager = () => {
                       {invoices.map((invoice, index) => {
                         const isEditing = editingInvoiceId === invoice.id;
                         const dueCountdown = getDueCountdownMeta(invoice.dueDate);
-                        const weekEndDate = shiftDateInputValue(invoice.mondayDate, 6);
+                        const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
                         const weekGapInfo = getWeekSequenceGapInfo(invoice.weekNumber, invoice.mondayDate, invoices, invoice.id);
                         const rowHoursData = invoiceHoursById[invoice.id] || {
                           totalMilliseconds: 0,
@@ -6288,7 +6337,7 @@ const InvoiceManager = () => {
                             ? shiftDateInputValue(editInvoiceDraft.mondayDate, resolveNetDays(editInvoiceDraft.paymentTerms))
                             : "";
                           const editWeekEndDate = editInvoiceDraft.mondayDate
-                            ? shiftDateInputValue(editInvoiceDraft.mondayDate, 6)
+                            ? shiftDateInputValue(editInvoiceDraft.mondayDate, getInvoicePeriodDayCount(editInvoiceDraft.periodType))
                             : "";
                           const editWeekGapInfo = getWeekSequenceGapInfo(
                             editInvoiceDraft.weekNumber,
@@ -7539,7 +7588,7 @@ const InvoiceManager = () => {
                       .sort((left, right) => Number(left.weekNumber || 0) - Number(right.weekNumber || 0))
                       .map((invoice) => (
                         <option key={`hours-audit-week-${invoice.id}`} value={String(invoice.weekNumber)}>
-                          {`Week ${invoice.weekNumber || "-"}: ${formatDisplayDate(invoice.mondayDate)} - ${formatDisplayDate(shiftDateInputValue(invoice.mondayDate, 6))}`}
+                          {`Week ${invoice.weekNumber || "-"}: ${formatDisplayDate(invoice.mondayDate)} - ${formatDisplayDate(shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType)))}`}
                         </option>
                       ))}
                   </select>
