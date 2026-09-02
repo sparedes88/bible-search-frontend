@@ -1391,19 +1391,11 @@ const InvoiceManager = () => {
     return keys;
   }, [associatedTimeRotateProjectNameKeysByProjectId]);
 
-  const projectNamesWithExplicitTdMatches = useMemo(() => new Set(
-    timeRotateLogs
-      .filter((log) => tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)])
-      .map((log) => log.projectNameKey)
-      .filter(Boolean)
-  ), [tdInvoiceProjectIdByIdentity, timeRotateLogs]);
-
-  const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => {
-    const explicitProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)];
-    if (explicitProjectId) return explicitProjectId === invoiceProjectId;
-    if (projectNamesWithExplicitTdMatches.has(log.projectNameKey)) return false;
-    return associatedTimeRotateProjectNameKeysByProjectId[invoiceProjectId]?.has(log.projectNameKey) || false;
-  };
+  // TD Matcher assignments are authoritative: a log bills to a project only when its TD is assigned there.
+  const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => (
+    Boolean(invoiceProjectId)
+    && tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)] === invoiceProjectId
+  );
 
   const tdMatcherRows = useMemo(() => {
     const rowsByIdentity = new Map();
@@ -1468,18 +1460,10 @@ const InvoiceManager = () => {
         const explicitProjectId = identities
           .map((identity) => tdInvoiceProjectIdByIdentity[identity])
           .find(Boolean);
-        const projectNameKey = normalizeProjectNameKey(row.projectName);
         const matchedProjects = explicitProjectId
           ? projects.filter((project) => project.id === explicitProjectId)
-          : projects.filter((project) => {
-          const associatedNames = normalizeTimeRotateProjectNames(
-            project?.timeRotateProjectNames?.length > 0 ? project.timeRotateProjectNames : [project?.name]
-          );
-          return associatedNames.some((name) => normalizeProjectNameKey(name) === projectNameKey);
-        });
-        const excludedByExplicitTdMatch = !explicitProjectId
-          && projectNamesWithExplicitTdMatches.has(projectNameKey)
-          && row.milliseconds > 0;
+          : [];
+        const excludedByExplicitTdMatch = !explicitProjectId && row.milliseconds > 0;
         return {
           ...row,
           identities,
@@ -1498,7 +1482,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projectNamesWithExplicitTdMatches, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
 
   const tdMatcherHoursAudit = useMemo(() => {
     const finalizedLogs = timeRotateLogs.filter((log) => (
@@ -1525,7 +1509,7 @@ const InvoiceManager = () => {
       selectedProjectMilliseconds,
       unassignedToSelectedProjectMilliseconds: Math.max(0, loggedMilliseconds - selectedProjectMilliseconds),
     };
-  }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId, projectNamesWithExplicitTdMatches]);
+  }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId]);
 
   const hoursAuditRows = useMemo(() => {
     if (!selectedProjectId) return [];
@@ -1624,10 +1608,7 @@ const InvoiceManager = () => {
   }), [hoursAuditRows]);
 
   const billableTimeRotateLogs = useMemo(() => {
-    if (
-      timeRotateLogs.length === 0
-      || (allAssociatedTimeRotateProjectNameKeys.size === 0 && Object.keys(tdInvoiceProjectIdByIdentity).length === 0)
-    ) {
+    if (timeRotateLogs.length === 0 || Object.keys(tdInvoiceProjectIdByIdentity).length === 0) {
       return [];
     }
 
@@ -1641,8 +1622,7 @@ const InvoiceManager = () => {
         const weekKey = getIsoWeekStartDateKeyFromTimestamp(eventTimestamp);
 
         if (log.logType === "completion") return null;
-        const explicitProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)];
-        if (!explicitProjectId && !allAssociatedTimeRotateProjectNameKeys.has(log.projectNameKey)) return null;
+        if (!tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)]) return null;
         if (!Number.isFinite(eventTimestamp) || eventTimestamp <= 0) return null;
         if (!Number.isFinite(safeDuration) || safeDuration <= 0) return null;
         if (!weekKey) return null;
@@ -2135,7 +2115,6 @@ const InvoiceManager = () => {
     selectedTimeRotateProjectNameKeys,
     associatedTimeRotateProjectNameKeysByProjectId,
     tdInvoiceProjectIdByIdentity,
-    projectNamesWithExplicitTdMatches,
     weeklyOvertimeAllocationByLogId,
   ]);
 
