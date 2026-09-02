@@ -1038,6 +1038,7 @@ const InvoiceManager = () => {
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
+  const [hoursAuditTimeRotateProject, setHoursAuditTimeRotateProject] = useState("");
   const [hoursAuditTdIdentity, setHoursAuditTdIdentity] = useState("");
   const [hoursAuditWeekNumber, setHoursAuditWeekNumber] = useState("");
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
@@ -1529,6 +1530,7 @@ const InvoiceManager = () => {
       const durationMs = getTimeRotateLogDurationMs(log);
       const usedAt = Number(log.startedAt) || Number(log.endedAt) || 0;
       if (durationMs <= 0) return;
+      if (hoursAuditTimeRotateProject && log.projectName !== hoursAuditTimeRotateProject) return;
       if (hoursAuditTdIdentity && getTimeRotateTaskIdentity(log) !== hoursAuditTdIdentity) return;
       if (selectedWeekInvoices.length > 0) {
         const isInSelectedWeek = selectedWeekInvoices.some((invoice) => {
@@ -1595,7 +1597,7 @@ const InvoiceManager = () => {
         registeredDates: Array.from(row.registeredDates).sort(),
       }))
       .sort((left, right) => left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditTdIdentity, hoursAuditWeekNumber, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditTdIdentity, hoursAuditTimeRotateProject, hoursAuditWeekNumber, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
   const hoursAuditTotals = useMemo(() => hoursAuditRows.reduce((totals, row) => ({
     timeRotateMilliseconds: totals.timeRotateMilliseconds + (Number(row.timeRotateMilliseconds) || 0),
@@ -7547,6 +7549,15 @@ const InvoiceManager = () => {
                     <option value="">Select invoice project</option>
                     {projects.map((project) => (
                       <option key={`hours-audit-project-${project.id}`} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  TimeRotate Project
+                  <select value={hoursAuditTimeRotateProject} onChange={(event) => setHoursAuditTimeRotateProject(event.target.value)} style={inputStyle}>
+                    <option value="">All TimeRotate Projects</option>
+                    {timeRotateProjectOptions.map((projectName) => (
+                      <option key={`hours-audit-time-rotate-${projectName}`} value={projectName}>{projectName}</option>
                     ))}
                   </select>
                 </label>
