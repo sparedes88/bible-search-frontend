@@ -1392,10 +1392,26 @@ const InvoiceManager = () => {
     return keys;
   }, [associatedTimeRotateProjectNameKeysByProjectId]);
 
+  // Assignments are stored per task identity, but a TD can produce new identities over time,
+  // so also resolve them by TD number to keep newly logged hours matched.
+  const tdInvoiceProjectIdByIssueId = useMemo(() => {
+    const lookup = {};
+    Object.entries(tdInvoiceProjectIdByIdentity).forEach(([identity, invoiceProjectId]) => {
+      const issueId = String(identity.split("::").pop() || "").trim().toLowerCase();
+      if (issueId && invoiceProjectId) lookup[issueId] = invoiceProjectId;
+    });
+    return lookup;
+  }, [tdInvoiceProjectIdByIdentity]);
+
+  const getAssignedInvoiceProjectIdForLog = (log) => (
+    tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)]
+    || tdInvoiceProjectIdByIssueId[String(log?.issueId || "").trim().toLowerCase()]
+    || ""
+  );
+
   // TD Matcher assignments are authoritative: a log bills to a project only when its TD is assigned there.
   const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => (
-    Boolean(invoiceProjectId)
-    && tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)] === invoiceProjectId
+    Boolean(invoiceProjectId) && getAssignedInvoiceProjectIdForLog(log) === invoiceProjectId
   );
 
   const tdMatcherRows = useMemo(() => {
@@ -1460,7 +1476,9 @@ const InvoiceManager = () => {
         const identities = Array.from(row.identities || [row.identity]).filter(Boolean);
         const explicitProjectId = identities
           .map((identity) => tdInvoiceProjectIdByIdentity[identity])
-          .find(Boolean);
+          .find(Boolean)
+          || tdInvoiceProjectIdByIssueId[String(row.issueId || "").trim().toLowerCase()]
+          || "";
         const matchedProjects = explicitProjectId
           ? projects.filter((project) => project.id === explicitProjectId)
           : [];
@@ -1505,7 +1523,7 @@ const InvoiceManager = () => {
       : 0;
 
     const unassignedMilliseconds = finalizedLogs
-      .filter((log) => !tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)])
+      .filter((log) => !getAssignedInvoiceProjectIdForLog(log))
       .reduce((total, log) => total + getTimeRotateLogDurationMs(log), 0);
 
     return {
@@ -1552,7 +1570,7 @@ const InvoiceManager = () => {
         || ""
       ).trim();
       const key = `${userLabel.toLowerCase()}::${getTimeRotateTaskIdentity(log)}`;
-      const assignedInvoiceProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)] || "";
+      const assignedInvoiceProjectId = getAssignedInvoiceProjectIdForLog(log);
       const existing = groupedRows.get(key) || {
         userLabel,
         projectName: String(log.projectName || "").trim() || "No project",
@@ -1628,7 +1646,7 @@ const InvoiceManager = () => {
         const weekKey = getIsoWeekStartDateKeyFromTimestamp(eventTimestamp);
 
         if (log.logType === "completion") return null;
-        if (!tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)]) return null;
+        if (!getAssignedInvoiceProjectIdForLog(log)) return null;
         if (!Number.isFinite(eventTimestamp) || eventTimestamp <= 0) return null;
         if (!Number.isFinite(safeDuration) || safeDuration <= 0) return null;
         if (!weekKey) return null;
