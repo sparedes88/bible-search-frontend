@@ -418,6 +418,11 @@ const buildTaskDetailsDocId = (taskIdentity) => (
 const getTimeRotateTaskIdentity = (log = {}) => (
   String(log.taskIdentity || `${log.projectDocId || ""}::${log.issueId || log.id || ""}`).trim()
 );
+const getTimeRotateLogDurationMs = (log = {}) => {
+  const durationMs = Number(log.durationMs);
+  if (Number.isFinite(durationMs) && durationMs > 0) return durationMs;
+  return Math.max(0, (Number(log.endedAt) || 0) - (Number(log.startedAt) || 0));
+};
 
 // Prefers a person's full name (first + last) from the org user directory over whatever short name was logged.
 const getTimeLogUserLabel = (log = {}, fullNameByIdentityAlias = {}, fullNameByFirstNameOnly = {}) => {
@@ -1411,6 +1416,7 @@ const InvoiceManager = () => {
     });
 
     timeRotateLogs.forEach((log) => {
+      if (log.logType === "completion" || getTimeRotateLogDurationMs(log) <= 0) return;
       const projectName = String(log.projectName || "").trim();
       const identity = getTimeRotateTaskIdentity(log);
       if (!identity) return;
@@ -1480,6 +1486,33 @@ const InvoiceManager = () => {
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
   }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projectNamesWithExplicitTdMatches, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
+
+  const tdMatcherHoursAudit = useMemo(() => {
+    const finalizedLogs = timeRotateLogs.filter((log) => (
+      log.logType !== "completion" && getTimeRotateLogDurationMs(log) > 0
+    ));
+    const loggedMilliseconds = finalizedLogs.reduce(
+      (total, log) => total + getTimeRotateLogDurationMs(log),
+      0
+    );
+    const tdMatcherMilliseconds = tdMatcherRows.reduce(
+      (total, row) => total + (Number(row.milliseconds) || 0),
+      0
+    );
+    const selectedProjectMilliseconds = selectedProjectId
+      ? finalizedLogs
+        .filter((log) => isLogMatchedToInvoiceProject(log, selectedProjectId))
+        .reduce((total, log) => total + getTimeRotateLogDurationMs(log), 0)
+      : 0;
+
+    return {
+      loggedMilliseconds,
+      payEveryoneMilliseconds: loggedMilliseconds,
+      tdMatcherMilliseconds,
+      selectedProjectMilliseconds,
+      unassignedToSelectedProjectMilliseconds: Math.max(0, loggedMilliseconds - selectedProjectMilliseconds),
+    };
+  }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId, projectNamesWithExplicitTdMatches]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
@@ -7382,6 +7415,38 @@ const InvoiceManager = () => {
             <div style={{ ...tableShellStyle, padding: "12px" }}>
               <div style={{ marginBottom: "10px", color: "#334155", fontSize: "0.9rem" }}>
                 Match each Technical Detail's actual TimeRotate project name to its invoice project. This is the source of weekly hours and billing totals.
+              </div>
+              <div style={{ marginBottom: "12px", padding: "12px", border: "1px solid #BFDBFE", background: "#EFF6FF" }}>
+                <div style={{ color: "#1E3A8A", fontWeight: 800, marginBottom: "8px" }}>Hours Audit</div>
+                <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>TIME ROTATE LOGGED</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(tdMatcherHoursAudit.loggedMilliseconds)}</div>
+                  </div>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>PAY EVERYONE CAPTURED</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(tdMatcherHoursAudit.payEveryoneMilliseconds)}</div>
+                  </div>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>TD MATCHER CAPTURED</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(tdMatcherHoursAudit.tdMatcherMilliseconds)}</div>
+                  </div>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>SELECTED INVOICE PROJECT</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(tdMatcherHoursAudit.selectedProjectMilliseconds)}</div>
+                    <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.72rem" }}>{selectedInvoiceProject?.name || "Select an invoice project"}</div>
+                  </div>
+                </div>
+                {tdMatcherHoursAudit.loggedMilliseconds !== tdMatcherHoursAudit.tdMatcherMilliseconds ? (
+                  <div style={{ marginTop: "8px", color: "#B91C1C", fontSize: "0.82rem", fontWeight: 700 }}>
+                    TD Matcher is missing {formatHoursUsed(tdMatcherHoursAudit.loggedMilliseconds - tdMatcherHoursAudit.tdMatcherMilliseconds)} from finalized TimeRotate logs.
+                  </div>
+                ) : null}
+                {selectedProjectId && tdMatcherHoursAudit.unassignedToSelectedProjectMilliseconds > 0 ? (
+                  <div style={{ marginTop: "8px", color: "#B45309", fontSize: "0.82rem", fontWeight: 700 }}>
+                    Not assigned to this invoice project: {formatHoursUsed(tdMatcherHoursAudit.unassignedToSelectedProjectMilliseconds)}.
+                  </div>
+                ) : null}
               </div>
               <input
                 type="search"
