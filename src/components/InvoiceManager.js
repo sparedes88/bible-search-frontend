@@ -7676,6 +7676,18 @@ const InvoiceManager = () => {
                     <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(tdMatcherHoursAudit.selectedProjectMilliseconds)}</div>
                     <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.72rem" }}>{selectedInvoiceProject?.name || "Select an invoice project"}</div>
                   </div>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>INVOICE HOURS CAPTURED</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatHoursUsed(invoiceTableTotals.totalMilliseconds)}</div>
+                    <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.72rem" }}>Across this project's invoice weeks</div>
+                  </div>
+                  <div style={{ padding: "8px", background: "#FFFFFF", border: "1px solid #DBEAFE" }}>
+                    <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 700 }}>INVOICE TOTAL</div>
+                    <div style={{ color: "#0F172A", fontSize: "1rem", fontWeight: 800 }}>{formatCurrency(invoiceTableTotals.totalLaborCost)}</div>
+                    <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.72rem" }}>
+                      Subtotal billed: {formatCurrency(invoiceTableTotals.subtotalInvoiceAmount)}
+                    </div>
+                  </div>
                 </div>
                 {tdMatcherHoursAudit.loggedMilliseconds !== tdMatcherHoursAudit.tdMatcherMilliseconds ? (
                   <div style={{ marginTop: "8px", color: "#B91C1C", fontSize: "0.82rem", fontWeight: 700 }}>
