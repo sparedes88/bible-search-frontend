@@ -3874,8 +3874,8 @@ const InvoiceManager = () => {
 
   const handleExportBillableInvoice = (invoice, rowHoursData) => {
     const users = Array.isArray(rowHoursData?.users) ? rowHoursData.users : [];
-    if (!invoice || users.length === 0) {
-      toast.error("No user hours are available to generate a billable invoice.");
+    if (!invoice) {
+      toast.error("This invoice row cannot be opened.");
       return;
     }
 
@@ -6374,8 +6374,7 @@ const InvoiceManager = () => {
                       type="button"
                       style={{ ...compactButtonStyle, background: "#1D4ED8" }}
                       onClick={() => handleExportBillableInvoice(activeInvoice, activeRowHoursData)}
-                      disabled={activeRowUsersHours.length === 0}
-                      title={activeRowUsersHours.length === 0 ? "No user hours available" : "View billable invoice"}
+                      title="View billable invoice"
                     >
                       View Billable Invoice
                     </button>
@@ -6951,8 +6950,7 @@ const InvoiceManager = () => {
                                   type="button"
                                   style={{ ...buttonStyle, background: "#1D4ED8" }}
                                   onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
-                                  disabled={rowUsersHours.length === 0}
-                                  title={rowUsersHours.length === 0 ? "No user hours available" : "View billable invoice"}
+                                  title="View billable invoice"
                                 >
                                   View
                                 </button>
