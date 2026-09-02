@@ -1994,6 +1994,23 @@ const InvoiceManager = () => {
 
         const userAggregationByLabel = new Map();
 
+        // A day billed on its own row is removed from its parent week so hours are never counted twice.
+        const childDayRanges = normalizeInvoicePeriodType(invoice.periodType) === "day"
+          ? []
+          : invoices
+            .filter((candidate) => (
+              normalizeInvoicePeriodType(candidate.periodType) === "day"
+              && Number(candidate.weekNumber) === Number(invoice.weekNumber)
+            ))
+            .map((candidate) => {
+              const dayDate = toDateInputValue(candidate.mondayDate);
+              return {
+                start: dayDate ? Date.parse(`${dayDate}T00:00:00`) : Number.NaN,
+                end: dayDate ? Date.parse(`${dayDate}T23:59:59.999`) : Number.NaN,
+              };
+            })
+            .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end));
+
         let totalMilliseconds = 0;
         let totalRegularMilliseconds = 0;
         let totalOvertimeMilliseconds = 0;
@@ -2001,6 +2018,7 @@ const InvoiceManager = () => {
         billableTimeRotateLogs.forEach((log) => {
           if (!isLogMatchedToInvoiceProject(log, selectedProjectId)) return;
           if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
+          if (childDayRanges.some((range) => log.eventTimestamp >= range.start && log.eventTimestamp <= range.end)) return;
 
           const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
             regularMilliseconds: log.safeDuration,
@@ -3704,7 +3722,9 @@ const InvoiceManager = () => {
     const weekNumber = isSingleDayInvoice
       ? parseWeekNumber(parentWeekInvoice?.weekNumber)
       : parseWeekNumber(invoiceDraft.weekNumber) || parseWeekNumber(suggestion.weekNumber);
-    const invoiceNumber = normalizeInvoiceNumber(invoiceDraft.invoiceNumber);
+    const invoiceNumber = isSingleDayInvoice
+      ? normalizeInvoiceNumber(`${normalizeInvoiceNumber(parentWeekInvoice?.invoiceNumber || "")}.${dayIndex}`)
+      : normalizeInvoiceNumber(invoiceDraft.invoiceNumber);
     const total = parseMoney(invoiceDraft.total);
     const paymentTerms = String(invoiceDraft.paymentTerms || "net30").trim().toLowerCase() || "net30";
     const netDays = resolveNetDays(paymentTerms);
@@ -6126,15 +6146,35 @@ const InvoiceManager = () => {
                   </div>
                   <div>
                     <label style={fieldLabelStyle}>Invoice #</label>
-                    <input
-                      style={compactInputStyle}
-                      placeholder="Example: INV-2026-010"
-                      value={invoiceDraft.invoiceNumber}
-                      onChange={(event) =>
-                        setInvoiceDraft((prev) => ({ ...prev, invoiceNumber: event.target.value }))
-                      }
-                      onInput={() => setIsInvoiceDraftDirty(true)}
-                    />
+                    {normalizeInvoicePeriodType(invoiceDraft.periodType) === "day" ? (() => {
+                      const parentWeek = invoices.find((invoice) => invoice.id === invoiceDraft.parentWeekInvoiceId);
+                      const previewDayIndex = parentWeek
+                        ? getDayOffsetBetweenDates(toDateInputValue(parentWeek.mondayDate), toDateInputValue(invoiceDraft.mondayDate)) + 1
+                        : 0;
+                      const previewInvoiceNumber = parentWeek && previewDayIndex >= 1 && previewDayIndex <= 7
+                        ? `${normalizeInvoiceNumber(parentWeek.invoiceNumber)}.${previewDayIndex}`
+                        : "";
+
+                      return (
+                        <input
+                          style={{ ...compactInputStyle, background: "#F1F5F9" }}
+                          value={previewInvoiceNumber}
+                          placeholder="Select week and date"
+                          readOnly
+                          title="Set automatically from the selected week and day"
+                        />
+                      );
+                    })() : (
+                      <input
+                        style={compactInputStyle}
+                        placeholder="Example: INV-2026-010"
+                        value={invoiceDraft.invoiceNumber}
+                        onChange={(event) =>
+                          setInvoiceDraft((prev) => ({ ...prev, invoiceNumber: event.target.value }))
+                        }
+                        onInput={() => setIsInvoiceDraftDirty(true)}
+                      />
+                    )}
                   </div>
                   <div>
                     <label style={fieldLabelStyle}>Total</label>
