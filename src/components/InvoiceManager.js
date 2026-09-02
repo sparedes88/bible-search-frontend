@@ -1555,6 +1555,7 @@ const InvoiceManager = () => {
         projectName: String(log.projectName || "").trim() || "No project",
         tdId,
         tdTitle,
+        isMatchedToSelectedProject: false,
         timeRotateMilliseconds: 0,
         payEveryoneMilliseconds: 0,
         invoiceMilliseconds: 0,
@@ -1567,7 +1568,9 @@ const InvoiceManager = () => {
       if (usedAt > 0) {
         existing.registeredDates.add(new Date(usedAt).toISOString().slice(0, 10));
       }
-      if (isLogMatchedToInvoiceProject(log, selectedProjectId)) {
+      const isMatchedToSelectedProject = isLogMatchedToInvoiceProject(log, selectedProjectId);
+      if (isMatchedToSelectedProject) {
+        existing.isMatchedToSelectedProject = true;
         let isCoveredByInvoiceWeek = false;
         invoices.forEach((invoice) => {
           const mondayDate = toDateInputValue(invoice.mondayDate);
@@ -7614,7 +7617,11 @@ const InvoiceManager = () => {
                             <td style={tableBodyCellStyle}>{formatHoursUsed(row.payEveryoneMilliseconds)}</td>
                             <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>{formatHoursUsed(row.invoiceMilliseconds)}</td>
                             <td style={{ ...tableBodyCellStyle, color: row.invoiceWeeks.length > 0 ? "#166534" : "#B45309", fontWeight: 700 }}>
-                              {row.invoiceWeeks.length > 0 ? row.invoiceWeeks.join(", ") : "Not caught by an invoice week"}
+                              {row.invoiceWeeks.length > 0
+                                ? row.invoiceWeeks.join(", ")
+                                : row.isMatchedToSelectedProject
+                                  ? "No invoice week covers this registered date"
+                                  : "TD is not assigned to this invoice project in TD Matcher"}
                             </td>
                             <td style={{ ...tableBodyCellStyle, color: difference > 0 ? "#B45309" : "#166534", fontWeight: 800 }}>
                               {difference > 0 ? `${formatHoursUsed(difference)} excluded` : "Matched"}
