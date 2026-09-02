@@ -1562,12 +1562,16 @@ const InvoiceManager = () => {
         || ""
       ).trim();
       const key = `${userLabel.toLowerCase()}::${getTimeRotateTaskIdentity(log)}`;
+      const assignedInvoiceProjectId = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)] || "";
       const existing = groupedRows.get(key) || {
         userLabel,
         projectName: String(log.projectName || "").trim() || "No project",
         tdId,
         tdTitle,
         isMatchedToSelectedProject: false,
+        assignedInvoiceProjectName: assignedInvoiceProjectId
+          ? String(projects.find((project) => project.id === assignedInvoiceProjectId)?.name || "").trim()
+          : "",
         timeRotateMilliseconds: 0,
         payEveryoneMilliseconds: 0,
         invoiceMilliseconds: 0,
@@ -7646,7 +7650,9 @@ const InvoiceManager = () => {
                                 ? row.invoiceWeeks.join(", ")
                                 : row.isMatchedToSelectedProject
                                   ? "No invoice week covers this registered date"
-                                  : "TD is not assigned to this invoice project in TD Matcher"}
+                                  : row.assignedInvoiceProjectName
+                                    ? `Assigned in TD Matcher to ${row.assignedInvoiceProjectName}, not the selected invoice project`
+                                    : "TD is not assigned to any invoice project in TD Matcher"}
                             </td>
                             <td style={{ ...tableBodyCellStyle, color: difference > 0 ? "#B45309" : "#166534", fontWeight: 800 }}>
                               {difference > 0 ? `${formatHoursUsed(difference)} excluded` : "Matched"}
