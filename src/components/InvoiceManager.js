@@ -1459,7 +1459,16 @@ const InvoiceManager = () => {
           );
           return associatedNames.some((name) => normalizeProjectNameKey(name) === projectNameKey);
         });
-        return { ...row, explicitProjectId, users: Array.from(row.users).sort((left, right) => left.localeCompare(right)), matchedProjects };
+        const excludedByExplicitTdMatch = !explicitProjectId
+          && projectNamesWithExplicitTdMatches.has(projectNameKey)
+          && row.milliseconds > 0;
+        return {
+          ...row,
+          explicitProjectId,
+          excludedByExplicitTdMatch,
+          users: Array.from(row.users).sort((left, right) => left.localeCompare(right)),
+          matchedProjects,
+        };
       })
       .filter((row) => {
         const search = tdMatcherSearch.trim().toLowerCase();
@@ -1470,7 +1479,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projectNamesWithExplicitTdMatches, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
@@ -1590,7 +1599,9 @@ const InvoiceManager = () => {
 
             nextIssueTitleByIdentity[`${projectDocId}::${issueId}`] = issueTitle;
 
-            if (/^TD[-\s]?/i.test(issueId)) {
+            const isTechnicalDetail = /^TD[-\s]?/i.test(issueId)
+              || /technical detail/i.test(issueTitle);
+            if (isTechnicalDetail) {
               nextTdMatcherCandidates.push({
                 identity: `${projectDocId}::${issueId}`,
                 issueId,
@@ -7407,7 +7418,14 @@ const InvoiceManager = () => {
                           <td style={tableBodyCellStyle}>{formatHoursUsed(row.milliseconds)}</td>
                           <td style={tableBodyCellStyle}>{formatLogTimestamp(row.firstUsedAt)}</td>
                           <td style={tableBodyCellStyle}>{formatLogTimestamp(row.lastUsedAt)}</td>
-                          <td style={tableBodyCellStyle}>{row.users.join(", ") || "Unknown"}</td>
+                          <td style={tableBodyCellStyle}>
+                            <div>{row.users.join(", ") || "Unknown"}</div>
+                            {row.excludedByExplicitTdMatch ? (
+                              <div style={{ marginTop: "4px", color: "#B45309", fontSize: "0.75rem", fontWeight: 700 }}>
+                                Logged but excluded: select an invoice project for this TD.
+                              </div>
+                            ) : null}
+                          </td>
                           <td style={tableBodyCellStyle}>
                             <select
                               value={selectedMatch}
