@@ -2669,6 +2669,20 @@ const InvoiceManager = () => {
           ...invoiceDoc.data(),
           invoiceStatus: normalizeInvoiceStatus(invoiceDoc.data()?.invoiceStatus, invoiceDoc.data()?.total, invoiceDoc.data()?.invoiceNumber),
         }));
+        // Keep each week ahead of its own day rows, and order those days from the week's first day.
+        nextInvoices.sort((left, right) => {
+          const weekDelta = Number(left.weekNumber || 0) - Number(right.weekNumber || 0);
+          if (weekDelta !== 0) return weekDelta;
+
+          const leftIsDay = normalizeInvoicePeriodType(left.periodType) === "day";
+          const rightIsDay = normalizeInvoicePeriodType(right.periodType) === "day";
+          if (leftIsDay !== rightIsDay) return leftIsDay ? 1 : -1;
+
+          const dayDelta = (Number(left.dayIndex) || 0) - (Number(right.dayIndex) || 0);
+          if (dayDelta !== 0) return dayDelta;
+
+          return String(left.mondayDate || "").localeCompare(String(right.mondayDate || ""));
+        });
         setInvoices(nextInvoices);
         setLoadingInvoices(false);
       },
