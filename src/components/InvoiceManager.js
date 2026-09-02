@@ -1552,6 +1552,7 @@ const InvoiceManager = () => {
       const key = `${userLabel.toLowerCase()}::${getTimeRotateTaskIdentity(log)}`;
       const existing = groupedRows.get(key) || {
         userLabel,
+        projectName: String(log.projectName || "").trim() || "No project",
         tdId,
         tdTitle,
         timeRotateMilliseconds: 0,
@@ -7552,6 +7553,7 @@ const InvoiceManager = () => {
                     <thead>
                       <tr>
                         <th style={tableHeaderCellStyle}>User</th>
+                        <th style={tableHeaderCellStyle}>Project</th>
                         <th style={tableHeaderCellStyle}>TD Card</th>
                         <th style={tableHeaderCellStyle}>TimeRotate</th>
                         <th style={tableHeaderCellStyle}>Pay Everyone</th>
@@ -7563,7 +7565,7 @@ const InvoiceManager = () => {
                     </thead>
                     <tbody>
                       {hoursAuditRows.length === 0 ? (
-                        <tr><td style={tableBodyCellStyle} colSpan={8}>No finalized TimeRotate hours are available for this audit.</td></tr>
+                        <tr><td style={tableBodyCellStyle} colSpan={9}>No finalized TimeRotate hours are available for this audit.</td></tr>
                       ) : hoursAuditRows.map((row) => {
                         const difference = row.timeRotateMilliseconds - row.invoiceMilliseconds;
                         return (
@@ -7576,6 +7578,7 @@ const InvoiceManager = () => {
                                   : "-"}
                               </div>
                             </td>
+                            <td style={tableBodyCellStyle}>{row.projectName}</td>
                             <td style={tableBodyCellStyle}>
                               <div style={{ fontWeight: 700 }}>{row.tdId}</div>
                               {row.tdTitle ? <div style={{ marginTop: "2px", color: "#64748B", fontSize: "0.8rem" }}>{row.tdTitle}</div> : null}
