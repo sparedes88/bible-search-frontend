@@ -1038,6 +1038,8 @@ const InvoiceManager = () => {
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
+  const [hoursAuditTdIdentity, setHoursAuditTdIdentity] = useState("");
+  const [hoursAuditWeekNumber, setHoursAuditWeekNumber] = useState("");
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
   const [quickPaidSavingByInvoiceKey, setQuickPaidSavingByInvoiceKey] = useState({});
   const [allProjectInvoices, setAllProjectInvoices] = useState([]);
@@ -1517,12 +1519,27 @@ const InvoiceManager = () => {
   const hoursAuditRows = useMemo(() => {
     if (!selectedProjectId) return [];
 
+    const selectedWeekInvoices = hoursAuditWeekNumber
+      ? invoices.filter((invoice) => String(invoice.weekNumber) === hoursAuditWeekNumber)
+      : [];
+
     const groupedRows = new Map();
     timeRotateLogs.forEach((log) => {
       if (log.logType === "completion") return;
       const durationMs = getTimeRotateLogDurationMs(log);
       const usedAt = Number(log.startedAt) || Number(log.endedAt) || 0;
       if (durationMs <= 0) return;
+      if (hoursAuditTdIdentity && getTimeRotateTaskIdentity(log) !== hoursAuditTdIdentity) return;
+      if (selectedWeekInvoices.length > 0) {
+        const isInSelectedWeek = selectedWeekInvoices.some((invoice) => {
+          const mondayDate = toDateInputValue(invoice.mondayDate);
+          const weekEndDate = shiftDateInputValue(mondayDate, 6);
+          const rangeStart = mondayDate ? Date.parse(`${mondayDate}T00:00:00`) : Number.NaN;
+          const rangeEnd = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : Number.NaN;
+          return usedAt >= rangeStart && usedAt <= rangeEnd;
+        });
+        if (!isInSelectedWeek) return;
+      }
 
       const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
       const tdId = String(log.issueId || "Unspecified TD").trim();
@@ -1566,7 +1583,7 @@ const InvoiceManager = () => {
     return Array.from(groupedRows.values())
       .map((row) => ({ ...row, invoiceWeeks: Array.from(row.invoiceWeeks).sort() }))
       .sort((left, right) => left.userLabel.localeCompare(right.userLabel) || left.tdId.localeCompare(right.tdId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, hoursAuditTdIdentity, hoursAuditWeekNumber, invoices, issueTitleByIdentity, issueTitleByIssueId, selectedProjectId, tdInvoiceProjectIdByIdentity, timeRotateLogs]);
 
   const billableTimeRotateLogs = useMemo(() => {
     if (
@@ -7483,6 +7500,41 @@ const InvoiceManager = () => {
             <div style={{ ...tableShellStyle, padding: "12px" }}>
               <div style={{ color: "#334155", fontSize: "0.9rem", marginBottom: "12px" }}>
                 Compare all finalized time by user and TD card. TimeRotate and Pay Everyone use the same finalized logs; Invoice shows only the hours included by this invoice project's TD matches.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  Invoice Project
+                  <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} style={inputStyle}>
+                    <option value="">Select invoice project</option>
+                    {projects.map((project) => (
+                      <option key={`hours-audit-project-${project.id}`} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  TD Card
+                  <select value={hoursAuditTdIdentity} onChange={(event) => setHoursAuditTdIdentity(event.target.value)} style={inputStyle}>
+                    <option value="">All TD Cards</option>
+                    {tdMatcherRows.map((row) => (
+                      <option key={`hours-audit-td-${row.identity}`} value={row.identity}>
+                        {`${row.issueId || "TD"}${row.title ? ` - ${row.title}` : ""}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  Invoice Week
+                  <select value={hoursAuditWeekNumber} onChange={(event) => setHoursAuditWeekNumber(event.target.value)} style={inputStyle}>
+                    <option value="">All Invoice Weeks</option>
+                    {[...invoices]
+                      .sort((left, right) => Number(left.weekNumber || 0) - Number(right.weekNumber || 0))
+                      .map((invoice) => (
+                        <option key={`hours-audit-week-${invoice.id}`} value={String(invoice.weekNumber)}>
+                          {`Week ${invoice.weekNumber || "-"}: ${formatDisplayDate(invoice.mondayDate)} - ${formatDisplayDate(shiftDateInputValue(invoice.mondayDate, 6))}`}
+                        </option>
+                      ))}
+                  </select>
+                </label>
               </div>
               {!selectedInvoiceProject ? (
                 <p style={{ color: "#64748B", margin: 0 }}>Select an invoice project to run the audit.</p>
