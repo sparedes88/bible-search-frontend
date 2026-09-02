@@ -1515,7 +1515,10 @@ const InvoiceManager = () => {
   }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId, projectNamesWithExplicitTdMatches]);
 
   const billableTimeRotateLogs = useMemo(() => {
-    if (timeRotateLogs.length === 0 || allAssociatedTimeRotateProjectNameKeys.size === 0) {
+    if (
+      timeRotateLogs.length === 0
+      || (allAssociatedTimeRotateProjectNameKeys.size === 0 && Object.keys(tdInvoiceProjectIdByIdentity).length === 0)
+    ) {
       return [];
     }
 
@@ -1824,7 +1827,7 @@ const InvoiceManager = () => {
   }, [billableTimeRotateLogs]);
 
   const invoiceHoursById = useMemo(() => {
-    if (invoices.length === 0 || selectedTimeRotateProjectNameKeys.size === 0 || billableTimeRotateLogs.length === 0) {
+    if (invoices.length === 0 || billableTimeRotateLogs.length === 0) {
       return {};
     }
 
