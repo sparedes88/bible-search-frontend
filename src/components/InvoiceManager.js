@@ -228,6 +228,7 @@ const emptyInvoiceDraft = {
   billingSource: "main_system",
   apStatus: "draft",
   periodType: "week",
+  parentWeekInvoiceId: "",
 };
 
 const INVOICE_PERIOD_OPTIONS = [
@@ -3695,11 +3696,7 @@ const InvoiceManager = () => {
     const isSingleDayInvoice = periodType === "day";
     const singleDayDate = toDateInputValue(invoiceDraft.mondayDate);
     const parentWeekInvoice = isSingleDayInvoice
-      ? invoices.find((invoice) => {
-        if (normalizeInvoicePeriodType(invoice.periodType) === "day") return false;
-        const offset = getDayOffsetBetweenDates(toDateInputValue(invoice.mondayDate), singleDayDate);
-        return offset >= 0 && offset <= 6;
-      })
+      ? invoices.find((invoice) => invoice.id === invoiceDraft.parentWeekInvoiceId)
       : null;
     const dayIndex = parentWeekInvoice
       ? getDayOffsetBetweenDates(toDateInputValue(parentWeekInvoice.mondayDate), singleDayDate) + 1
@@ -3719,6 +3716,21 @@ const InvoiceManager = () => {
         invoiceDraft.mondayDate || suggestion.mondayDate
       );
     const dueDate = mondayDate ? shiftDateInputValue(mondayDate, netDays) : "";
+
+    if (isSingleDayInvoice && !parentWeekInvoice) {
+      toast.error("Select the week this day belongs to.");
+      return;
+    }
+
+    if (isSingleDayInvoice && !singleDayDate) {
+      toast.error("Select the date for this invoice.");
+      return;
+    }
+
+    if (isSingleDayInvoice && (dayIndex < 1 || dayIndex > 7)) {
+      toast.error("Pick a date inside the selected week.");
+      return;
+    }
 
     if (!weekNumber) {
       toast.error("Week number must be a positive number.");
@@ -6073,16 +6085,44 @@ const InvoiceManager = () => {
                   </div>
                   <div>
                     <label style={fieldLabelStyle}>Week</label>
-                    <input
-                      style={compactInputStyle}
-                      type="text"
-                      placeholder="Example: Week 10"
-                      value={invoiceDraft.weekNumber}
-                      onChange={(event) =>
-                        setInvoiceDraft((prev) => ({ ...prev, weekNumber: event.target.value }))
-                      }
-                      onInput={() => setIsInvoiceDraftDirty(true)}
-                    />
+                    {normalizeInvoicePeriodType(invoiceDraft.periodType) === "day" ? (
+                      <select
+                        style={compactInputStyle}
+                        value={invoiceDraft.parentWeekInvoiceId}
+                        onChange={(event) => {
+                          const parentWeek = invoices.find((invoice) => invoice.id === event.target.value);
+                          setIsInvoiceDraftDirty(true);
+                          setInvoiceDraft((prev) => ({
+                            ...prev,
+                            parentWeekInvoiceId: event.target.value,
+                            weekNumber: String(parentWeek?.weekNumber || ""),
+                            invoiceNumber: normalizeInvoiceNumber(parentWeek?.invoiceNumber || ""),
+                            mondayDate: toDateInputValue(parentWeek?.mondayDate || prev.mondayDate),
+                          }));
+                        }}
+                      >
+                        <option value="">Select a week</option>
+                        {invoices
+                          .filter((invoice) => normalizeInvoicePeriodType(invoice.periodType) !== "day")
+                          .sort((left, right) => Number(left.weekNumber || 0) - Number(right.weekNumber || 0))
+                          .map((invoice) => (
+                            <option key={`day-parent-week-${invoice.id}`} value={invoice.id}>
+                              {`Week ${invoice.weekNumber || "-"}: ${formatDisplayDate(invoice.mondayDate)}`}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <input
+                        style={compactInputStyle}
+                        type="text"
+                        placeholder="Example: Week 10"
+                        value={invoiceDraft.weekNumber}
+                        onChange={(event) =>
+                          setInvoiceDraft((prev) => ({ ...prev, weekNumber: event.target.value }))
+                        }
+                        onInput={() => setIsInvoiceDraftDirty(true)}
+                      />
+                    )}
                   </div>
                   <div>
                     <label style={fieldLabelStyle}>Invoice #</label>
