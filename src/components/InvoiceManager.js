@@ -1407,10 +1407,13 @@ const InvoiceManager = () => {
 
   const tdMatcherRows = useMemo(() => {
     const rowsByIdentity = new Map();
+    // A TD card and its time logs can carry different internal task identities, so group by TD ID.
+    const getRowKey = (issueId, identity) => String(issueId || "").trim().toLowerCase() || identity;
 
     tdMatcherCandidates.forEach((candidate) => {
-      rowsByIdentity.set(candidate.identity, {
+      rowsByIdentity.set(getRowKey(candidate.issueId, candidate.identity), {
         ...candidate,
+        identities: new Set([candidate.identity]),
         milliseconds: 0,
         firstUsedAt: 0,
         lastUsedAt: 0,
@@ -1431,8 +1434,9 @@ const InvoiceManager = () => {
         || ""
       ).trim();
 
-      const existing = rowsByIdentity.get(identity) || {
+      const existing = rowsByIdentity.get(getRowKey(log.issueId, identity)) || {
         identity,
+        identities: new Set(),
         issueId: String(log.issueId || "").trim(),
         title: resolvedTitle,
         projectName,
@@ -1441,6 +1445,8 @@ const InvoiceManager = () => {
         lastUsedAt: 0,
         users: new Set(),
       };
+      existing.identities.add(identity);
+      if (!existing.projectName && projectName) existing.projectName = projectName;
       if (!existing.title && resolvedTitle) existing.title = resolvedTitle;
       existing.milliseconds += Math.max(0, Number(log.durationMs) || (Number(log.endedAt) - Number(log.startedAt)) || 0);
       const logStartAt = Number(log.startedAt) || Number(log.endedAt) || 0;
@@ -1453,12 +1459,15 @@ const InvoiceManager = () => {
       }
       const userLabel = getTimeLogUserLabel(log, fullNameByIdentityAlias, fullNameByFirstNameOnly);
       if (userLabel) existing.users.add(userLabel);
-      rowsByIdentity.set(identity, existing);
+      rowsByIdentity.set(getRowKey(log.issueId, identity), existing);
     });
 
     return Array.from(rowsByIdentity.values())
       .map((row) => {
-        const explicitProjectId = tdInvoiceProjectIdByIdentity[row.identity];
+        const identities = Array.from(row.identities || [row.identity]).filter(Boolean);
+        const explicitProjectId = identities
+          .map((identity) => tdInvoiceProjectIdByIdentity[identity])
+          .find(Boolean);
         const projectNameKey = normalizeProjectNameKey(row.projectName);
         const matchedProjects = explicitProjectId
           ? projects.filter((project) => project.id === explicitProjectId)
@@ -1473,6 +1482,7 @@ const InvoiceManager = () => {
           && row.milliseconds > 0;
         return {
           ...row,
+          identities,
           explicitProjectId,
           excludedByExplicitTdMatch,
           users: Array.from(row.users).sort((left, right) => left.localeCompare(right)),
@@ -4655,13 +4665,15 @@ const InvoiceManager = () => {
     }
   };
 
-  const handleMatchTdToInvoiceProject = async (tdIdentity, timeRotateProjectName, targetProjectId) => {
+  const handleMatchTdToInvoiceProject = async (tdIdentities, timeRotateProjectName, targetProjectId) => {
     if (!canManageInvoices || !targetProjectId) return;
 
     const targetProject = projects.find((project) => project.id === targetProjectId);
-    const normalizedTdIdentity = String(tdIdentity || "").trim();
+    const normalizedTdIdentities = (Array.isArray(tdIdentities) ? tdIdentities : [tdIdentities])
+      .map((identity) => String(identity || "").trim())
+      .filter(Boolean);
     const normalizedProjectName = String(timeRotateProjectName || "").trim();
-    if (!targetProject || !normalizedTdIdentity || !normalizedProjectName) return;
+    if (!targetProject || normalizedTdIdentities.length === 0) return;
 
     try {
       const normalizedProjectNameKey = normalizeProjectNameKey(normalizedProjectName);
@@ -4682,13 +4694,15 @@ const InvoiceManager = () => {
           });
         }
       });
-      batch.set(doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(normalizedTdIdentity)), {
-        taskIdentity: normalizedTdIdentity,
-        invoiceProjectId: targetProjectId,
-        updatedAt: Date.now(),
-        updatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
-        updatedByUid: user?.uid || "",
-      }, { merge: true });
+      normalizedTdIdentities.forEach((taskIdentity) => {
+        batch.set(doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(taskIdentity)), {
+          taskIdentity,
+          invoiceProjectId: targetProjectId,
+          updatedAt: Date.now(),
+          updatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+          updatedByUid: user?.uid || "",
+        }, { merge: true });
+      });
       await batch.commit();
       toast.success(`TD is now matched to ${targetProject.name}.`);
     } catch (error) {
@@ -7729,8 +7743,8 @@ const InvoiceManager = () => {
                           <td style={tableBodyCellStyle}>
                             <select
                               value={selectedMatch}
-                              onChange={(event) => handleMatchTdToInvoiceProject(row.identity, row.projectName, event.target.value)}
-                              disabled={!row.projectName || !canManageInvoices}
+                              onChange={(event) => handleMatchTdToInvoiceProject(row.identities, row.projectName, event.target.value)}
+                              disabled={!canManageInvoices}
                               style={{ ...compactInputStyle, minWidth: "220px" }}
                             >
                               <option value="">
