@@ -1038,6 +1038,7 @@ const InvoiceManager = () => {
   const [addingNextWeek, setAddingNextWeek] = useState(false);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
+  const [showUnmatchedTdsOnly, setShowUnmatchedTdsOnly] = useState(false);
   const [hoursAuditTimeRotateProject, setHoursAuditTimeRotateProject] = useState("");
   const [hoursAuditTdIdentity, setHoursAuditTdIdentity] = useState("");
   const [hoursAuditWeekNumber, setHoursAuditWeekNumber] = useState("");
@@ -1474,6 +1475,7 @@ const InvoiceManager = () => {
         };
       })
       .filter((row) => {
+        if (showUnmatchedTdsOnly && row.explicitProjectId) return false;
         const search = tdMatcherSearch.trim().toLowerCase();
         if (!search) return true;
         return [row.issueId, row.title, row.projectName, ...row.users]
@@ -1482,7 +1484,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, showUnmatchedTdsOnly, tdInvoiceProjectIdByIdentity, tdMatcherCandidates, tdMatcherSearch, timeRotateLogs]);
 
   const tdMatcherHoursAudit = useMemo(() => {
     const finalizedLogs = timeRotateLogs.filter((log) => (
@@ -1502,12 +1504,16 @@ const InvoiceManager = () => {
         .reduce((total, log) => total + getTimeRotateLogDurationMs(log), 0)
       : 0;
 
+    const unassignedMilliseconds = finalizedLogs
+      .filter((log) => !tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)])
+      .reduce((total, log) => total + getTimeRotateLogDurationMs(log), 0);
+
     return {
       loggedMilliseconds,
       payEveryoneMilliseconds: loggedMilliseconds,
       tdMatcherMilliseconds,
       selectedProjectMilliseconds,
-      unassignedToSelectedProjectMilliseconds: Math.max(0, loggedMilliseconds - selectedProjectMilliseconds),
+      unassignedMilliseconds,
     };
   }, [selectedProjectId, tdMatcherRows, timeRotateLogs, tdInvoiceProjectIdByIdentity, associatedTimeRotateProjectNameKeysByProjectId]);
 
@@ -7676,19 +7682,29 @@ const InvoiceManager = () => {
                     TD Matcher is missing {formatHoursUsed(tdMatcherHoursAudit.loggedMilliseconds - tdMatcherHoursAudit.tdMatcherMilliseconds)} from finalized TimeRotate logs.
                   </div>
                 ) : null}
-                {selectedProjectId && tdMatcherHoursAudit.unassignedToSelectedProjectMilliseconds > 0 ? (
+                {tdMatcherHoursAudit.unassignedMilliseconds > 0 ? (
                   <div style={{ marginTop: "8px", color: "#B45309", fontSize: "0.82rem", fontWeight: 700 }}>
-                    Not assigned to this invoice project: {formatHoursUsed(tdMatcherHoursAudit.unassignedToSelectedProjectMilliseconds)}.
+                    Logged hours with no TD assignment in any invoice project: {formatHoursUsed(tdMatcherHoursAudit.unassignedMilliseconds)}. Use "Show unmatched TDs only" below to assign them.
                   </div>
                 ) : null}
               </div>
-              <input
-                type="search"
-                value={tdMatcherSearch}
-                onChange={(event) => setTdMatcherSearch(event.target.value)}
-                placeholder="Search TD ID, title, TimeRotate project, or user"
-                style={{ ...inputStyle, maxWidth: "480px", marginBottom: "12px" }}
-              />
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "12px" }}>
+                <input
+                  type="search"
+                  value={tdMatcherSearch}
+                  onChange={(event) => setTdMatcherSearch(event.target.value)}
+                  placeholder="Search TD ID, title, TimeRotate project, or user"
+                  style={{ ...inputStyle, maxWidth: "480px" }}
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "#334155", fontSize: "0.85rem", fontWeight: 700, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={showUnmatchedTdsOnly}
+                    onChange={(event) => setShowUnmatchedTdsOnly(event.target.checked)}
+                  />
+                  Show unmatched TDs only
+                </label>
+              </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "940px" }}>
                   <thead>
