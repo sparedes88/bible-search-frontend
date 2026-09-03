@@ -806,6 +806,108 @@ const BillableInvoicePreviewPage = () => {
     }
   };
 
+  const [documentPresets, setDocumentPresets] = useState([]);
+  const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [presetNameDraft, setPresetNameDraft] = useState("");
+  const [isSavingPreset, setIsSavingPreset] = useState(false);
+
+  const presetsCollectionRef = useMemo(() => {
+    if (!id || !draftPayload?.projectId) return null;
+    return collection(db, "churches", id, "invoiceProjects", draftPayload.projectId, "billableDocumentPresets");
+  }, [id, draftPayload?.projectId]);
+
+  useEffect(() => {
+    if (!presetsCollectionRef) {
+      setDocumentPresets([]);
+      return undefined;
+    }
+
+    return onSnapshot(presetsCollectionRef, (snapshot) => {
+      setDocumentPresets(snapshot.docs
+        .map((presetDoc) => ({ id: presetDoc.id, ...presetDoc.data() }))
+        .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""))));
+    }, (error) => {
+      console.error("Failed to load billable document presets:", error);
+      setDocumentPresets([]);
+    });
+  }, [presetsCollectionRef]);
+
+  const handleSaveDocumentPreset = async () => {
+    if (!presetsCollectionRef) {
+      toast.error("Regenerate this preview from Invoices to save presets.");
+      return;
+    }
+
+    const name = presetNameDraft.trim();
+    if (!name) {
+      toast.error("Name this preset first.");
+      return;
+    }
+
+    setIsSavingPreset(true);
+    try {
+      await addDoc(presetsCollectionRef, {
+        name,
+        settings: {
+          documentType,
+          showTotals: showDocumentTotals,
+          infoVisibility: documentInfoVisibility,
+          includeWorkSummaryInPdf,
+          clientWorkOrderNumber,
+          showClientWorkOrderNumber,
+          roundHoursUp,
+          showDrafterNames,
+          drafterNamesByUser,
+          showRegularOvertimeLabels,
+          sectionVisibility,
+        },
+        createdAt: serverTimestamp(),
+      });
+      setPresetNameDraft("");
+      toast.success(`Preset "${name}" saved.`);
+    } catch (error) {
+      console.error("Failed to save billable document preset:", error);
+      toast.error("Failed to save this preset.");
+    } finally {
+      setIsSavingPreset(false);
+    }
+  };
+
+  const handleApplyDocumentPreset = async (presetId) => {
+    setSelectedPresetId(presetId);
+    const preset = documentPresets.find((entry) => entry.id === presetId);
+    if (!preset) return;
+
+    const settings = preset.settings || {};
+    setSectionVisibility((previous) => ({ ...previous, ...(settings.sectionVisibility || {}) }));
+    await handleDocumentSettingsChange(
+      settings.documentType || "invoice",
+      settings.showTotals !== false,
+      { ...documentInfoVisibility, ...(settings.infoVisibility || {}) },
+      settings.includeWorkSummaryInPdf === true,
+      String(settings.clientWorkOrderNumber || ""),
+      settings.showClientWorkOrderNumber === true,
+      settings.roundHoursUp === true,
+      settings.showDrafterNames === true,
+      settings.drafterNamesByUser || {},
+      settings.showRegularOvertimeLabels !== false
+    );
+    toast.success(`Preset "${preset.name || "Preset"}" applied.`);
+  };
+
+  const handleDeleteDocumentPreset = async () => {
+    if (!presetsCollectionRef || !selectedPresetId) return;
+
+    try {
+      await deleteDoc(doc(presetsCollectionRef, selectedPresetId));
+      setSelectedPresetId("");
+      toast.success("Preset deleted.");
+    } catch (error) {
+      console.error("Failed to delete billable document preset:", error);
+      toast.error("Failed to delete this preset.");
+    }
+  };
+
   const handleSaveNoteOverrides = async () => {
     if (!invoiceDocRef) {
       toast.error("This invoice preview cannot be saved to Firebase (missing invoice reference). Regenerate it from Invoices.");
@@ -1621,6 +1723,46 @@ const BillableInvoicePreviewPage = () => {
             {section.label}
           </label>
         ))}
+      </div>
+
+      <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <strong style={{ color: "#0F172A" }}>Preset:</strong>
+        <select
+          value={selectedPresetId}
+          onChange={(event) => handleApplyDocumentPreset(event.target.value)}
+          disabled={isSavingDocumentSettings}
+          style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem", minWidth: "220px" }}
+        >
+          <option value="">Select a saved preset</option>
+          {documentPresets.map((preset) => (
+            <option key={preset.id} value={preset.id}>{preset.name || "Untitled preset"}</option>
+          ))}
+        </select>
+        {selectedPresetId ? (
+          <button
+            type="button"
+            onClick={handleDeleteDocumentPreset}
+            style={{ border: "1px solid #FCA5A5", borderRadius: "6px", padding: "7px 12px", background: "#FFFFFF", color: "#B91C1C", fontWeight: 700, cursor: "pointer" }}
+          >
+            Delete
+          </button>
+        ) : null}
+        <input
+          type="text"
+          value={presetNameDraft}
+          onChange={(event) => setPresetNameDraft(event.target.value)}
+          placeholder="Name this preset"
+          style={{ padding: "8px", borderRadius: "6px", border: "1px solid #CBD5E1", fontSize: "0.9rem", minWidth: "200px" }}
+        />
+        <button
+          type="button"
+          onClick={handleSaveDocumentPreset}
+          disabled={isSavingPreset}
+          title="Save the current options, client work order, and drafter names as a reusable preset"
+          style={{ border: "none", borderRadius: "6px", padding: "8px 14px", background: "#0F766E", color: "#FFFFFF", fontWeight: 700, cursor: isSavingPreset ? "not-allowed" : "pointer", opacity: isSavingPreset ? 0.7 : 1 }}
+        >
+          {isSavingPreset ? "Saving..." : "Save Current as Preset"}
+        </button>
       </div>
 
       <div data-html2canvas-ignore="true" style={{ ...cardStyle, marginTop: "12px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
