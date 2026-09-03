@@ -39,9 +39,10 @@ const toMillisFromAny = (value) => {
   return 0;
 };
 
-// Mirrors PayEveryone's compensation resolution (current rate, same as its Time and Cost tab)
-// so the P&L section's labor cost matches what that module would show for the same person.
-const resolveCurrentHourlyRateFromSettings = (data = {}) => {
+// Mirrors PayEveryone's compensation resolution, but using the rate that was in effect during
+// the billed period (its rate history) instead of today's rate, so a raise/change made after the
+// invoice period doesn't distort the historical labor cost.
+const resolveHourlyRateFromSettings = (data = {}, referenceTimestamp = Date.now()) => {
   const normalizeSnapshot = (value = {}) => ({
     billingType: String(value.billingType || "").toLowerCase() === "salary" ? "salary" : "hourly",
     hourlyRate: Number(value.hourlyRate) || 0,
@@ -54,8 +55,8 @@ const resolveCurrentHourlyRateFromSettings = (data = {}) => {
     .filter((entry) => Number.isFinite(entry.effectiveFrom))
     .sort((left, right) => left.effectiveFrom - right.effectiveFrom);
 
-  const now = Date.now();
-  const effectiveEntry = [...changeLog].reverse().find((entry) => entry.effectiveFrom <= now)
+  const safeReference = Number(referenceTimestamp) || Date.now();
+  const effectiveEntry = [...changeLog].reverse().find((entry) => entry.effectiveFrom <= safeReference)
     || changeLog[0]
     || normalizeSnapshot(data);
 
@@ -400,29 +401,27 @@ const BillableInvoicePreviewPage = () => {
 
   // Backtraces P&L labor cost to Pay Everyone's compensation settings, keyed by every identity
   // (userId, email, display name) that could plausibly match a Time Rotate log's user.
-  const [hourlyRateByIdentityKey, setHourlyRateByIdentityKey] = useState({});
+  const [compSettingsByIdentityKey, setCompSettingsByIdentityKey] = useState({});
 
   useEffect(() => {
     if (!id) {
-      setHourlyRateByIdentityKey({});
+      setCompSettingsByIdentityKey({});
       return undefined;
     }
 
     return onSnapshot(collection(db, "churches", id, "payEveryoneUserSettings"), (snapshot) => {
-      const nextRatesByKey = {};
+      const nextSettingsByKey = {};
       snapshot.docs.forEach((settingsDoc) => {
         const data = settingsDoc.data() || {};
-        const hourlyRate = resolveCurrentHourlyRateFromSettings(data);
-        if (!Number.isFinite(hourlyRate) || hourlyRate <= 0) return;
 
         [data.userKey, data.userId, data.userEmail, data.userLabel]
           .map((value) => String(value || "").trim().toLowerCase())
           .filter(Boolean)
           .forEach((key) => {
-            nextRatesByKey[key] = hourlyRate;
+            nextSettingsByKey[key] = data;
           });
       });
-      setHourlyRateByIdentityKey(nextRatesByKey);
+      setCompSettingsByIdentityKey(nextSettingsByKey);
     });
   }, [id]);
 
@@ -1492,6 +1491,14 @@ const BillableInvoicePreviewPage = () => {
   }, [effectiveUsers]);
 
   const profitLossRows = useMemo(() => {
+    // Use the end of the billed period (not "now") so a later raise/rate change in Pay Everyone
+    // doesn't distort what this invoice's labor actually cost at the time it was worked.
+    const periodReferenceTimestamp = (() => {
+      const weekEndDate = draftPayload?.weekEndDate;
+      const parsed = weekEndDate ? Date.parse(`${weekEndDate}T23:59:59.999`) : NaN;
+      return Number.isFinite(parsed) ? parsed : Date.now();
+    })();
+
     return effectiveUsers.map((userEntry) => {
       const identityCandidates = [
         ...(Array.isArray(userEntry.identityKeys) ? userEntry.identityKeys : []),
@@ -1500,8 +1507,11 @@ const BillableInvoicePreviewPage = () => {
         .map((value) => String(value || "").trim().toLowerCase())
         .filter(Boolean);
 
-      const matchedKey = identityCandidates.find((key) => hourlyRateByIdentityKey[key] !== undefined);
-      const hourlyRate = matchedKey ? hourlyRateByIdentityKey[matchedKey] : 0;
+      const matchedKey = identityCandidates.find((key) => compSettingsByIdentityKey[key] !== undefined);
+      const hourlyRate = matchedKey
+        ? resolveHourlyRateFromSettings(compSettingsByIdentityKey[matchedKey], periodReferenceTimestamp)
+        : 0;
+      const hasRate = Boolean(matchedKey) && Number.isFinite(hourlyRate) && hourlyRate > 0;
       const realHours = Number(userEntry.realTotalHours || userEntry.totalHours || 0);
       const realLaborCost = hourlyRate * realHours;
       const billedAmount = Number(userEntry.lineTotal || 0);
@@ -1512,14 +1522,14 @@ const BillableInvoicePreviewPage = () => {
         name: userEntry.name,
         realHours,
         hourlyRate,
-        hasRate: Boolean(matchedKey),
+        hasRate,
         realLaborCost,
         billedAmount,
         margin,
         marginPercent,
       };
     });
-  }, [effectiveUsers, hourlyRateByIdentityKey]);
+  }, [effectiveUsers, compSettingsByIdentityKey, draftPayload?.weekEndDate]);
 
   const profitLossTotals = useMemo(() => {
     const totals = profitLossRows.reduce((accumulator, row) => ({
