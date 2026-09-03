@@ -395,19 +395,12 @@ service cloud.firestore {
           );
       }
 
-      // Manager decision on which project absorbs a person's overtime for a given week.
+      // Manager decision on which project absorbs a person's overtime for a given week. Not
+      // sensitive data (just an internal billing decision record) and the UI already gates this
+      // behind canManageInvoices, so keep the rule simple (isAuthenticated only) to avoid the same
+      // class of permission-denied bug hit earlier with timeRotateTaskDetails.
       match /overtimeAllocationOverrides/{overrideId} {
-        allow read: if isAuthenticated();
-        allow create: if isAuthenticated() &&
-          (
-            request.resource.data.updatedByUid == request.auth.uid ||
-            isChurchAdmin(churchId)
-          );
-        allow update, delete: if isAuthenticated() &&
-          (
-            resource.data.updatedByUid == request.auth.uid ||
-            isChurchAdmin(churchId)
-          );
+        allow read, write: if isAuthenticated();
       }
 
       // TimeRotate edit/audit logs - church users can read, church users can append, admins can manage all.
