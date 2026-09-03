@@ -601,6 +601,7 @@ const TimeRotate = () => {
   const [taskTagsByIdentity, setTaskTagsByIdentity] = useState({});
   const [taskProjectNameByIdentity, setTaskProjectNameByIdentity] = useState({});
   const [taskCompletionByIdentity, setTaskCompletionByIdentity] = useState({});
+  const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
   const [projectNameQuickUpdate, setProjectNameQuickUpdate] = useState({
     open: false,
     card: null,
@@ -1285,6 +1286,7 @@ const TimeRotate = () => {
         const nextTagsMap = {};
         const nextProjectNameMap = {};
         const nextCompletionMap = {};
+        const nextBlockedMap = {};
 
         snapshot.forEach((snapshotDoc) => {
           const data = snapshotDoc.data() || {};
@@ -1300,11 +1302,13 @@ const TimeRotate = () => {
             nextProjectNameMap[taskIdentity] = normalizeValue(data.projectName);
           }
           nextCompletionMap[taskIdentity] = normalizeCompletionStatus(data.completionStatus, data.isCompleted === true);
+          nextBlockedMap[taskIdentity] = data.timeEntryBlocked === true;
         });
 
         setTaskTagsByIdentity(nextTagsMap);
         setTaskProjectNameByIdentity(nextProjectNameMap);
         setTaskCompletionByIdentity(nextCompletionMap);
+        setTaskBlockedByIdentity(nextBlockedMap);
       },
       (snapshotError) => {
         console.error("Error loading task descriptions:", snapshotError);
@@ -1955,10 +1959,10 @@ const TimeRotate = () => {
   const manualTaskOptions = useMemo(() => {
     return productionCards.map((card) => ({
       value: card.taskIdentity,
-      label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})`,
+      label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})${taskBlockedByIdentity[card.taskIdentity] ? " [BLOCKED]" : ""}`,
       card,
     }));
-  }, [getResolvedProjectName, productionCards]);
+  }, [getResolvedProjectName, productionCards, taskBlockedByIdentity]);
 
   const selectedManualUser = useMemo(() => {
     return manualUserOptions.find((option) => option.value === manualSelectedUserId) || null;
@@ -2192,6 +2196,11 @@ const TimeRotate = () => {
     }
 
     if (activeTimer && activeTimer.cardKey === card.key) {
+      return;
+    }
+
+    if (taskBlockedByIdentity[card.taskIdentity]) {
+      setLogActionError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
       return;
     }
 
@@ -2433,6 +2442,12 @@ const TimeRotate = () => {
 
     if (!selectedManualTask) {
       setManualEntryError("Select a task before saving manual time.");
+      setManualEntrySuccess("");
+      return;
+    }
+
+    if (taskBlockedByIdentity[selectedManualTask.taskIdentity]) {
+      setManualEntryError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
       setManualEntrySuccess("");
       return;
     }
@@ -3989,18 +4004,19 @@ const TimeRotate = () => {
                         <button
                           type="button"
                           onClick={() => handleStart(card)}
-                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key)}
+                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || Boolean(taskBlockedByIdentity[card.taskIdentity])}
+                          title={taskBlockedByIdentity[card.taskIdentity] ? "This TD card is blocked from time entry" : undefined}
                           style={{
-                            backgroundColor: activeTimer ? "#94A3B8" : "#0F766E",
+                            backgroundColor: taskBlockedByIdentity[card.taskIdentity] ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
                             color: "#FFFFFF",
                             border: "none",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            cursor: activeTimer ? "not-allowed" : "pointer",
+                            cursor: (activeTimer || taskBlockedByIdentity[card.taskIdentity]) ? "not-allowed" : "pointer",
                             fontWeight: 600,
                           }}
                         >
-                          Start
+                          {taskBlockedByIdentity[card.taskIdentity] ? "Blocked" : "Start"}
                         </button>
                       )}
                     </td>

@@ -1109,6 +1109,7 @@ const InvoiceManager = () => {
   const [tdMatcherCandidates, setTdMatcherCandidates] = useState([]);
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
   const [tdInvoiceProjectIdByIdentity, setTdInvoiceProjectIdByIdentity] = useState({});
+  const [tdBlockedByIdentity, setTdBlockedByIdentity] = useState({});
   const externalPdfInputRef = useRef(null);
 
   const handleInvoicesTabChange = (tabKey, { replace = false } = {}) => {
@@ -1297,16 +1298,20 @@ const InvoiceManager = () => {
 
     return onSnapshot(collection(db, "churches", id, "timeRotateTaskDetails"), (snapshot) => {
       const nextMatches = {};
+      const nextBlocked = {};
       snapshot.forEach((taskDoc) => {
         const taskData = taskDoc.data() || {};
         const taskIdentity = String(taskData.taskIdentity || "").trim();
         const invoiceProjectId = String(taskData.invoiceProjectId || "").trim();
         if (taskIdentity && invoiceProjectId) nextMatches[taskIdentity] = invoiceProjectId;
+        if (taskIdentity) nextBlocked[taskIdentity] = taskData.timeEntryBlocked === true;
       });
       setTdInvoiceProjectIdByIdentity(nextMatches);
+      setTdBlockedByIdentity(nextBlocked);
     }, (error) => {
       console.error("Error loading TD invoice matches:", error);
       setTdInvoiceProjectIdByIdentity({});
+      setTdBlockedByIdentity({});
     });
   }, [id]);
 
@@ -1516,11 +1521,13 @@ const InvoiceManager = () => {
           ? projects.filter((project) => project.id === explicitProjectId)
           : [];
         const excludedByExplicitTdMatch = !explicitProjectId && row.milliseconds > 0;
+        const isBlocked = identities.some((identity) => tdBlockedByIdentity[identity]);
         return {
           ...row,
           identities,
           explicitProjectId,
           excludedByExplicitTdMatch,
+          isBlocked,
           users: Array.from(row.users).sort((left, right) => left.localeCompare(right)),
           matchedProjects,
         };
@@ -1537,7 +1544,7 @@ const InvoiceManager = () => {
           .includes(search);
       })
       .sort((left, right) => left.projectName.localeCompare(right.projectName) || left.issueId.localeCompare(right.issueId));
-  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, showUnmatchedTdsOnly, tdInvoiceProjectIdByIdentity, tdInvoiceProjectIdByIssueId, tdMatcherCandidates, tdMatcherProjectFilter, tdMatcherSearch, timeRotateLogs]);
+  }, [fullNameByFirstNameOnly, fullNameByIdentityAlias, issueTitleByIdentity, issueTitleByIssueId, projects, showUnmatchedTdsOnly, tdBlockedByIdentity, tdInvoiceProjectIdByIdentity, tdInvoiceProjectIdByIssueId, tdMatcherCandidates, tdMatcherProjectFilter, tdMatcherSearch, timeRotateLogs]);
 
   const tdMatcherHoursAudit = useMemo(() => {
     const finalizedLogs = timeRotateLogs.filter((log) => (
@@ -4999,6 +5006,33 @@ const InvoiceManager = () => {
     }
   };
 
+  const handleToggleTdBlocked = async (tdIdentities, nextBlocked) => {
+    if (!canManageInvoices) return;
+
+    const normalizedTdIdentities = (Array.isArray(tdIdentities) ? tdIdentities : [tdIdentities])
+      .map((identity) => String(identity || "").trim())
+      .filter(Boolean);
+    if (normalizedTdIdentities.length === 0) return;
+
+    try {
+      const batch = writeBatch(db);
+
+      normalizedTdIdentities.forEach((taskIdentity) => {
+        batch.set(doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(taskIdentity)), {
+          taskIdentity,
+          timeEntryBlocked: nextBlocked,
+          timeEntryBlockedUpdatedAt: Date.now(),
+          timeEntryBlockedUpdatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+        }, { merge: true });
+      });
+      await batch.commit();
+      toast.success(nextBlocked ? "TD card is now blocked from time entry." : "TD card is now unblocked.");
+    } catch (error) {
+      console.error("Error updating TD blocked status:", error);
+      toast.error("Failed to update the TD's blocked status.");
+    }
+  };
+
   const handleUpdateApStatus = async (invoice, nextStatusValue) => {
     if (!canManageInvoices || !selectedProjectId || !invoice?.id) {
       return;
@@ -8275,16 +8309,17 @@ const InvoiceManager = () => {
                       <th style={tableHeaderCellStyle}>Last Used</th>
                       <th style={tableHeaderCellStyle}>Users</th>
                       <th style={tableHeaderCellStyle}>Invoice Project Match</th>
+                      <th style={tableHeaderCellStyle}>Time Entry</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tdMatcherRows.length === 0 ? (
-                      <tr><td style={tableBodyCellStyle} colSpan={8}>No TimeRotate Technical Details match this search.</td></tr>
+                      <tr><td style={tableBodyCellStyle} colSpan={9}>No TimeRotate Technical Details match this search.</td></tr>
                     ) : tdMatcherRows.map((row) => {
                       const matchedProjectIds = row.matchedProjects.map((project) => project.id);
                       const selectedMatch = matchedProjectIds.length === 1 ? matchedProjectIds[0] : "";
                       return (
-                        <tr key={row.identity} style={{ background: row.matchedProjects.length === 1 ? "#F0FDF4" : "#FFFBEB" }}>
+                        <tr key={row.identity} style={{ background: row.isBlocked ? "#FEF2F2" : (row.matchedProjects.length === 1 ? "#F0FDF4" : "#FFFBEB") }}>
                           <td style={tableBodyCellStyle}>{row.issueId || "-"}</td>
                           <td style={tableBodyCellStyle}>{row.title || "-"}</td>
                           <td style={tableBodyCellStyle}>{row.projectName || "Missing project name"}</td>
@@ -8318,6 +8353,26 @@ const InvoiceManager = () => {
                                 Currently matches: {row.matchedProjects.map((project) => project.name).join(", ")}
                               </div>
                             ) : null}
+                          </td>
+                          <td style={tableBodyCellStyle}>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTdBlocked(row.identities, !row.isBlocked)}
+                              disabled={!canManageInvoices}
+                              title={row.isBlocked ? "Unblock this TD card so time can be logged to it again" : "Block this TD card from new time entries in TimeRotate and Pay Everyone"}
+                              style={{
+                                border: "none",
+                                borderRadius: "999px",
+                                padding: "6px 12px",
+                                fontWeight: 700,
+                                fontSize: "0.78rem",
+                                cursor: canManageInvoices ? "pointer" : "not-allowed",
+                                background: row.isBlocked ? "#DC2626" : "#E2E8F0",
+                                color: row.isBlocked ? "#FFFFFF" : "#334155",
+                              }}
+                            >
+                              {row.isBlocked ? "Blocked" : "Allowed"}
+                            </button>
                           </td>
                         </tr>
                       );

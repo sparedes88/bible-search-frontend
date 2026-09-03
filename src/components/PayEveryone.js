@@ -3121,6 +3121,7 @@ const EditableTimeEntriesTab = ({
             nextOptions.push({
               key: `${projectDoc.id}-${issueDoc.id}`,
               issueId,
+              projectDocId: projectDoc.id,
               projectName,
               issueLabel: normalizeValue(titleField ? rowData[titleField] : ""),
             });
@@ -3158,6 +3159,32 @@ const EditableTimeEntriesTab = ({
     return () => {
       isCancelled = true;
     };
+  }, [id]);
+
+  // TD cards blocked in the TD Matcher (Invoices) can't have new time charged to them here.
+  const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
+
+  useEffect(() => {
+    if (!id) {
+      setTaskBlockedByIdentity({});
+      return undefined;
+    }
+
+    const unsubscribe = onSnapshot(collection(db, "churches", id, "timeRotateTaskDetails"), (snapshot) => {
+      const nextBlockedMap = {};
+      snapshot.forEach((snapshotDoc) => {
+        const data = snapshotDoc.data() || {};
+        const taskIdentity = normalizeValue(data.taskIdentity);
+        if (!taskIdentity) return;
+        nextBlockedMap[taskIdentity] = data.timeEntryBlocked === true;
+      });
+      setTaskBlockedByIdentity(nextBlockedMap);
+    }, (error) => {
+      console.error("Error loading TD blocked status:", error);
+      setTaskBlockedByIdentity({});
+    });
+
+    return () => unsubscribe();
   }, [id]);
 
   const buildCardValue = (issueId, projectName) => `${normalizeComparable(issueId)}||${normalizeComparable(projectName)}`;
@@ -3513,6 +3540,17 @@ const EditableTimeEntriesTab = ({
     if (hasProjectChanged && !cardOptionByValue[normalizeValue(rowEdits.cardValue)]) {
       console.warn("A card must be selected for the new project before saving.");
       return;
+    }
+
+    const selectedCardForBlockCheck = normalizeValue(rowEdits.cardValue)
+      ? cardOptionByValue[normalizeValue(rowEdits.cardValue)]
+      : null;
+    if (selectedCardForBlockCheck) {
+      const candidateTaskIdentity = `${selectedCardForBlockCheck.projectDocId || "unknown-project"}::${normalizeValue(selectedCardForBlockCheck.issueId)}`;
+      if (taskBlockedByIdentity[candidateTaskIdentity]) {
+        window.alert("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
+        return;
+      }
     }
 
     setSavingRowId(row.id);
@@ -4018,11 +4056,15 @@ const EditableTimeEntriesTab = ({
                                   ? "Select a card for this project"
                                   : `Keep current (${row.issueId || "-"})`}
                             </option>
-                            {rowCardOptions.map((option) => (
-                              <option key={option.key} value={option.value}>
-                                {option.issueId}{option.issueLabel ? ` - ${option.issueLabel}` : ""}
-                              </option>
-                            ))}
+                            {rowCardOptions.map((option) => {
+                              const optionTaskIdentity = `${option.projectDocId || "unknown-project"}::${normalizeValue(option.issueId)}`;
+                              const isOptionBlocked = taskBlockedByIdentity[optionTaskIdentity];
+                              return (
+                                <option key={option.key} value={option.value}>
+                                  {option.issueId}{option.issueLabel ? ` - ${option.issueLabel}` : ""}{isOptionBlocked ? " [BLOCKED]" : ""}
+                                </option>
+                              );
+                            })}
                           </select>
                           {isCardSelectionIncomplete ? (
                             <div style={{ marginTop: "4px", color: "#B45309", fontSize: "0.72rem", fontWeight: 700 }}>
