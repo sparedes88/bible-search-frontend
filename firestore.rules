@@ -374,9 +374,14 @@ service cloud.firestore {
           (resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
       }
 
-      // TimeRotate task details (tags/project overrides/completion status)
+      // TimeRotate task details (tags/project overrides/completion status/time-entry block flag).
+      // Read is intentionally just isAuthenticated() (not the stricter isUserInChurch check used
+      // elsewhere): every TimeRotate user needs this to load client-side to know whether a card
+      // is blocked from new time entries, and a user whose /users doc doesn't cleanly resolve
+      // church membership (e.g. missing churchId field) must not silently fail this read, or the
+      // block feature fails open for them with no visible error.
       match /timeRotateTaskDetails/{taskId} {
-        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() &&
           (
             request.resource.data.updatedByUid == request.auth.uid ||
