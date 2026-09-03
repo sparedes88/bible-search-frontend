@@ -1383,6 +1383,7 @@ const BillableInvoicePreviewPage = () => {
 
       const userEntry = usersByKey.get(key);
       userEntry.manualHours += hours;
+      const entryStartMs = entry.date && entry.startTime ? new Date(`${entry.date}T${entry.startTime}`).getTime() : 0;
       const manualCard = {
         label: entry.issueId || entry.cardTitle || "Manual Entry",
         projectName: entry.projectName || draftPayload.projectName || "",
@@ -1391,6 +1392,8 @@ const BillableInvoicePreviewPage = () => {
         description: entry.cardTitle || "",
         taskIdentity: `manual-${entry.id}`,
         milliseconds: hours * 3600000,
+        firstUsedAt: Number.isFinite(entryStartMs) ? entryStartMs : 0,
+        lastUsedAt: Number.isFinite(entryStartMs) ? entryStartMs : 0,
         hoursUsed: `${hours.toFixed(2)} hrs`,
       };
       userEntry.cards.push(manualCard);
@@ -2892,6 +2895,9 @@ const BillableInvoicePreviewPage = () => {
                             {!isIncluded ? " (not on this invoice)" : ""}
                           </span>
                           <span style={{ fontWeight: 700 }}>{card.hoursUsed || "0h 00m"}</span>
+                          <span style={{ color: "#64748B", fontSize: "0.74rem" }}>
+                            {formatWorkDateRange(card.firstUsedAt, card.lastUsedAt)}
+                          </span>
                           {!canReassign && (
                             <span style={{ color: "#B45309", fontWeight: 600, fontSize: "0.72rem" }}>
                               Regenerate this invoice from Invoices to enable correcting this card.

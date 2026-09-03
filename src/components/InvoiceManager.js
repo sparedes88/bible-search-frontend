@@ -2367,6 +2367,7 @@ const InvoiceManager = () => {
             title: resolvedCardTitle,
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
             includedInInvoice: false,
+            firstUsedAt: 0,
             lastUsedAt: 0,
             logIds: [],
           };
@@ -2374,6 +2375,9 @@ const InvoiceManager = () => {
           existingAllCard.includedInInvoice = existingAllCard.includedInInvoice || includedInInvoice;
           existingAllCard.logIds.push(String(log.id || "").trim());
           const logUsedAt = Number(log.eventTimestamp) || 0;
+          if (logUsedAt > 0 && (!existingAllCard.firstUsedAt || logUsedAt < existingAllCard.firstUsedAt)) {
+            existingAllCard.firstUsedAt = logUsedAt;
+          }
           if (logUsedAt > existingAllCard.lastUsedAt) existingAllCard.lastUsedAt = logUsedAt;
           userAggregation.allCardsByKey.set(cardKey, existingAllCard);
         });
@@ -4439,6 +4443,7 @@ const InvoiceManager = () => {
           title: String(card.title || "").trim(),
           taskIdentity: String(card.taskIdentity || "").trim(),
           projectDocId: String(card.projectDocId || "").trim(),
+          firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
           includedInInvoice: Boolean(card.includedInInvoice),
           milliseconds: Number(card.milliseconds) || 0,
