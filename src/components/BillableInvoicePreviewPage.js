@@ -2837,6 +2837,16 @@ const BillableInvoicePreviewPage = () => {
               0
             );
             const realTotalHours = realTotalMilliseconds / 3600000;
+            const userNotes = Array.isArray(userEntry.notes) ? userEntry.notes : [];
+            const getCardNotes = (card) => userNotes
+              .filter((note) => {
+                if (card.taskIdentity && note.taskIdentity) return note.taskIdentity === card.taskIdentity;
+                if (card.issueId && note.issueId) {
+                  return note.issueId === card.issueId && (!card.projectDocId || !note.projectDocId || note.projectDocId === card.projectDocId);
+                }
+                return String(note.cardLabel || "").trim() === String(card.label || "").trim();
+              })
+              .sort((left, right) => Number(right.timestamp || 0) - Number(left.timestamp || 0));
 
             return (
               <div
@@ -2858,6 +2868,7 @@ const BillableInvoicePreviewPage = () => {
                       const cardKey = getTimeReviewCardKey(index, card);
                       const canReassign = Array.isArray(card.logIds) && card.logIds.length > 0;
                       const isReassigning = reassigningCardKey === cardKey;
+                      const cardNotes = getCardNotes(card);
                       return (
                       <div
                         key={`time-review-${index}-card-${cardIndex}`}
@@ -2884,6 +2895,15 @@ const BillableInvoicePreviewPage = () => {
                           {!canReassign && (
                             <span style={{ color: "#B45309", fontWeight: 600, fontSize: "0.72rem" }}>
                               Regenerate this invoice from Invoices to enable correcting this card.
+                            </span>
+                          )}
+                          {cardNotes.length > 0 && (
+                            <span style={{ marginTop: "4px", display: "grid", gap: "2px" }}>
+                              {cardNotes.map((note, noteIndex) => (
+                                <span key={`time-review-${index}-card-${cardIndex}-note-${noteIndex}`} style={{ fontWeight: 400, fontSize: "0.76rem", color: "#475569" }}>
+                                  {`📝 ${note.text}`}
+                                </span>
+                              ))}
                             </span>
                           )}
                         </span>
