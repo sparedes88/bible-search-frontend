@@ -609,6 +609,8 @@ const TimeRotate = () => {
   const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
   const [taskBlockedByIssueId, setTaskBlockedByIssueId] = useState({});
   const [taskBlockedByDigits, setTaskBlockedByDigits] = useState({});
+  const [taskActiveStatusByIdentity, setTaskActiveStatusByIdentity] = useState({});
+  const [savingCardActiveStatusByIdentity, setSavingCardActiveStatusByIdentity] = useState({});
   const [projectNameQuickUpdate, setProjectNameQuickUpdate] = useState({
     open: false,
     card: null,
@@ -1296,6 +1298,7 @@ const TimeRotate = () => {
         const nextBlockedMap = {};
         const nextBlockedByIssueIdMap = {};
         const nextBlockedByDigitsMap = {};
+        const nextActiveStatusMap = {};
 
         snapshot.forEach((snapshotDoc) => {
           const data = snapshotDoc.data() || {};
@@ -1325,6 +1328,7 @@ const TimeRotate = () => {
           if (issueIdDigits && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByDigitsMap, issueIdDigits))) {
             nextBlockedByDigitsMap[issueIdDigits] = isBlocked;
           }
+          nextActiveStatusMap[taskIdentity] = normalizeValue(data.cardActiveStatus).toLowerCase() === "inactive" ? "inactive" : "active";
         });
 
         setTaskTagsByIdentity(nextTagsMap);
@@ -1333,6 +1337,7 @@ const TimeRotate = () => {
         setTaskBlockedByIdentity(nextBlockedMap);
         setTaskBlockedByIssueId(nextBlockedByIssueIdMap);
         setTaskBlockedByDigits(nextBlockedByDigitsMap);
+        setTaskActiveStatusByIdentity(nextActiveStatusMap);
       },
       (snapshotError) => {
         console.error("Error loading task descriptions:", snapshotError);
@@ -2232,6 +2237,46 @@ const TimeRotate = () => {
     return Boolean(issueIdDigits && taskBlockedByDigits[issueIdDigits]);
   };
 
+  const CARD_ACTIVE_STATUS_PIN = "2197";
+
+  const isCardInactive = (card) => taskActiveStatusByIdentity[card?.taskIdentity] === "inactive";
+
+  const handleToggleCardActiveStatus = async (card) => {
+    if (!id || !card?.taskIdentity) return;
+
+    const nextStatus = isCardInactive(card) ? "active" : "inactive";
+    const enteredPin = window.prompt(`Enter PIN to mark this card ${nextStatus === "inactive" ? "Inactive" : "Active"}:`);
+    if (enteredPin === null) return;
+
+    if (normalizeValue(enteredPin) !== CARD_ACTIVE_STATUS_PIN) {
+      window.alert("Incorrect PIN.");
+      return;
+    }
+
+    setSavingCardActiveStatusByIdentity((current) => ({ ...current, [card.taskIdentity]: true }));
+    try {
+      await setDoc(
+        doc(db, "churches", id, "timeRotateTaskDetails", buildTaskDetailsDocId(card.taskIdentity)),
+        {
+          taskIdentity: card.taskIdentity,
+          issueId: card.issueId,
+          projectDocId: card.projectDocId,
+          cardActiveStatus: nextStatus,
+          cardActiveStatusUpdatedAt: Date.now(),
+          cardActiveStatusUpdatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+          updatedByUid: user?.uid || "",
+        },
+        { merge: true }
+      );
+      setTaskActiveStatusByIdentity((current) => ({ ...current, [card.taskIdentity]: nextStatus }));
+    } catch (saveError) {
+      console.error("Error saving card active status:", saveError);
+      setLogActionError("Could not save the card status.");
+    } finally {
+      setSavingCardActiveStatusByIdentity((current) => ({ ...current, [card.taskIdentity]: false }));
+    }
+  };
+
   const handleStart = (card) => {
     if (activeTimer && activeTimer.cardKey !== card.key) {
       return;
@@ -2243,6 +2288,11 @@ const TimeRotate = () => {
 
     if (isCardBlocked(card)) {
       setLogActionError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
+      return;
+    }
+
+    if (isCardInactive(card)) {
+      setLogActionError("This card is marked Inactive and cannot be started.");
       return;
     }
 
@@ -2490,6 +2540,12 @@ const TimeRotate = () => {
 
     if (isCardBlocked(selectedManualTask)) {
       setManualEntryError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
+      setManualEntrySuccess("");
+      return;
+    }
+
+    if (isCardInactive(selectedManualTask)) {
+      setManualEntryError("This card is marked Inactive and cannot be used for time entry.");
       setManualEntrySuccess("");
       return;
     }
@@ -3828,6 +3884,7 @@ const TimeRotate = () => {
                   <th style={cellHeaderStyle}>ID</th>
                   <th style={cellHeaderStyle}>Project Name</th>
                   <th style={cellHeaderStyle}>Title</th>
+                  <th style={cellHeaderStyle}>Status</th>
                   <th style={cellHeaderStyle}>Completed for Review</th>
                   <th style={cellHeaderStyle}>Action</th>
                 </tr>
@@ -3880,6 +3937,29 @@ const TimeRotate = () => {
                         : (card.title || "-")}
                     </td>
                     <td style={cellStyle}>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleCardActiveStatus(card)}
+                        disabled={Boolean(savingCardActiveStatusByIdentity[card.taskIdentity])}
+                        title="Requires a PIN to change"
+                        style={{
+                          border: "none",
+                          borderRadius: "999px",
+                          padding: "6px 12px",
+                          fontWeight: 700,
+                          fontSize: "0.78rem",
+                          cursor: savingCardActiveStatusByIdentity[card.taskIdentity] ? "not-allowed" : "pointer",
+                          background: isCardInactive(card) ? "#DC2626" : "#DCFCE7",
+                          color: isCardInactive(card) ? "#FFFFFF" : "#166534",
+                          opacity: savingCardActiveStatusByIdentity[card.taskIdentity] ? 0.7 : 1,
+                        }}
+                      >
+                        {savingCardActiveStatusByIdentity[card.taskIdentity]
+                          ? "Saving..."
+                          : (isCardInactive(card) ? "Inactive" : "Active")}
+                      </button>
+                    </td>
+                    <td style={cellStyle}>
                       {(() => {
                         const completionStatus = getResolvedTaskCompletionStatus(card);
 
@@ -3930,19 +4010,25 @@ const TimeRotate = () => {
                         <button
                           type="button"
                           onClick={() => handleStart(card)}
-                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || isCardBlocked(card)}
-                          title={isCardBlocked(card) ? "This TD card is blocked from time entry" : `taskIdentity: ${card.taskIdentity} | issueId: ${card.issueId}`}
+                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || isCardBlocked(card) || isCardInactive(card)}
+                          title={
+                            isCardBlocked(card)
+                              ? "This TD card is blocked from time entry"
+                              : isCardInactive(card)
+                                ? "This card is marked Inactive"
+                                : `taskIdentity: ${card.taskIdentity} | issueId: ${card.issueId}`
+                          }
                           style={{
-                            backgroundColor: isCardBlocked(card) ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
+                            backgroundColor: (isCardBlocked(card) || isCardInactive(card)) ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
                             color: "#FFFFFF",
                             border: "none",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            cursor: (activeTimer || isCardBlocked(card)) ? "not-allowed" : "pointer",
+                            cursor: (activeTimer || isCardBlocked(card) || isCardInactive(card)) ? "not-allowed" : "pointer",
                             fontWeight: 600,
                           }}
                         >
-                          {isCardBlocked(card) ? "Blocked" : "Start"}
+                          {isCardBlocked(card) ? "Blocked" : (isCardInactive(card) ? "Inactive" : "Start")}
                         </button>
                       )}
                     </td>
