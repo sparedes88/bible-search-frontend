@@ -6875,9 +6875,6 @@ const InvoiceManager = () => {
                                       .map((dayInvoice) => `#${getInvoicePeriodLabel(dayInvoice)}`)
                                       .join(", ")}
                                   </div>
-                                  <div style={{ marginTop: "2px", color: "#0F172A", fontWeight: 800 }}>
-                                    {`Week combined: ${formatCurrency((Number(effectiveInvoiceTotal) || 0) + childDayTotal)}`}
-                                  </div>
                                 </div>
                               ) : null}
                             </td>
