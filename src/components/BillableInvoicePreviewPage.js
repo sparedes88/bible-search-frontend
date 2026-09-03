@@ -2695,13 +2695,10 @@ const BillableInvoicePreviewPage = () => {
           {users.length === 0 ? (
             <div style={{ color: "#64748B", fontSize: "0.88rem" }}>No billable time to review.</div>
           ) : users.map((userEntry, index) => {
-            const drafterRowKey = `drafter-${index + 1}`;
-            const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
-            const selectedDrafterName = String(drafterNamesByUser[drafterRowKey] || drafterNamesByUser[userKey] || "").trim();
-            const reviewLabel = showDrafterNames && selectedDrafterName
-              ? `Drafter #${index + 1} — ${selectedDrafterName}`
-              : `Drafter #${index + 1}`;
-            const personName = selectedDrafterName || userEntry.name || reviewLabel;
+            // Time Review must always reflect who actually logged the time, never the
+            // display-only "Drafter" name substitution used elsewhere on the document.
+            const reviewLabel = String(userEntry.name || `Drafter #${index + 1}`).trim();
+            const personName = userEntry.name || reviewLabel;
             const cards = Array.isArray(userEntry.allCards) && userEntry.allCards.length > 0
               ? userEntry.allCards
               : (Array.isArray(userEntry.cards) ? userEntry.cards.map((card) => ({ ...card, includedInInvoice: true })) : []);
