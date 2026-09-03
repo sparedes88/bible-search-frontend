@@ -2757,16 +2757,21 @@ const BillableInvoicePreviewPage = () => {
                             {!isIncluded ? " (not on this invoice)" : ""}
                           </span>
                           <span style={{ fontWeight: 700 }}>{card.hoursUsed || "0h 00m"}</span>
+                          {!canReassign && (
+                            <span style={{ color: "#B45309", fontWeight: 600, fontSize: "0.72rem" }}>
+                              Regenerate this invoice from Invoices to enable correcting this card.
+                            </span>
+                          )}
                         </span>
                         <span data-html2canvas-ignore="true" style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 400 }}>
                           <select
                             value={timeReviewCardSelections[cardKey] || ""}
                             onChange={(event) => setTimeReviewCardSelections((previous) => ({ ...previous, [cardKey]: event.target.value }))}
-                            disabled={!canReassign || isReassigning}
-                            title={canReassign ? "Pick the correct TD card" : "Regenerate this invoice from Invoices to enable correcting this card"}
+                            disabled={isReassigning || cardOptionsLoading}
+                            title={canReassign ? "Pick the correct TD card" : "You can preview a selection, but this card can't be moved until the invoice is regenerated"}
                             style={{ padding: "4px 6px", borderRadius: "4px", border: "1px solid #CBD5E1", fontSize: "0.78rem", maxWidth: "220px" }}
                           >
-                            <option value="">Move to TD card...</option>
+                            <option value="">{cardOptionsLoading ? "Loading TD cards..." : "Move to TD card..."}</option>
                             {cardOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {`${option.issueId} — ${option.issueLabel || option.projectName}`}
@@ -2777,6 +2782,7 @@ const BillableInvoicePreviewPage = () => {
                             type="button"
                             onClick={() => handleReassignTimeReviewCard(index, card, personName)}
                             disabled={!canReassign || isReassigning || !timeReviewCardSelections[cardKey]}
+                            title={canReassign ? undefined : "Regenerate this invoice from Invoices to enable correcting this card"}
                             style={{
                               border: "none",
                               borderRadius: "4px",
