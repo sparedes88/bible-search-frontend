@@ -602,6 +602,7 @@ const TimeRotate = () => {
   const [taskProjectNameByIdentity, setTaskProjectNameByIdentity] = useState({});
   const [taskCompletionByIdentity, setTaskCompletionByIdentity] = useState({});
   const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
+  const [taskBlockedByIssueId, setTaskBlockedByIssueId] = useState({});
   const [projectNameQuickUpdate, setProjectNameQuickUpdate] = useState({
     open: false,
     card: null,
@@ -1287,6 +1288,7 @@ const TimeRotate = () => {
         const nextProjectNameMap = {};
         const nextCompletionMap = {};
         const nextBlockedMap = {};
+        const nextBlockedByIssueIdMap = {};
 
         snapshot.forEach((snapshotDoc) => {
           const data = snapshotDoc.data() || {};
@@ -1302,13 +1304,21 @@ const TimeRotate = () => {
             nextProjectNameMap[taskIdentity] = normalizeValue(data.projectName);
           }
           nextCompletionMap[taskIdentity] = normalizeCompletionStatus(data.completionStatus, data.isCompleted === true);
-          nextBlockedMap[taskIdentity] = data.timeEntryBlocked === true;
+          const isBlocked = data.timeEntryBlocked === true;
+          nextBlockedMap[taskIdentity] = isBlocked;
+          // A TD can produce slightly different task identities over time (e.g. project doc id
+          // drift), so also index blocked status by the bare TD/issue id as a fallback match.
+          const issueIdSuffix = String(taskIdentity.split("::").pop() || "").trim().toLowerCase();
+          if (issueIdSuffix && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByIssueIdMap, issueIdSuffix))) {
+            nextBlockedByIssueIdMap[issueIdSuffix] = isBlocked;
+          }
         });
 
         setTaskTagsByIdentity(nextTagsMap);
         setTaskProjectNameByIdentity(nextProjectNameMap);
         setTaskCompletionByIdentity(nextCompletionMap);
         setTaskBlockedByIdentity(nextBlockedMap);
+        setTaskBlockedByIssueId(nextBlockedByIssueIdMap);
       },
       (snapshotError) => {
         console.error("Error loading task descriptions:", snapshotError);
@@ -1957,12 +1967,16 @@ const TimeRotate = () => {
   }, [taskTagsByIdentity]);
 
   const manualTaskOptions = useMemo(() => {
-    return productionCards.map((card) => ({
-      value: card.taskIdentity,
-      label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})${taskBlockedByIdentity[card.taskIdentity] ? " [BLOCKED]" : ""}`,
-      card,
-    }));
-  }, [getResolvedProjectName, productionCards, taskBlockedByIdentity]);
+    return productionCards.map((card) => {
+      const issueIdKey = String(card.issueId || "").trim().toLowerCase();
+      const isBlocked = Boolean(taskBlockedByIdentity[card.taskIdentity] || (issueIdKey && taskBlockedByIssueId[issueIdKey]));
+      return {
+        value: card.taskIdentity,
+        label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})${isBlocked ? " [BLOCKED]" : ""}`,
+        card,
+      };
+    });
+  }, [getResolvedProjectName, productionCards, taskBlockedByIdentity, taskBlockedByIssueId]);
 
   const selectedManualUser = useMemo(() => {
     return manualUserOptions.find((option) => option.value === manualSelectedUserId) || null;
@@ -2190,6 +2204,13 @@ const TimeRotate = () => {
     }
   };
 
+  const isCardBlocked = (card) => {
+    if (!card) return false;
+    if (taskBlockedByIdentity[card.taskIdentity]) return true;
+    const issueIdKey = String(card.issueId || "").trim().toLowerCase();
+    return Boolean(issueIdKey && taskBlockedByIssueId[issueIdKey]);
+  };
+
   const handleStart = (card) => {
     if (activeTimer && activeTimer.cardKey !== card.key) {
       return;
@@ -2199,7 +2220,7 @@ const TimeRotate = () => {
       return;
     }
 
-    if (taskBlockedByIdentity[card.taskIdentity]) {
+    if (isCardBlocked(card)) {
       setLogActionError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
       return;
     }
@@ -2446,7 +2467,7 @@ const TimeRotate = () => {
       return;
     }
 
-    if (taskBlockedByIdentity[selectedManualTask.taskIdentity]) {
+    if (isCardBlocked(selectedManualTask)) {
       setManualEntryError("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
       setManualEntrySuccess("");
       return;
@@ -4004,19 +4025,19 @@ const TimeRotate = () => {
                         <button
                           type="button"
                           onClick={() => handleStart(card)}
-                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || Boolean(taskBlockedByIdentity[card.taskIdentity])}
-                          title={taskBlockedByIdentity[card.taskIdentity] ? "This TD card is blocked from time entry" : undefined}
+                          disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || isCardBlocked(card)}
+                          title={isCardBlocked(card) ? "This TD card is blocked from time entry" : undefined}
                           style={{
-                            backgroundColor: taskBlockedByIdentity[card.taskIdentity] ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
+                            backgroundColor: isCardBlocked(card) ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
                             color: "#FFFFFF",
                             border: "none",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            cursor: (activeTimer || taskBlockedByIdentity[card.taskIdentity]) ? "not-allowed" : "pointer",
+                            cursor: (activeTimer || isCardBlocked(card)) ? "not-allowed" : "pointer",
                             fontWeight: 600,
                           }}
                         >
-                          {taskBlockedByIdentity[card.taskIdentity] ? "Blocked" : "Start"}
+                          {isCardBlocked(card) ? "Blocked" : "Start"}
                         </button>
                       )}
                     </td>

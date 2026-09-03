@@ -3163,25 +3163,37 @@ const EditableTimeEntriesTab = ({
 
   // TD cards blocked in the TD Matcher (Invoices) can't have new time charged to them here.
   const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
+  const [taskBlockedByIssueId, setTaskBlockedByIssueId] = useState({});
 
   useEffect(() => {
     if (!id) {
       setTaskBlockedByIdentity({});
+      setTaskBlockedByIssueId({});
       return undefined;
     }
 
     const unsubscribe = onSnapshot(collection(db, "churches", id, "timeRotateTaskDetails"), (snapshot) => {
       const nextBlockedMap = {};
+      const nextBlockedByIssueIdMap = {};
       snapshot.forEach((snapshotDoc) => {
         const data = snapshotDoc.data() || {};
         const taskIdentity = normalizeValue(data.taskIdentity);
         if (!taskIdentity) return;
-        nextBlockedMap[taskIdentity] = data.timeEntryBlocked === true;
+        const isBlocked = data.timeEntryBlocked === true;
+        nextBlockedMap[taskIdentity] = isBlocked;
+        // A TD can produce slightly different task identities over time, so also index blocked
+        // status by the bare TD/issue id as a fallback match.
+        const issueIdSuffix = String(taskIdentity.split("::").pop() || "").trim().toLowerCase();
+        if (issueIdSuffix && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByIssueIdMap, issueIdSuffix))) {
+          nextBlockedByIssueIdMap[issueIdSuffix] = isBlocked;
+        }
       });
       setTaskBlockedByIdentity(nextBlockedMap);
+      setTaskBlockedByIssueId(nextBlockedByIssueIdMap);
     }, (error) => {
       console.error("Error loading TD blocked status:", error);
       setTaskBlockedByIdentity({});
+      setTaskBlockedByIssueId({});
     });
 
     return () => unsubscribe();
@@ -3547,7 +3559,12 @@ const EditableTimeEntriesTab = ({
       : null;
     if (selectedCardForBlockCheck) {
       const candidateTaskIdentity = `${selectedCardForBlockCheck.projectDocId || "unknown-project"}::${normalizeValue(selectedCardForBlockCheck.issueId)}`;
-      if (taskBlockedByIdentity[candidateTaskIdentity]) {
+      const candidateIssueIdKey = normalizeComparable(selectedCardForBlockCheck.issueId);
+      const isCandidateBlocked = Boolean(
+        taskBlockedByIdentity[candidateTaskIdentity]
+        || (candidateIssueIdKey && taskBlockedByIssueId[candidateIssueIdKey])
+      );
+      if (isCandidateBlocked) {
         window.alert("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
         return;
       }
@@ -4058,7 +4075,11 @@ const EditableTimeEntriesTab = ({
                             </option>
                             {rowCardOptions.map((option) => {
                               const optionTaskIdentity = `${option.projectDocId || "unknown-project"}::${normalizeValue(option.issueId)}`;
-                              const isOptionBlocked = taskBlockedByIdentity[optionTaskIdentity];
+                              const optionIssueIdKey = normalizeComparable(option.issueId);
+                              const isOptionBlocked = Boolean(
+                                taskBlockedByIdentity[optionTaskIdentity]
+                                || (optionIssueIdKey && taskBlockedByIssueId[optionIssueIdKey])
+                              );
                               return (
                                 <option key={option.key} value={option.value}>
                                   {option.issueId}{option.issueLabel ? ` - ${option.issueLabel}` : ""}{isOptionBlocked ? " [BLOCKED]" : ""}
