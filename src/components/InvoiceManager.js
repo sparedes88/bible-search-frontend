@@ -2022,25 +2022,41 @@ const InvoiceManager = () => {
 
         const targetLogs = logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === override);
         const targetTotalMilliseconds = targetLogs.reduce((sum, log) => sum + log.safeDuration, 0);
+        // Regular always stays pinned at a clean 40h (or the full total if under 40h) -- it should
+        // never get reduced just because the overtime portion got rounded up, so it stays obvious
+        // that this person hit the 40h mark.
+        const regularCapacityMilliseconds = Math.min(targetTotalMilliseconds, OVERTIME_THRESHOLD_MILLISECONDS);
         const rawExcessMilliseconds = Math.max(0, targetTotalMilliseconds - OVERTIME_THRESHOLD_MILLISECONDS);
         const hourMilliseconds = 60 * 60 * 1000;
         const overtimeRoundingCutoffMilliseconds = 45 * 60 * 1000;
         const wholeOvertimeHours = Math.floor(rawExcessMilliseconds / hourMilliseconds);
         const overtimeRemainderMilliseconds = rawExcessMilliseconds - wholeOvertimeHours * hourMilliseconds;
-        const roundedOvertimeMilliseconds = Math.min(
-          targetTotalMilliseconds,
-          (overtimeRemainderMilliseconds >= overtimeRoundingCutoffMilliseconds ? wholeOvertimeHours + 1 : wholeOvertimeHours) * hourMilliseconds
-        );
-        const regularCapacityMilliseconds = targetTotalMilliseconds - roundedOvertimeMilliseconds;
+        const roundedOvertimeMilliseconds =
+          (overtimeRemainderMilliseconds >= overtimeRoundingCutoffMilliseconds ? wholeOvertimeHours + 1 : wholeOvertimeHours) * hourMilliseconds;
 
         let consumedMilliseconds = 0;
+        let lastOvertimeLogId = null;
         targetLogs.forEach((log) => {
           const regularRemaining = Math.max(0, regularCapacityMilliseconds - consumedMilliseconds);
           const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
           const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
           allocationByLogId[log.id] = { regularMilliseconds, overtimeMilliseconds };
+          if (overtimeMilliseconds > 0 || regularMilliseconds < log.safeDuration) lastOvertimeLogId = log.id;
           consumedMilliseconds += log.safeDuration;
         });
+
+        // The rounding above may bill slightly more or less overtime than was actually worked past
+        // 40h (that's the point -- round up bills a full hour, round down bills nothing extra);
+        // apply that adjustment to whichever log carried the overtime so the totals add up to the
+        // rounded figure without ever touching the pinned regular hours.
+        const targetLogIdForRoundingAdjustment = lastOvertimeLogId || (targetLogs.length > 0 ? targetLogs[targetLogs.length - 1].id : null);
+        if (targetLogIdForRoundingAdjustment) {
+          const roundingDeltaMilliseconds = roundedOvertimeMilliseconds - rawExcessMilliseconds;
+          if (roundingDeltaMilliseconds !== 0) {
+            const existing = allocationByLogId[targetLogIdForRoundingAdjustment];
+            existing.overtimeMilliseconds = Math.max(0, existing.overtimeMilliseconds + roundingDeltaMilliseconds);
+          }
+        }
         return;
       }
 
