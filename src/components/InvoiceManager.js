@@ -5038,7 +5038,77 @@ const InvoiceManager = () => {
         margin: { left: margin, right: margin },
       });
 
-      const summaryStartY = (pdf.lastAutoTable?.finalY || 88) + 24;
+      // Under every invoice line item, break down exactly which TD cards each person worked on
+      // and how much time they logged, so the report doubles as a per-invoice audit trail.
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      let detailCursorY = (pdf.lastAutoTable?.finalY || 88) + 24;
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("Time Breakdown by Invoice", margin, detailCursorY);
+      detailCursorY += 8;
+
+      sortedInvoices.forEach((invoice) => {
+        const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
+        const invoiceNumberLabel = (invoice.invoiceNumber || "-").toString().toUpperCase();
+        const rowHoursData = invoiceHoursById[invoice.id] || { users: [], totalMilliseconds: 0 };
+        const invoiceUsers = Array.isArray(rowHoursData.users) ? rowHoursData.users : [];
+
+        const detailRows = [];
+        invoiceUsers.forEach((userEntry) => {
+          const userCards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+          if (userCards.length === 0) {
+            detailRows.push([userEntry.name || "Unknown User", "-", "-", formatHoursUsed(userEntry.milliseconds || 0)]);
+            return;
+          }
+          userCards
+            .sort((left, right) => right.milliseconds - left.milliseconds)
+            .forEach((card) => {
+              detailRows.push([
+                userEntry.name || "Unknown User",
+                String(card.label || "Unspecified Card").trim(),
+                String(card.title || "").trim() || "-",
+                formatHoursUsed(card.milliseconds),
+              ]);
+            });
+        });
+
+        if (detailRows.length === 0) return;
+
+        if (detailCursorY > pageHeight - 90) {
+          pdf.addPage();
+          detailCursorY = margin;
+        }
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(
+          `Week ${invoice.weekNumber || "-"} — Invoice ${invoiceNumberLabel} (${formatDisplayDate(invoice.mondayDate) || "-"} – ${formatDisplayDate(weekEndDate) || "-"}) — Total: ${formatHoursUsed(rowHoursData.totalMilliseconds || 0)}`,
+          margin,
+          detailCursorY
+        );
+
+        autoTable(pdf, {
+          startY: detailCursorY + 6,
+          theme: "grid",
+          head: [["Person", "TD Card", "Issue Title", "Hours"]],
+          body: detailRows,
+          styles: { font: "helvetica", fontSize: 8, cellPadding: 5 },
+          headStyles: { fillColor: [100, 116, 139], textColor: [255, 255, 255], fontStyle: "bold" },
+          margin: { left: margin, right: margin },
+        });
+
+        detailCursorY = (pdf.lastAutoTable?.finalY || detailCursorY + 6) + 20;
+      });
+
+      if (detailCursorY > pageHeight - 140) {
+        pdf.addPage();
+        detailCursorY = margin;
+      }
+
+      const summaryStartY = detailCursorY;
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(12);
       pdf.setTextColor(15, 23, 42);
