@@ -3247,9 +3247,6 @@ const TimeRotate = () => {
         <div style={{ marginTop: "14px", color: "#334155", fontWeight: 600 }}>{totalCountLabel}</div>
 
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "12px", marginBottom: "12px" }}>
-          <Link to={`${routePrefix}/${id}/time-tracking`} style={tabStyle(false)}>
-            ◴ TimeTracking
-          </Link>
           <Link to={`${routePrefix}/${id}/time-rotate`} style={tabStyle(true)}>
             ▤ TimeRotate Board
           </Link>

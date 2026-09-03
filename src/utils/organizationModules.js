@@ -384,6 +384,14 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
+        id: "time-tracker",
+        title: "Time Tracker",
+        description: "Track time and manage tasks with daily progress",
+        icon: "⏱️",
+        buildPath: (organizationId) => `/organization/${organizationId}/time-tracker`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
         id: "conduit-run-counter",
         title: "Conduit Run Counter",
         description: "Import Excel, review all columns, and update status per line item",
