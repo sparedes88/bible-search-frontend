@@ -2143,7 +2143,9 @@ const InvoiceManager = () => {
               needsDecision,
             };
           })
-          .sort((left, right) => right.totalOvertimeMilliseconds - left.totalOvertimeMilliseconds || left.userLabel.localeCompare(right.userLabel)),
+          // Sort by name only (not overtime amount) so a row doesn't jump position when you
+          // change its billing decision.
+          .sort((left, right) => left.userLabel.localeCompare(right.userLabel)),
       }))
       .sort((left, right) => right.weekKey.localeCompare(left.weekKey));
   }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById, overtimeOverrideByWeekUser]);
