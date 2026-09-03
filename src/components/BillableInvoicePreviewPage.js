@@ -13,12 +13,15 @@ const SECTION_DEFS = [
   { key: "companyHeader", label: "Company Header & Client" },
   { key: "invoiceInfo", label: "Invoice Details" },
   { key: "summary", label: "Billable Summary by Person" },
+  { key: "timeReview", label: "Time Review" },
   { key: "workSummary", label: "Work Summary per User" },
   { key: "issuesNotes", label: "Issues and Notes" },
 ];
 
+const HIDDEN_SECTIONS_BY_DEFAULT = ["issuesNotes", "workSummary", "timeReview"];
+
 const DEFAULT_SECTION_VISIBILITY = SECTION_DEFS.reduce((acc, section) => {
-  acc[section.key] = section.key !== "issuesNotes" && section.key !== "workSummary";
+  acc[section.key] = !HIDDEN_SECTIONS_BY_DEFAULT.includes(section.key);
   return acc;
 }, {});
 
@@ -2612,6 +2615,56 @@ const BillableInvoicePreviewPage = () => {
               </div>
             </div>
           </div> : null}
+        </div>
+      </div>
+      )}
+
+      {sectionVisibility.timeReview && (
+      <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
+        <h2 style={sectionHeadingStyle}>Time Review</h2>
+        <div style={{ display: "grid", gap: "10px" }}>
+          {users.length === 0 ? (
+            <div style={{ color: "#64748B", fontSize: "0.88rem" }}>No billable time to review.</div>
+          ) : users.map((userEntry, index) => {
+            const drafterRowKey = `drafter-${index + 1}`;
+            const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
+            const selectedDrafterName = String(drafterNamesByUser[drafterRowKey] || drafterNamesByUser[userKey] || "").trim();
+            const reviewLabel = showDrafterNames && selectedDrafterName
+              ? `Drafter #${index + 1} — ${selectedDrafterName}`
+              : `Drafter #${index + 1}`;
+            const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+
+            return (
+              <div
+                key={`time-review-${index}`}
+                style={{ border: "1px solid #E2E8F0", padding: "10px 12px", breakInside: "avoid", pageBreakInside: "avoid" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 800, color: "#0F172A", fontSize: "0.92rem" }}>{reviewLabel}</div>
+                  <div style={{ fontWeight: 800, color: "#0F766E", fontSize: "0.92rem", fontVariantNumeric: "tabular-nums" }}>
+                    {`Total billed: ${formatHoursClock(userEntry.totalHours || 0)}`}
+                  </div>
+                </div>
+                {cards.length === 0 ? (
+                  <div style={{ marginTop: "6px", color: "#64748B", fontSize: "0.82rem" }}>No TD cards recorded.</div>
+                ) : (
+                  <div style={{ marginTop: "8px", display: "grid", gap: "4px" }}>
+                    {cards.map((card, cardIndex) => (
+                      <div
+                        key={`time-review-${index}-card-${cardIndex}`}
+                        style={{ display: "flex", justifyContent: "space-between", gap: "12px", fontSize: "0.84rem", color: "#334155" }}
+                      >
+                        <span>
+                          {`${String(card.label || card.issueId || "TD").trim()}${getIssueTitleText(card) ? `: ${getIssueTitleText(card)}` : ""}`}
+                        </span>
+                        <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{card.hoursUsed || "0h 00m"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
       )}
