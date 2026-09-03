@@ -1973,6 +1973,8 @@ const InvoiceManager = () => {
     };
   }, [id]);
 
+  const REGULAR_ONLY_OVERTIME_OVERRIDE = "__regular_only__";
+
   const weeklyOvertimeAllocationByLogId = useMemo(() => {
     if (billableTimeRotateLogs.length === 0) return {};
 
@@ -1989,31 +1991,57 @@ const InvoiceManager = () => {
     const allocationByLogId = {};
 
     grouped.forEach((logs, groupKey) => {
-      // By default the first hours logged that week are "regular" and whatever comes after the
-      // 40h mark is overtime, chronologically, regardless of project. A manager can override
-      // which project absorbs the overtime for a given person/week; when set, that project's
-      // logs are evaluated LAST so they're the ones most likely to land past the 40h threshold.
-      const overrideProjectId = overtimeOverrideByWeekUser[groupKey];
-      const orderedLogs = overrideProjectId
-        ? [
-          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) !== overrideProjectId),
-          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === overrideProjectId),
-        ]
-        : logs;
+      const override = overtimeOverrideByWeekUser[groupKey];
 
-      let consumedMilliseconds = 0;
+      // A manager can explicitly decide "bill this person's whole week as regular", overriding
+      // even a single project that alone crossed 40h.
+      if (override === REGULAR_ONLY_OVERTIME_OVERRIDE) {
+        logs.forEach((log) => {
+          allocationByLogId[log.id] = { regularMilliseconds: log.safeDuration, overtimeMilliseconds: 0 };
+        });
+        return;
+      }
 
-      orderedLogs.forEach((log) => {
-        const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
-        const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
-        const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
+      // A manager can also decide "bill the overtime to this specific project", which pools ALL
+      // of the person's hours that week (across every project) and evaluates the chosen project's
+      // logs LAST so they're the ones most likely to land past the 40h mark.
+      if (override) {
+        const orderedLogs = [
+          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) !== override),
+          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === override),
+        ];
 
-        allocationByLogId[log.id] = {
-          regularMilliseconds,
-          overtimeMilliseconds,
-        };
+        let consumedMilliseconds = 0;
+        orderedLogs.forEach((log) => {
+          const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
+          const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
+          const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
+          allocationByLogId[log.id] = { regularMilliseconds, overtimeMilliseconds };
+          consumedMilliseconds += log.safeDuration;
+        });
+        return;
+      }
 
-        consumedMilliseconds += log.safeDuration;
+      // Default (no manager decision yet): it isn't justifiable to bill a client project overtime
+      // just because a person split their week across multiple projects that together exceed 40h.
+      // Each project only owes overtime if IT ALONE gave that person more than 40h that week, so
+      // the 40h threshold is evaluated per project, not pooled across all of a person's projects.
+      const logsByProject = new Map();
+      logs.forEach((log) => {
+        const projectId = getAssignedInvoiceProjectIdForLog(log) || "__unassigned__";
+        if (!logsByProject.has(projectId)) logsByProject.set(projectId, []);
+        logsByProject.get(projectId).push(log);
+      });
+
+      logsByProject.forEach((projectLogs) => {
+        let consumedMilliseconds = 0;
+        projectLogs.forEach((log) => {
+          const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
+          const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
+          const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
+          allocationByLogId[log.id] = { regularMilliseconds, overtimeMilliseconds };
+          consumedMilliseconds += log.safeDuration;
+        });
       });
     });
 
@@ -2090,16 +2118,27 @@ const InvoiceManager = () => {
       .map(([weekKey, usersInWeek]) => ({
         weekKey,
         users: Array.from(usersInWeek.values())
-          .map((userEntry) => ({
-            ...userEntry,
-            // Chronological order mirrors the FIFO overtime allocation, so the first project
-            // listed is the one that consumed the earliest regular-hour minutes that week.
-            projects: Array.from(userEntry.projectsById.values()).sort((left, right) => left.firstUsedAt - right.firstUsedAt),
-          }))
+          .map((userEntry) => {
+            const overrideKey = `${weekKey}::${String(userEntry.userLabel || "").trim().toLowerCase()}`;
+            const hasOverride = Boolean(overtimeOverrideByWeekUser[overrideKey]);
+            const projects = Array.from(userEntry.projectsById.values()).sort((left, right) => left.firstUsedAt - right.firstUsedAt);
+            // Per policy, a project only owes overtime once it alone gives this person more than
+            // 40h that week; flag that here so a manager can make an explicit billing decision
+            // instead of it silently auto-billing.
+            const needsDecision = !hasOverride && projects.some((project) => project.milliseconds > OVERTIME_THRESHOLD_MILLISECONDS);
+            return {
+              ...userEntry,
+              // Chronological order mirrors the FIFO overtime allocation, so the first project
+              // listed is the one that consumed the earliest regular-hour minutes that week.
+              projects,
+              hasOverride,
+              needsDecision,
+            };
+          })
           .sort((left, right) => right.totalOvertimeMilliseconds - left.totalOvertimeMilliseconds || left.userLabel.localeCompare(right.userLabel)),
       }))
       .sort((left, right) => right.weekKey.localeCompare(left.weekKey));
-  }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById]);
+  }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById, overtimeOverrideByWeekUser]);
 
   const filteredOvertimeAnalysisByWeek = useMemo(() => {
     const searchTerm = overtimeAnalysisUserSearch.trim().toLowerCase();
@@ -8194,7 +8233,7 @@ const InvoiceManager = () => {
           ) : activeInvoicesTab === "overtime-analysis" ? (
             <div style={{ ...tableShellStyle, padding: "12px" }}>
               <div style={{ color: "#334155", fontSize: "0.9rem", marginBottom: "12px" }}>
-                By default, overtime is allocated per person, per week, chronologically across ALL of their TD-matched invoice projects (not per-invoice) — the first 40h logged that week are regular, everything after is overtime, regardless of which project it's on. Use "Bill Overtime To" below to decide which project should absorb a person's overtime for a given week instead; this changes their actual invoice math, not just this view.
+                By policy, it isn't billable to charge a client project overtime just because a person split their week across multiple projects. Each project only owes overtime if it ALONE gave that person more than 40h that week; sharing hours across projects that don't individually cross 40h bills as regular on every project. When a single project does cross 40h alone, it's flagged below for you to decide how to bill it — nothing auto-bills as overtime without your decision.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
                 <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
@@ -8256,6 +8295,13 @@ const InvoiceManager = () => {
                               const currentOverrideProjectId = overtimeOverrideByWeekUser[overrideKey] || "";
                               return (
                               <React.Fragment key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}`}>
+                                {userEntry.needsDecision && (
+                                  <tr>
+                                    <td colSpan={7} style={{ ...tableBodyCellStyle, background: "#FEF2F2", color: "#991B1B", fontWeight: 700 }}>
+                                      ⚠️ A project crossed 40h alone for {userEntry.userLabel} this week. Per your overtime policy, decide how to bill it below — it is currently billing as regular on every project until you decide.
+                                    </td>
+                                  </tr>
+                                )}
                                 {userEntry.projects.map((projectEntry, projectIndex) => (
                                   <tr
                                     key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}-${projectEntry.projectId}`}
@@ -8288,14 +8334,15 @@ const InvoiceManager = () => {
                                       value={currentOverrideProjectId}
                                       onChange={(event) => handleSetOvertimeOverride(weekGroup.weekKey, userEntry.userLabel, event.target.value)}
                                       disabled={!canManageInvoices}
-                                      style={{ ...compactInputStyle, minWidth: "200px" }}
+                                      style={{ ...compactInputStyle, minWidth: "200px", border: userEntry.needsDecision ? "1px solid #DC2626" : undefined }}
                                     >
-                                      <option value="">Automatic (chronological)</option>
+                                      <option value="">Automatic (per-project, no pooling)</option>
+                                      <option value={REGULAR_ONLY_OVERTIME_OVERRIDE}>Bill as Regular (no overtime)</option>
                                       {userEntry.projects
                                         .filter((projectEntry) => projectEntry.projectId !== "__unassigned__")
                                         .map((projectEntry) => (
                                           <option key={`overtime-override-${overrideKey}-${projectEntry.projectId}`} value={projectEntry.projectId}>
-                                            {projectEntry.projectName}
+                                            {`Bill overtime to ${projectEntry.projectName}`}
                                           </option>
                                         ))}
                                     </select>
