@@ -195,7 +195,12 @@ const normalizeKey = (value) =>
 
 const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   const normalizedAliases = aliases.map(normalizeKey);
-  const candidates = [...(Array.isArray(fields) ? fields : []), ...Object.keys(rowData || {})];
+  // Check the row's actual stored keys first (same source of truth InvoiceManager's TD Matcher
+  // uses), falling back to the project's declared column schema only when a real key isn't
+  // present -- otherwise a schema name that doesn't match any real key on this row can win here,
+  // silently resolving to a different (often undefined -> row-index-fallback) issue id than what
+  // TD Matcher resolved for the exact same row, breaking any identity-based match (e.g. blocking).
+  const candidates = [...Object.keys(rowData || {}), ...(Array.isArray(fields) ? fields : [])];
 
   for (const candidate of candidates) {
     if (normalizedAliases.includes(normalizeKey(candidate))) {
