@@ -2075,8 +2075,10 @@ const InvoiceManager = () => {
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
             firstUsedAt: 0,
             lastUsedAt: 0,
+            logIds: [],
           };
           existingCard.milliseconds += log.safeDuration;
+          existingCard.logIds.push(String(log.id || "").trim());
           const logUsedAt = Number(log.eventTimestamp) || 0;
           if (logUsedAt > 0 && (!existingCard.firstUsedAt || logUsedAt < existingCard.firstUsedAt)) {
             existingCard.firstUsedAt = logUsedAt;
@@ -2151,9 +2153,11 @@ const InvoiceManager = () => {
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
             includedInInvoice: false,
             lastUsedAt: 0,
+            logIds: [],
           };
           existingAllCard.milliseconds += log.safeDuration;
           existingAllCard.includedInInvoice = existingAllCard.includedInInvoice || includedInInvoice;
+          existingAllCard.logIds.push(String(log.id || "").trim());
           const logUsedAt = Number(log.eventTimestamp) || 0;
           if (logUsedAt > existingAllCard.lastUsedAt) existingAllCard.lastUsedAt = logUsedAt;
           userAggregation.allCardsByKey.set(cardKey, existingAllCard);
@@ -4207,6 +4211,7 @@ const InvoiceManager = () => {
           firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
           milliseconds: Number(card.milliseconds) || 0,
+          logIds: Array.isArray(card.logIds) ? card.logIds.filter(Boolean) : [],
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         allCards: (Array.isArray(userEntry.allCards) ? userEntry.allCards : []).map((card) => ({
@@ -4219,6 +4224,7 @@ const InvoiceManager = () => {
           lastUsedAt: Number(card.lastUsedAt) || 0,
           includedInInvoice: Boolean(card.includedInInvoice),
           milliseconds: Number(card.milliseconds) || 0,
+          logIds: Array.isArray(card.logIds) ? card.logIds.filter(Boolean) : [],
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({

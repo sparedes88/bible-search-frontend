@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import * as XLSX from "xlsx";
 import * as html2pdfLib from "html2pdf.js";
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { toast } from "react-toastify";
 import commonStyles from "../pages/commonStyles";
 import { getChurchData } from "../api/church";
@@ -323,7 +323,7 @@ const BillableInvoicePreviewPage = () => {
             ).trim();
             const issueLabel = String((titleColumn ? rowData[titleColumn] : "") || "").trim();
 
-            nextOptions.push({ issueId, projectName, issueLabel });
+            nextOptions.push({ issueId, projectName, issueLabel, projectDocId: projectDoc.id });
           });
         }
 
@@ -426,21 +426,11 @@ const BillableInvoicePreviewPage = () => {
 
   const [noteRowOverrides, setNoteRowOverrides] = useState({});
   const [editingNoteRowKey, setEditingNoteRowKey] = useState(null);
-  const [timeReviewOverrides, setTimeReviewOverrides] = useState({});
-  const [isSavingTimeReviewOverrides, setIsSavingTimeReviewOverrides] = useState(false);
+  const [timeReviewCardSelections, setTimeReviewCardSelections] = useState({});
+  const [reassigningCardKey, setReassigningCardKey] = useState("");
 
   const getTimeReviewCardKey = (userIndex, card) =>
     `${userIndex}::${String(card.taskIdentity || card.issueId || card.label || "").trim().toLowerCase()}`;
-
-  // Lets a reviewer correct a card that's mismatched (e.g. TD Matcher assigned it to the wrong
-  // invoice) without leaving this page; the override is local until explicitly saved.
-  const toggleTimeReviewCardIncluded = (userIndex, card, defaultIncluded) => {
-    const cardKey = getTimeReviewCardKey(userIndex, card);
-    setTimeReviewOverrides((previous) => {
-      const currentlyIncluded = previous[cardKey] !== undefined ? previous[cardKey] : defaultIncluded;
-      return { ...previous, [cardKey]: !currentlyIncluded };
-    });
-  };
 
   const getNoteRowKey = (userIndex, rowIndex) => `${userIndex}:${rowIndex}`;
 
@@ -729,10 +719,6 @@ const BillableInvoicePreviewPage = () => {
         if (isMounted && savedOverrides && typeof savedOverrides === "object") {
           setNoteRowOverrides(savedOverrides);
         }
-        const savedTimeReviewOverrides = invoiceSnap.data()?.timeReviewOverrides;
-        if (isMounted && savedTimeReviewOverrides && typeof savedTimeReviewOverrides === "object") {
-          setTimeReviewOverrides(savedTimeReviewOverrides);
-        }
       } catch (error) {
         console.error("Failed to load saved note overrides:", error);
       }
@@ -951,24 +937,55 @@ const BillableInvoicePreviewPage = () => {
     }
   };
 
-  const handleSaveTimeReviewOverrides = async () => {
-    if (!invoiceDocRef) {
-      toast.error("This invoice preview cannot be saved to Firebase (missing invoice reference). Regenerate it from Invoices.");
+  const handleReassignTimeReviewCard = async (userIndex, card, personName) => {
+    const cardKey = getTimeReviewCardKey(userIndex, card);
+    const selectedValue = timeReviewCardSelections[cardKey];
+    const selectedOption = cardOptions.find((option) => option.value === selectedValue);
+
+    if (!selectedOption) {
+      toast.error("Select a TD card to move this time to.");
       return;
     }
 
-    setIsSavingTimeReviewOverrides(true);
+    const logIds = Array.isArray(card.logIds) ? card.logIds.filter(Boolean) : [];
+    if (logIds.length === 0) {
+      toast.error("This entry doesn't support correcting yet. Regenerate this invoice from Invoices, then try again.");
+      return;
+    }
+
+    if (!id) return;
+
+    const confirmed = window.confirm(
+      `Move ${card.hoursUsed || "this time"} of ${personName}'s time from "${card.label}" to "${selectedOption.issueId} — ${selectedOption.issueLabel || selectedOption.projectName}"?\n\nThis updates the real Time Rotate logs and will change what shows in Pay Everyone and future invoices.`
+    );
+    if (!confirmed) return;
+
+    setReassigningCardKey(cardKey);
     try {
-      await updateDoc(invoiceDocRef, {
-        timeReviewOverrides,
-        timeReviewOverridesUpdatedAt: serverTimestamp(),
+      const newProjectDocId = String(selectedOption.projectDocId || "").trim() || "unknown-project";
+      const newIssueId = String(selectedOption.issueId || "").trim();
+      const batch = writeBatch(db);
+      logIds.forEach((logId) => {
+        batch.update(doc(db, "churches", id, "timeRotateLogs", logId), {
+          issueId: newIssueId,
+          projectDocId: newProjectDocId,
+          taskIdentity: `${newProjectDocId}::${newIssueId}`,
+          title: selectedOption.issueLabel || "",
+          projectName: selectedOption.projectName || "",
+        });
       });
-      toast.success("Time review changes saved.");
+      await batch.commit();
+      toast.success("Time moved to the new TD card. Regenerate this invoice from Invoices to see the correction reflected here.");
+      setTimeReviewCardSelections((previous) => {
+        const next = { ...previous };
+        delete next[cardKey];
+        return next;
+      });
     } catch (error) {
-      console.error("Failed to save time review overrides:", error);
-      toast.error("Failed to save time review changes.");
+      console.error("Failed to reassign time review card:", error);
+      toast.error("Failed to move this time to the new TD card.");
     } finally {
-      setIsSavingTimeReviewOverrides(false);
+      setReassigningCardKey("");
     }
   };
 
@@ -1738,15 +1755,6 @@ const BillableInvoicePreviewPage = () => {
             style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: invoiceDocRef ? "#7C3AED" : "#94A3B8", color: "#FFFFFF", fontWeight: 700, cursor: invoiceDocRef ? "pointer" : "not-allowed" }}
           >
             {isSavingNoteOverrides ? "Saving..." : "Save Note Changes"}
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveTimeReviewOverrides}
-            disabled={isSavingTimeReviewOverrides || !invoiceDocRef}
-            title={invoiceDocRef ? "Save Time Review card corrections to Firebase" : "Regenerate this preview from Invoices to enable saving"}
-            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: invoiceDocRef ? "#7C3AED" : "#94A3B8", color: "#FFFFFF", fontWeight: 700, cursor: invoiceDocRef ? "pointer" : "not-allowed" }}
-          >
-            {isSavingTimeReviewOverrides ? "Saving..." : "Save Time Review Changes"}
           </button>
           <button
             type="button"
@@ -2681,7 +2689,7 @@ const BillableInvoicePreviewPage = () => {
       <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
         <h2 style={sectionHeadingStyle}>Time Review</h2>
         <div data-html2canvas-ignore="true" style={{ color: "#64748B", fontSize: "0.78rem", marginBottom: "8px" }}>
-          Check/uncheck a card to correct whether it should count on this invoice, then click "Save Time Review Changes" above.
+          If a card is wrong, pick the correct TD card and click "Move" — this updates the real Time Rotate logs (Pay Everyone included), not just this invoice.
         </div>
         <div style={{ display: "grid", gap: "10px" }}>
           {users.length === 0 ? (
@@ -2693,23 +2701,18 @@ const BillableInvoicePreviewPage = () => {
             const reviewLabel = showDrafterNames && selectedDrafterName
               ? `Drafter #${index + 1} — ${selectedDrafterName}`
               : `Drafter #${index + 1}`;
+            const personName = selectedDrafterName || userEntry.name || reviewLabel;
             const cards = Array.isArray(userEntry.allCards) && userEntry.allCards.length > 0
               ? userEntry.allCards
               : (Array.isArray(userEntry.cards) ? userEntry.cards.map((card) => ({ ...card, includedInInvoice: true })) : []);
-            const cardsWithEffectiveState = cards.map((card) => {
-              const cardKey = getTimeReviewCardKey(index, card);
-              const override = timeReviewOverrides[cardKey];
-              const isIncluded = override !== undefined ? override : Boolean(card.includedInInvoice);
-              return { ...card, cardKey, isIncluded };
-            });
-            const sortedCards = [...cardsWithEffectiveState].sort((left, right) => {
-              if (left.isIncluded !== right.isIncluded) {
-                return left.isIncluded ? -1 : 1;
+            const sortedCards = [...cards].sort((left, right) => {
+              if (Boolean(left.includedInInvoice) !== Boolean(right.includedInInvoice)) {
+                return left.includedInInvoice ? -1 : 1;
               }
               return Number(right.lastUsedAt || 0) - Number(left.lastUsedAt || 0);
             });
-            const realTotalMilliseconds = cardsWithEffectiveState.reduce(
-              (sum, card) => (card.isIncluded ? sum + (Number(card.milliseconds) || 0) : sum),
+            const realTotalMilliseconds = cards.reduce(
+              (sum, card) => (card.includedInInvoice ? sum + (Number(card.milliseconds) || 0) : sum),
               0
             );
             const realTotalHours = realTotalMilliseconds / 3600000;
@@ -2728,9 +2731,12 @@ const BillableInvoicePreviewPage = () => {
                 {sortedCards.length === 0 ? (
                   <div style={{ marginTop: "6px", color: "#64748B", fontSize: "0.82rem" }}>No TD cards recorded.</div>
                 ) : (
-                  <div style={{ marginTop: "8px", display: "grid", gap: "4px" }}>
+                  <div style={{ marginTop: "8px", display: "grid", gap: "6px" }}>
                     {sortedCards.map((card, cardIndex) => {
-                      const isIncluded = card.isIncluded;
+                      const isIncluded = Boolean(card.includedInInvoice);
+                      const cardKey = getTimeReviewCardKey(index, card);
+                      const canReassign = Array.isArray(card.logIds) && card.logIds.length > 0;
+                      const isReassigning = reassigningCardKey === cardKey;
                       return (
                       <div
                         key={`time-review-${index}-card-${cardIndex}`}
@@ -2739,28 +2745,55 @@ const BillableInvoicePreviewPage = () => {
                           alignItems: "center",
                           justifyContent: "space-between",
                           gap: "12px",
+                          flexWrap: "wrap",
                           fontSize: "0.84rem",
                           color: isIncluded ? "#0F172A" : "#64748B",
                           background: isIncluded ? "#DCFCE7" : "transparent",
-                          padding: "3px 6px",
+                          padding: "5px 6px",
                           borderRadius: "4px",
                           fontWeight: isIncluded ? 700 : 400,
                         }}
                       >
-                        <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <input
-                            type="checkbox"
-                            data-html2canvas-ignore="true"
-                            checked={isIncluded}
-                            onChange={() => toggleTimeReviewCardIncluded(index, card, Boolean(card.includedInInvoice))}
-                            title="Toggle whether this card counts on this invoice"
-                          />
+                        <span style={{ display: "flex", flexDirection: "column" }}>
                           <span>
                             {`${String(card.label || card.issueId || "TD").trim()}${getIssueTitleText(card) ? `: ${getIssueTitleText(card)}` : ""}`}
                             {!isIncluded ? " (not on this invoice)" : ""}
                           </span>
+                          <span style={{ fontWeight: 700 }}>{card.hoursUsed || "0h 00m"}</span>
                         </span>
-                        <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{card.hoursUsed || "0h 00m"}</span>
+                        <span data-html2canvas-ignore="true" style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 400 }}>
+                          <select
+                            value={timeReviewCardSelections[cardKey] || ""}
+                            onChange={(event) => setTimeReviewCardSelections((previous) => ({ ...previous, [cardKey]: event.target.value }))}
+                            disabled={!canReassign || isReassigning}
+                            title={canReassign ? "Pick the correct TD card" : "Regenerate this invoice from Invoices to enable correcting this card"}
+                            style={{ padding: "4px 6px", borderRadius: "4px", border: "1px solid #CBD5E1", fontSize: "0.78rem", maxWidth: "220px" }}
+                          >
+                            <option value="">Move to TD card...</option>
+                            {cardOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {`${option.issueId} — ${option.issueLabel || option.projectName}`}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => handleReassignTimeReviewCard(index, card, personName)}
+                            disabled={!canReassign || isReassigning || !timeReviewCardSelections[cardKey]}
+                            style={{
+                              border: "none",
+                              borderRadius: "4px",
+                              padding: "4px 10px",
+                              background: (!canReassign || isReassigning || !timeReviewCardSelections[cardKey]) ? "#94A3B8" : "#7C3AED",
+                              color: "#FFFFFF",
+                              fontWeight: 700,
+                              fontSize: "0.78rem",
+                              cursor: (!canReassign || isReassigning || !timeReviewCardSelections[cardKey]) ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {isReassigning ? "Moving..." : "Move"}
+                          </button>
+                        </span>
                       </div>
                       );
                     })}
