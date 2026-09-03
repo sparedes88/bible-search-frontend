@@ -637,6 +637,7 @@ const TimeRotate = () => {
   const [inProgressNoteErrorByDocId, setInProgressNoteErrorByDocId] = useState({});
   const [manualSelectedUserId, setManualSelectedUserId] = useState("");
   const [manualSelectedTaskIdentity, setManualSelectedTaskIdentity] = useState("");
+  const [manualTaskSearch, setManualTaskSearch] = useState("");
   const [manualStartAt, setManualStartAt] = useState("");
   const [manualEndAt, setManualEndAt] = useState("");
   const [manualTotalHours, setManualTotalHours] = useState("1");
@@ -2001,6 +2002,12 @@ const TimeRotate = () => {
       };
     });
   }, [getResolvedProjectName, productionCards, taskBlockedByIdentity, taskBlockedByIssueId, taskBlockedByDigits]);
+
+  const filteredManualTaskOptions = useMemo(() => {
+    const normalizedSearch = normalizeValue(manualTaskSearch).toLowerCase();
+    if (!normalizedSearch) return manualTaskOptions;
+    return manualTaskOptions.filter((option) => option.label.toLowerCase().includes(normalizedSearch));
+  }, [manualTaskOptions, manualTaskSearch]);
 
   const selectedManualUser = useMemo(() => {
     return manualUserOptions.find((option) => option.value === manualSelectedUserId) || null;
@@ -3399,6 +3406,13 @@ const TimeRotate = () => {
 
               <label style={{ display: "grid", gap: "6px", color: "#0F172A", fontWeight: 600 }}>
                 <span>Task ID / Title / Project</span>
+                <input
+                  type="text"
+                  value={manualTaskSearch}
+                  onChange={(event) => setManualTaskSearch(event.target.value)}
+                  placeholder="Search by ID, title, or project..."
+                  style={inputStyle}
+                />
                 <select
                   value={manualSelectedTaskIdentity}
                   onChange={(event) => {
@@ -3406,10 +3420,13 @@ const TimeRotate = () => {
                     setManualEntryError("");
                     setManualEntrySuccess("");
                   }}
+                  size={manualTaskSearch && filteredManualTaskOptions.length > 1 ? Math.min(8, filteredManualTaskOptions.length + 1) : undefined}
                   style={inputStyle}
                 >
-                  <option value="">Select task...</option>
-                  {manualTaskOptions.map((option) => (
+                  <option value="">
+                    {filteredManualTaskOptions.length === 0 ? "No tasks match your search" : "Select task..."}
+                  </option>
+                  {filteredManualTaskOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
