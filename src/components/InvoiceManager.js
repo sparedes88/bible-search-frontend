@@ -8320,7 +8320,12 @@ const InvoiceManager = () => {
                       const selectedMatch = matchedProjectIds.length === 1 ? matchedProjectIds[0] : "";
                       return (
                         <tr key={row.identity} style={{ background: row.isBlocked ? "#FEF2F2" : (row.matchedProjects.length === 1 ? "#F0FDF4" : "#FFFBEB") }}>
-                          <td style={tableBodyCellStyle}>{row.issueId || "-"}</td>
+                          <td style={tableBodyCellStyle}>
+                            {row.issueId || "-"}
+                            <div style={{ marginTop: "2px", color: "#94A3B8", fontSize: "0.68rem", fontFamily: "monospace", wordBreak: "break-all" }}>
+                              {row.identities.join(" | ")}
+                            </div>
+                          </td>
                           <td style={tableBodyCellStyle}>{row.title || "-"}</td>
                           <td style={tableBodyCellStyle}>{row.projectName || "Missing project name"}</td>
                           <td style={tableBodyCellStyle}>{formatHoursUsed(row.milliseconds)}</td>
@@ -8359,7 +8364,7 @@ const InvoiceManager = () => {
                               type="button"
                               onClick={() => handleToggleTdBlocked(row.identities, !row.isBlocked)}
                               disabled={!canManageInvoices}
-                              title={row.isBlocked ? "Unblock this TD card so time can be logged to it again" : "Block this TD card from new time entries in TimeRotate and Pay Everyone"}
+                              title={`${row.isBlocked ? "Unblock" : "Block"} this TD card from new time entries in TimeRotate and Pay Everyone\nIdentities: ${row.identities.join(", ")}`}
                               style={{
                                 border: "none",
                                 borderRadius: "999px",

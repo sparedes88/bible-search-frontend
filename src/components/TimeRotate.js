@@ -3839,6 +3839,9 @@ const TimeRotate = () => {
                       ) : (
                         "-"
                       )}
+                      <div style={{ marginTop: "2px", color: "#94A3B8", fontSize: "0.68rem", fontFamily: "monospace", wordBreak: "break-all" }}>
+                        {card.taskIdentity}
+                      </div>
                     </td>
                     <td style={cellStyle}>
                       <div style={{ minWidth: "220px", display: "grid", gap: "6px" }}>
@@ -4031,7 +4034,7 @@ const TimeRotate = () => {
                           type="button"
                           onClick={() => handleStart(card)}
                           disabled={Boolean(activeTimer && activeTimer.cardKey !== card.key) || isCardBlocked(card)}
-                          title={isCardBlocked(card) ? "This TD card is blocked from time entry" : undefined}
+                          title={isCardBlocked(card) ? "This TD card is blocked from time entry" : `taskIdentity: ${card.taskIdentity} | issueId: ${card.issueId}`}
                           style={{
                             backgroundColor: isCardBlocked(card) ? "#B91C1C" : (activeTimer ? "#94A3B8" : "#0F766E"),
                             color: "#FFFFFF",
