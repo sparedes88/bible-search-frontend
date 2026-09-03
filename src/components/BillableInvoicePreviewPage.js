@@ -426,6 +426,21 @@ const BillableInvoicePreviewPage = () => {
 
   const [noteRowOverrides, setNoteRowOverrides] = useState({});
   const [editingNoteRowKey, setEditingNoteRowKey] = useState(null);
+  const [timeReviewOverrides, setTimeReviewOverrides] = useState({});
+  const [isSavingTimeReviewOverrides, setIsSavingTimeReviewOverrides] = useState(false);
+
+  const getTimeReviewCardKey = (userIndex, card) =>
+    `${userIndex}::${String(card.taskIdentity || card.issueId || card.label || "").trim().toLowerCase()}`;
+
+  // Lets a reviewer correct a card that's mismatched (e.g. TD Matcher assigned it to the wrong
+  // invoice) without leaving this page; the override is local until explicitly saved.
+  const toggleTimeReviewCardIncluded = (userIndex, card, defaultIncluded) => {
+    const cardKey = getTimeReviewCardKey(userIndex, card);
+    setTimeReviewOverrides((previous) => {
+      const currentlyIncluded = previous[cardKey] !== undefined ? previous[cardKey] : defaultIncluded;
+      return { ...previous, [cardKey]: !currentlyIncluded };
+    });
+  };
 
   const getNoteRowKey = (userIndex, rowIndex) => `${userIndex}:${rowIndex}`;
 
@@ -714,6 +729,10 @@ const BillableInvoicePreviewPage = () => {
         if (isMounted && savedOverrides && typeof savedOverrides === "object") {
           setNoteRowOverrides(savedOverrides);
         }
+        const savedTimeReviewOverrides = invoiceSnap.data()?.timeReviewOverrides;
+        if (isMounted && savedTimeReviewOverrides && typeof savedTimeReviewOverrides === "object") {
+          setTimeReviewOverrides(savedTimeReviewOverrides);
+        }
       } catch (error) {
         console.error("Failed to load saved note overrides:", error);
       }
@@ -929,6 +948,27 @@ const BillableInvoicePreviewPage = () => {
       toast.error("Failed to save note changes.");
     } finally {
       setIsSavingNoteOverrides(false);
+    }
+  };
+
+  const handleSaveTimeReviewOverrides = async () => {
+    if (!invoiceDocRef) {
+      toast.error("This invoice preview cannot be saved to Firebase (missing invoice reference). Regenerate it from Invoices.");
+      return;
+    }
+
+    setIsSavingTimeReviewOverrides(true);
+    try {
+      await updateDoc(invoiceDocRef, {
+        timeReviewOverrides,
+        timeReviewOverridesUpdatedAt: serverTimestamp(),
+      });
+      toast.success("Time review changes saved.");
+    } catch (error) {
+      console.error("Failed to save time review overrides:", error);
+      toast.error("Failed to save time review changes.");
+    } finally {
+      setIsSavingTimeReviewOverrides(false);
     }
   };
 
@@ -1265,6 +1305,7 @@ const BillableInvoicePreviewPage = () => {
         title: entry.cardTitle || "",
         description: entry.cardTitle || "",
         taskIdentity: `manual-${entry.id}`,
+        milliseconds: hours * 3600000,
         hoursUsed: `${hours.toFixed(2)} hrs`,
       };
       userEntry.cards.push(manualCard);
@@ -1291,6 +1332,7 @@ const BillableInvoicePreviewPage = () => {
         return {
           ...userEntry,
           totalHours: billedTotalHours,
+          realTotalHours: totalHours,
           regularHours,
           overtimeHours,
           regularRate: baseRate,
@@ -1351,13 +1393,15 @@ const BillableInvoicePreviewPage = () => {
       totalOvertimeHours: accumulator.totalOvertimeHours + Number(userEntry.overtimeHours || 0),
       totalHours: accumulator.totalHours + Number(userEntry.totalHours || 0),
       totalAmount: accumulator.totalAmount + Number(userEntry.lineTotal || 0),
-    }), { totalRegularHours: 0, totalOvertimeHours: 0, totalHours: 0, totalAmount: 0 });
+      realTotalHours: accumulator.realTotalHours + Number(userEntry.realTotalHours || 0),
+    }), { totalRegularHours: 0, totalOvertimeHours: 0, totalHours: 0, totalAmount: 0, realTotalHours: 0 });
 
     return {
       totalRegularHours: Number(totals.totalRegularHours.toFixed(2)),
       totalOvertimeHours: Number(totals.totalOvertimeHours.toFixed(2)),
       totalHours: Number(totals.totalHours.toFixed(2)),
       totalAmount: Number(totals.totalAmount.toFixed(2)),
+      realTotalHours: Number(totals.realTotalHours.toFixed(4)),
     };
   }, [effectiveUsers]);
 
@@ -1694,6 +1738,15 @@ const BillableInvoicePreviewPage = () => {
             style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: invoiceDocRef ? "#7C3AED" : "#94A3B8", color: "#FFFFFF", fontWeight: 700, cursor: invoiceDocRef ? "pointer" : "not-allowed" }}
           >
             {isSavingNoteOverrides ? "Saving..." : "Save Note Changes"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveTimeReviewOverrides}
+            disabled={isSavingTimeReviewOverrides || !invoiceDocRef}
+            title={invoiceDocRef ? "Save Time Review card corrections to Firebase" : "Regenerate this preview from Invoices to enable saving"}
+            style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: invoiceDocRef ? "#7C3AED" : "#94A3B8", color: "#FFFFFF", fontWeight: 700, cursor: invoiceDocRef ? "pointer" : "not-allowed" }}
+          >
+            {isSavingTimeReviewOverrides ? "Saving..." : "Save Time Review Changes"}
           </button>
           <button
             type="button"
@@ -2627,6 +2680,9 @@ const BillableInvoicePreviewPage = () => {
       {sectionVisibility.timeReview && (
       <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
         <h2 style={sectionHeadingStyle}>Time Review</h2>
+        <div data-html2canvas-ignore="true" style={{ color: "#64748B", fontSize: "0.78rem", marginBottom: "8px" }}>
+          Check/uncheck a card to correct whether it should count on this invoice, then click "Save Time Review Changes" above.
+        </div>
         <div style={{ display: "grid", gap: "10px" }}>
           {users.length === 0 ? (
             <div style={{ color: "#64748B", fontSize: "0.88rem" }}>No billable time to review.</div>
@@ -2640,12 +2696,23 @@ const BillableInvoicePreviewPage = () => {
             const cards = Array.isArray(userEntry.allCards) && userEntry.allCards.length > 0
               ? userEntry.allCards
               : (Array.isArray(userEntry.cards) ? userEntry.cards.map((card) => ({ ...card, includedInInvoice: true })) : []);
-            const sortedCards = [...cards].sort((left, right) => {
-              if (Boolean(left.includedInInvoice) !== Boolean(right.includedInInvoice)) {
-                return left.includedInInvoice ? -1 : 1;
+            const cardsWithEffectiveState = cards.map((card) => {
+              const cardKey = getTimeReviewCardKey(index, card);
+              const override = timeReviewOverrides[cardKey];
+              const isIncluded = override !== undefined ? override : Boolean(card.includedInInvoice);
+              return { ...card, cardKey, isIncluded };
+            });
+            const sortedCards = [...cardsWithEffectiveState].sort((left, right) => {
+              if (left.isIncluded !== right.isIncluded) {
+                return left.isIncluded ? -1 : 1;
               }
               return Number(right.lastUsedAt || 0) - Number(left.lastUsedAt || 0);
             });
+            const realTotalMilliseconds = cardsWithEffectiveState.reduce(
+              (sum, card) => (card.isIncluded ? sum + (Number(card.milliseconds) || 0) : sum),
+              0
+            );
+            const realTotalHours = realTotalMilliseconds / 3600000;
 
             return (
               <div
@@ -2663,25 +2730,35 @@ const BillableInvoicePreviewPage = () => {
                 ) : (
                   <div style={{ marginTop: "8px", display: "grid", gap: "4px" }}>
                     {sortedCards.map((card, cardIndex) => {
-                      const isIncluded = Boolean(card.includedInInvoice);
+                      const isIncluded = card.isIncluded;
                       return (
                       <div
                         key={`time-review-${index}-card-${cardIndex}`}
                         style={{
                           display: "flex",
+                          alignItems: "center",
                           justifyContent: "space-between",
                           gap: "12px",
                           fontSize: "0.84rem",
                           color: isIncluded ? "#0F172A" : "#64748B",
                           background: isIncluded ? "#DCFCE7" : "transparent",
-                          padding: isIncluded ? "3px 6px" : "3px 6px",
+                          padding: "3px 6px",
                           borderRadius: "4px",
                           fontWeight: isIncluded ? 700 : 400,
                         }}
                       >
-                        <span>
-                          {`${String(card.label || card.issueId || "TD").trim()}${getIssueTitleText(card) ? `: ${getIssueTitleText(card)}` : ""}`}
-                          {!isIncluded ? " (not on this invoice)" : ""}
+                        <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <input
+                            type="checkbox"
+                            data-html2canvas-ignore="true"
+                            checked={isIncluded}
+                            onChange={() => toggleTimeReviewCardIncluded(index, card, Boolean(card.includedInInvoice))}
+                            title="Toggle whether this card counts on this invoice"
+                          />
+                          <span>
+                            {`${String(card.label || card.issueId || "TD").trim()}${getIssueTitleText(card) ? `: ${getIssueTitleText(card)}` : ""}`}
+                            {!isIncluded ? " (not on this invoice)" : ""}
+                          </span>
                         </span>
                         <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{card.hoursUsed || "0h 00m"}</span>
                       </div>
@@ -2689,10 +2766,18 @@ const BillableInvoicePreviewPage = () => {
                     })}
                   </div>
                 )}
+                <div style={{ marginTop: "8px", textAlign: "right", color: "#334155", fontSize: "0.82rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                  {`Real Total Hours: ${realTotalHours.toFixed(2)} hrs`}
+                </div>
               </div>
             );
           })}
         </div>
+        {users.length > 0 && (
+          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "2px solid #E2E8F0", textAlign: "right", color: "#0F172A", fontSize: "0.95rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {`Real Total Hours (all drafters): ${effectiveTotals.realTotalHours.toFixed(2)} hrs`}
+          </div>
+        )}
       </div>
       )}
 

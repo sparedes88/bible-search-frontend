@@ -4206,6 +4206,7 @@ const InvoiceManager = () => {
           projectDocId: String(card.projectDocId || "").trim(),
           firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
+          milliseconds: Number(card.milliseconds) || 0,
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         allCards: (Array.isArray(userEntry.allCards) ? userEntry.allCards : []).map((card) => ({
@@ -4217,6 +4218,7 @@ const InvoiceManager = () => {
           projectDocId: String(card.projectDocId || "").trim(),
           lastUsedAt: Number(card.lastUsedAt) || 0,
           includedInInvoice: Boolean(card.includedInInvoice),
+          milliseconds: Number(card.milliseconds) || 0,
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({
