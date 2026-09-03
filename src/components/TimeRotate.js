@@ -608,6 +608,7 @@ const TimeRotate = () => {
   const [taskCompletionByIdentity, setTaskCompletionByIdentity] = useState({});
   const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
   const [taskBlockedByIssueId, setTaskBlockedByIssueId] = useState({});
+  const [taskBlockedByDigits, setTaskBlockedByDigits] = useState({});
   const [projectNameQuickUpdate, setProjectNameQuickUpdate] = useState({
     open: false,
     card: null,
@@ -1294,6 +1295,7 @@ const TimeRotate = () => {
         const nextCompletionMap = {};
         const nextBlockedMap = {};
         const nextBlockedByIssueIdMap = {};
+        const nextBlockedByDigitsMap = {};
 
         snapshot.forEach((snapshotDoc) => {
           const data = snapshotDoc.data() || {};
@@ -1317,6 +1319,12 @@ const TimeRotate = () => {
           if (issueIdSuffix && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByIssueIdMap, issueIdSuffix))) {
             nextBlockedByIssueIdMap[issueIdSuffix] = isBlocked;
           }
+          // The TD number itself can gain/lose a "TD-" style prefix between when a historical log
+          // was written and how the sheet reads today, so also fall back to matching by digits only.
+          const issueIdDigits = issueIdSuffix.replace(/[^0-9]/g, "");
+          if (issueIdDigits && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByDigitsMap, issueIdDigits))) {
+            nextBlockedByDigitsMap[issueIdDigits] = isBlocked;
+          }
         });
 
         setTaskTagsByIdentity(nextTagsMap);
@@ -1324,6 +1332,7 @@ const TimeRotate = () => {
         setTaskCompletionByIdentity(nextCompletionMap);
         setTaskBlockedByIdentity(nextBlockedMap);
         setTaskBlockedByIssueId(nextBlockedByIssueIdMap);
+        setTaskBlockedByDigits(nextBlockedByDigitsMap);
       },
       (snapshotError) => {
         console.error("Error loading task descriptions:", snapshotError);
@@ -1974,14 +1983,19 @@ const TimeRotate = () => {
   const manualTaskOptions = useMemo(() => {
     return productionCards.map((card) => {
       const issueIdKey = String(card.issueId || "").trim().toLowerCase();
-      const isBlocked = Boolean(taskBlockedByIdentity[card.taskIdentity] || (issueIdKey && taskBlockedByIssueId[issueIdKey]));
+      const issueIdDigits = issueIdKey.replace(/[^0-9]/g, "");
+      const isBlocked = Boolean(
+        taskBlockedByIdentity[card.taskIdentity]
+        || (issueIdKey && taskBlockedByIssueId[issueIdKey])
+        || (issueIdDigits && taskBlockedByDigits[issueIdDigits])
+      );
       return {
         value: card.taskIdentity,
         label: `${card.issueId || "-"} - ${card.title || "Untitled task"} (${getResolvedProjectName(card) || "No project"})${isBlocked ? " [BLOCKED]" : ""}`,
         card,
       };
     });
-  }, [getResolvedProjectName, productionCards, taskBlockedByIdentity, taskBlockedByIssueId]);
+  }, [getResolvedProjectName, productionCards, taskBlockedByIdentity, taskBlockedByIssueId, taskBlockedByDigits]);
 
   const selectedManualUser = useMemo(() => {
     return manualUserOptions.find((option) => option.value === manualSelectedUserId) || null;
@@ -2213,7 +2227,9 @@ const TimeRotate = () => {
     if (!card) return false;
     if (taskBlockedByIdentity[card.taskIdentity]) return true;
     const issueIdKey = String(card.issueId || "").trim().toLowerCase();
-    return Boolean(issueIdKey && taskBlockedByIssueId[issueIdKey]);
+    if (issueIdKey && taskBlockedByIssueId[issueIdKey]) return true;
+    const issueIdDigits = issueIdKey.replace(/[^0-9]/g, "");
+    return Boolean(issueIdDigits && taskBlockedByDigits[issueIdDigits]);
   };
 
   const handleStart = (card) => {

@@ -3164,17 +3164,20 @@ const EditableTimeEntriesTab = ({
   // TD cards blocked in the TD Matcher (Invoices) can't have new time charged to them here.
   const [taskBlockedByIdentity, setTaskBlockedByIdentity] = useState({});
   const [taskBlockedByIssueId, setTaskBlockedByIssueId] = useState({});
+  const [taskBlockedByDigits, setTaskBlockedByDigits] = useState({});
 
   useEffect(() => {
     if (!id) {
       setTaskBlockedByIdentity({});
       setTaskBlockedByIssueId({});
+      setTaskBlockedByDigits({});
       return undefined;
     }
 
     const unsubscribe = onSnapshot(collection(db, "churches", id, "timeRotateTaskDetails"), (snapshot) => {
       const nextBlockedMap = {};
       const nextBlockedByIssueIdMap = {};
+      const nextBlockedByDigitsMap = {};
       snapshot.forEach((snapshotDoc) => {
         const data = snapshotDoc.data() || {};
         const taskIdentity = normalizeValue(data.taskIdentity);
@@ -3187,13 +3190,21 @@ const EditableTimeEntriesTab = ({
         if (issueIdSuffix && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByIssueIdMap, issueIdSuffix))) {
           nextBlockedByIssueIdMap[issueIdSuffix] = isBlocked;
         }
+        // The TD number can gain/lose a prefix like "TD-" between historical logs and the
+        // current sheet, so also fall back to matching by digits only.
+        const issueIdDigits = issueIdSuffix.replace(/[^0-9]/g, "");
+        if (issueIdDigits && (isBlocked || !Object.prototype.hasOwnProperty.call(nextBlockedByDigitsMap, issueIdDigits))) {
+          nextBlockedByDigitsMap[issueIdDigits] = isBlocked;
+        }
       });
       setTaskBlockedByIdentity(nextBlockedMap);
       setTaskBlockedByIssueId(nextBlockedByIssueIdMap);
+      setTaskBlockedByDigits(nextBlockedByDigitsMap);
     }, (error) => {
       console.error("Error loading TD blocked status:", error);
       setTaskBlockedByIdentity({});
       setTaskBlockedByIssueId({});
+      setTaskBlockedByDigits({});
     });
 
     return () => unsubscribe();
@@ -3560,9 +3571,11 @@ const EditableTimeEntriesTab = ({
     if (selectedCardForBlockCheck) {
       const candidateTaskIdentity = `${selectedCardForBlockCheck.projectDocId || "unknown-project"}::${normalizeValue(selectedCardForBlockCheck.issueId)}`;
       const candidateIssueIdKey = normalizeComparable(selectedCardForBlockCheck.issueId);
+      const candidateIssueIdDigits = candidateIssueIdKey.replace(/[^0-9]/g, "");
       const isCandidateBlocked = Boolean(
         taskBlockedByIdentity[candidateTaskIdentity]
         || (candidateIssueIdKey && taskBlockedByIssueId[candidateIssueIdKey])
+        || (candidateIssueIdDigits && taskBlockedByDigits[candidateIssueIdDigits])
       );
       if (isCandidateBlocked) {
         window.alert("This TD card is blocked from time entry. Ask a supervisor to unblock it in the TD Matcher.");
@@ -4076,9 +4089,11 @@ const EditableTimeEntriesTab = ({
                             {rowCardOptions.map((option) => {
                               const optionTaskIdentity = `${option.projectDocId || "unknown-project"}::${normalizeValue(option.issueId)}`;
                               const optionIssueIdKey = normalizeComparable(option.issueId);
+                              const optionIssueIdDigits = optionIssueIdKey.replace(/[^0-9]/g, "");
                               const isOptionBlocked = Boolean(
                                 taskBlockedByIdentity[optionTaskIdentity]
                                 || (optionIssueIdKey && taskBlockedByIssueId[optionIssueIdKey])
+                                || (optionIssueIdDigits && taskBlockedByDigits[optionIssueIdDigits])
                               );
                               return (
                                 <option key={option.key} value={option.value}>
