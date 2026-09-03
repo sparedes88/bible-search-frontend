@@ -395,6 +395,21 @@ service cloud.firestore {
           );
       }
 
+      // Manager decision on which project absorbs a person's overtime for a given week.
+      match /overtimeAllocationOverrides/{overrideId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() &&
+          (
+            request.resource.data.updatedByUid == request.auth.uid ||
+            isChurchAdmin(churchId)
+          );
+        allow update, delete: if isAuthenticated() &&
+          (
+            resource.data.updatedByUid == request.auth.uid ||
+            isChurchAdmin(churchId)
+          );
+      }
+
       // TimeRotate edit/audit logs - church users can read, church users can append, admins can manage all.
       match /timeRotateEditLogs/{logId} {
         allow read: if isAuthenticated() && isUserInChurch(churchId);

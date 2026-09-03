@@ -1110,6 +1110,7 @@ const InvoiceManager = () => {
   const [projectIssuesByProjectNameKey, setProjectIssuesByProjectNameKey] = useState({});
   const [tdInvoiceProjectIdByIdentity, setTdInvoiceProjectIdByIdentity] = useState({});
   const [tdBlockedByIdentity, setTdBlockedByIdentity] = useState({});
+  const [overtimeOverrideByWeekUser, setOvertimeOverrideByWeekUser] = useState({});
   const externalPdfInputRef = useRef(null);
 
   const handleInvoicesTabChange = (tabKey, { replace = false } = {}) => {
@@ -1312,6 +1313,32 @@ const InvoiceManager = () => {
       console.error("Error loading TD invoice matches:", error);
       setTdInvoiceProjectIdByIdentity({});
       setTdBlockedByIdentity({});
+    });
+  }, [id]);
+
+  // Lets a manager decide which project absorbs a person's overtime for a given week, overriding
+  // the default chronological (first-logged-hours-are-regular) allocation.
+  useEffect(() => {
+    if (!id) {
+      setOvertimeOverrideByWeekUser({});
+      return undefined;
+    }
+
+    return onSnapshot(collection(db, "churches", id, "overtimeAllocationOverrides"), (snapshot) => {
+      const nextOverrides = {};
+      snapshot.forEach((overrideDoc) => {
+        const data = overrideDoc.data() || {};
+        const weekKey = String(data.weekKey || "").trim();
+        const userKey = String(data.userLabel || "").trim().toLowerCase();
+        const invoiceProjectId = String(data.invoiceProjectId || "").trim();
+        if (weekKey && userKey && invoiceProjectId) {
+          nextOverrides[`${weekKey}::${userKey}`] = invoiceProjectId;
+        }
+      });
+      setOvertimeOverrideByWeekUser(nextOverrides);
+    }, (error) => {
+      console.error("Error loading overtime allocation overrides:", error);
+      setOvertimeOverrideByWeekUser({});
     });
   }, [id]);
 
@@ -1961,10 +1988,22 @@ const InvoiceManager = () => {
 
     const allocationByLogId = {};
 
-    grouped.forEach((logs) => {
+    grouped.forEach((logs, groupKey) => {
+      // By default the first hours logged that week are "regular" and whatever comes after the
+      // 40h mark is overtime, chronologically, regardless of project. A manager can override
+      // which project absorbs the overtime for a given person/week; when set, that project's
+      // logs are evaluated LAST so they're the ones most likely to land past the 40h threshold.
+      const overrideProjectId = overtimeOverrideByWeekUser[groupKey];
+      const orderedLogs = overrideProjectId
+        ? [
+          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) !== overrideProjectId),
+          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === overrideProjectId),
+        ]
+        : logs;
+
       let consumedMilliseconds = 0;
 
-      logs.forEach((log) => {
+      orderedLogs.forEach((log) => {
         const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
         const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
         const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
@@ -1979,7 +2018,7 @@ const InvoiceManager = () => {
     });
 
     return allocationByLogId;
-  }, [billableTimeRotateLogs]);
+  }, [billableTimeRotateLogs, overtimeOverrideByWeekUser, tdInvoiceProjectIdByIdentity]);
 
   const projectNameById = useMemo(() => {
     const map = {};
@@ -5030,6 +5069,37 @@ const InvoiceManager = () => {
     } catch (error) {
       console.error("Error updating TD blocked status:", error);
       toast.error("Failed to update the TD's blocked status.");
+    }
+  };
+
+  const handleSetOvertimeOverride = async (weekKey, userLabel, invoiceProjectId) => {
+    if (!canManageInvoices) return;
+
+    const normalizedWeekKey = String(weekKey || "").trim();
+    const normalizedUserLabel = String(userLabel || "").trim();
+    if (!normalizedWeekKey || !normalizedUserLabel) return;
+
+    const docId = `${normalizedWeekKey}_${normalizedUserLabel}`.toLowerCase().replace(/[^a-z0-9_]+/g, "");
+
+    try {
+      if (!invoiceProjectId) {
+        await deleteDoc(doc(db, "churches", id, "overtimeAllocationOverrides", docId));
+        toast.success("Overtime billing reset to automatic (chronological) for this person/week.");
+        return;
+      }
+
+      await setDoc(doc(db, "churches", id, "overtimeAllocationOverrides", docId), {
+        weekKey: normalizedWeekKey,
+        userLabel: normalizedUserLabel,
+        invoiceProjectId,
+        updatedAt: Date.now(),
+        updatedByUid: user?.uid || "",
+        updatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+      }, { merge: true });
+      toast.success("Overtime for this person/week will now bill to the selected project.");
+    } catch (error) {
+      console.error("Error saving overtime allocation override:", error);
+      toast.error("Failed to save the overtime billing decision.");
     }
   };
 
@@ -8124,7 +8194,7 @@ const InvoiceManager = () => {
           ) : activeInvoicesTab === "overtime-analysis" ? (
             <div style={{ ...tableShellStyle, padding: "12px" }}>
               <div style={{ color: "#334155", fontSize: "0.9rem", marginBottom: "12px" }}>
-                Overtime is allocated per person, per week, chronologically across ALL of their TD-matched invoice projects (not per-invoice) — the first 40h logged that week are regular, everything after is overtime, regardless of which project it's on. This view shows, per week and per user, which projects absorbed the regular vs overtime hours so you can see why a specific invoice shows overtime.
+                By default, overtime is allocated per person, per week, chronologically across ALL of their TD-matched invoice projects (not per-invoice) — the first 40h logged that week are regular, everything after is overtime, regardless of which project it's on. Use "Bill Overtime To" below to decide which project should absorb a person's overtime for a given week instead; this changes their actual invoice math, not just this view.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
                 <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
@@ -8177,10 +8247,14 @@ const InvoiceManager = () => {
                               <th style={tableHeaderCellStyle}>Regular</th>
                               <th style={tableHeaderCellStyle}>Overtime</th>
                               <th style={tableHeaderCellStyle}>Logs</th>
+                              <th style={tableHeaderCellStyle}>Bill Overtime To</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {weekGroup.users.map((userEntry) => (
+                            {weekGroup.users.map((userEntry) => {
+                              const overrideKey = `${weekGroup.weekKey}::${String(userEntry.userLabel || "").trim().toLowerCase()}`;
+                              const currentOverrideProjectId = overtimeOverrideByWeekUser[overrideKey] || "";
+                              return (
                               <React.Fragment key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}`}>
                                 {userEntry.projects.map((projectEntry, projectIndex) => (
                                   <tr
@@ -8197,6 +8271,7 @@ const InvoiceManager = () => {
                                       {formatHoursUsed(projectEntry.overtimeMilliseconds)}
                                     </td>
                                     <td style={tableBodyCellStyle}>{projectEntry.logCount}</td>
+                                    <td style={tableBodyCellStyle} />
                                   </tr>
                                 ))}
                                 <tr style={{ background: "#F1F5F9" }}>
@@ -8208,9 +8283,27 @@ const InvoiceManager = () => {
                                     {formatHoursUsed(userEntry.totalOvertimeMilliseconds)}
                                   </td>
                                   <td style={tableBodyCellStyle} />
+                                  <td style={tableBodyCellStyle}>
+                                    <select
+                                      value={currentOverrideProjectId}
+                                      onChange={(event) => handleSetOvertimeOverride(weekGroup.weekKey, userEntry.userLabel, event.target.value)}
+                                      disabled={!canManageInvoices}
+                                      style={{ ...compactInputStyle, minWidth: "200px" }}
+                                    >
+                                      <option value="">Automatic (chronological)</option>
+                                      {userEntry.projects
+                                        .filter((projectEntry) => projectEntry.projectId !== "__unassigned__")
+                                        .map((projectEntry) => (
+                                          <option key={`overtime-override-${overrideKey}-${projectEntry.projectId}`} value={projectEntry.projectId}>
+                                            {projectEntry.projectName}
+                                          </option>
+                                        ))}
+                                    </select>
+                                  </td>
                                 </tr>
                               </React.Fragment>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
