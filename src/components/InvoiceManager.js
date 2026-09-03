@@ -8346,22 +8346,44 @@ const InvoiceManager = () => {
                                   </td>
                                   <td style={tableBodyCellStyle} />
                                   <td style={tableBodyCellStyle}>
-                                    <select
-                                      value={currentOverrideProjectId}
-                                      onChange={(event) => handleSetOvertimeOverride(weekGroup.weekKey, userEntry.userLabel, event.target.value)}
-                                      disabled={!canManageInvoices}
-                                      style={{ ...compactInputStyle, minWidth: "200px", border: userEntry.needsDecision ? "1px solid #DC2626" : undefined }}
-                                    >
-                                      <option value="">Automatic (bills as regular until decided)</option>
-                                      <option value={REGULAR_ONLY_OVERTIME_OVERRIDE}>Bill as Regular (no overtime)</option>
-                                      {userEntry.projects
-                                        .filter((projectEntry) => projectEntry.projectId !== "__unassigned__")
-                                        .map((projectEntry) => (
-                                          <option key={`overtime-override-${overrideKey}-${projectEntry.projectId}`} value={projectEntry.projectId}>
-                                            {`Bill overtime to ${projectEntry.projectName}`}
-                                          </option>
-                                        ))}
-                                    </select>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                      <select
+                                        value={currentOverrideProjectId}
+                                        onChange={(event) => handleSetOvertimeOverride(weekGroup.weekKey, userEntry.userLabel, event.target.value)}
+                                        disabled={!canManageInvoices}
+                                        style={{ ...compactInputStyle, minWidth: "200px", border: userEntry.needsDecision ? "1px solid #DC2626" : undefined }}
+                                      >
+                                        <option value="">Reset to No Decision (Automatic)</option>
+                                        <option value={REGULAR_ONLY_OVERTIME_OVERRIDE}>Bill as Regular (no overtime)</option>
+                                        {userEntry.projects
+                                          .filter((projectEntry) => projectEntry.projectId !== "__unassigned__")
+                                          .map((projectEntry) => (
+                                            <option key={`overtime-override-${overrideKey}-${projectEntry.projectId}`} value={projectEntry.projectId}>
+                                              {`Bill overtime to ${projectEntry.projectName}`}
+                                            </option>
+                                          ))}
+                                      </select>
+                                      {userEntry.hasOverride && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSetOvertimeOverride(weekGroup.weekKey, userEntry.userLabel, "")}
+                                          disabled={!canManageInvoices}
+                                          title="Clear this decision and go back to no decision (as before)"
+                                          style={{
+                                            border: "1px solid #CBD5E1",
+                                            borderRadius: "4px",
+                                            padding: "4px 8px",
+                                            background: "#FFFFFF",
+                                            color: "#475569",
+                                            fontWeight: 700,
+                                            fontSize: "0.76rem",
+                                            cursor: canManageInvoices ? "pointer" : "not-allowed",
+                                          }}
+                                        >
+                                          Reset
+                                        </button>
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               </React.Fragment>
