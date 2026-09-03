@@ -2008,6 +2008,11 @@ const InvoiceManager = () => {
       // and every other project this person worked that week stays fully regular. Nothing pools
       // across projects -- a project only ever owes overtime for hours it alone gave the person
       // past 40h.
+      //
+      // The excess past 40h is rounded to the nearest whole hour using a 45-minute cutoff (only
+      // for this decision): 45+ minutes into the hour rounds up to a full overtime hour, less
+      // than that rounds down and bills as regular -- it isn't justifiable to charge a client
+      // overtime for a sliver of extra time.
       if (override) {
         logs.forEach((log) => {
           if (getAssignedInvoiceProjectIdForLog(log) !== override) {
@@ -2016,9 +2021,21 @@ const InvoiceManager = () => {
         });
 
         const targetLogs = logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === override);
+        const targetTotalMilliseconds = targetLogs.reduce((sum, log) => sum + log.safeDuration, 0);
+        const rawExcessMilliseconds = Math.max(0, targetTotalMilliseconds - OVERTIME_THRESHOLD_MILLISECONDS);
+        const hourMilliseconds = 60 * 60 * 1000;
+        const overtimeRoundingCutoffMilliseconds = 45 * 60 * 1000;
+        const wholeOvertimeHours = Math.floor(rawExcessMilliseconds / hourMilliseconds);
+        const overtimeRemainderMilliseconds = rawExcessMilliseconds - wholeOvertimeHours * hourMilliseconds;
+        const roundedOvertimeMilliseconds = Math.min(
+          targetTotalMilliseconds,
+          (overtimeRemainderMilliseconds >= overtimeRoundingCutoffMilliseconds ? wholeOvertimeHours + 1 : wholeOvertimeHours) * hourMilliseconds
+        );
+        const regularCapacityMilliseconds = targetTotalMilliseconds - roundedOvertimeMilliseconds;
+
         let consumedMilliseconds = 0;
         targetLogs.forEach((log) => {
-          const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
+          const regularRemaining = Math.max(0, regularCapacityMilliseconds - consumedMilliseconds);
           const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
           const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
           allocationByLogId[log.id] = { regularMilliseconds, overtimeMilliseconds };
