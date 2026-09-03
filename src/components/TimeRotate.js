@@ -3828,12 +3828,6 @@ const TimeRotate = () => {
                   <th style={cellHeaderStyle}>ID</th>
                   <th style={cellHeaderStyle}>Project Name</th>
                   <th style={cellHeaderStyle}>Title</th>
-                  <th style={cellHeaderStyle}>E2 Status</th>
-                  <th style={cellHeaderStyle}>E2 Detailer</th>
-                  <th style={cellHeaderStyle}>E2 Detailer Support Team</th>
-                  <th style={cellHeaderStyle}>Task Tags</th>
-                  <th style={cellHeaderStyle}>Technical Direction</th>
-                  <th style={cellHeaderStyle}>Data Stage</th>
                   <th style={cellHeaderStyle}>Completed for Review</th>
                   <th style={cellHeaderStyle}>Action</th>
                 </tr>
@@ -3885,116 +3879,6 @@ const TimeRotate = () => {
                         ? `⭐ ${card.title || "-"}`
                         : (card.title || "-")}
                     </td>
-                    <td style={cellStyle}>{card.statusAgile || "-"}</td>
-                    <td style={cellStyle}>{card.leadDetailer || "-"}</td>
-                    <td style={cellStyle}>{card.supportTeam || "-"}</td>
-                    <td style={cellStyle}>
-                      <div style={{ minWidth: "210px", display: "grid", gap: "6px" }}>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", minHeight: "18px" }}>
-                          {getResolvedTaskTags(card).length > 0 ? (
-                            getResolvedTaskTags(card).map((tag) => (
-                              <TagChip
-                                key={`${card.taskIdentity}-${tag}`}
-                                tag={tag}
-                                onRemove={() => handleRemoveTaskTag(card, tag)}
-                              />
-                            ))
-                          ) : (
-                            <span style={{ color: "#94A3B8", fontSize: "0.85rem" }}>No tags</span>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
-                          {showTaskTagInputByIdentity[card.taskIdentity] ? (
-                            <>
-                              <input
-                                type="text"
-                                list="task-tag-suggestions"
-                                value={taskTagInputByIdentity[card.taskIdentity] || ""}
-                                onChange={(event) => handleTaskTagInputChange(card.taskIdentity, event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter" || event.key === ",") {
-                                    event.preventDefault();
-                                    handleAddTaskTag(card, taskTagInputByIdentity[card.taskIdentity] || "");
-                                  }
-                                  if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    handleHideTaskTagInput(card.taskIdentity);
-                                  }
-                                }}
-                                placeholder="Add tag"
-                                style={{
-                                  flex: "1 1 auto",
-                                  minWidth: "100px",
-                                  padding: "6px 8px",
-                                  border: "1px solid #CBD5E1",
-                                  borderRadius: "6px",
-                                  fontFamily: "inherit",
-                                  fontSize: "0.82rem",
-                                  backgroundColor: "#FFFFFF",
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleAddTaskTag(card, taskTagInputByIdentity[card.taskIdentity] || "")}
-                                style={{
-                                  backgroundColor: "#0F766E",
-                                  color: "#FFFFFF",
-                                  border: "none",
-                                  borderRadius: "6px",
-                                  padding: "6px 8px",
-                                  cursor: "pointer",
-                                  fontWeight: 600,
-                                  fontSize: "0.78rem",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                +
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleHideTaskTagInput(card.taskIdentity)}
-                                style={{
-                                  backgroundColor: "transparent",
-                                  color: "#64748B",
-                                  border: "1px solid #CBD5E1",
-                                  borderRadius: "6px",
-                                  padding: "5px 7px",
-                                  cursor: "pointer",
-                                  fontWeight: 600,
-                                  fontSize: "0.76rem",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                x
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleShowTaskTagInput(card.taskIdentity)}
-                              style={{
-                                backgroundColor: "transparent",
-                                color: "#0F766E",
-                                border: "1px solid #99F6E4",
-                                borderRadius: "6px",
-                                padding: "5px 8px",
-                                cursor: "pointer",
-                                fontWeight: 600,
-                                fontSize: "0.76rem",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              + Tag
-                            </button>
-                          )}
-                          {Boolean(savingTaskTagsByIdentity[card.taskIdentity]) && (
-                            <span style={{ color: "#64748B", fontSize: "0.75rem", fontWeight: 600 }}>Saving...</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td style={cellStyle}>{card.technicalDirection || "-"}</td>
-                    <td style={cellStyle}>{card.dataStage || "Production"}</td>
                     <td style={cellStyle}>
                       {(() => {
                         const completionStatus = getResolvedTaskCompletionStatus(card);
