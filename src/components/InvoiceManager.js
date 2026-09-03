@@ -8280,14 +8280,20 @@ const InvoiceManager = () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {weekGroup.users.map((userEntry) => {
+                            {weekGroup.users.map((userEntry, userIndex) => {
                               const overrideKey = `${weekGroup.weekKey}::${String(userEntry.userLabel || "").trim().toLowerCase()}`;
                               const currentOverrideProjectId = overtimeOverrideByWeekUser[overrideKey] || "";
+                              const groupTopBorder = userIndex > 0 ? "4px solid #94A3B8" : undefined;
                               return (
                               <React.Fragment key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}`}>
+                                {userIndex > 0 && (
+                                  <tr>
+                                    <td colSpan={7} style={{ padding: 0, border: "none", height: "14px", background: "#FFFFFF" }} />
+                                  </tr>
+                                )}
                                 {userEntry.needsDecision && (
                                   <tr>
-                                    <td colSpan={7} style={{ ...tableBodyCellStyle, background: "#FEF2F2", color: "#991B1B", fontWeight: 700 }}>
+                                    <td colSpan={7} style={{ ...tableBodyCellStyle, background: "#FEF2F2", color: "#991B1B", fontWeight: 700, borderTop: groupTopBorder }}>
                                       ⚠️ A project crossed 40h alone for {userEntry.userLabel} this week. Per your overtime policy, decide how to bill it below — it is currently billing as regular on every project until you decide.
                                     </td>
                                   </tr>
@@ -8297,17 +8303,17 @@ const InvoiceManager = () => {
                                     key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}-${projectEntry.projectId}`}
                                     style={{ background: userEntry.totalOvertimeMilliseconds > 0 ? "#FFFBEB" : "#F8FAFC" }}
                                   >
-                                    <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>
+                                    <td style={{ ...tableBodyCellStyle, fontWeight: 800, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>
                                       {projectIndex === 0 ? (userEntry.userLabel || "Unknown") : ""}
                                     </td>
-                                    <td style={tableBodyCellStyle}>{projectEntry.projectName}</td>
-                                    <td style={tableBodyCellStyle}>{formatHoursUsed(projectEntry.milliseconds)}</td>
-                                    <td style={tableBodyCellStyle}>{formatHoursUsed(projectEntry.regularMilliseconds)}</td>
-                                    <td style={{ ...tableBodyCellStyle, color: projectEntry.overtimeMilliseconds > 0 ? "#B45309" : "#0F172A", fontWeight: projectEntry.overtimeMilliseconds > 0 ? 800 : 400 }}>
+                                    <td style={{ ...tableBodyCellStyle, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>{projectEntry.projectName}</td>
+                                    <td style={{ ...tableBodyCellStyle, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>{formatHoursUsed(projectEntry.milliseconds)}</td>
+                                    <td style={{ ...tableBodyCellStyle, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>{formatHoursUsed(projectEntry.regularMilliseconds)}</td>
+                                    <td style={{ ...tableBodyCellStyle, color: projectEntry.overtimeMilliseconds > 0 ? "#B45309" : "#0F172A", fontWeight: projectEntry.overtimeMilliseconds > 0 ? 800 : 400, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>
                                       {formatHoursUsed(projectEntry.overtimeMilliseconds)}
                                     </td>
-                                    <td style={tableBodyCellStyle}>{projectEntry.logCount}</td>
-                                    <td style={tableBodyCellStyle} />
+                                    <td style={{ ...tableBodyCellStyle, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }}>{projectEntry.logCount}</td>
+                                    <td style={{ ...tableBodyCellStyle, borderTop: projectIndex === 0 && !userEntry.needsDecision ? groupTopBorder : undefined }} />
                                   </tr>
                                 ))}
                                 <tr style={{ background: "#F1F5F9" }}>
