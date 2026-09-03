@@ -2002,17 +2002,21 @@ const InvoiceManager = () => {
         return;
       }
 
-      // A manager can also decide "bill the overtime to this specific project", which pools ALL
-      // of the person's hours that week (across every project) and evaluates the chosen project's
-      // logs LAST so they're the ones most likely to land past the 40h mark.
+      // A manager can also decide "bill the overtime to this specific project": that project's
+      // own hours are split against the 40h threshold (regular up to 40h, excess is overtime),
+      // and every other project this person worked that week stays fully regular. Nothing pools
+      // across projects -- a project only ever owes overtime for hours it alone gave the person
+      // past 40h.
       if (override) {
-        const orderedLogs = [
-          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) !== override),
-          ...logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === override),
-        ];
+        logs.forEach((log) => {
+          if (getAssignedInvoiceProjectIdForLog(log) !== override) {
+            allocationByLogId[log.id] = { regularMilliseconds: log.safeDuration, overtimeMilliseconds: 0 };
+          }
+        });
 
+        const targetLogs = logs.filter((log) => getAssignedInvoiceProjectIdForLog(log) === override);
         let consumedMilliseconds = 0;
-        orderedLogs.forEach((log) => {
+        targetLogs.forEach((log) => {
           const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
           const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
           const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
@@ -2022,26 +2026,12 @@ const InvoiceManager = () => {
         return;
       }
 
-      // Default (no manager decision yet): it isn't justifiable to bill a client project overtime
-      // just because a person split their week across multiple projects that together exceed 40h.
-      // Each project only owes overtime if IT ALONE gave that person more than 40h that week, so
-      // the 40h threshold is evaluated per project, not pooled across all of a person's projects.
-      const logsByProject = new Map();
+      // Default (no manager decision yet): nothing bills as overtime automatically, even if a
+      // single project alone gave this person more than 40h that week -- that case is flagged in
+      // the Overtime Analysis tab as needing a decision, and bills as regular until a manager
+      // explicitly picks which project (if any) should absorb the overtime.
       logs.forEach((log) => {
-        const projectId = getAssignedInvoiceProjectIdForLog(log) || "__unassigned__";
-        if (!logsByProject.has(projectId)) logsByProject.set(projectId, []);
-        logsByProject.get(projectId).push(log);
-      });
-
-      logsByProject.forEach((projectLogs) => {
-        let consumedMilliseconds = 0;
-        projectLogs.forEach((log) => {
-          const regularRemaining = Math.max(0, OVERTIME_THRESHOLD_MILLISECONDS - consumedMilliseconds);
-          const regularMilliseconds = Math.min(log.safeDuration, regularRemaining);
-          const overtimeMilliseconds = Math.max(0, log.safeDuration - regularMilliseconds);
-          allocationByLogId[log.id] = { regularMilliseconds, overtimeMilliseconds };
-          consumedMilliseconds += log.safeDuration;
-        });
+        allocationByLogId[log.id] = { regularMilliseconds: log.safeDuration, overtimeMilliseconds: 0 };
       });
     });
 
@@ -8336,7 +8326,7 @@ const InvoiceManager = () => {
                                       disabled={!canManageInvoices}
                                       style={{ ...compactInputStyle, minWidth: "200px", border: userEntry.needsDecision ? "1px solid #DC2626" : undefined }}
                                     >
-                                      <option value="">Automatic (per-project, no pooling)</option>
+                                      <option value="">Automatic (bills as regular until decided)</option>
                                       <option value={REGULAR_ONLY_OVERTIME_OVERRIDE}>Bill as Regular (no overtime)</option>
                                       {userEntry.projects
                                         .filter((projectEntry) => projectEntry.projectId !== "__unassigned__")
