@@ -14,16 +14,57 @@ const SECTION_DEFS = [
   { key: "invoiceInfo", label: "Invoice Details" },
   { key: "summary", label: "Billable Summary by Person" },
   { key: "timeReview", label: "Time Review" },
+  { key: "profitLoss", label: "P&L (Cost vs. Billed)" },
   { key: "workSummary", label: "Work Summary per User" },
   { key: "issuesNotes", label: "Issues and Notes" },
 ];
 
-const HIDDEN_SECTIONS_BY_DEFAULT = ["issuesNotes", "workSummary", "timeReview"];
+const HIDDEN_SECTIONS_BY_DEFAULT = ["issuesNotes", "workSummary", "timeReview", "profitLoss"];
 
 const DEFAULT_SECTION_VISIBILITY = SECTION_DEFS.reduce((acc, section) => {
   acc[section.key] = !HIDDEN_SECTIONS_BY_DEFAULT.includes(section.key);
   return acc;
 }, {});
+
+const WEEKS_PER_MONTH = 52 / 12;
+
+const toMillisFromAny = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+// Mirrors PayEveryone's compensation resolution (current rate, same as its Time and Cost tab)
+// so the P&L section's labor cost matches what that module would show for the same person.
+const resolveCurrentHourlyRateFromSettings = (data = {}) => {
+  const normalizeSnapshot = (value = {}) => ({
+    billingType: String(value.billingType || "").toLowerCase() === "salary" ? "salary" : "hourly",
+    hourlyRate: Number(value.hourlyRate) || 0,
+    monthlySalary: Number(value.monthlySalary) || 0,
+    expectedHours: Number(value.expectedHours) || 40,
+  });
+
+  const changeLog = (Array.isArray(data.changeLog) ? data.changeLog : [])
+    .map((entry) => ({ effectiveFrom: toMillisFromAny(entry?.effectiveFrom), ...normalizeSnapshot(entry) }))
+    .filter((entry) => Number.isFinite(entry.effectiveFrom))
+    .sort((left, right) => left.effectiveFrom - right.effectiveFrom);
+
+  const now = Date.now();
+  const effectiveEntry = [...changeLog].reverse().find((entry) => entry.effectiveFrom <= now)
+    || changeLog[0]
+    || normalizeSnapshot(data);
+
+  if (effectiveEntry.billingType === "salary") {
+    const expectedMonthlyHours = effectiveEntry.expectedHours > 0 ? effectiveEntry.expectedHours * WEEKS_PER_MONTH : 0;
+    return expectedMonthlyHours > 0 ? effectiveEntry.monthlySalary / expectedMonthlyHours : 0;
+  }
+  return effectiveEntry.hourlyRate;
+};
 
 const tableHeaderCellStyle = {
   textAlign: "left",
@@ -355,6 +396,34 @@ const BillableInvoicePreviewPage = () => {
     return () => {
       isCancelled = true;
     };
+  }, [id]);
+
+  // Backtraces P&L labor cost to Pay Everyone's compensation settings, keyed by every identity
+  // (userId, email, display name) that could plausibly match a Time Rotate log's user.
+  const [hourlyRateByIdentityKey, setHourlyRateByIdentityKey] = useState({});
+
+  useEffect(() => {
+    if (!id) {
+      setHourlyRateByIdentityKey({});
+      return undefined;
+    }
+
+    return onSnapshot(collection(db, "churches", id, "payEveryoneUserSettings"), (snapshot) => {
+      const nextRatesByKey = {};
+      snapshot.docs.forEach((settingsDoc) => {
+        const data = settingsDoc.data() || {};
+        const hourlyRate = resolveCurrentHourlyRateFromSettings(data);
+        if (!Number.isFinite(hourlyRate) || hourlyRate <= 0) return;
+
+        [data.userKey, data.userId, data.userEmail, data.userLabel]
+          .map((value) => String(value || "").trim().toLowerCase())
+          .filter(Boolean)
+          .forEach((key) => {
+            nextRatesByKey[key] = hourlyRate;
+          });
+      });
+      setHourlyRateByIdentityKey(nextRatesByKey);
+    });
   }, [id]);
 
   // Inlines the logo as a data URL so html2canvas can always render it, regardless of CORS on the remote asset.
@@ -1421,6 +1490,51 @@ const BillableInvoicePreviewPage = () => {
       realTotalHours: Number(totals.realTotalHours.toFixed(4)),
     };
   }, [effectiveUsers]);
+
+  const profitLossRows = useMemo(() => {
+    return effectiveUsers.map((userEntry) => {
+      const identityCandidates = [
+        ...(Array.isArray(userEntry.identityKeys) ? userEntry.identityKeys : []),
+        userEntry.name,
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+
+      const matchedKey = identityCandidates.find((key) => hourlyRateByIdentityKey[key] !== undefined);
+      const hourlyRate = matchedKey ? hourlyRateByIdentityKey[matchedKey] : 0;
+      const realHours = Number(userEntry.realTotalHours || userEntry.totalHours || 0);
+      const realLaborCost = hourlyRate * realHours;
+      const billedAmount = Number(userEntry.lineTotal || 0);
+      const margin = billedAmount - realLaborCost;
+      const marginPercent = billedAmount > 0 ? (margin / billedAmount) * 100 : 0;
+
+      return {
+        name: userEntry.name,
+        realHours,
+        hourlyRate,
+        hasRate: Boolean(matchedKey),
+        realLaborCost,
+        billedAmount,
+        margin,
+        marginPercent,
+      };
+    });
+  }, [effectiveUsers, hourlyRateByIdentityKey]);
+
+  const profitLossTotals = useMemo(() => {
+    const totals = profitLossRows.reduce((accumulator, row) => ({
+      realLaborCost: accumulator.realLaborCost + row.realLaborCost,
+      billedAmount: accumulator.billedAmount + row.billedAmount,
+    }), { realLaborCost: 0, billedAmount: 0 });
+
+    const margin = totals.billedAmount - totals.realLaborCost;
+    return {
+      realLaborCost: totals.realLaborCost,
+      billedAmount: totals.billedAmount,
+      margin,
+      marginPercent: totals.billedAmount > 0 ? (margin / totals.billedAmount) * 100 : 0,
+    };
+  }, [profitLossRows]);
 
   const projectNameOptions = useMemo(() => {
     const uniqueProjectNames = new Map();
@@ -2812,6 +2926,70 @@ const BillableInvoicePreviewPage = () => {
         {users.length > 0 && (
           <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "2px solid #E2E8F0", textAlign: "right", color: "#0F172A", fontSize: "0.95rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
             {`Real Total Hours (all drafters): ${effectiveTotals.realTotalHours.toFixed(2)} hrs`}
+          </div>
+        )}
+      </div>
+      )}
+
+      {sectionVisibility.profitLoss && (
+      <div style={{ ...cardStyle, marginTop: "12px", width: "100%", boxSizing: "border-box" }}>
+        <h2 style={sectionHeadingStyle}>P&L (Cost vs. Billed)</h2>
+        <div style={{ color: "#64748B", fontSize: "0.78rem", marginBottom: "8px" }}>
+          Labor cost is backtraced to each person's current compensation rate in Pay Everyone.
+        </div>
+        {profitLossRows.length === 0 ? (
+          <div style={{ color: "#64748B", fontSize: "0.88rem" }}>No billable time to review.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={tableHeaderCellStyle}>Person</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Real Hours</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Pay Everyone Rate</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Real Labor Cost</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Billed Amount</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Margin</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: "right" }}>Margin %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profitLossRows.map((row, rowIndex) => (
+                  <tr key={`pl-row-${rowIndex}`}>
+                    <td style={tableBodyCellStyle}>{row.name}</td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.realHours.toFixed(2)}</td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {row.hasRate ? `${formatCurrency(row.hourlyRate)}/hr` : <span style={{ color: "#94A3B8", fontStyle: "italic" }}>No rate on file</span>}
+                    </td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {row.hasRate ? formatCurrency(row.realLaborCost) : "—"}
+                    </td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatCurrency(row.billedAmount)}</td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 700, color: row.margin >= 0 ? "#166534" : "#B91C1C", fontVariantNumeric: "tabular-nums" }}>
+                      {row.hasRate ? formatCurrency(row.margin) : "—"}
+                    </td>
+                    <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 700, color: row.margin >= 0 ? "#166534" : "#B91C1C", fontVariantNumeric: "tabular-nums" }}>
+                      {row.hasRate ? `${row.marginPercent.toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>Total</td>
+                  <td style={tableBodyCellStyle} />
+                  <td style={tableBodyCellStyle} />
+                  <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(profitLossTotals.realLaborCost)}</td>
+                  <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(profitLossTotals.billedAmount)}</td>
+                  <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 800, color: profitLossTotals.margin >= 0 ? "#166534" : "#B91C1C", fontVariantNumeric: "tabular-nums" }}>
+                    {formatCurrency(profitLossTotals.margin)}
+                  </td>
+                  <td style={{ ...tableBodyCellStyle, textAlign: "right", fontWeight: 800, color: profitLossTotals.margin >= 0 ? "#166534" : "#B91C1C", fontVariantNumeric: "tabular-nums" }}>
+                    {`${profitLossTotals.marginPercent.toFixed(1)}%`}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         )}
       </div>

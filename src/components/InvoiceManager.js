@@ -2217,6 +2217,7 @@ const InvoiceManager = () => {
               cards,
               allCards,
               notes,
+              identityKeys: Array.from(aggregate.identityKeys || []),
             };
           })
           .sort((left, right) => right.milliseconds - left.milliseconds);
@@ -3999,6 +4000,7 @@ const InvoiceManager = () => {
           notes,
           issueSummary,
           notesSummary,
+          identityKeys: Array.isArray(userEntry.identityKeys) ? userEntry.identityKeys : [],
         };
       })
       .sort((left, right) => right.lineTotal - left.lineTotal);
@@ -4200,6 +4202,7 @@ const InvoiceManager = () => {
         lineTotal: Number(userEntry.lineTotal || 0),
         issueSummary: userEntry.issueSummary,
         notesSummary: userEntry.notesSummary,
+        identityKeys: Array.isArray(userEntry.identityKeys) ? userEntry.identityKeys : [],
         cards: (Array.isArray(userEntry.cards) ? userEntry.cards : []).map((card) => ({
           label: String(card.label || "Unspecified Card").trim(),
           projectName: String(card.projectName || "Unknown Project").trim(),
