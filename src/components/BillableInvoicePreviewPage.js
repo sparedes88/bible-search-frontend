@@ -1206,6 +1206,7 @@ const BillableInvoicePreviewPage = () => {
           ...userEntry,
           name: resolvedName,
           cards: Array.isArray(userEntry.cards) ? [...userEntry.cards] : [],
+          allCards: Array.isArray(userEntry.allCards) ? [...userEntry.allCards] : [],
           notes: Array.isArray(userEntry.notes) ? [...userEntry.notes] : [],
           baseTotalHours: Number(userEntry.totalHours || 0),
           baseRegularHours: Number(userEntry.regularHours || 0),
@@ -1217,6 +1218,7 @@ const BillableInvoicePreviewPage = () => {
 
       // Merge a short-name duplicate into the already-registered full-name entry.
       existing.cards.push(...(Array.isArray(userEntry.cards) ? userEntry.cards : []));
+      existing.allCards.push(...(Array.isArray(userEntry.allCards) ? userEntry.allCards : []));
       existing.notes.push(...(Array.isArray(userEntry.notes) ? userEntry.notes : []));
       existing.baseTotalHours += Number(userEntry.totalHours || 0);
       existing.baseRegularHours += Number(userEntry.regularHours || 0);
@@ -1245,6 +1247,7 @@ const BillableInvoicePreviewPage = () => {
         usersByKey.set(key, {
           name: entry.personName.trim(),
           cards: [],
+          allCards: [],
           notes: [],
           baseTotalHours: 0,
           baseRegularHours: 0,
@@ -1255,7 +1258,7 @@ const BillableInvoicePreviewPage = () => {
 
       const userEntry = usersByKey.get(key);
       userEntry.manualHours += hours;
-      userEntry.cards.push({
+      const manualCard = {
         label: entry.issueId || entry.cardTitle || "Manual Entry",
         projectName: entry.projectName || draftPayload.projectName || "",
         issueId: entry.issueId || "",
@@ -1263,7 +1266,9 @@ const BillableInvoicePreviewPage = () => {
         description: entry.cardTitle || "",
         taskIdentity: `manual-${entry.id}`,
         hoursUsed: `${hours.toFixed(2)} hrs`,
-      });
+      };
+      userEntry.cards.push(manualCard);
+      userEntry.allCards.push({ ...manualCard, includedInInvoice: true });
     });
 
     return Array.from(usersByKey.values())
@@ -2632,7 +2637,15 @@ const BillableInvoicePreviewPage = () => {
             const reviewLabel = showDrafterNames && selectedDrafterName
               ? `Drafter #${index + 1} — ${selectedDrafterName}`
               : `Drafter #${index + 1}`;
-            const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
+            const cards = Array.isArray(userEntry.allCards) && userEntry.allCards.length > 0
+              ? userEntry.allCards
+              : (Array.isArray(userEntry.cards) ? userEntry.cards.map((card) => ({ ...card, includedInInvoice: true })) : []);
+            const sortedCards = [...cards].sort((left, right) => {
+              if (Boolean(left.includedInInvoice) !== Boolean(right.includedInInvoice)) {
+                return left.includedInInvoice ? -1 : 1;
+              }
+              return Number(right.lastUsedAt || 0) - Number(left.lastUsedAt || 0);
+            });
 
             return (
               <div
@@ -2645,21 +2658,35 @@ const BillableInvoicePreviewPage = () => {
                     {`Total billed: ${formatHoursClock(userEntry.totalHours || 0)}`}
                   </div>
                 </div>
-                {cards.length === 0 ? (
+                {sortedCards.length === 0 ? (
                   <div style={{ marginTop: "6px", color: "#64748B", fontSize: "0.82rem" }}>No TD cards recorded.</div>
                 ) : (
                   <div style={{ marginTop: "8px", display: "grid", gap: "4px" }}>
-                    {cards.map((card, cardIndex) => (
+                    {sortedCards.map((card, cardIndex) => {
+                      const isIncluded = Boolean(card.includedInInvoice);
+                      return (
                       <div
                         key={`time-review-${index}-card-${cardIndex}`}
-                        style={{ display: "flex", justifyContent: "space-between", gap: "12px", fontSize: "0.84rem", color: "#334155" }}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                          fontSize: "0.84rem",
+                          color: isIncluded ? "#0F172A" : "#64748B",
+                          background: isIncluded ? "#DCFCE7" : "transparent",
+                          padding: isIncluded ? "3px 6px" : "3px 6px",
+                          borderRadius: "4px",
+                          fontWeight: isIncluded ? 700 : 400,
+                        }}
                       >
                         <span>
                           {`${String(card.label || card.issueId || "TD").trim()}${getIssueTitleText(card) ? `: ${getIssueTitleText(card)}` : ""}`}
+                          {!isIncluded ? " (not on this invoice)" : ""}
                         </span>
                         <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{card.hoursUsed || "0h 00m"}</span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

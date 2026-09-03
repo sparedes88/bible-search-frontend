@@ -2117,6 +2117,48 @@ const InvoiceManager = () => {
           }
         });
 
+        // Track every TD card each billed user touched during this period, regardless of which
+        // project it's matched to, so the billable preview can show the full picture and
+        // highlight which of those cards are actually included in this invoice.
+        billableTimeRotateLogs.forEach((log) => {
+          if (log.eventTimestamp < rangeStart || log.eventTimestamp > rangeEnd) return;
+          if (childDayRanges.some((range) => log.eventTimestamp >= range.start && log.eventTimestamp <= range.end)) return;
+
+          const userAggregation = userAggregationByLabel.get(log.userLabel);
+          if (!userAggregation) return;
+
+          if (!userAggregation.allCardsByKey) userAggregation.allCardsByKey = new Map();
+
+          const resolvedProjectDocId = String(log.projectDocId || "").trim();
+          const resolvedIssueId = String(log.issueId || "").trim();
+          const resolvedTaskIdentity = String(log.taskIdentity || "").trim();
+          const titleFromLookup = issueTitleByIdentity[`${resolvedProjectDocId}::${resolvedIssueId}`]
+            || issueTitleByIdentity[resolvedTaskIdentity]
+            || issueTitleByIssueId[resolvedIssueId]
+            || "";
+          const resolvedCardTitle = String(log.title || titleFromLookup || "").trim();
+          const cardLabel = String(log.issueId || resolvedCardTitle || log.taskIdentity || "Unspecified Card").trim();
+          const cardKey = String(log.taskIdentity || `${resolvedProjectDocId}::${resolvedIssueId}::${cardLabel}`).trim();
+          const includedInInvoice = isLogMatchedToInvoiceProject(log, selectedProjectId);
+
+          const existingAllCard = userAggregation.allCardsByKey.get(cardKey) || {
+            key: cardKey,
+            label: cardLabel,
+            milliseconds: 0,
+            projectDocId: resolvedProjectDocId,
+            issueId: resolvedIssueId,
+            title: resolvedCardTitle,
+            projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
+            includedInInvoice: false,
+            lastUsedAt: 0,
+          };
+          existingAllCard.milliseconds += log.safeDuration;
+          existingAllCard.includedInInvoice = existingAllCard.includedInInvoice || includedInInvoice;
+          const logUsedAt = Number(log.eventTimestamp) || 0;
+          if (logUsedAt > existingAllCard.lastUsedAt) existingAllCard.lastUsedAt = logUsedAt;
+          userAggregation.allCardsByKey.set(cardKey, existingAllCard);
+        });
+
         const projectIssuesForInvoice = Array.from(selectedTimeRotateProjectNameKeys)
           .flatMap((projectNameKey) => projectIssuesByProjectNameKey[projectNameKey] || []);
 
@@ -2151,6 +2193,9 @@ const InvoiceManager = () => {
             const cards = Array.from(aggregate.cardsByKey.values())
               .sort((left, right) => right.milliseconds - left.milliseconds);
 
+            const allCards = Array.from((aggregate.allCardsByKey || new Map()).values())
+              .sort((left, right) => right.milliseconds - left.milliseconds);
+
             const dedupedNotesMap = new Map();
             aggregate.notes.forEach((note) => {
               const dedupeKey = `${String(note.projectName || "").trim().toLowerCase()}::${String(note.cardLabel || "").trim().toLowerCase()}::${String(note.text || "").trim().toLowerCase()}`;
@@ -2166,6 +2211,7 @@ const InvoiceManager = () => {
               regularMilliseconds: aggregate.regularMilliseconds,
               overtimeMilliseconds: aggregate.overtimeMilliseconds,
               cards,
+              allCards,
               notes,
             };
           })
@@ -3919,6 +3965,7 @@ const InvoiceManager = () => {
 
         const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
         const notes = Array.isArray(userEntry.notes) ? userEntry.notes : [];
+        const allCards = Array.isArray(userEntry.allCards) ? userEntry.allCards : cards;
 
         const issueSummary = cards
           .map((card) => {
@@ -3944,6 +3991,7 @@ const InvoiceManager = () => {
           overtimeCost: Number(cost.overtimeCost || 0),
           lineTotal: Number(cost.totalCost || 0),
           cards,
+          allCards,
           notes,
           issueSummary,
           notesSummary,
@@ -4158,6 +4206,17 @@ const InvoiceManager = () => {
           projectDocId: String(card.projectDocId || "").trim(),
           firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
+          hoursUsed: formatHoursUsed(card.milliseconds),
+        })),
+        allCards: (Array.isArray(userEntry.allCards) ? userEntry.allCards : []).map((card) => ({
+          label: String(card.label || "Unspecified Card").trim(),
+          projectName: String(card.projectName || "Unknown Project").trim(),
+          issueId: String(card.issueId || "").trim(),
+          title: String(card.title || "").trim(),
+          taskIdentity: String(card.taskIdentity || "").trim(),
+          projectDocId: String(card.projectDocId || "").trim(),
+          lastUsedAt: Number(card.lastUsedAt) || 0,
+          includedInInvoice: Boolean(card.includedInInvoice),
           hoursUsed: formatHoursUsed(card.milliseconds),
         })),
         notes: (Array.isArray(userEntry.notes) ? userEntry.notes : []).map((note) => ({
