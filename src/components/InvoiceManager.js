@@ -178,7 +178,7 @@ const BI_PIE_CHART_COLORS = [
   "#6366F1",
 ];
 
-const INVOICE_TAB_KEYS = ["table", "reconciliation", "td-matcher", "hours-audit", "business-intelligence", "quick-paid"];
+const INVOICE_TAB_KEYS = ["table", "reconciliation", "td-matcher", "hours-audit", "overtime-analysis", "business-intelligence", "quick-paid"];
 const DEFAULT_INVOICE_TAB = "business-intelligence";
 
 const normalizeInvoiceTabKey = (value) => {
@@ -1072,6 +1072,9 @@ const InvoiceManager = () => {
   const [hoursAuditTimeRotateProject, setHoursAuditTimeRotateProject] = useState("");
   const [hoursAuditTdIdentity, setHoursAuditTdIdentity] = useState("");
   const [hoursAuditWeekNumber, setHoursAuditWeekNumber] = useState("");
+  const [overtimeAnalysisWeekFilter, setOvertimeAnalysisWeekFilter] = useState("");
+  const [overtimeAnalysisUserSearch, setOvertimeAnalysisUserSearch] = useState("");
+  const [overtimeAnalysisOvertimeOnly, setOvertimeAnalysisOvertimeOnly] = useState(false);
   const [quickPaidSearch, setQuickPaidSearch] = useState("");
   const [quickPaidSavingByInvoiceKey, setQuickPaidSavingByInvoiceKey] = useState({});
   const [allProjectInvoices, setAllProjectInvoices] = useState([]);
@@ -1970,6 +1973,107 @@ const InvoiceManager = () => {
 
     return allocationByLogId;
   }, [billableTimeRotateLogs]);
+
+  const projectNameById = useMemo(() => {
+    const map = {};
+    projects.forEach((project) => {
+      map[project.id] = String(project.name || "Unknown Project").trim() || "Unknown Project";
+    });
+    return map;
+  }, [projects]);
+
+  // Lets us see, per week and per user, exactly which invoice projects absorbed regular vs
+  // overtime hours -- since overtime is allocated chronologically across ALL of a person's
+  // TD-matched projects that week, not per-invoice, this exposes why a specific project's
+  // invoice can show overtime even though that project alone is under 40h.
+  const overtimeAnalysisByWeek = useMemo(() => {
+    if (billableTimeRotateLogs.length === 0) return [];
+
+    const weekGroups = new Map();
+
+    billableTimeRotateLogs.forEach((log) => {
+      if (!weekGroups.has(log.weekKey)) weekGroups.set(log.weekKey, new Map());
+      const usersInWeek = weekGroups.get(log.weekKey);
+
+      if (!usersInWeek.has(log.userLabel)) {
+        usersInWeek.set(log.userLabel, {
+          userLabel: log.userLabel,
+          totalMilliseconds: 0,
+          totalRegularMilliseconds: 0,
+          totalOvertimeMilliseconds: 0,
+          projectsById: new Map(),
+        });
+      }
+      const userEntry = usersInWeek.get(log.userLabel);
+
+      const invoiceProjectId = getAssignedInvoiceProjectIdForLog(log) || "__unassigned__";
+      if (!userEntry.projectsById.has(invoiceProjectId)) {
+        userEntry.projectsById.set(invoiceProjectId, {
+          projectId: invoiceProjectId,
+          projectName: invoiceProjectId === "__unassigned__"
+            ? "Not assigned in TD Matcher"
+            : (projectNameById[invoiceProjectId] || "Unknown Project"),
+          milliseconds: 0,
+          regularMilliseconds: 0,
+          overtimeMilliseconds: 0,
+          firstUsedAt: 0,
+          logCount: 0,
+        });
+      }
+      const projectEntry = userEntry.projectsById.get(invoiceProjectId);
+
+      const allocation = weeklyOvertimeAllocationByLogId[log.id] || {
+        regularMilliseconds: log.safeDuration,
+        overtimeMilliseconds: 0,
+      };
+
+      userEntry.totalMilliseconds += log.safeDuration;
+      userEntry.totalRegularMilliseconds += allocation.regularMilliseconds;
+      userEntry.totalOvertimeMilliseconds += allocation.overtimeMilliseconds;
+
+      projectEntry.milliseconds += log.safeDuration;
+      projectEntry.regularMilliseconds += allocation.regularMilliseconds;
+      projectEntry.overtimeMilliseconds += allocation.overtimeMilliseconds;
+      projectEntry.logCount += 1;
+      if (!projectEntry.firstUsedAt || log.eventTimestamp < projectEntry.firstUsedAt) {
+        projectEntry.firstUsedAt = log.eventTimestamp;
+      }
+    });
+
+    return Array.from(weekGroups.entries())
+      .map(([weekKey, usersInWeek]) => ({
+        weekKey,
+        users: Array.from(usersInWeek.values())
+          .map((userEntry) => ({
+            ...userEntry,
+            // Chronological order mirrors the FIFO overtime allocation, so the first project
+            // listed is the one that consumed the earliest regular-hour minutes that week.
+            projects: Array.from(userEntry.projectsById.values()).sort((left, right) => left.firstUsedAt - right.firstUsedAt),
+          }))
+          .sort((left, right) => right.totalOvertimeMilliseconds - left.totalOvertimeMilliseconds || left.userLabel.localeCompare(right.userLabel)),
+      }))
+      .sort((left, right) => right.weekKey.localeCompare(left.weekKey));
+  }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById]);
+
+  const filteredOvertimeAnalysisByWeek = useMemo(() => {
+    const searchTerm = overtimeAnalysisUserSearch.trim().toLowerCase();
+
+    return overtimeAnalysisByWeek
+      .filter((weekGroup) => !overtimeAnalysisWeekFilter || weekGroup.weekKey === overtimeAnalysisWeekFilter)
+      .map((weekGroup) => ({
+        ...weekGroup,
+        users: weekGroup.users.filter((userEntry) => {
+          if (overtimeAnalysisOvertimeOnly && userEntry.totalOvertimeMilliseconds <= 0) return false;
+          if (searchTerm && !userEntry.userLabel.toLowerCase().includes(searchTerm)) return false;
+          return true;
+        }),
+      }))
+      .filter((weekGroup) => weekGroup.users.length > 0);
+  }, [overtimeAnalysisByWeek, overtimeAnalysisWeekFilter, overtimeAnalysisUserSearch, overtimeAnalysisOvertimeOnly]);
+
+  const overtimeAnalysisWeekOptions = useMemo(() => {
+    return overtimeAnalysisByWeek.map((weekGroup) => weekGroup.weekKey);
+  }, [overtimeAnalysisByWeek]);
 
   const invoiceHoursById = useMemo(() => {
     if (invoices.length === 0 || billableTimeRotateLogs.length === 0) {
@@ -6163,6 +6267,16 @@ const InvoiceManager = () => {
             </button>
             <button
               type="button"
+              onClick={() => handleInvoicesTabChange("overtime-analysis")}
+              style={{
+                ...buttonStyle,
+                background: activeInvoicesTab === "overtime-analysis" ? "#1D4ED8" : "#94A3B8",
+              }}
+            >
+              Overtime Analysis
+            </button>
+            <button
+              type="button"
               onClick={() => handleInvoicesTabChange("business-intelligence")}
               style={{
                 ...buttonStyle,
@@ -6189,6 +6303,7 @@ const InvoiceManager = () => {
             <a href={getInvoiceTabHref("reconciliation")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Reconciliation Link</a>
             <a href={getInvoiceTabHref("td-matcher")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>TD Matcher Link</a>
             <a href={getInvoiceTabHref("hours-audit")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Hours Audit Link</a>
+            <a href={getInvoiceTabHref("overtime-analysis")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Overtime Analysis Link</a>
             <a href={getInvoiceTabHref("quick-paid")} style={{ color: "#1D4ED8", textDecoration: "underline" }}>Quick Paid Link</a>
           </div>
 
@@ -7969,6 +8084,104 @@ const InvoiceManager = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          ) : activeInvoicesTab === "overtime-analysis" ? (
+            <div style={{ ...tableShellStyle, padding: "12px" }}>
+              <div style={{ color: "#334155", fontSize: "0.9rem", marginBottom: "12px" }}>
+                Overtime is allocated per person, per week, chronologically across ALL of their TD-matched invoice projects (not per-invoice) — the first 40h logged that week are regular, everything after is overtime, regardless of which project it's on. This view shows, per week and per user, which projects absorbed the regular vs overtime hours so you can see why a specific invoice shows overtime.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginBottom: "12px" }}>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  Week
+                  <select value={overtimeAnalysisWeekFilter} onChange={(event) => setOvertimeAnalysisWeekFilter(event.target.value)} style={inputStyle}>
+                    <option value="">All Weeks</option>
+                    {overtimeAnalysisWeekOptions.map((weekKey) => (
+                      <option key={`overtime-analysis-week-${weekKey}`} value={weekKey}>
+                        {`Week of ${formatDisplayDate(weekKey)} - ${formatDisplayDate(shiftDateInputValue(weekKey, 6))}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: "5px", color: "#334155", fontSize: "0.85rem", fontWeight: 700 }}>
+                  User
+                  <input
+                    type="text"
+                    value={overtimeAnalysisUserSearch}
+                    onChange={(event) => setOvertimeAnalysisUserSearch(event.target.value)}
+                    placeholder="Search by name"
+                    style={inputStyle}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", color: "#334155", fontSize: "0.85rem", fontWeight: 700, marginTop: "22px" }}>
+                  <input
+                    type="checkbox"
+                    checked={overtimeAnalysisOvertimeOnly}
+                    onChange={(event) => setOvertimeAnalysisOvertimeOnly(event.target.checked)}
+                  />
+                  Only show users with overtime that week
+                </label>
+              </div>
+
+              {filteredOvertimeAnalysisByWeek.length === 0 ? (
+                <p style={{ color: "#64748B", margin: 0 }}>No finalized TimeRotate hours match these filters.</p>
+              ) : (
+                <div style={{ display: "grid", gap: "16px" }}>
+                  {filteredOvertimeAnalysisByWeek.map((weekGroup) => (
+                    <div key={`overtime-analysis-week-group-${weekGroup.weekKey}`} style={{ border: "1px solid #E2E8F0" }}>
+                      <div style={{ padding: "8px 12px", background: "#EFF6FF", fontWeight: 800, color: "#1E3A8A" }}>
+                        {`Week of ${formatDisplayDate(weekGroup.weekKey)} - ${formatDisplayDate(shiftDateInputValue(weekGroup.weekKey, 6))}`}
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "900px" }}>
+                          <thead>
+                            <tr>
+                              <th style={tableHeaderCellStyle}>User</th>
+                              <th style={tableHeaderCellStyle}>Invoice Project (chronological order)</th>
+                              <th style={tableHeaderCellStyle}>Hours</th>
+                              <th style={tableHeaderCellStyle}>Regular</th>
+                              <th style={tableHeaderCellStyle}>Overtime</th>
+                              <th style={tableHeaderCellStyle}>Logs</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {weekGroup.users.map((userEntry) => (
+                              <React.Fragment key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}`}>
+                                {userEntry.projects.map((projectEntry, projectIndex) => (
+                                  <tr
+                                    key={`overtime-analysis-user-${weekGroup.weekKey}-${userEntry.userLabel}-${projectEntry.projectId}`}
+                                    style={{ background: userEntry.totalOvertimeMilliseconds > 0 ? "#FFFBEB" : "#F8FAFC" }}
+                                  >
+                                    <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>
+                                      {projectIndex === 0 ? (userEntry.userLabel || "Unknown") : ""}
+                                    </td>
+                                    <td style={tableBodyCellStyle}>{projectEntry.projectName}</td>
+                                    <td style={tableBodyCellStyle}>{formatHoursUsed(projectEntry.milliseconds)}</td>
+                                    <td style={tableBodyCellStyle}>{formatHoursUsed(projectEntry.regularMilliseconds)}</td>
+                                    <td style={{ ...tableBodyCellStyle, color: projectEntry.overtimeMilliseconds > 0 ? "#B45309" : "#0F172A", fontWeight: projectEntry.overtimeMilliseconds > 0 ? 800 : 400 }}>
+                                      {formatHoursUsed(projectEntry.overtimeMilliseconds)}
+                                    </td>
+                                    <td style={tableBodyCellStyle}>{projectEntry.logCount}</td>
+                                  </tr>
+                                ))}
+                                <tr style={{ background: "#F1F5F9" }}>
+                                  <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>Weekly Total</td>
+                                  <td style={tableBodyCellStyle} />
+                                  <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>{formatHoursUsed(userEntry.totalMilliseconds)}</td>
+                                  <td style={{ ...tableBodyCellStyle, fontWeight: 800 }}>{formatHoursUsed(userEntry.totalRegularMilliseconds)}</td>
+                                  <td style={{ ...tableBodyCellStyle, fontWeight: 800, color: userEntry.totalOvertimeMilliseconds > 0 ? "#B45309" : "#0F172A" }}>
+                                    {formatHoursUsed(userEntry.totalOvertimeMilliseconds)}
+                                  </td>
+                                  <td style={tableBodyCellStyle} />
+                                </tr>
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
