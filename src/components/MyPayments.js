@@ -970,7 +970,7 @@ const MyPayments = () => {
     return {
       ...award,
       creditAmount,
-      creditStatus: claim ? "Claimed" : award.eligible ? "Available" : "Pending",
+      creditStatus: claim ? "Claimed" : award.eligible ? "You won this — claim it" : "Not won",
       claimedAt: claim?.claimedAt || 0,
     };
   }), [awardClaims, awardRows]);
@@ -1473,7 +1473,7 @@ const MyPayments = () => {
                 <tr key={`award-credit-${entry.id}`}>
                   <td style={tdStyle}>{entry.name}</td>
                   <td style={{ ...tdStyle, fontWeight: 800 }}>{toCurrency(entry.creditAmount)}</td>
-                  <td style={{ ...tdStyle, fontWeight: 800, color: entry.creditStatus === "Claimed" ? "#64748B" : entry.creditStatus === "Available" ? "#166534" : "#B45309" }}>{entry.creditStatus}</td>
+                  <td style={{ ...tdStyle, fontWeight: 800, color: entry.creditStatus === "Claimed" ? "#64748B" : entry.creditStatus === "You won this — claim it" ? "#166534" : "#991B1B" }}>{entry.creditStatus}</td>
                   <td style={tdStyle}>{entry.claimedAt ? formatCompensationDate(entry.claimedAt) : "-"}</td>
                 </tr>
               ))}
