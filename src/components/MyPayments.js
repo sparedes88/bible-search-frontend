@@ -589,12 +589,20 @@ const MyPayments = () => {
       return undefined;
     }
 
+    const usersQuery = canSwitchUsers
+      ? collection(db, "users")
+      : query(collection(db, "users"), where("churchId", "==", id));
+
     return onSnapshot(
-      query(collection(db, "users"), where("churchId", "==", id)),
+      usersQuery,
       (snapshot) => {
         const nextUsers = snapshot.docs
           .map((snapshotDoc) => {
             const data = snapshotDoc.data() || {};
+            const normalizedRole = normalizeValue(data.role || data.userRole).toLowerCase();
+            const isGlobalAdminProfile = normalizedRole === "global_admin" || normalizedRole === "system_global_admin";
+            const belongsToOrganization = [data.churchId, data.churchID, data.organizationId].some((value) => normalizeValue(value) === id);
+            if (canSwitchUsers && !belongsToOrganization && !isGlobalAdminProfile) return null;
             const firstName = normalizeValue(data.firstName || data.name || data.displayName);
             const lastName = normalizeValue(data.lastName || data.surname);
             const fullName = lastName && !firstName.toLowerCase().includes(lastName.toLowerCase())
@@ -608,6 +616,7 @@ const MyPayments = () => {
               userLabel: label,
             };
           })
+          .filter(Boolean)
           .sort((left, right) => left.userLabel.localeCompare(right.userLabel));
         setOrganizationUsers(nextUsers);
         setSelectedUserKey((previous) => previous || nextUsers.find((entry) => entry.userId === userId)?.userKey || nextUsers[0]?.userKey || "");

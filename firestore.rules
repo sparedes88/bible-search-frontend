@@ -171,9 +171,11 @@ service cloud.firestore {
       }
 
       // Allow querying users by churchId for admin connections
-      allow list: if isAuthenticated() && 
-                  ('churchId' in request.query.filters) &&
-                  (userBelongsToChurch(request.query.filters.churchId[0]) || isGlobalAdmin());
+      allow list: if isAuthenticated() &&
+                  (isGlobalAdmin() || (
+                    ('churchId' in request.query.filters) &&
+                    userBelongsToChurch(request.query.filters.churchId[0])
+                  ));
 
       // Allow querying users by phone or email for lookup purposes (event check-in, login, etc)
       allow list: if isAuthenticated() && 
