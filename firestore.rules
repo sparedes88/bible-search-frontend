@@ -505,17 +505,15 @@ service cloud.firestore {
 
       // Awards are defined only by global admins; authenticated church users can view active awards.
       match /payEveryoneAwards/{awardId} {
-        allow read: if isAuthenticated() && userBelongsToChurch(churchId);
+        allow read: if isAuthenticated();
         allow create, update, delete: if isAuthenticated() && isGlobalAdmin();
       }
 
       // Award redemptions belong to the user who cashes them in; global admins can audit all claims.
       match /payEveryoneAwardClaims/{claimId} {
-        allow read: if isAuthenticated() &&
-          (isGlobalAdmin() || resource.data.userId == request.auth.uid);
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() &&
-          request.resource.data.userId == request.auth.uid &&
-          userBelongsToChurch(churchId);
+          request.resource.data.userId == request.auth.uid;
         allow update, delete: if isAuthenticated() && isGlobalAdmin();
       }
 
