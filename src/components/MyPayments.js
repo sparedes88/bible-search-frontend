@@ -470,8 +470,12 @@ const MyPayments = () => {
         const nextUsers = snapshot.docs
           .map((snapshotDoc) => {
             const data = snapshotDoc.data() || {};
-            const fullName = [data.firstName, data.lastName].filter(Boolean).map((value) => normalizeValue(value)).filter(Boolean).join(" ");
-            const label = fullName || normalizeValue(data.displayName || data.name) || data.email || snapshotDoc.id;
+            const firstName = normalizeValue(data.firstName || data.name || data.displayName);
+            const lastName = normalizeValue(data.lastName || data.surname);
+            const fullName = lastName && !firstName.toLowerCase().includes(lastName.toLowerCase())
+              ? `${firstName} ${lastName}`.trim()
+              : firstName;
+            const label = fullName || data.email || snapshotDoc.id;
             return {
               userKey: snapshotDoc.id,
               userId: snapshotDoc.id,
