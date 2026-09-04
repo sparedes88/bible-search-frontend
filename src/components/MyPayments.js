@@ -969,6 +969,8 @@ const MyPayments = () => {
     claimedReward: totals.claimedReward + (award.claimed ? parseNumber(award.rewardAmount) : 0),
   }), { totalReward: 0, eligibleReward: 0, claimedReward: 0 }), [awardRows]);
 
+  const awardCreditBalance = awardTotals.eligibleReward + awardTotals.claimedReward;
+
   const awardCreditLog = useMemo(() => awardRows.map((award) => {
     const claim = awardClaims.find((entry) => entry.awardId === award.id);
     const creditAmount = parseNumber(award.rewardAmount);
@@ -1468,12 +1470,12 @@ const MyPayments = () => {
         </div>
         <div style={{ margin: "0 14px 14px", padding: "16px 18px", borderRadius: "10px", background: "linear-gradient(135deg, #0F766E, #115E59)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credit Remaining</div>
-            <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credit Balance</div>
+            <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardCreditBalance)}</div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credits Claimed</div>
-            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.claimedReward)}</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Available To Cash In</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
           </div>
         </div>
         <div style={{ margin: "0 14px 14px", border: "1px solid #E2E8F0", borderRadius: "8px", overflowX: "auto" }}>
