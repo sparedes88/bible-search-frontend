@@ -532,7 +532,13 @@ service cloud.firestore {
             (userBelongsToChurch(churchId) && isPaymentMethodOwner())
           );
         allow create: if isAuthenticated() &&
-          (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
+          (
+            canManageModule(churchId, 'pay-everyone') ||
+            canManageModule(churchId, 'time-tracker') ||
+            (userBelongsToChurch(churchId) &&
+              request.resource.data.userId == request.auth.uid &&
+              request.resource.data.userEmail == request.auth.token.email)
+          );
         allow update: if isAuthenticated() &&
           (
             canManageModule(churchId, 'pay-everyone') ||

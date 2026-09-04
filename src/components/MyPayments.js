@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
 import commonStyles from "../pages/commonStyles";
@@ -454,6 +454,7 @@ const MyPayments = () => {
   const [editingMethodDetails, setEditingMethodDetails] = useState("");
   const [editingMethodNote, setEditingMethodNote] = useState("");
   const [savingPaymentMethod, setSavingPaymentMethod] = useState(false);
+  const [paymentMethodFormOpen, setPaymentMethodFormOpen] = useState(false);
 
   const selectedIdentity = useMemo(() => {
     if (!canSwitchUsers) return { userId, userEmail };
@@ -464,6 +465,7 @@ const MyPayments = () => {
   }, [canSwitchUsers, organizationUsers, selectedUserKey, userEmail, userId]);
 
   const startEditingPaymentMethod = (method) => {
+    setPaymentMethodFormOpen(true);
     setEditingPaymentMethodId(method.id);
     setEditingMethodType(method.methodType || "airtm");
     setEditingMethodOther(method.methodOther || "");
@@ -472,6 +474,7 @@ const MyPayments = () => {
   };
 
   const cancelEditingPaymentMethod = () => {
+    setPaymentMethodFormOpen(false);
     setEditingPaymentMethodId("");
     setEditingMethodType("airtm");
     setEditingMethodOther("");
@@ -483,13 +486,20 @@ const MyPayments = () => {
     if (!editingMethodType || !editingMethodDetails.trim()) return;
     setSavingPaymentMethod(true);
     try {
-      await updateDoc(doc(db, "churches", id, "payEveryonePaymentMethods", methodId), {
+      const methodData = {
+        userId: selectedIdentity.userId,
+        userEmail: selectedIdentity.userEmail,
         methodType: editingMethodType,
         methodOther: editingMethodType === "other" ? editingMethodOther.trim() : "",
         details: editingMethodDetails.trim(),
         note: editingMethodNote.trim(),
         updatedAt: Date.now(),
-      });
+      };
+      if (methodId) {
+        await updateDoc(doc(db, "churches", id, "payEveryonePaymentMethods", methodId), methodData);
+      } else {
+        await addDoc(collection(db, "churches", id, "payEveryonePaymentMethods"), methodData);
+      }
       cancelEditingPaymentMethod();
     } catch (error) {
       console.error("Failed to update payment method:", error);
@@ -1130,7 +1140,40 @@ const MyPayments = () => {
       </div>
 
       <div style={{ ...cardStyle, padding: 0, overflowX: "auto" }}>
-        <div style={{ padding: "14px", fontWeight: 800, color: "#0F172A" }}>My Payment Methods</div>
+        <div style={{ padding: "14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 800, color: "#0F172A" }}>My Payment Methods</div>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingPaymentMethodId("");
+              setEditingMethodType("airtm");
+              setEditingMethodOther("");
+              setEditingMethodDetails("");
+              setEditingMethodNote("");
+              setPaymentMethodFormOpen(true);
+            }}
+            style={{ padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+          >
+            Add Payment Method
+          </button>
+        </div>
+        {paymentMethodFormOpen && (
+          <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
+            <div style={{ color: "#1E3A8A", fontWeight: 800, marginBottom: "8px" }}>{editingPaymentMethodId ? "Edit Payment Method" : "Add Payment Method"}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px" }}>
+              <select value={editingMethodType} onChange={(event) => setEditingMethodType(event.target.value)} style={filterInputStyle}>
+                {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              {editingMethodType === "other" && <input value={editingMethodOther} onChange={(event) => setEditingMethodOther(event.target.value)} placeholder="Other method" style={filterInputStyle} />}
+              <input value={editingMethodDetails} onChange={(event) => setEditingMethodDetails(event.target.value)} placeholder="Account details" style={filterInputStyle} required />
+              <input value={editingMethodNote} onChange={(event) => setEditingMethodNote(event.target.value)} placeholder="Note (optional)" style={filterInputStyle} />
+            </div>
+            <div style={{ marginTop: "10px" }}>
+              <button type="button" onClick={() => handleSavePaymentMethod(editingPaymentMethodId)} disabled={savingPaymentMethod || !editingMethodDetails.trim()} style={{ marginRight: "6px", padding: "7px 11px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{savingPaymentMethod ? "Saving..." : editingPaymentMethodId ? "Update" : "Save"}</button>
+              <button type="button" onClick={cancelEditingPaymentMethod} style={{ padding: "7px 11px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Cancel</button>
+            </div>
+          </div>
+        )}
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "520px" }}>
           <thead>
             <tr>
