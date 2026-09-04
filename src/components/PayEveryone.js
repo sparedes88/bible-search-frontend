@@ -2674,7 +2674,16 @@ const PaymentsTab = ({
       </div>
 
       {paymentsSubTab === "add-payment" && <div style={{ marginBottom: "12px", padding: "12px", backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "10px" }}>
-        <div style={{ fontWeight: 700, color: "#0F172A", marginBottom: "8px" }}>Add Payment</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", marginBottom: "8px" }}>
+          <div style={{ fontWeight: 700, color: "#0F172A" }}>Add Payment</div>
+          <button
+            type="button"
+            onClick={() => navigate(`${location.pathname}?tab=payments&view=summary`)}
+            style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "7px 10px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700, cursor: "pointer" }}
+          >
+            Edit Payments
+          </button>
+        </div>
         {selectedPaymentBalance && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", marginBottom: "14px" }}>
             <div style={{ padding: "10px", border: "1px solid #E2E8F0", borderRadius: "8px", backgroundColor: "#FFFFFF" }}>
