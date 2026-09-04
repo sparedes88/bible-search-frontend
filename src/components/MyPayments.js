@@ -961,7 +961,19 @@ const MyPayments = () => {
   const awardTotals = useMemo(() => awardRows.reduce((totals, award) => ({
     totalReward: totals.totalReward + parseNumber(award.rewardAmount),
     eligibleReward: totals.eligibleReward + (award.eligible && !award.claimed ? parseNumber(award.rewardAmount) : 0),
-  }), { totalReward: 0, eligibleReward: 0 }), [awardRows]);
+    claimedReward: totals.claimedReward + (award.claimed ? parseNumber(award.rewardAmount) : 0),
+  }), { totalReward: 0, eligibleReward: 0, claimedReward: 0 }), [awardRows]);
+
+  const awardCreditLog = useMemo(() => awardRows.map((award) => {
+    const claim = awardClaims.find((entry) => entry.awardId === award.id);
+    const creditAmount = parseNumber(award.rewardAmount);
+    return {
+      ...award,
+      creditAmount,
+      creditStatus: claim ? "Claimed" : award.eligible ? "Available" : "Pending",
+      claimedAt: claim?.claimedAt || 0,
+    };
+  }), [awardClaims, awardRows]);
 
   const awardWinnersById = useMemo(() => {
     if (!canSwitchUsers) return {};
@@ -1444,13 +1456,29 @@ const MyPayments = () => {
         </div>
         <div style={{ margin: "0 14px 14px", padding: "16px 18px", borderRadius: "10px", background: "linear-gradient(135deg, #0F766E, #115E59)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Total Award Value</div>
-            <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardTotals.totalReward)}</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credit Remaining</div>
+            <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Available To Cash In</div>
-            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credits Claimed</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.claimedReward)}</div>
           </div>
+        </div>
+        <div style={{ margin: "0 14px 14px", border: "1px solid #E2E8F0", borderRadius: "8px", overflowX: "auto" }}>
+          <div style={{ padding: "10px 12px", fontWeight: 800, color: "#0F172A", backgroundColor: "#F8FAFC" }}>Award Credit Log</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
+            <thead><tr><th style={thStyle}>Award</th><th style={thStyle}>Credit</th><th style={thStyle}>Status</th><th style={thStyle}>Claimed Date</th></tr></thead>
+            <tbody>
+              {awardCreditLog.length === 0 ? <tr><td style={tdStyle} colSpan={4}>No award credits recorded.</td></tr> : awardCreditLog.map((entry) => (
+                <tr key={`award-credit-${entry.id}`}>
+                  <td style={tdStyle}>{entry.name}</td>
+                  <td style={{ ...tdStyle, fontWeight: 800 }}>{toCurrency(entry.creditAmount)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 800, color: entry.creditStatus === "Claimed" ? "#64748B" : entry.creditStatus === "Available" ? "#166534" : "#B45309" }}>{entry.creditStatus}</td>
+                  <td style={tdStyle}>{entry.claimedAt ? formatCompensationDate(entry.claimedAt) : "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         {canSwitchUsers && awardFormOpen && (
           <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
