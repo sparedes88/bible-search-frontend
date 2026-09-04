@@ -1035,16 +1035,27 @@ const MyPayments = () => {
     if (!canSwitchUsers) return undefined;
     const syncWinnerIds = async () => {
       await Promise.all(awards
-        .filter((award) => award.conditionType === "most_hours" && (
-          !(Array.isArray(award.winnerUserIds) && award.winnerUserIds.length > 0)
-          || !(Array.isArray(award.winnerUserEmails) && award.winnerUserEmails.length > 0)
-        ))
-        .map((award) => updateDoc(doc(db, "churches", id, "payEveryoneAwards", award.id), {
-          winnerUserIds: (awardWinnersById[award.id] || []).map((winner) => winner.userId).filter(Boolean),
-          winnerUserEmails: (awardWinnersById[award.id] || []).map((winner) => winner.userEmail).filter(Boolean),
-          winnerUserLabels: (awardWinnersById[award.id] || []).map((winner) => winner.label).filter(Boolean),
-          winnersCalculatedAt: Date.now(),
-        }).catch((error) => console.error("Failed to sync award winners:", error))));
+        .filter((award) => award.conditionType === "most_hours")
+        .map((award) => {
+          const winners = awardWinnersById[award.id] || [];
+          const winnerUserIds = winners.map((winner) => winner.userId).filter(Boolean).sort();
+          const winnerUserEmails = winners.map((winner) => winner.userEmail).filter(Boolean).sort();
+          const winnerUserLabels = winners.map((winner) => winner.label).filter(Boolean).sort();
+          const currentIds = (Array.isArray(award.winnerUserIds) ? award.winnerUserIds : []).filter(Boolean).sort();
+          const currentEmails = (Array.isArray(award.winnerUserEmails) ? award.winnerUserEmails : []).filter(Boolean).sort();
+          const currentLabels = (Array.isArray(award.winnerUserLabels) ? award.winnerUserLabels : []).filter(Boolean).sort();
+          if (
+            JSON.stringify(currentIds) === JSON.stringify(winnerUserIds)
+            && JSON.stringify(currentEmails) === JSON.stringify(winnerUserEmails)
+            && JSON.stringify(currentLabels) === JSON.stringify(winnerUserLabels)
+          ) return Promise.resolve();
+          return updateDoc(doc(db, "churches", id, "payEveryoneAwards", award.id), {
+            winnerUserIds,
+            winnerUserEmails,
+            winnerUserLabels,
+            winnersCalculatedAt: Date.now(),
+          }).catch((error) => console.error("Failed to sync award winners:", error));
+        }));
     };
     syncWinnerIds();
     return undefined;
