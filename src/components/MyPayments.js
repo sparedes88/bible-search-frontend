@@ -154,6 +154,16 @@ const getEffectiveHourlyRate = (comp) => {
   return comp.hourlyRate;
 };
 
+const formatCompensationDate = (value) => {
+  const timestamp = toTimestampMs(value);
+  if (!timestamp) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestamp));
+};
+
 const mergeById = (previousList, incomingDocs) => {
   const merged = new Map(previousList.map((entry) => [entry.id, entry]));
   incomingDocs.forEach((entry) => merged.set(entry.id, entry));
@@ -691,6 +701,31 @@ const MyPayments = () => {
     return Array.from(uniqueProjects).sort((left, right) => left.localeCompare(right));
   }, [timeLogs]);
 
+  const compensationHistory = useMemo(() => {
+    const rawHistory = Array.isArray(compSettings?.changeLog) && compSettings.changeLog.length > 0
+      ? compSettings.changeLog
+      : [{ effectiveFrom: 0, ...compSettings }];
+    const entries = rawHistory
+      .map((entry) => ({
+        effectiveFrom: toTimestampMs(entry?.effectiveFrom),
+        ...normalizeCompSnapshot(entry),
+      }))
+      .sort((left, right) => left.effectiveFrom - right.effectiveFrom);
+
+    return entries.map((entry, index) => {
+      const nextEntry = entries[index + 1];
+      const endMs = nextEntry?.effectiveFrom ? nextEntry.effectiveFrom - 1 : 0;
+      const previousEntry = entries[index - 1];
+      const changed = Boolean(previousEntry) && (
+        entry.billingType !== previousEntry.billingType
+        || entry.hourlyRate !== previousEntry.hourlyRate
+        || entry.monthlySalary !== previousEntry.monthlySalary
+        || entry.expectedHours !== previousEntry.expectedHours
+      );
+      return { ...entry, endMs, changed };
+    });
+  }, [compSettings]);
+
   const dateFilteredTimeLogs = useMemo(() => {
     const { startMs, endMs } = getHoursFilterRange(hoursFilter, { customStart, customEnd });
     return timeLogs.filter((entry) => {
@@ -830,6 +865,43 @@ const MyPayments = () => {
             {toCurrency(totals.balance)}
           </div>
         </div>
+      </div>
+
+      <div style={{ ...cardStyle, marginBottom: "20px", padding: 0, overflowX: "auto" }}>
+        <div style={{ padding: "14px", fontWeight: 800, color: "#0F172A" }}>Compensation History</div>
+        <div style={{ padding: "0 14px 10px", color: "#64748B", fontSize: "0.84rem" }}>
+          Salary and rate history pulled from Pay Everyone Compensation.
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>Effective From</th>
+              <th style={thStyle}>Effective To</th>
+              <th style={thStyle}>Type</th>
+              <th style={thStyle}>Salary / Rate</th>
+              <th style={thStyle}>Expected Hours</th>
+              <th style={thStyle}>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {compensationHistory.length === 0 ? (
+              <tr><td style={tdStyle} colSpan={6}>No compensation history found.</td></tr>
+            ) : compensationHistory.map((entry, index) => (
+              <tr key={`compensation-history-${entry.effectiveFrom}-${index}`}>
+                <td style={tdStyle}>{entry.effectiveFrom ? formatCompensationDate(entry.effectiveFrom) : "Before history tracking"}</td>
+                <td style={tdStyle}>{entry.endMs ? formatCompensationDate(entry.endMs) : "Current"}</td>
+                <td style={tdStyle}>{entry.billingType === "salary" ? "Salary" : "Hourly"}</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>
+                  {entry.billingType === "salary"
+                    ? `${toCurrency(entry.monthlySalary)} / month`
+                    : `${toCurrency(entry.hourlyRate)} / hour`}
+                </td>
+                <td style={tdStyle}>{entry.expectedHours || 0} hrs/week</td>
+                <td style={tdStyle}>{entry.changed ? "Increased or changed" : index === 0 ? "Starting rate" : "No change"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div style={{ ...cardStyle, marginBottom: "20px" }}>
