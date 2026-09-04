@@ -763,11 +763,14 @@ const MyPayments = () => {
       return () => {};
     }
 
-    const unsubscribe = onSnapshot(
-      query(collection(db, "churches", id, "timeRotateLogs"), where("userId", "==", selectedIdentity.userId)),
-      (snapshot) => {
-        setTimeLogs(
-          snapshot.docs.map((snapshotDoc) => {
+    const logsRef = collection(db, "churches", id, "timeRotateLogs");
+    const identityQueries = [query(logsRef, where("userId", "==", selectedIdentity.userId))];
+    if (selectedIdentity.userEmail) {
+      identityQueries.push(query(logsRef, where("userEmail", "==", selectedIdentity.userEmail)));
+    }
+    const queryResults = identityQueries.map(() => []);
+    const unsubscribes = identityQueries.map((identityQuery, queryIndex) => onSnapshot(identityQuery, (snapshot) => {
+        queryResults[queryIndex] = snapshot.docs.map((snapshotDoc) => {
             const data = snapshotDoc.data() || {};
             return {
               id: snapshotDoc.id,
@@ -777,16 +780,12 @@ const MyPayments = () => {
               issueLabel: normalizeValue(data.issueLabel || data.issueTitle),
               projectName: normalizeValue(data.projectName),
             };
-          })
-        );
-      },
-      (error) => {
-        console.error("Failed to load my time logs:", error);
-      }
-    );
+          });
+        setTimeLogs(queryResults.reduce((merged, entries) => mergeById(merged, entries), []).sort((left, right) => (right.startedAt || 0) - (left.startedAt || 0)));
+      }, (error) => console.error("Failed to load my time logs:", error)));
 
-    return () => unsubscribe();
-  }, [id, selectedIdentity.userId]);
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [id, selectedIdentity.userEmail, selectedIdentity.userId]);
 
   useEffect(() => {
     if (!id || !selectedIdentity.userId) {
@@ -794,20 +793,18 @@ const MyPayments = () => {
       return () => {};
     }
 
-    const unsubscribe = onSnapshot(
-      query(collection(db, "churches", id, "payEveryoneUserSettings"), where("userId", "==", selectedIdentity.userId)),
-      (snapshot) => {
-        const settingsDoc = snapshot.docs[0];
-        setCompSettings(settingsDoc ? settingsDoc.data() || {} : {});
-      },
-      (error) => {
-        console.error("Failed to load my compensation settings:", error);
-        setCompSettings({});
-      }
-    );
-
-    return () => unsubscribe();
-  }, [id, selectedIdentity.userId]);
+    const settingsRef = collection(db, "churches", id, "payEveryoneUserSettings");
+    const identityQueries = [query(settingsRef, where("userId", "==", selectedIdentity.userId))];
+    if (selectedIdentity.userEmail) identityQueries.push(query(settingsRef, where("userEmail", "==", selectedIdentity.userEmail)));
+    const unsubscribes = identityQueries.map((identityQuery) => onSnapshot(identityQuery, (snapshot) => {
+      const settingsDoc = snapshot.docs[0];
+      if (settingsDoc) setCompSettings(settingsDoc.data() || {});
+    }, (error) => {
+      console.error("Failed to load my compensation settings:", error);
+      setCompSettings({});
+    }));
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [id, selectedIdentity.userEmail, selectedIdentity.userId]);
 
   useEffect(() => {
     if (!id) {
