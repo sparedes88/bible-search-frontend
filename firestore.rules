@@ -369,7 +369,7 @@ service cloud.firestore {
 
       // TimeRotate logs - users can create/edit/delete their own entries, church admins can manage all
       match /timeRotateLogs/{logId} {
-        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow read: if isAuthenticated() && (isGlobalAdmin() || isUserInChurch(churchId));
         allow create: if isAuthenticated() &&
           (request.resource.data.userId == request.auth.uid || isChurchAdmin(churchId));
         allow update, delete: if isAuthenticated() &&
@@ -477,11 +477,11 @@ service cloud.firestore {
             settingId == request.auth.uid;
         }
 
-        allow get: if isAuthenticated() && userBelongsToChurch(churchId) &&
+        allow get: if isAuthenticated() && (isGlobalAdmin() || userBelongsToChurch(churchId)) &&
           (isSettingsOwnerFromResource() || canReadPayEveryoneModule());
 
         // Owner-filtered queries are allowed; broad queries still need module read access.
-        allow list: if isAuthenticated() && userBelongsToChurch(churchId) &&
+        allow list: if isAuthenticated() && (isGlobalAdmin() || userBelongsToChurch(churchId)) &&
           (isSettingsOwnerFromResource() || canReadPayEveryoneModule());
 
         allow create: if isAuthenticated() && canReadPayEveryoneModule() &&
