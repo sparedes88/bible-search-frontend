@@ -910,6 +910,14 @@ const MyPayments = () => {
     const selectedAwardUserLabel = organizationUsers.find((entry) => entry.userId === selectedIdentity.userId)?.userLabel
       || normalizeValue(user?.displayName)
       || selectedIdentity.userEmail;
+    const selectedAwardUserLabels = [
+      selectedAwardUserLabel,
+      user?.displayName,
+      user?.name,
+      user?.firstName,
+      [user?.firstName, user?.lastName].filter(Boolean).join(" "),
+      selectedIdentity.userEmail,
+    ].map((value) => normalizeValue(value).toLowerCase()).filter(Boolean);
     const logsForUser = canSwitchUsers
       ? awardLogs.filter((entry) => entry.userId === selectedIdentity.userId || (selectedIdentity.userEmail && entry.userEmail === selectedIdentity.userEmail))
       : timeLogs;
@@ -939,13 +947,16 @@ const MyPayments = () => {
           && award.winnerUserEmails.some((email) => normalizeValue(email).toLowerCase() === selectedIdentity.userEmail.toLowerCase())
         ) || (
           Array.isArray(award.winnerUserLabels)
-          && award.winnerUserLabels.some((label) => normalizeValue(label).toLowerCase() === normalizeValue(selectedAwardUserLabel).toLowerCase())
+          && award.winnerUserLabels.some((label) => {
+            const normalizedLabel = normalizeValue(label).toLowerCase();
+            return selectedAwardUserLabels.some((candidate) => candidate === normalizedLabel || candidate.includes(normalizedLabel) || normalizedLabel.includes(candidate));
+          })
         );
       }
     }
     const claimed = awardClaims.some((claim) => claim.awardId === award.id);
     return { ...award, metrics, eligible, claimed };
-  }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs, user?.displayName]);
+  }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs, user?.displayName, user?.firstName, user?.lastName, user?.name]);
 
   const awardTotals = useMemo(() => awardRows.reduce((totals, award) => ({
     totalReward: totals.totalReward + parseNumber(award.rewardAmount),
