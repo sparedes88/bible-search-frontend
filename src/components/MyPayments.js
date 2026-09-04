@@ -976,7 +976,12 @@ const MyPayments = () => {
     claimedReward: totals.claimedReward + (award.claimed ? parseNumber(award.rewardAmount) : 0),
   }), { totalReward: 0, eligibleReward: 0, claimedReward: 0 }), [awardRows]);
 
-  const awardCreditBalance = awardTotals.eligibleReward + awardTotals.claimedReward;
+  const claimedCreditTotal = useMemo(
+    () => awardClaims.reduce((total, claim) => total + parseNumber(claim.rewardAmount), 0),
+    [awardClaims]
+  );
+
+  const awardCreditBalance = awardTotals.eligibleReward + claimedCreditTotal;
 
   const awardCreditLog = useMemo(() => awardRows.map((award) => {
     const claim = awardClaims.find((entry) => entry.awardId === award.id);
