@@ -1228,6 +1228,13 @@ const MyPayments = () => {
             {toCurrency(totals.balance)}
           </div>
         </div>
+        <div style={{ ...cardStyle, borderColor: "#0F766E", backgroundColor: "#ECFDF5" }}>
+          <div style={{ color: "#047857", fontSize: "0.78rem", fontWeight: 800 }}>Credit Remaining</div>
+          <div style={{ color: "#065F46", fontSize: "1.35rem", fontWeight: 900 }}>
+            {toCurrency(awardTotals.eligibleReward)}
+          </div>
+          <div style={{ color: "#047857", fontSize: "0.72rem", marginTop: "3px" }}>Award credits available to cash in</div>
+        </div>
       </div>
 
       <div style={{ ...cardStyle, marginBottom: "20px", padding: 0, overflowX: "auto" }}>
