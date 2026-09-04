@@ -154,6 +154,62 @@ const getEffectiveHourlyRate = (comp) => {
   return comp.hourlyRate;
 };
 
+const getAwardPeriodRange = (award) => ({
+  startMs: parseDateInputValue(award?.startDate),
+  endMs: parseDateInputValue(award?.endDate, true),
+});
+
+const getZonedDateParts = (timestamp, timeZone) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timeZone || "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    dateKey: `${values.year}-${values.month}-${values.day}`,
+    weekday: values.weekday.slice(0, 3),
+    minutes: (Number(values.hour) * 60) + Number(values.minute),
+  };
+};
+
+const calculateAwardMetrics = (logs, compensation, award) => {
+  const { startMs, endMs } = getAwardPeriodRange(award);
+  const periodLogs = (Array.isArray(logs) ? logs : []).filter((entry) => {
+    const timestamp = Number(entry.startedAt) || Number(entry.endedAt) || 0;
+    return timestamp >= startMs && timestamp <= endMs;
+  });
+  const totalHours = periodLogs.reduce((sum, entry) => sum + (parseNumber(entry.durationMs) / 3600000), 0);
+  const schedule = compensation?.expectedSchedule || {};
+  const timeZone = compensation?.scheduleTimezone || "America/New_York";
+  const earliestByDay = new Map();
+  periodLogs.forEach((entry) => {
+    const timestamp = Number(entry.startedAt) || Number(entry.endedAt) || 0;
+    if (!timestamp) return;
+    const zoned = getZonedDateParts(timestamp, timeZone);
+    const existing = earliestByDay.get(zoned.dateKey);
+    if (!existing || timestamp < existing.timestamp) earliestByDay.set(zoned.dateKey, { timestamp, zoned });
+  });
+  let onTimeDays = 0;
+  earliestByDay.forEach(({ zoned }) => {
+    const expectedTime = String(schedule[zoned.weekday] || "07:00");
+    const [hours, minutes] = expectedTime.split(":").map(Number);
+    if (zoned.minutes <= ((hours || 0) * 60) + (minutes || 0)) onTimeDays += 1;
+  });
+  const trackedDays = earliestByDay.size;
+  return {
+    totalHours,
+    trackedDays,
+    onTimeDays,
+    onTimeRate: trackedDays > 0 ? (onTimeDays / trackedDays) * 100 : 0,
+  };
+};
+
 const formatCompensationDate = (value) => {
   const timestamp = toTimestampMs(value);
   if (!timestamp) return "-";
@@ -455,6 +511,22 @@ const MyPayments = () => {
   const [editingMethodNote, setEditingMethodNote] = useState("");
   const [savingPaymentMethod, setSavingPaymentMethod] = useState(false);
   const [paymentMethodFormOpen, setPaymentMethodFormOpen] = useState(false);
+  const [awards, setAwards] = useState([]);
+  const [awardClaims, setAwardClaims] = useState([]);
+  const [awardLogs, setAwardLogs] = useState([]);
+  const [allCompSettings, setAllCompSettings] = useState({});
+  const [awardFormOpen, setAwardFormOpen] = useState(false);
+  const [savingAward, setSavingAward] = useState(false);
+  const [claimingAwardId, setClaimingAwardId] = useState("");
+  const [awardDraft, setAwardDraft] = useState({
+    name: "",
+    description: "",
+    conditionType: "most_hours",
+    threshold: "",
+    startDate: new Date().toISOString().slice(0, 8) + "01",
+    endDate: new Date().toISOString().slice(0, 10),
+    rewardAmount: "",
+  });
 
   const selectedIdentity = useMemo(() => {
     if (!canSwitchUsers) return { userId, userEmail };
@@ -542,6 +614,46 @@ const MyPayments = () => {
       (error) => console.error("Failed to load users for global admin payment switcher:", error)
     );
   }, [canSwitchUsers, id, userId]);
+
+  useEffect(() => {
+    if (!id) return undefined;
+    return onSnapshot(collection(db, "churches", id, "payEveryoneAwards"), (snapshot) => {
+      setAwards(snapshot.docs.map((awardDoc) => ({ id: awardDoc.id, ...awardDoc.data() }))
+        .filter((award) => award.active !== false)
+        .sort((left, right) => String(left.endDate || "").localeCompare(String(right.endDate || ""))));
+    });
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || !selectedIdentity.userId) {
+      setAwardClaims([]);
+      return undefined;
+    }
+    return onSnapshot(
+      query(collection(db, "churches", id, "payEveryoneAwardClaims"), where("userId", "==", selectedIdentity.userId)),
+      (snapshot) => setAwardClaims(snapshot.docs.map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() })))
+    );
+  }, [id, selectedIdentity.userId]);
+
+  useEffect(() => {
+    if (!canSwitchUsers || !id) {
+      setAwardLogs([]);
+      setAllCompSettings({});
+      return undefined;
+    }
+    const logUnsubscribe = onSnapshot(collection(db, "churches", id, "timeRotateLogs"), (snapshot) => {
+      setAwardLogs(snapshot.docs.map((logDoc) => {
+        const data = logDoc.data() || {};
+        return { id: logDoc.id, userId: normalizeValue(data.userId), userEmail: normalizeValue(data.userEmail), userLabel: normalizeValue(data.registeredBy || data.userLabel), startedAt: toTimestampMs(data.startedAt), endedAt: toTimestampMs(data.endedAt), durationMs: parseNumber(data.durationMs) };
+      }));
+    });
+    const settingsUnsubscribe = onSnapshot(collection(db, "churches", id, "payEveryoneUserSettings"), (snapshot) => {
+      const settings = {};
+      snapshot.docs.forEach((settingsDoc) => { settings[settingsDoc.id] = settingsDoc.data() || {}; });
+      setAllCompSettings(settings);
+    });
+    return () => { logUnsubscribe(); settingsUnsubscribe(); };
+  }, [canSwitchUsers, id]);
 
   useEffect(() => {
     if (!id || !selectedIdentity.userId) {
@@ -781,6 +893,73 @@ const MyPayments = () => {
       return { ...entry, endMs, changed };
     });
   }, [compSettings]);
+
+  const awardRows = useMemo(() => awards.map((award) => {
+    const logsForUser = canSwitchUsers
+      ? awardLogs.filter((entry) => entry.userId === selectedIdentity.userId || (selectedIdentity.userEmail && entry.userEmail === selectedIdentity.userEmail))
+      : timeLogs;
+    const metrics = calculateAwardMetrics(logsForUser, compSettings || {}, award);
+    let eligible = false;
+    if (award.conditionType === "min_hours") eligible = metrics.totalHours >= parseNumber(award.threshold);
+    if (award.conditionType === "on_time_rate") eligible = metrics.onTimeRate >= parseNumber(award.threshold);
+    if (award.conditionType === "on_time_days") eligible = metrics.onTimeDays >= parseNumber(award.threshold);
+    if (award.conditionType === "most_hours") {
+      if (canSwitchUsers) {
+        const totalsByUser = organizationUsers.map((entry) => {
+          const entryLogs = awardLogs.filter((log) => log.userId === entry.userId || (entry.userEmail && log.userEmail === entry.userEmail));
+          const entryComp = allCompSettings[entry.userId] || {};
+          return { userId: entry.userId, hours: calculateAwardMetrics(entryLogs, entryComp, award).totalHours };
+        });
+        const maxHours = Math.max(0, ...totalsByUser.map((entry) => entry.hours));
+        eligible = totalsByUser.some((entry) => entry.userId === selectedIdentity.userId && maxHours > 0 && entry.hours === maxHours);
+      } else {
+        eligible = Array.isArray(award.winnerUserIds) && award.winnerUserIds.includes(selectedIdentity.userId);
+      }
+    }
+    const claimed = awardClaims.some((claim) => claim.awardId === award.id);
+    return { ...award, metrics, eligible, claimed };
+  }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs]);
+
+  const handleSaveAward = async () => {
+    if (!canSwitchUsers || !awardDraft.name.trim() || !awardDraft.startDate || !awardDraft.endDate) return;
+    setSavingAward(true);
+    try {
+      await addDoc(collection(db, "churches", id, "payEveryoneAwards"), {
+        name: awardDraft.name.trim(),
+        description: awardDraft.description.trim(),
+        conditionType: awardDraft.conditionType,
+        threshold: parseNumber(awardDraft.threshold),
+        startDate: awardDraft.startDate,
+        endDate: awardDraft.endDate,
+        rewardAmount: parseNumber(awardDraft.rewardAmount),
+        active: true,
+        createdByUid: userId,
+        createdAt: Date.now(),
+      });
+      setAwardDraft((current) => ({ ...current, name: "", description: "", threshold: "", rewardAmount: "" }));
+      setAwardFormOpen(false);
+    } finally {
+      setSavingAward(false);
+    }
+  };
+
+  const handleClaimAward = async (award) => {
+    if (!award.eligible || award.claimed || claimingAwardId) return;
+    setClaimingAwardId(award.id);
+    try {
+      await addDoc(collection(db, "churches", id, "payEveryoneAwardClaims"), {
+        awardId: award.id,
+        awardName: award.name,
+        rewardAmount: parseNumber(award.rewardAmount),
+        userId: selectedIdentity.userId,
+        userEmail: selectedIdentity.userEmail,
+        userLabel: displayName,
+        claimedAt: Date.now(),
+      });
+    } finally {
+      setClaimingAwardId("");
+    }
+  };
 
   const dateFilteredTimeLogs = useMemo(() => {
     const { startMs, endMs } = getHoursFilterRange(hoursFilter, { customStart, customEnd });
@@ -1136,6 +1315,54 @@ const MyPayments = () => {
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "16px", padding: "12px 14px", color: "#0F172A", fontWeight: 800 }}>
           <div>Entries: {filteredTimeLogs.length}</div>
           <div>Total: {filteredHours.toFixed(2)} hrs</div>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle, padding: 0, overflowX: "auto" }}>
+        <div style={{ padding: "14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 800, color: "#0F172A" }}>Awards</div>
+            <div style={{ color: "#64748B", fontSize: "0.82rem", marginTop: "3px" }}>Awards use the employee's hours and Pay Everyone expected schedule for the award period.</div>
+          </div>
+          {canSwitchUsers && <button type="button" onClick={() => setAwardFormOpen((current) => !current)} style={{ padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>{awardFormOpen ? "Close Award Builder" : "Create Award"}</button>}
+        </div>
+        {canSwitchUsers && awardFormOpen && (
+          <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px" }}>
+              <input value={awardDraft.name} onChange={(event) => setAwardDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Award name" style={filterInputStyle} />
+              <select value={awardDraft.conditionType} onChange={(event) => setAwardDraft((current) => ({ ...current, conditionType: event.target.value }))} style={filterInputStyle}>
+                <option value="most_hours">Most hours worked</option>
+                <option value="min_hours">Minimum hours worked</option>
+                <option value="on_time_rate">On-time attendance rate</option>
+                <option value="on_time_days">On-time attendance days</option>
+              </select>
+              <input type="number" min="0" value={awardDraft.threshold} onChange={(event) => setAwardDraft((current) => ({ ...current, threshold: event.target.value }))} placeholder="Threshold (if needed)" style={filterInputStyle} />
+              <input type="number" min="0" step="0.01" value={awardDraft.rewardAmount} onChange={(event) => setAwardDraft((current) => ({ ...current, rewardAmount: event.target.value }))} placeholder="Reward amount (optional)" style={filterInputStyle} />
+              <input type="date" value={awardDraft.startDate} onChange={(event) => setAwardDraft((current) => ({ ...current, startDate: event.target.value }))} style={filterInputStyle} />
+              <input type="date" value={awardDraft.endDate} onChange={(event) => setAwardDraft((current) => ({ ...current, endDate: event.target.value }))} style={filterInputStyle} />
+              <input value={awardDraft.description} onChange={(event) => setAwardDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Description / rules" style={{ ...filterInputStyle, gridColumn: "1 / -1" }} />
+            </div>
+            <button type="button" onClick={handleSaveAward} disabled={savingAward || !awardDraft.name.trim()} style={{ marginTop: "10px", padding: "7px 11px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{savingAward ? "Saving..." : "Save Award"}</button>
+          </div>
+        )}
+        <div style={{ padding: "0 14px 14px", display: "grid", gap: "10px" }}>
+          {awardRows.length === 0 ? <div style={{ color: "#64748B" }}>No active awards available.</div> : awardRows.map((award) => (
+            <div key={award.id} style={{ border: "1px solid #E2E8F0", borderRadius: "8px", padding: "12px", backgroundColor: award.claimed ? "#F8FAFC" : award.eligible ? "#ECFDF5" : "#FFFFFF" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 800, color: "#0F172A" }}>{award.name}</div>
+                <div style={{ color: "#64748B", fontSize: "0.8rem" }}>{formatCompensationDate(parseDateInputValue(award.startDate))} - {formatCompensationDate(parseDateInputValue(award.endDate, true))}</div>
+              </div>
+              <div style={{ color: "#475569", fontSize: "0.84rem", marginTop: "4px" }}>{award.description || "No additional rules."}</div>
+              <div style={{ color: "#334155", fontSize: "0.82rem", marginTop: "6px" }}>
+                Current result: {award.metrics.totalHours.toFixed(2)} hrs, {award.metrics.onTimeDays} on-time days, {award.metrics.onTimeRate.toFixed(1)}% on time
+                {award.rewardAmount ? ` • Reward: ${toCurrency(award.rewardAmount)}` : ""}
+              </div>
+              <div style={{ marginTop: "8px", fontWeight: 800, color: award.claimed ? "#64748B" : award.eligible ? "#166534" : "#B45309" }}>
+                {award.claimed ? "Already cashed in" : award.eligible ? "Eligible" : "Not eligible yet"}
+                {award.eligible && !award.claimed && <button type="button" onClick={() => handleClaimAward(award)} disabled={claimingAwardId === award.id} style={{ marginLeft: "10px", padding: "6px 10px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{claimingAwardId === award.id ? "Processing..." : "Cash In Award"}</button>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
