@@ -928,7 +928,13 @@ const MyPayments = () => {
         const maxHours = Math.max(0, ...totalsByUser.map((entry) => entry.hours));
         eligible = totalsByUser.some((entry) => entry.userId === selectedIdentity.userId && maxHours > 0 && entry.hours === maxHours);
       } else {
-        eligible = Array.isArray(award.winnerUserIds) && award.winnerUserIds.includes(selectedIdentity.userId);
+        eligible = (
+          Array.isArray(award.winnerUserIds) && award.winnerUserIds.includes(selectedIdentity.userId)
+        ) || (
+          Boolean(selectedIdentity.userEmail)
+          && Array.isArray(award.winnerUserEmails)
+          && award.winnerUserEmails.some((email) => normalizeValue(email).toLowerCase() === selectedIdentity.userEmail.toLowerCase())
+        );
       }
     }
     const claimed = awardClaims.some((claim) => claim.awardId === award.id);
@@ -966,6 +972,7 @@ const MyPayments = () => {
       }
       winnersByAward[award.id] = winners.map((item) => ({
         userId: item.entry.userId,
+        userEmail: item.entry.userEmail,
         label: item.entry.userLabel || item.entry.userEmail || item.entry.userId,
         metrics: item.metrics,
       }));
@@ -977,9 +984,13 @@ const MyPayments = () => {
     if (!canSwitchUsers) return undefined;
     const syncWinnerIds = async () => {
       await Promise.all(awards
-        .filter((award) => award.conditionType === "most_hours" && !(Array.isArray(award.winnerUserIds) && award.winnerUserIds.length > 0))
+        .filter((award) => award.conditionType === "most_hours" && (
+          !(Array.isArray(award.winnerUserIds) && award.winnerUserIds.length > 0)
+          || !(Array.isArray(award.winnerUserEmails) && award.winnerUserEmails.length > 0)
+        ))
         .map((award) => updateDoc(doc(db, "churches", id, "payEveryoneAwards", award.id), {
           winnerUserIds: (awardWinnersById[award.id] || []).map((winner) => winner.userId).filter(Boolean),
+          winnerUserEmails: (awardWinnersById[award.id] || []).map((winner) => winner.userEmail).filter(Boolean),
           winnerUserLabels: (awardWinnersById[award.id] || []).map((winner) => winner.label).filter(Boolean),
           winnersCalculatedAt: Date.now(),
         }).catch((error) => console.error("Failed to sync award winners:", error))));
