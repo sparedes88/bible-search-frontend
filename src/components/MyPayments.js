@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
 import commonStyles from "../pages/commonStyles";
@@ -448,6 +448,12 @@ const MyPayments = () => {
   const [loadError, setLoadError] = useState("");
   const [organizationUsers, setOrganizationUsers] = useState([]);
   const [selectedUserKey, setSelectedUserKey] = useState("");
+  const [editingPaymentMethodId, setEditingPaymentMethodId] = useState("");
+  const [editingMethodType, setEditingMethodType] = useState("airtm");
+  const [editingMethodOther, setEditingMethodOther] = useState("");
+  const [editingMethodDetails, setEditingMethodDetails] = useState("");
+  const [editingMethodNote, setEditingMethodNote] = useState("");
+  const [savingPaymentMethod, setSavingPaymentMethod] = useState(false);
 
   const selectedIdentity = useMemo(() => {
     if (!canSwitchUsers) return { userId, userEmail };
@@ -456,6 +462,42 @@ const MyPayments = () => {
       ? { userId: selectedUser.userId, userEmail: selectedUser.userEmail }
       : { userId, userEmail };
   }, [canSwitchUsers, organizationUsers, selectedUserKey, userEmail, userId]);
+
+  const startEditingPaymentMethod = (method) => {
+    setEditingPaymentMethodId(method.id);
+    setEditingMethodType(method.methodType || "airtm");
+    setEditingMethodOther(method.methodOther || "");
+    setEditingMethodDetails(method.details || "");
+    setEditingMethodNote(method.note || "");
+  };
+
+  const cancelEditingPaymentMethod = () => {
+    setEditingPaymentMethodId("");
+    setEditingMethodType("airtm");
+    setEditingMethodOther("");
+    setEditingMethodDetails("");
+    setEditingMethodNote("");
+  };
+
+  const handleSavePaymentMethod = async (methodId) => {
+    if (!editingMethodType || !editingMethodDetails.trim()) return;
+    setSavingPaymentMethod(true);
+    try {
+      await updateDoc(doc(db, "churches", id, "payEveryonePaymentMethods", methodId), {
+        methodType: editingMethodType,
+        methodOther: editingMethodType === "other" ? editingMethodOther.trim() : "",
+        details: editingMethodDetails.trim(),
+        note: editingMethodNote.trim(),
+        updatedAt: Date.now(),
+      });
+      cancelEditingPaymentMethod();
+    } catch (error) {
+      console.error("Failed to update payment method:", error);
+      setLoadError("We could not update the payment method. Please try again.");
+    } finally {
+      setSavingPaymentMethod(false);
+    }
+  };
 
   useEffect(() => {
     if (!canSwitchUsers || !id) {
@@ -1096,24 +1138,42 @@ const MyPayments = () => {
               <th style={thStyle}>Details</th>
               <th style={thStyle}>Note</th>
               <th style={thStyle}>Updated</th>
+              <th style={thStyle}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {paymentMethods.length === 0 ? (
               <tr>
-                <td style={tdStyle} colSpan={4}>No payment method on file.</td>
+                <td style={tdStyle} colSpan={5}>No payment method on file.</td>
               </tr>
             ) : (
               paymentMethods.map((method) => (
                 <tr key={method.id}>
                   <td style={tdStyle}>
-                    {method.methodType === "other"
+                    {editingPaymentMethodId === method.id ? (
+                      <select value={editingMethodType} onChange={(event) => setEditingMethodType(event.target.value)} style={filterInputStyle}>
+                        {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    ) : method.methodType === "other"
                       ? method.methodOther || "Other"
                       : PAYMENT_METHOD_LABELS[method.methodType] || method.methodType || "-"}
+                    {editingPaymentMethodId === method.id && editingMethodType === "other" && (
+                      <input value={editingMethodOther} onChange={(event) => setEditingMethodOther(event.target.value)} placeholder="Other method" style={{ ...filterInputStyle, marginTop: "6px" }} />
+                    )}
                   </td>
-                  <td style={tdStyle}>{method.details || "-"}</td>
-                  <td style={tdStyle}>{method.note || "-"}</td>
+                  <td style={tdStyle}>{editingPaymentMethodId === method.id ? <input value={editingMethodDetails} onChange={(event) => setEditingMethodDetails(event.target.value)} style={filterInputStyle} /> : method.details || "-"}</td>
+                  <td style={tdStyle}>{editingPaymentMethodId === method.id ? <input value={editingMethodNote} onChange={(event) => setEditingMethodNote(event.target.value)} style={filterInputStyle} /> : method.note || "-"}</td>
                   <td style={tdStyle}>{formatDateOnly(method.updatedAt)}</td>
+                  <td style={tdStyle}>
+                    {editingPaymentMethodId === method.id ? (
+                      <>
+                        <button type="button" onClick={() => handleSavePaymentMethod(method.id)} disabled={savingPaymentMethod} style={{ marginRight: "6px", padding: "6px 10px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{savingPaymentMethod ? "Saving..." : "Save"}</button>
+                        <button type="button" onClick={cancelEditingPaymentMethod} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Cancel</button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => startEditingPaymentMethod(method)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Edit</button>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

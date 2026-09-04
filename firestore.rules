@@ -531,7 +531,17 @@ service cloud.firestore {
             canManageModule(churchId, 'time-tracker') ||
             (userBelongsToChurch(churchId) && isPaymentMethodOwner())
           );
-        allow create, update, delete: if isAuthenticated() &&
+        allow create: if isAuthenticated() &&
+          (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
+        allow update: if isAuthenticated() &&
+          (
+            canManageModule(churchId, 'pay-everyone') ||
+            canManageModule(churchId, 'time-tracker') ||
+            (userBelongsToChurch(churchId) && isPaymentMethodOwner() &&
+              request.resource.data.userId == resource.data.userId &&
+              request.resource.data.userEmail == resource.data.userEmail)
+          );
+        allow delete: if isAuthenticated() &&
           (canManageModule(churchId, 'pay-everyone') || canManageModule(churchId, 'time-tracker'));
       }
 
