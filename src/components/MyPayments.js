@@ -1426,6 +1426,11 @@ const MyPayments = () => {
                 Current result: {award.metrics.totalHours.toFixed(2)} hrs, {award.metrics.onTimeDays} on-time days, {award.metrics.onTimeRate.toFixed(1)}% on time
                 {award.rewardAmount ? ` • Reward: ${toCurrency(award.rewardAmount)}` : ""}
               </div>
+              {!award.claimed && (
+                <div style={{ marginTop: "10px", padding: "8px 10px", borderRadius: "6px", backgroundColor: award.eligible ? "#DCFCE7" : "#FEF2F2", color: award.eligible ? "#166534" : "#991B1B", fontWeight: 800 }}>
+                  {award.eligible ? "ELIGIBLE — You qualify for this award" : "NOT ELIGIBLE — Keep working toward the requirement"}
+                </div>
+              )}
               {canSwitchUsers && (
                 <div style={{ marginTop: "6px", color: "#334155", fontSize: "0.82rem" }}>
                   <strong>Winner(s):</strong>{" "}
@@ -1435,7 +1440,7 @@ const MyPayments = () => {
                 </div>
               )}
               <div style={{ marginTop: "8px", fontWeight: 800, color: award.claimed ? "#64748B" : award.eligible ? "#166534" : "#B45309" }}>
-                {award.claimed ? "Already cashed in" : award.eligible ? "Eligible" : "Not eligible yet"}
+                {award.claimed ? "ALREADY CASHED IN" : award.eligible ? "READY TO CASH IN" : "NOT READY"}
                 {canSwitchUsers && <button type="button" onClick={() => startEditingAward(award)} style={{ marginLeft: "10px", padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Edit Award</button>}
                 {award.eligible && !award.claimed && <button type="button" onClick={() => handleClaimAward(award)} disabled={claimingAwardId === award.id} style={{ marginLeft: "10px", padding: "6px 10px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{claimingAwardId === award.id ? "Processing..." : "Cash In Award"}</button>}
               </div>
