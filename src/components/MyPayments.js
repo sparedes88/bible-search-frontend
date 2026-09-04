@@ -516,6 +516,7 @@ const MyPayments = () => {
   const [awardLogs, setAwardLogs] = useState([]);
   const [allCompSettings, setAllCompSettings] = useState({});
   const [awardFormOpen, setAwardFormOpen] = useState(false);
+  const [editingAwardId, setEditingAwardId] = useState("");
   const [savingAward, setSavingAward] = useState(false);
   const [claimingAwardId, setClaimingAwardId] = useState("");
   const [awardDraft, setAwardDraft] = useState({
@@ -923,11 +924,43 @@ const MyPayments = () => {
     return { ...award, metrics, eligible, claimed };
   }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs]);
 
+  const awardWinnersById = useMemo(() => {
+    if (!canSwitchUsers) return {};
+    const winnersByAward = {};
+    awards.forEach((award) => {
+      const userMetrics = organizationUsers.map((entry) => {
+        const entryLogs = awardLogs.filter((log) => log.userId === entry.userId || (entry.userEmail && log.userEmail === entry.userEmail));
+        const entryComp = allCompSettings[entry.userId] || Object.values(allCompSettings).find((settings) => normalizeValue(settings.userId) === entry.userId) || {};
+        return { entry, metrics: calculateAwardMetrics(entryLogs, entryComp, award) };
+      });
+      let winners = [];
+      if (award.conditionType === "most_hours") {
+        const maxHours = Math.max(0, ...userMetrics.map((item) => item.metrics.totalHours));
+        winners = maxHours > 0 ? userMetrics.filter((item) => item.metrics.totalHours === maxHours) : [];
+      } else {
+        const threshold = award.conditionType === "on_time_rate"
+          ? (parseNumber(award.threshold) > 0 ? parseNumber(award.threshold) : 100)
+          : parseNumber(award.threshold);
+        winners = userMetrics.filter((item) => (
+          award.conditionType === "min_hours" ? item.metrics.totalHours >= threshold
+            : award.conditionType === "on_time_rate" ? item.metrics.onTimeRate >= threshold
+              : award.conditionType === "on_time_days" ? item.metrics.onTimeDays >= threshold
+                : false
+        ));
+      }
+      winnersByAward[award.id] = winners.map((item) => ({
+        label: item.entry.userLabel || item.entry.userEmail || item.entry.userId,
+        metrics: item.metrics,
+      }));
+    });
+    return winnersByAward;
+  }, [allCompSettings, awardLogs, awards, canSwitchUsers, organizationUsers]);
+
   const handleSaveAward = async () => {
     if (!canSwitchUsers || !awardDraft.name.trim() || !awardDraft.startDate || !awardDraft.endDate) return;
     setSavingAward(true);
     try {
-      await addDoc(collection(db, "churches", id, "payEveryoneAwards"), {
+      const awardData = {
         name: awardDraft.name.trim(),
         description: awardDraft.description.trim(),
         conditionType: awardDraft.conditionType,
@@ -937,13 +970,33 @@ const MyPayments = () => {
         rewardAmount: parseNumber(awardDraft.rewardAmount),
         active: true,
         createdByUid: userId,
-        createdAt: Date.now(),
-      });
+        updatedAt: Date.now(),
+      };
+      if (editingAwardId) {
+        await updateDoc(doc(db, "churches", id, "payEveryoneAwards", editingAwardId), awardData);
+      } else {
+        await addDoc(collection(db, "churches", id, "payEveryoneAwards"), { ...awardData, createdAt: Date.now() });
+      }
       setAwardDraft((current) => ({ ...current, name: "", description: "", threshold: "", rewardAmount: "" }));
+      setEditingAwardId("");
       setAwardFormOpen(false);
     } finally {
       setSavingAward(false);
     }
+  };
+
+  const startEditingAward = (award) => {
+    setEditingAwardId(award.id);
+    setAwardDraft({
+      name: award.name || "",
+      description: award.description || "",
+      conditionType: award.conditionType || "most_hours",
+      threshold: award.threshold ? String(award.threshold) : award.conditionType === "on_time_rate" ? "100" : "",
+      startDate: award.startDate || "",
+      endDate: award.endDate || "",
+      rewardAmount: award.rewardAmount ? String(award.rewardAmount) : "",
+    });
+    setAwardFormOpen(true);
   };
 
   const handleClaimAward = async (award) => {
@@ -1327,7 +1380,7 @@ const MyPayments = () => {
             <div style={{ fontWeight: 800, color: "#0F172A" }}>Awards</div>
             <div style={{ color: "#64748B", fontSize: "0.82rem", marginTop: "3px" }}>Awards use the employee's hours and Pay Everyone expected schedule for the award period.</div>
           </div>
-          {canSwitchUsers && <button type="button" onClick={() => setAwardFormOpen((current) => !current)} style={{ padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>{awardFormOpen ? "Close Award Builder" : "Create Award"}</button>}
+          {canSwitchUsers && <button type="button" onClick={() => { setEditingAwardId(""); setAwardFormOpen((current) => !current); }} style={{ padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>{awardFormOpen ? "Close Award Builder" : "Create Award"}</button>}
         </div>
         {canSwitchUsers && awardFormOpen && (
           <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
@@ -1345,7 +1398,8 @@ const MyPayments = () => {
               <input type="date" value={awardDraft.endDate} onChange={(event) => setAwardDraft((current) => ({ ...current, endDate: event.target.value }))} style={filterInputStyle} />
               <input value={awardDraft.description} onChange={(event) => setAwardDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Description / rules" style={{ ...filterInputStyle, gridColumn: "1 / -1" }} />
             </div>
-            <button type="button" onClick={handleSaveAward} disabled={savingAward || !awardDraft.name.trim()} style={{ marginTop: "10px", padding: "7px 11px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{savingAward ? "Saving..." : "Save Award"}</button>
+            <button type="button" onClick={handleSaveAward} disabled={savingAward || !awardDraft.name.trim()} style={{ marginTop: "10px", padding: "7px 11px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{savingAward ? "Saving..." : editingAwardId ? "Update Award" : "Save Award"}</button>
+            {editingAwardId && <button type="button" onClick={() => { setEditingAwardId(""); setAwardFormOpen(false); }} style={{ marginTop: "10px", marginLeft: "6px", padding: "7px 11px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Cancel Edit</button>}
           </div>
         )}
         <div style={{ padding: "0 14px 14px", display: "grid", gap: "10px" }}>
@@ -1363,8 +1417,17 @@ const MyPayments = () => {
                 Current result: {award.metrics.totalHours.toFixed(2)} hrs, {award.metrics.onTimeDays} on-time days, {award.metrics.onTimeRate.toFixed(1)}% on time
                 {award.rewardAmount ? ` • Reward: ${toCurrency(award.rewardAmount)}` : ""}
               </div>
+              {canSwitchUsers && (
+                <div style={{ marginTop: "6px", color: "#334155", fontSize: "0.82rem" }}>
+                  <strong>Winner(s):</strong>{" "}
+                  {(awardWinnersById[award.id] || []).length > 0
+                    ? awardWinnersById[award.id].map((winner) => `${winner.label} (${winner.metrics.totalHours.toFixed(2)} hrs, ${winner.metrics.onTimeRate.toFixed(1)}% on time)`).join(", ")
+                    : "No winner yet"}
+                </div>
+              )}
               <div style={{ marginTop: "8px", fontWeight: 800, color: award.claimed ? "#64748B" : award.eligible ? "#166534" : "#B45309" }}>
                 {award.claimed ? "Already cashed in" : award.eligible ? "Eligible" : "Not eligible yet"}
+                {canSwitchUsers && <button type="button" onClick={() => startEditingAward(award)} style={{ marginLeft: "10px", padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>Edit Award</button>}
                 {award.eligible && !award.claimed && <button type="button" onClick={() => handleClaimAward(award)} disabled={claimingAwardId === award.id} style={{ marginLeft: "10px", padding: "6px 10px", border: "none", borderRadius: "6px", backgroundColor: "#0F766E", color: "#FFFFFF", fontWeight: 700 }}>{claimingAwardId === award.id ? "Processing..." : "Cash In Award"}</button>}
               </div>
             </div>
