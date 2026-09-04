@@ -640,20 +640,27 @@ const MyPayments = () => {
       return undefined;
     }
     const claimsRef = collection(db, "churches", id, "payEveryoneAwardClaims");
-    const identityQueries = [query(claimsRef, where("userId", "==", selectedIdentity.userId))];
-    if (selectedIdentity.userEmail) identityQueries.push(query(claimsRef, where("userEmail", "==", selectedIdentity.userEmail)));
     const selectedUserLabel = organizationUsers.find((entry) => entry.userId === selectedIdentity.userId)?.userLabel
       || normalizeValue(user?.displayName)
       || normalizeValue(user?.name)
       || selectedIdentity.userEmail;
-    if (selectedUserLabel) identityQueries.push(query(claimsRef, where("userLabel", "==", selectedUserLabel)));
-    const queryResults = identityQueries.map(() => []);
-    const unsubscribes = identityQueries.map((identityQuery, queryIndex) => onSnapshot(identityQuery, (snapshot) => {
-      queryResults[queryIndex] = snapshot.docs.map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() }));
-      setAwardClaims(queryResults.reduce((merged, entries) => mergeById(merged, entries), []));
-    }));
-    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }, [id, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, user?.displayName, user?.name]);
+    const identityValues = [
+      selectedIdentity.userId,
+      selectedIdentity.userEmail,
+      selectedUserLabel,
+      user?.displayName,
+      user?.name,
+      user?.firstName,
+      [user?.firstName, user?.lastName].filter(Boolean).join(" "),
+    ].map((value) => normalizeValue(value).toLowerCase()).filter(Boolean);
+    return onSnapshot(claimsRef, (snapshot) => {
+      setAwardClaims(snapshot.docs
+        .map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() }))
+        .filter((claim) => [claim.userId, claim.userEmail, claim.userLabel]
+          .map((value) => normalizeValue(value).toLowerCase())
+          .some((value) => value && identityValues.includes(value))));
+    });
+  }, [id, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, user?.displayName, user?.firstName, user?.lastName, user?.name]);
 
   useEffect(() => {
     if (!canSwitchUsers || !id) {
