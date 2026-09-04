@@ -901,7 +901,10 @@ const MyPayments = () => {
     const metrics = calculateAwardMetrics(logsForUser, compSettings || {}, award);
     let eligible = false;
     if (award.conditionType === "min_hours") eligible = metrics.totalHours >= parseNumber(award.threshold);
-    if (award.conditionType === "on_time_rate") eligible = metrics.onTimeRate >= parseNumber(award.threshold);
+    if (award.conditionType === "on_time_rate") {
+      const requiredRate = parseNumber(award.threshold) > 0 ? parseNumber(award.threshold) : 100;
+      eligible = metrics.onTimeRate >= requiredRate;
+    }
     if (award.conditionType === "on_time_days") eligible = metrics.onTimeDays >= parseNumber(award.threshold);
     if (award.conditionType === "most_hours") {
       if (canSwitchUsers) {
@@ -1330,13 +1333,13 @@ const MyPayments = () => {
           <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px" }}>
               <input value={awardDraft.name} onChange={(event) => setAwardDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Award name" style={filterInputStyle} />
-              <select value={awardDraft.conditionType} onChange={(event) => setAwardDraft((current) => ({ ...current, conditionType: event.target.value }))} style={filterInputStyle}>
+              <select value={awardDraft.conditionType} onChange={(event) => setAwardDraft((current) => ({ ...current, conditionType: event.target.value, threshold: event.target.value === "on_time_rate" ? "100" : current.threshold }))} style={filterInputStyle}>
                 <option value="most_hours">Most hours worked</option>
                 <option value="min_hours">Minimum hours worked</option>
                 <option value="on_time_rate">On-time attendance rate</option>
                 <option value="on_time_days">On-time attendance days</option>
               </select>
-              <input type="number" min="0" value={awardDraft.threshold} onChange={(event) => setAwardDraft((current) => ({ ...current, threshold: event.target.value }))} placeholder="Threshold (if needed)" style={filterInputStyle} />
+              <input type="number" min="0" max={awardDraft.conditionType === "on_time_rate" ? "100" : undefined} value={awardDraft.threshold} onChange={(event) => setAwardDraft((current) => ({ ...current, threshold: event.target.value }))} placeholder={awardDraft.conditionType === "on_time_rate" ? "Required on-time % (default 100)" : "Threshold (if needed)"} style={filterInputStyle} />
               <input type="number" min="0" step="0.01" value={awardDraft.rewardAmount} onChange={(event) => setAwardDraft((current) => ({ ...current, rewardAmount: event.target.value }))} placeholder="Reward amount (optional)" style={filterInputStyle} />
               <input type="date" value={awardDraft.startDate} onChange={(event) => setAwardDraft((current) => ({ ...current, startDate: event.target.value }))} style={filterInputStyle} />
               <input type="date" value={awardDraft.endDate} onChange={(event) => setAwardDraft((current) => ({ ...current, endDate: event.target.value }))} style={filterInputStyle} />
@@ -1353,6 +1356,9 @@ const MyPayments = () => {
                 <div style={{ color: "#64748B", fontSize: "0.8rem" }}>{formatCompensationDate(parseDateInputValue(award.startDate))} - {formatCompensationDate(parseDateInputValue(award.endDate, true))}</div>
               </div>
               <div style={{ color: "#475569", fontSize: "0.84rem", marginTop: "4px" }}>{award.description || "No additional rules."}</div>
+              <div style={{ color: "#1E3A8A", fontSize: "0.82rem", fontWeight: 700, marginTop: "4px" }}>
+                Rule: {award.conditionType === "on_time_rate" ? `100% on time${parseNumber(award.threshold) > 0 && parseNumber(award.threshold) !== 100 ? ` (configured ${parseNumber(award.threshold)}%)` : ""}` : award.conditionType === "on_time_days" ? `${parseNumber(award.threshold)} on-time days` : award.conditionType === "min_hours" ? `${parseNumber(award.threshold)} minimum hours` : "Most hours worked"}
+              </div>
               <div style={{ color: "#334155", fontSize: "0.82rem", marginTop: "6px" }}>
                 Current result: {award.metrics.totalHours.toFixed(2)} hrs, {award.metrics.onTimeDays} on-time days, {award.metrics.onTimeRate.toFixed(1)}% on time
                 {award.rewardAmount ? ` • Reward: ${toCurrency(award.rewardAmount)}` : ""}
