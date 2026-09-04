@@ -1260,8 +1260,8 @@ const MyPayments = () => {
           <div style={{ color: "#166534", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(claimedCreditTotal)}</div>
         </div>
         <div style={{ ...cardStyle, borderColor: "#FCD34D", backgroundColor: "#FFFBEB" }}>
-          <div style={{ color: "#92400E", fontSize: "0.78rem", fontWeight: 800 }}>Credit Owed</div>
-          <div style={{ color: "#92400E", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
+          <div style={{ color: "#92400E", fontSize: "0.78rem", fontWeight: 800 }}>Total Credit Owed</div>
+          <div style={{ color: "#92400E", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardCreditBalance)}</div>
         </div>
       </div>
 
