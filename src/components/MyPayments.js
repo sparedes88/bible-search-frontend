@@ -658,7 +658,7 @@ const MyPayments = () => {
         .map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() }))
         .filter((claim) => [claim.userId, claim.userEmail, claim.userLabel]
           .map((value) => normalizeValue(value).toLowerCase())
-          .some((value) => value && identityValues.includes(value))));
+          .some((value) => value && identityValues.some((candidate) => value === candidate || value.includes(candidate) || candidate.includes(value)))));
     });
   }, [id, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, user?.displayName, user?.firstName, user?.lastName, user?.name]);
 
@@ -977,8 +977,11 @@ const MyPayments = () => {
   }), { totalReward: 0, eligibleReward: 0, claimedReward: 0 }), [awardRows]);
 
   const claimedCreditTotal = useMemo(
-    () => awardClaims.reduce((total, claim) => total + parseNumber(claim.rewardAmount), 0),
-    [awardClaims]
+    () => awardClaims.reduce((total, claim) => {
+      const award = awards.find((entry) => entry.id === claim.awardId);
+      return total + parseNumber(award?.rewardAmount ?? claim.rewardAmount);
+    }, 0),
+    [awardClaims, awards]
   );
 
   const awardCreditBalance = awardTotals.eligibleReward + claimedCreditTotal;
