@@ -1489,7 +1489,11 @@ const MyPayments = () => {
             <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardCreditBalance)}</div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Available To Cash In</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credits Claimed</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(claimedCreditTotal)}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Credit Owed</div>
             <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
           </div>
         </div>
