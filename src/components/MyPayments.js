@@ -965,12 +965,28 @@ const MyPayments = () => {
         ));
       }
       winnersByAward[award.id] = winners.map((item) => ({
+        userId: item.entry.userId,
         label: item.entry.userLabel || item.entry.userEmail || item.entry.userId,
         metrics: item.metrics,
       }));
     });
     return winnersByAward;
   }, [allCompSettings, awardLogs, awards, canSwitchUsers, organizationUsers]);
+
+  useEffect(() => {
+    if (!canSwitchUsers) return undefined;
+    const syncWinnerIds = async () => {
+      await Promise.all(awards
+        .filter((award) => award.conditionType === "most_hours" && !(Array.isArray(award.winnerUserIds) && award.winnerUserIds.length > 0))
+        .map((award) => updateDoc(doc(db, "churches", id, "payEveryoneAwards", award.id), {
+          winnerUserIds: (awardWinnersById[award.id] || []).map((winner) => winner.userId).filter(Boolean),
+          winnerUserLabels: (awardWinnersById[award.id] || []).map((winner) => winner.label).filter(Boolean),
+          winnersCalculatedAt: Date.now(),
+        }).catch((error) => console.error("Failed to sync award winners:", error))));
+    };
+    syncWinnerIds();
+    return undefined;
+  }, [awardWinnersById, awards, canSwitchUsers, id]);
 
   const handleSaveAward = async () => {
     if (!canSwitchUsers || !awardDraft.name.trim() || !awardDraft.startDate || !awardDraft.endDate) return;
