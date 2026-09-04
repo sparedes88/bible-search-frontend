@@ -639,11 +639,16 @@ const MyPayments = () => {
       setAwardClaims([]);
       return undefined;
     }
-    return onSnapshot(
-      query(collection(db, "churches", id, "payEveryoneAwardClaims"), where("userId", "==", selectedIdentity.userId)),
-      (snapshot) => setAwardClaims(snapshot.docs.map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() })))
-    );
-  }, [id, selectedIdentity.userId]);
+    const claimsRef = collection(db, "churches", id, "payEveryoneAwardClaims");
+    const identityQueries = [query(claimsRef, where("userId", "==", selectedIdentity.userId))];
+    if (selectedIdentity.userEmail) identityQueries.push(query(claimsRef, where("userEmail", "==", selectedIdentity.userEmail)));
+    const queryResults = identityQueries.map(() => []);
+    const unsubscribes = identityQueries.map((identityQuery, queryIndex) => onSnapshot(identityQuery, (snapshot) => {
+      queryResults[queryIndex] = snapshot.docs.map((claimDoc) => ({ id: claimDoc.id, ...claimDoc.data() }));
+      setAwardClaims(queryResults.reduce((merged, entries) => mergeById(merged, entries), []));
+    }));
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [id, selectedIdentity.userEmail, selectedIdentity.userId]);
 
   useEffect(() => {
     if (!canSwitchUsers || !id) {
