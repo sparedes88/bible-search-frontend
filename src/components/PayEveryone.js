@@ -71,6 +71,19 @@ const formatDateOnly = (value) => {
     year: "numeric",
   }).format(new Date(value));
 };
+const formatPaymentDate = (value, fallbackValue = 0) => {
+  const storedDate = normalizeValue(value);
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(storedDate);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(Number(year), Number(month) - 1, Number(day)));
+  }
+  return formatDateOnly(fallbackValue || value);
+};
 
 const formatWeekdayOnly = (value) => {
   if (!value) return "-";
@@ -2947,7 +2960,7 @@ const PaymentsTab = ({
                       {toCurrency(entry.differenceOwed)}
                     </td>
                     <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
-                      {latestPayment ? `${formatDateOnly(latestPayment.paymentDateMs || latestPayment.paymentDate)}${latestPayment.note ? ` • ${latestPayment.note}` : ""}` : "No payments yet"}
+                      {latestPayment ? `${formatPaymentDate(latestPayment.paymentDate, latestPayment.paymentDateMs)}${latestPayment.note ? ` • ${latestPayment.note}` : ""}` : "No payments yet"}
                     </td>
                   </tr>
                 );
@@ -3029,7 +3042,7 @@ const PaymentsTab = ({
                   <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
                     {editingPaymentId === payment.id ? (
                       <input type="date" value={editingPaymentDate} onChange={(event) => setEditingPaymentDate(event.target.value)} style={{ padding: "6px", border: "1px solid #CBD5E1", borderRadius: "6px" }} />
-                    ) : formatDateOnly(payment.paymentDateMs || payment.paymentDate)}
+                    ) : formatPaymentDate(payment.paymentDate, payment.paymentDateMs)}
                   </td>
                   <td style={{ padding: "11px 14px", borderBottom: "1px solid #F1F5F9", color: "#334155" }}>
                     {editingPaymentId === payment.id ? (
