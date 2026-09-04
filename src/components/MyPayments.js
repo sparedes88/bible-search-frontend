@@ -416,10 +416,11 @@ const Pagination = ({ page, itemCount, onPageChange }) => {
 
 const MyPayments = () => {
   const { id } = useParams();
-  const { user } = useAuth();
+  const { user, isGlobalAdmin } = useAuth();
 
   const userId = normalizeValue(user?.uid);
   const userEmail = normalizeValue(user?.email);
+  const canSwitchUsers = typeof isGlobalAdmin === "function" ? isGlobalAdmin() : false;
 
   const [payments, setPayments] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
@@ -435,9 +436,48 @@ const MyPayments = () => {
   const [hoursPage, setHoursPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [organizationUsers, setOrganizationUsers] = useState([]);
+  const [selectedUserKey, setSelectedUserKey] = useState("");
+
+  const selectedIdentity = useMemo(() => {
+    if (!canSwitchUsers) return { userId, userEmail };
+    const selectedUser = organizationUsers.find((entry) => entry.userKey === selectedUserKey);
+    return selectedUser
+      ? { userId: selectedUser.userId, userEmail: selectedUser.userEmail }
+      : { userId, userEmail };
+  }, [canSwitchUsers, organizationUsers, selectedUserKey, userEmail, userId]);
 
   useEffect(() => {
-    if (!id || !userId) {
+    if (!canSwitchUsers || !id) {
+      setOrganizationUsers([]);
+      setSelectedUserKey("");
+      return undefined;
+    }
+
+    return onSnapshot(
+      query(collection(db, "users"), where("churchId", "==", id)),
+      (snapshot) => {
+        const nextUsers = snapshot.docs
+          .map((snapshotDoc) => {
+            const data = snapshotDoc.data() || {};
+            const label = normalizeValue(data.displayName || data.name || [data.firstName, data.lastName].filter(Boolean).join(" ")) || data.email || snapshotDoc.id;
+            return {
+              userKey: snapshotDoc.id,
+              userId: snapshotDoc.id,
+              userEmail: normalizeValue(data.email),
+              userLabel: label,
+            };
+          })
+          .sort((left, right) => left.userLabel.localeCompare(right.userLabel));
+        setOrganizationUsers(nextUsers);
+        setSelectedUserKey((previous) => previous || nextUsers.find((entry) => entry.userId === userId)?.userKey || nextUsers[0]?.userKey || "");
+      },
+      (error) => console.error("Failed to load users for global admin payment switcher:", error)
+    );
+  }, [canSwitchUsers, id, userId]);
+
+  useEffect(() => {
+    if (!id || !selectedIdentity.userId) {
       setPayments([]);
       setLoading(false);
       return () => {};
@@ -445,9 +485,9 @@ const MyPayments = () => {
 
     setLoading(true);
     const paymentsRef = collection(db, "churches", id, "payEveryonePayments");
-    const identityQueries = [query(paymentsRef, where("userId", "==", userId))];
-    if (userEmail) {
-      identityQueries.push(query(paymentsRef, where("userEmail", "==", userEmail)));
+    const identityQueries = [query(paymentsRef, where("userId", "==", selectedIdentity.userId))];
+    if (selectedIdentity.userEmail) {
+      identityQueries.push(query(paymentsRef, where("userEmail", "==", selectedIdentity.userEmail)));
     }
 
     const perQueryResults = identityQueries.map(() => []);
@@ -482,18 +522,18 @@ const MyPayments = () => {
     );
 
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }, [id, userId, userEmail]);
+  }, [id, selectedIdentity.userEmail, selectedIdentity.userId]);
 
   useEffect(() => {
-    if (!id || !userId) {
+    if (!id || !selectedIdentity.userId) {
       setPaymentMethods([]);
       return () => {};
     }
 
     const methodsRef = collection(db, "churches", id, "payEveryonePaymentMethods");
-    const identityQueries = [query(methodsRef, where("userId", "==", userId))];
-    if (userEmail) {
-      identityQueries.push(query(methodsRef, where("userEmail", "==", userEmail)));
+    const identityQueries = [query(methodsRef, where("userId", "==", selectedIdentity.userId))];
+    if (selectedIdentity.userEmail) {
+      identityQueries.push(query(methodsRef, where("userEmail", "==", selectedIdentity.userEmail)));
     }
 
     const perQueryResults = identityQueries.map(() => []);
@@ -526,16 +566,16 @@ const MyPayments = () => {
     );
 
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }, [id, userId, userEmail]);
+  }, [id, selectedIdentity.userEmail, selectedIdentity.userId]);
 
   useEffect(() => {
-    if (!id || !userId) {
+    if (!id || !selectedIdentity.userId) {
       setTimeLogs([]);
       return () => {};
     }
 
     const unsubscribe = onSnapshot(
-      query(collection(db, "churches", id, "timeRotateLogs"), where("userId", "==", userId)),
+      query(collection(db, "churches", id, "timeRotateLogs"), where("userId", "==", selectedIdentity.userId)),
       (snapshot) => {
         setTimeLogs(
           snapshot.docs.map((snapshotDoc) => {
@@ -557,16 +597,16 @@ const MyPayments = () => {
     );
 
     return () => unsubscribe();
-  }, [id, userId]);
+  }, [id, selectedIdentity.userId]);
 
   useEffect(() => {
-    if (!id || !userId) {
+    if (!id || !selectedIdentity.userId) {
       setCompSettings(null);
       return () => {};
     }
 
     const unsubscribe = onSnapshot(
-      query(collection(db, "churches", id, "payEveryoneUserSettings"), where("userId", "==", userId)),
+      query(collection(db, "churches", id, "payEveryoneUserSettings"), where("userId", "==", selectedIdentity.userId)),
       (snapshot) => {
         const settingsDoc = snapshot.docs[0];
         setCompSettings(settingsDoc ? settingsDoc.data() || {} : {});
@@ -578,7 +618,7 @@ const MyPayments = () => {
     );
 
     return () => unsubscribe();
-  }, [id, userId]);
+  }, [id, selectedIdentity.userId]);
 
   useEffect(() => {
     if (!id) {
@@ -702,7 +742,10 @@ const MyPayments = () => {
     [hoursByProject.length, logoPalette]
   );
 
-  const displayName = normalizeValue(user?.displayName) || userEmail || "My account";
+  const selectedUserRecord = organizationUsers.find((entry) => entry.userKey === selectedUserKey);
+  const displayName = canSwitchUsers
+    ? selectedUserRecord?.userLabel || selectedIdentity.userEmail || "Selected user"
+    : normalizeValue(user?.displayName) || userEmail || "My account";
   const activeFilterLabel = HOURS_FILTERS.find(([filterId]) => filterId === hoursFilter)?.[1] || "";
 
   if (!userId) {
@@ -729,9 +772,31 @@ const MyPayments = () => {
       <div style={{ margin: "16px 0", textAlign: "center" }}>
         <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#0F172A", margin: 0 }}>My Payments</h1>
         <div style={{ color: "#64748B", marginTop: "4px" }}>
-          Payment history and balance for {displayName}. Only your own records are shown.
+          Payment history and balance for {displayName}. {canSwitchUsers ? "Global admin view." : "Only your own records are shown."}
         </div>
       </div>
+
+      {canSwitchUsers && (
+        <div style={{ ...cardStyle, marginBottom: "16px", borderColor: "#93C5FD", backgroundColor: "#EFF6FF" }}>
+          <label htmlFor="my-payments-user-switcher" style={{ display: "block", color: "#1E3A8A", fontWeight: 800, marginBottom: "6px" }}>
+            View payments for user
+          </label>
+          <select
+            id="my-payments-user-switcher"
+            value={selectedUserKey}
+            onChange={(event) => {
+              setSelectedUserKey(event.target.value);
+              setPaymentsPage(1);
+              setHoursPage(1);
+            }}
+            style={{ width: "100%", maxWidth: "520px", padding: "10px 12px", border: "1px solid #93C5FD", borderRadius: "8px", backgroundColor: "#FFFFFF" }}
+          >
+            {organizationUsers.map((entry) => (
+              <option key={entry.userKey} value={entry.userKey}>{entry.userLabel}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {loadError && (
         <div style={{ ...cardStyle, borderColor: "#FCA5A5", backgroundColor: "#FEF2F2", color: "#B91C1C", marginBottom: "16px" }}>
