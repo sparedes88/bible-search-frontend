@@ -1251,11 +1251,17 @@ const MyPayments = () => {
           </div>
         </div>
         <div style={{ ...cardStyle, borderColor: "#0F766E", backgroundColor: "#ECFDF5" }}>
-          <div style={{ color: "#047857", fontSize: "0.78rem", fontWeight: 800 }}>Credit Remaining</div>
-          <div style={{ color: "#065F46", fontSize: "1.35rem", fontWeight: 900 }}>
-            {toCurrency(awardTotals.eligibleReward)}
-          </div>
-          <div style={{ color: "#047857", fontSize: "0.72rem", marginTop: "3px" }}>Award credits available to cash in</div>
+          <div style={{ color: "#047857", fontSize: "0.78rem", fontWeight: 800 }}>Credit Balance</div>
+          <div style={{ color: "#065F46", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardCreditBalance)}</div>
+          <div style={{ color: "#047857", fontSize: "0.72rem", marginTop: "3px" }}>Claimed + owed award credits</div>
+        </div>
+        <div style={{ ...cardStyle, borderColor: "#86EFAC", backgroundColor: "#F0FDF4" }}>
+          <div style={{ color: "#166534", fontSize: "0.78rem", fontWeight: 800 }}>Credits Claimed</div>
+          <div style={{ color: "#166534", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(claimedCreditTotal)}</div>
+        </div>
+        <div style={{ ...cardStyle, borderColor: "#FCD34D", backgroundColor: "#FFFBEB" }}>
+          <div style={{ color: "#92400E", fontSize: "0.78rem", fontWeight: 800 }}>Credit Owed</div>
+          <div style={{ color: "#92400E", fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
         </div>
       </div>
 
