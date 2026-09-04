@@ -933,6 +933,11 @@ const MyPayments = () => {
     return { ...award, metrics, eligible, claimed };
   }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs]);
 
+  const awardTotals = useMemo(() => awardRows.reduce((totals, award) => ({
+    totalReward: totals.totalReward + parseNumber(award.rewardAmount),
+    eligibleReward: totals.eligibleReward + (award.eligible && !award.claimed ? parseNumber(award.rewardAmount) : 0),
+  }), { totalReward: 0, eligibleReward: 0 }), [awardRows]);
+
   const awardWinnersById = useMemo(() => {
     if (!canSwitchUsers) return {};
     const winnersByAward = {};
@@ -1391,6 +1396,16 @@ const MyPayments = () => {
           </div>
           {canSwitchUsers && <button type="button" onClick={() => { setEditingAwardId(""); setAwardFormOpen((current) => !current); }} style={{ padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: "6px", backgroundColor: "#FFFFFF", color: "#334155", fontWeight: 700 }}>{awardFormOpen ? "Close Award Builder" : "Create Award"}</button>}
         </div>
+        <div style={{ margin: "0 14px 14px", padding: "16px 18px", borderRadius: "10px", background: "linear-gradient(135deg, #0F766E, #115E59)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Total Award Value</div>
+            <div style={{ fontSize: "2rem", lineHeight: 1.1, fontWeight: 900 }}>{toCurrency(awardTotals.totalReward)}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85 }}>Available To Cash In</div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 900 }}>{toCurrency(awardTotals.eligibleReward)}</div>
+          </div>
+        </div>
         {canSwitchUsers && awardFormOpen && (
           <div style={{ margin: "0 14px 14px", padding: "12px", border: "1px solid #BFDBFE", borderRadius: "8px", backgroundColor: "#EFF6FF" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px" }}>
@@ -1426,6 +1441,11 @@ const MyPayments = () => {
                 Current result: {award.metrics.totalHours.toFixed(2)} hrs, {award.metrics.onTimeDays} on-time days, {award.metrics.onTimeRate.toFixed(1)}% on time
                 {award.rewardAmount ? ` • Reward: ${toCurrency(award.rewardAmount)}` : ""}
               </div>
+              {(award.eligible || award.claimed) && (
+                <div style={{ marginTop: "8px", padding: "8px 10px", borderRadius: "6px", backgroundColor: "#FEF3C7", color: "#92400E", fontWeight: 900 }}>
+                  Winner: {displayName}
+                </div>
+              )}
               {!award.claimed && (
                 <div style={{ marginTop: "10px", padding: "8px 10px", borderRadius: "6px", backgroundColor: award.eligible ? "#DCFCE7" : "#FEF2F2", color: award.eligible ? "#166534" : "#991B1B", fontWeight: 800 }}>
                   {award.eligible ? "ELIGIBLE — You qualify for this award" : "NOT ELIGIBLE — Keep working toward the requirement"}
