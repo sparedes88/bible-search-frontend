@@ -907,6 +907,9 @@ const MyPayments = () => {
   }, [compSettings]);
 
   const awardRows = useMemo(() => awards.map((award) => {
+    const selectedAwardUserLabel = organizationUsers.find((entry) => entry.userId === selectedIdentity.userId)?.userLabel
+      || normalizeValue(user?.displayName)
+      || selectedIdentity.userEmail;
     const logsForUser = canSwitchUsers
       ? awardLogs.filter((entry) => entry.userId === selectedIdentity.userId || (selectedIdentity.userEmail && entry.userEmail === selectedIdentity.userEmail))
       : timeLogs;
@@ -934,12 +937,15 @@ const MyPayments = () => {
           Boolean(selectedIdentity.userEmail)
           && Array.isArray(award.winnerUserEmails)
           && award.winnerUserEmails.some((email) => normalizeValue(email).toLowerCase() === selectedIdentity.userEmail.toLowerCase())
+        ) || (
+          Array.isArray(award.winnerUserLabels)
+          && award.winnerUserLabels.some((label) => normalizeValue(label).toLowerCase() === normalizeValue(selectedAwardUserLabel).toLowerCase())
         );
       }
     }
     const claimed = awardClaims.some((claim) => claim.awardId === award.id);
     return { ...award, metrics, eligible, claimed };
-  }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs]);
+  }), [allCompSettings, awardClaims, awardLogs, awards, canSwitchUsers, compSettings, organizationUsers, selectedIdentity.userEmail, selectedIdentity.userId, timeLogs, user?.displayName]);
 
   const awardTotals = useMemo(() => awardRows.reduce((totals, award) => ({
     totalReward: totals.totalReward + parseNumber(award.rewardAmount),
