@@ -3162,6 +3162,7 @@ const TimeRotateCardHours = () => {
         userId: row.userKey || user?.uid || "",
         userEmail: row.userEmail || user?.email || "",
         notes: [],
+        enteredAt: Date.now(),
       });
       setHighlightedEntryKey(`${row.rollupKey}::${newEntryRef.id}`);
       setAddingRowKey(null);

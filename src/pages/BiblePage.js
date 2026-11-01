@@ -6,7 +6,11 @@ import { searchChurchById } from "../api";
 import commonStyles from "./commonStyles";
 import "./pages.responsive.css";
 
-const OPENAI_API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
+const GEMINI_TEXT_MODEL = "gemini-flash-latest";
+const FIREBASE_FUNCTIONS_BASE_URL =
+  typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "/firebase-api"
+    : "https://us-central1-igletechv1.cloudfunctions.net";
 
 const BiblePage = () => {
   const { id } = useParams();
@@ -34,34 +38,23 @@ const BiblePage = () => {
     setLoading(true);
 
     try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      const response = await fetch(`${FIREBASE_FUNCTIONS_BASE_URL}/generateTimeRotateInvoiceReview`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${OPENAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content: "Responde solo con versículos de la Biblia en la versión Reina Valera 1960, en español. Asegúrate de incluir la referencia completa (libro, capítulo y versículo) al final en una línea separada.",
-            },
-            {
-              role: "user",
-              content: `Busca los siguientes versículos en la Biblia (Reina Valera 1960): ${searchQuery}`,
-            },
-          ],
-          temperature: 0.7,
+          model: GEMINI_TEXT_MODEL,
+          prompt: `Responde solo con versículos de la Biblia en la versión Reina Valera 1960, en español. Incluye la referencia completa (libro, capítulo y versículo) al final en una línea separada.\n\nBusca los siguientes versículos: ${searchQuery}`,
         }),
       });
 
       if (!response.ok) {
-        throw new Error("Error al buscar los versículos. Verifica tu API Key.");
+        throw new Error("Error al buscar los versículos. Intenta de nuevo.");
       }
 
       const data = await response.json();
-      const bibleText = data.choices?.[0]?.message?.content || "No se encontraron resultados.";
+      const bibleText = String(data?.text || "").trim() || "No se encontraron resultados.";
 
       setSearchResults(bibleText);
       setHistory(prev => [...prev, { query: searchQuery, result: bibleText }]);

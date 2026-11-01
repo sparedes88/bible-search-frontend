@@ -1,14 +1,14 @@
 import React, { Suspense } from "react";
 import {
   BrowserRouter as Router,
-  Route,
   Routes,
+  Route,
   Navigate,
   useParams,
 } from "react-router-dom";
-import Login from "./components/Login"; // Ensure the path is correct
+import Login from "./components/Login";
 import Register from "./components/Register";
-import ProtectedRoute from "./components/ProtectedRoute"; // Protect Only `/mi-perfil`
+import ProtectedRoute from "./components/ProtectedRoute";
 import RequireAuth from "./components/RequireAuth"; // Add this import
 import { AuthProvider } from "./contexts/AuthContext"; // Import AuthProvider
 import ErrorBoundary from "./components/ErrorBoundary"; // Import ErrorBoundary component
@@ -89,15 +89,21 @@ const SubcategorySettings = React.lazy(() => import("./components/SubcategorySet
 const MiOrganizacion = React.lazy(() => import("./components/MiOrganizacion"));
 const ModuleVisibilitySettings = React.lazy(() => import("./components/ModuleVisibilitySettings"));
 const EvangelismOutreach = React.lazy(() => import("./components/EvangelismOutreach"));
+const LeadsPage = React.lazy(() => import("./components/LeadsPage"));
+const LeadsStatusManager = React.lazy(() => import("./components/LeadsStatusManager"));
+const PublicLeadPhoneCheckIn = React.lazy(() => import("./components/PublicLeadPhoneCheckIn"));
 const AllEvents = React.lazy(() => import("./components/AllEvents"));
 const ChurchApp = React.lazy(() => import("./components/ChurchApp"));
 const EventDetails = React.lazy(() => import("./components/EventDetails"));
+const EventAttendanceCounter = React.lazy(() => import("./components/EventAttendanceCounter"));
+const EventAttendanceAnalytics = React.lazy(() => import("./components/EventAttendanceAnalytics"));
 const VisitorDetails = React.lazy(() => import("./components/VisitorDetails"));
 const EventCoordination = React.lazy(() => import("./components/EventCoordination"));
 const ManageGroups = React.lazy(() => import("./components/ManageGroups"));
 const GroupDetails = React.lazy(() => import("./components/GroupDetails"));
 const AsistentePastoral = React.lazy(() => import("./components/AsistentePastoral"));
 const PastorTech = React.lazy(() => import("./components/PastorTech"));
+const AITraining = React.lazy(() => import("./components/AITraining"));
 const EasyProjector = React.lazy(() => import("./components/EasyProjector"));
 const BroadcastView = React.lazy(() => import("./components/BroadcastView"));
 const BroadcastView3 = React.lazy(() => import("./components/BroadcastView3"));
@@ -163,6 +169,7 @@ const TimeRotateOfficeStatus = React.lazy(() => import("./components/TimeRotateO
 const TimerPage = React.lazy(() => import("./components/TimerPage"));
 const ConduitRunCounter = React.lazy(() => import("./components/ConduitRunCounter"));
 const MyDesignTeam = React.lazy(() => import("./components/MyDesignTeam"));
+const EventAnnouncementDesigner = React.lazy(() => import("./components/EventAnnouncementDesigner"));
 const MyEZLink = React.lazy(() => import("./components/MyEZLink"));
 const EzLinkRedirect = React.lazy(() => import("./components/EzLinkRedirect"));
 const TaskProgressDetail = React.lazy(() => import("./components/TaskProgressDetail"));
@@ -178,7 +185,10 @@ const BIMModule = React.lazy(() => import("./components/BIMModule"));
 const ProjectIssueDashboard = React.lazy(() => import("./components/ProjectIssueDashboard"));
 const ProjectIssueDetail = React.lazy(() => import("./components/ProjectIssueDetail"));
 const ProjectListsIssuesModule = React.lazy(() => import("./components/ProjectListsIssuesModule"));
+const IssuesMainList = React.lazy(() => import("./components/IssuesMainList"));
+const BroadcastShortLink = React.lazy(() => import("./components/BroadcastShortLink"));
 const WorkProgressModule = React.lazy(() => import("./components/WorkProgressModule"));
+const WorkRequestModule = React.lazy(() => import("./components/WorkRequestModule"));
 const WorkProgressTaskDetailPage = React.lazy(() => import("./components/WorkProgressTaskDetailPage"));
 const LiveIssueTracker = React.lazy(() => import("./components/live-issue-tracker"));
 const E2DetailerManager = React.lazy(() => import("./components/E2DetailerManager"));
@@ -187,6 +197,29 @@ const TagAliasManager = React.lazy(() => import("./components/TagAliasManager"))
 const AgileDevelopmentDashboard = React.lazy(() => import("./components/AgileDevelopmentDashboard"));
 const AgileBoardPage = React.lazy(() => import("./pages/AgileBoardPage"));
 const TrackMe = React.lazy(() => import("./components/TrackMe"));
+
+// Without this, any unmatched URL (a mistyped short link, an old bookmark) renders a blank page.
+const NotFoundPage = () => (
+  <div
+    style={{
+      minHeight: "100vh",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textAlign: "center",
+      padding: "24px",
+      fontFamily: "'Nunito', sans-serif",
+    }}
+  >
+    <div>
+      <h1 style={{ fontSize: "1.5rem", marginBottom: "8px" }}>Page not found</h1>
+      <p style={{ color: "#6b7280", marginBottom: "16px" }}>
+        Check the address and try again. Broadcast links look like /b/ABC12
+      </p>
+      <a href="/" style={{ color: "#4F46E5", fontWeight: 700 }}>Go to the home page</a>
+    </div>
+  </div>
+);
 
 const App = () => {
   return (
@@ -203,6 +236,7 @@ const App = () => {
                   </PrivateRoute>
                 }
               />
+          <Route path="/b/:code" element={<ErrorBoundary><BroadcastShortLink /></ErrorBoundary>} />
           <Route path="/" element={<ErrorBoundary><Search /></ErrorBoundary>} />{" "}
           {/* Set Search as the main page */}
           <Route path="/organization/:id" element={<ErrorBoundary><ChurchApp /></ErrorBoundary>} />
@@ -351,6 +385,14 @@ const App = () => {
             element={<CourseDetail />}
           />
           <Route
+            path="/organization/:id/ai-training"
+            element={
+              <PrivateRoute roles={["admin", "global_admin", "member"]}>
+                <AITraining />
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/process-config"
             element={
               <ProtectedRoute requireGlobalAdmin={true}>
@@ -411,6 +453,26 @@ const App = () => {
             element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>}
           />
           <Route
+            path="/organization/:id/leads"
+            element={<ErrorBoundary><LeadsPage /></ErrorBoundary>}
+          />
+          <Route
+            path="/public-lead-check-in/:churchId/:token"
+            element={<ErrorBoundary><PublicLeadPhoneCheckIn /></ErrorBoundary>}
+          />
+          <Route
+            path="/check-in/:churchId/:slug/:token"
+            element={<ErrorBoundary><PublicLeadPhoneCheckIn /></ErrorBoundary>}
+          />
+          <Route
+            path="/organization/:id/leads/:tab"
+            element={
+              <PrivateRoute roles={["admin", "global_admin"]}>
+                <ErrorBoundary><LeadsStatusManager /></ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/role-manager"
             element={
               <PrivateRoute roles={["admin", "global_admin"]}>
@@ -427,6 +489,14 @@ const App = () => {
             }
           />
           <Route path="/organization/:id/all-events" element={<AllEvents />} />
+          <Route
+            path="/organization/:id/all-events/counter-analytics"
+            element={<EventAttendanceAnalytics />}
+          />
+          <Route
+            path="/organization/:id/event/:eventId/counter"
+            element={<EventAttendanceCounter />}
+          />
           <Route
             path="/organization/:id/event/:eventId"
             element={<EventDetails />}
@@ -564,13 +634,9 @@ const App = () => {
           <Route path="/organization/:id/teams/:teamId" element={<TeamDetailPage />} />
           <Route path="/organization/:id/event/:eventId/register" element={<EventRegistration />} />
           <Route path="/organization/:id/member-signup" element={<MemberSignup />} />
-          <Route 
-            path="/organization/:id/event/:eventId/registrations" 
-            element={
-              <PrivateRoute roles={["admin", "global_admin"]}>
-                <EventRegistrationAdmin />
-              </PrivateRoute>
-            } 
+          <Route
+            path="/organization/:id/event/:eventId/registrations"
+            element={<EventRegistrationAdmin />}
           />
           <Route 
             path="/organization/:id/event/:eventId/manage-registrations" 
@@ -854,10 +920,26 @@ const App = () => {
             }
           />
           <Route
+            path="/organization/:id/issues-main-list"
+            element={
+              <PrivateRoute>
+                <ErrorBoundary><IssuesMainList /></ErrorBoundary>
+              </PrivateRoute>
+            }
+          />
+          <Route
             path="/organization/:id/work-progress"
             element={
               <PrivateRoute>
                 <WorkProgressModule />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/organization/:id/work-requests"
+            element={
+              <PrivateRoute>
+                <WorkRequestModule />
               </PrivateRoute>
             }
           />
@@ -868,6 +950,10 @@ const App = () => {
                 <WorkProgressTaskDetailPage />
               </PrivateRoute>
             }
+          />
+          <Route
+            path="/organization/:id/event/:eventId/design"
+            element={<PrivateRoute><EventAnnouncementDesigner /></PrivateRoute>}
           />
           <Route
             path="/organization/:id/my-design-team"
@@ -983,6 +1069,8 @@ const App = () => {
           <Route path="/church/:id/ezlink/:slug" element={<ErrorBoundary><EzLinkRedirect /></ErrorBoundary>} />
           <Route path="/church/:id/module-visibility-settings" element={<PrivateRoute roles={["admin", "global_admin", "member"]}><ErrorBoundary><ModuleVisibilitySettings /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/evangelism-outreach" element={<ErrorBoundary><EvangelismOutreach /></ErrorBoundary>} />
+          <Route path="/church/:id/leads" element={<ErrorBoundary><LeadsPage /></ErrorBoundary>} />
+          <Route path="/church/:id/leads/:tab" element={<PrivateRoute roles={["admin", "global_admin"]}><ErrorBoundary><LeadsStatusManager /></ErrorBoundary></PrivateRoute>} />
           <Route path="/church/:id/my-sunday" element={<ErrorBoundary><MySunday /></ErrorBoundary>} />
           <Route
             path="/church/:id/panel-schedules"
@@ -1239,6 +1327,7 @@ const App = () => {
               </PrivateRoute>
             }
           />
+          <Route path="*" element={<NotFoundPage />} />
           </Routes>
           </Suspense>
         </Router>

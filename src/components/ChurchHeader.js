@@ -20,6 +20,7 @@ const ChurchHeader = ({
   applyShadow = true,
   allowEditBannerLogo = false,
   showOrganizationName = true,
+  compact = false,
 }) => {
   const organizationId = id || churchId;
 
@@ -231,6 +232,63 @@ const ChurchHeader = ({
       window.removeEventListener("touchend", stopDrag);
     };
   }, [isDraggingBanner, isResizingBanner, allowEditBannerLogo]);
+
+  if (compact) {
+    return (
+      <div
+        className="church-header-container church-header-compact"
+        style={{
+          boxShadow: applyShadow ? "0 2px 8px rgba(0,0,0,0.1)" : "none",
+          width: "100%",
+          maxWidth: "100%",
+          margin: "0 auto 16px",
+          backgroundColor: "white",
+          borderRadius: "12px",
+          padding: "16px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "8px",
+          position: "relative",
+          textAlign: "center",
+        }}
+      >
+        <ToastContainer />
+        {loading ? (
+          <Skeleton circle height={72} width={72} />
+        ) : (
+          <img
+            className="church-header-logo-image"
+            src={preview.logo || church?.logo || "/img/logo-fallback.svg"}
+            alt="Church Logo"
+            onError={(event) => {
+              event.currentTarget.onerror = null;
+              event.currentTarget.src = "/img/logo-fallback.svg";
+            }}
+            style={{
+              width: "72px",
+              height: "72px",
+              objectFit: "contain",
+              borderRadius: "50%",
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #E5E7EB",
+              padding: "4px",
+              display: "block",
+            }}
+          />
+        )}
+        {showOrganizationName &&
+          (loading ? (
+            <Skeleton width={220} height={24} />
+          ) : (
+            <h2 className="church-name" style={{ margin: 0, fontSize: "1.25rem" }}>
+              {church?.nombre || ""}
+            </h2>
+          ))}
+      </div>
+    );
+  }
 
   return (
     <div

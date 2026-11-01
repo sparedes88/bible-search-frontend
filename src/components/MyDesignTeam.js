@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { MdArrowBack, MdCheck } from "react-icons/md";
 import {
   addDoc,
   collection,
@@ -9,6 +10,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  where,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -524,6 +526,48 @@ const resizeBlobToDimensions = async (sourceBlob, dimensions) => {
 const MyDesignTeam = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const eventId = searchParams.get('eventId') || '';
+  const [designEvent, setDesignEvent] = useState(null);
+  const [applyingToEvent, setApplyingToEvent] = useState(false);
+  const roleKeys = [user?.role, user?.baseRole, user?.basedOn].map(role => String(role || '').toLowerCase());
+  const canManageEvent = Boolean(user && (roleKeys.includes('global_admin') || (
+    roleKeys.includes('admin') && String(user.churchId || user.churchID || user.organizationId || '') === String(id)
+  )));
+
+  useEffect(() => {
+    if (!eventId) return;
+    let active = true;
+    setDesignEvent(null);
+    const loadEvent = async () => {
+      try {
+        const snapshot = await getDoc(doc(db, 'eventInstances', eventId));
+        if (!snapshot.exists() || String(snapshot.data().churchId) !== String(id)) {
+          throw new Error('Event not found in this organization.');
+        }
+        if (!active) return;
+        const event = snapshot.data();
+        setDesignEvent({ ...event, id: eventId });
+        if (!lastHydratedSelectionRef.current) setFormState({
+          ...INITIAL_FORM_STATE,
+          title: event.instanceTitle || event.title || '',
+          purpose: `Event promotion: ${event.instanceTitle || event.title || ''}`,
+          date: /^\d{2}-\d{2}-\d{4}$/.test(event.startDate || '')
+            ? `${event.startDate.slice(6)}-${event.startDate.slice(0, 2)}-${event.startDate.slice(3, 5)}`
+            : event.startDate || '',
+          startTime: event.startHour || '',
+          endTime: event.endHour || '',
+          location: event.location || '',
+          notes: event.description || '',
+        });
+      } catch (error) {
+        if (active) toast.error(error.message || 'Could not load event.');
+      }
+    };
+    loadEvent();
+    return () => { active = false; };
+  }, [eventId, id]);
 
   const [settings, setSettings] = useState({
     organizationName: "",
@@ -818,7 +862,7 @@ const MyDesignTeam = () => {
     // Single request stream for roots and revisions to avoid listener target contention.
     const requestsQuery = query(
       collection(db, "churches", id, "myDesignTeamRequests"),
-      orderBy("createdAt", "desc"),
+      eventId ? where('eventId', '==', eventId) : orderBy("createdAt", "desc"),
       limit(500)
     );
 
@@ -829,7 +873,8 @@ const MyDesignTeam = () => {
     );
 
     const unsubRequests = onSnapshot(requestsQuery, (snapshot) => {
-      const mapped = snapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() || {}) }));
+      const mapped = snapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() || {}) }))
+        .sort((first, second) => getTimestampValue(second.createdAt) - getTimestampValue(first.createdAt));
       setRequests((previous) => {
         const merged = new Map();
         [...mapped, ...previous].forEach((item) => {
@@ -845,7 +890,7 @@ const MyDesignTeam = () => {
         initializedRef.current = true;
         const firstId = String(mapped[0]?.id || "").trim();
         if (firstId) {
-          lastHydratedSelectionRef.current = firstId;
+          lastHydratedSelectionRef.current = eventId ? '' : firstId;
           setSelectedRequestId(firstId);
         }
       }
@@ -860,7 +905,7 @@ const MyDesignTeam = () => {
       unsubRequests();
       unsubReferences();
     };
-  }, [db, getTimestampValue, id]);
+  }, [db, getTimestampValue, id, eventId]);
 
   const handleSaveSettings = async () => {
     if (!id) return;
@@ -1108,6 +1153,10 @@ const MyDesignTeam = () => {
   const submitDesignRequest = useCallback(
     async ({ isEdit, isNewThread, overrides = {} }) => {
       if (!id) return;
+      if (eventId && (!designEvent || !canManageEvent)) {
+        toast.error('An event manager must select a valid event before generating its design.');
+        return;
+      }
 
       // isNewThread = create a brand-new thread using the current design as source (e.g. translated version)
       const usesRevisionMode = isEdit || isNewThread;
@@ -1165,6 +1214,7 @@ const MyDesignTeam = () => {
           : buildRequestPrompt({ formState: formSnapshot, settings, referenceNames });
 
         requestRef = await addDoc(collection(db, "churches", id, "myDesignTeamRequests"), {
+          ...(eventId ? { eventId } : {}),
           status: "processing",
           type: requestType,
           prompt,
@@ -1192,6 +1242,7 @@ const MyDesignTeam = () => {
         setRequests((previous) => {
           const draftRequest = {
             id: requestRef.id,
+            ...(eventId ? { eventId } : {}),
             status: "processing",
             type: requestType,
             prompt,
@@ -1439,7 +1490,7 @@ const MyDesignTeam = () => {
         );
       }
     },
-    [activeRootId, coerceFormSnapshot, editInstruction, formState, id, inspirationFiles, latestThreadResult, references, settings, user]
+    [activeRootId, coerceFormSnapshot, editInstruction, formState, id, inspirationFiles, latestThreadResult, references, settings, user, eventId, designEvent, canManageEvent]
   );
 
   const normalizeQueuedPayload = useCallback((payload = {}) => {
@@ -1499,17 +1550,45 @@ const MyDesignTeam = () => {
     submitDesignRequest(nextEntry.payload);
   }, [isGenerating, pendingChangeQueue, submitDesignRequest]);
 
+  const handleUseForEvent = async () => {
+    if (!canManageEvent || !designEvent || !viewedMessage?.imageUrl || isGenerating || applyingToEvent) return;
+    setApplyingToEvent(true);
+    try {
+      await updateDoc(doc(db, 'eventInstances', eventId), {
+        imageUrl: viewedMessage.imageStoragePath || viewedMessage.imageUrl,
+        designRequestId: viewedMessage.id,
+      });
+      toast.success('Event image updated successfully');
+      navigate(`/organization/${id}/all-events`);
+    } catch (error) {
+      toast.error('Could not update the event image. Your design is still saved.');
+    } finally {
+      setApplyingToEvent(false);
+    }
+  };
+
   return (
     <div className="my-design-team-page" style={commonStyles.fullWidthContainer}>
       <ChurchHeader id={id} />
 
       <div className="my-design-team-shell">
         <div className="my-design-team-hero">
-          <h1>My Design Team</h1>
-          <p>
+          <h1>{eventId ? designEvent?.instanceTitle || designEvent?.title || 'Event design' : 'My Design Team'}</h1>
+          {eventId ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              <button type="button" className="my-design-team-button my-design-team-button-secondary" onClick={() => navigate(`/organization/${id}/all-events`)}>
+                <MdArrowBack aria-hidden="true" /> Back to events
+              </button>
+              {canManageEvent && (
+                <button type="button" className="my-design-team-button" disabled={!designEvent || !viewedMessage?.imageUrl || isGenerating || applyingToEvent} onClick={handleUseForEvent}>
+                  <MdCheck aria-hidden="true" /> {applyingToEvent ? 'Saving...' : 'Use for event'}
+                </button>
+              )}
+            </div>
+          ) : <p>
             Create branded designs with Gemini, iterate from image feedback, and keep a searchable
             history for your organization.
-          </p>
+          </p>}
         </div>
 
         <div className="my-design-team-grid">

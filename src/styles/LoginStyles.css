@@ -129,6 +129,26 @@
   max-width: 56ch;
 }
 
+.login-week-events { min-width: 0; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--login-border); }
+.login-week-events-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.login-week-events-heading h2 { margin: 0; font-size: 17px; color: var(--login-ink-900); }
+.login-week-events-heading > span { color: var(--login-ink-500); font-size: 13px; }
+.login-week-event-media { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #e9f0f3; border-radius: 4px; }
+.login-week-event-media > img { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.login-week-event-placeholder { display: flex; position: absolute; inset: 0; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; color: var(--login-accent-dark); text-align: center; }
+.login-week-event-placeholder span { overflow-wrap: anywhere; font-size: 18px; font-weight: 600; }
+.login-week-event-caption { min-height: 110px; padding-top: 14px; overflow-wrap: anywhere; }
+.login-week-event-caption h3 { margin: 0 0 7px; color: var(--login-ink-900); font-size: 21px; line-height: 1.3; }
+.login-week-event-caption p { margin: 0 0 5px; font-size: 14px; line-height: 1.5; color: var(--login-ink-700); }
+.login-week-event-caption .login-week-event-location { color: var(--login-ink-500); }
+.login-week-event-register { display: inline-flex; align-items: center; justify-content: center; gap: 7px; margin-top: 10px; padding: 9px 13px; border-radius: 4px; background: var(--login-accent-dark); color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; }
+.login-week-event-register:hover, .login-week-event-register:focus-visible { background: var(--login-accent); color: #fff; text-decoration: none; outline-color: var(--login-accent-dark); }
+.login-week-events-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.login-week-events-controls button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--login-border); border-radius: 4px; background: #fff; color: var(--login-accent-dark); cursor: pointer; }
+.login-week-events-controls button:hover, .login-week-events-controls button:focus-visible { background: var(--login-surface-muted); outline-color: var(--login-accent); }
+.login-week-events-counter { min-width: 50px; text-align: center; font-size: 13px; color: var(--login-ink-700); }
+.login-week-events-loading, .login-week-events-unavailable { margin: 22px 0 0; font-size: 14px; color: var(--login-ink-500); }
+
 .login-benefits-list {
   margin: 24px 0 0;
   padding-left: 20px;

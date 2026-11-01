@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   query,
   where,
+  documentId,
 } from "firebase/firestore";
 import { useNavigate, useParams } from "react-router-dom";
 import Select from "react-select";
@@ -25,6 +26,7 @@ import { initializeApp } from "firebase/app";
 import "./Admin.css";
 import commonStyles from "../pages/commonStyles";
 import { fetchGroupList } from "../api/church";
+import OrganizationAccessManager from "./OrganizationAccessManager";
 
 const isLocalhostEnvironment =
   typeof window !== "undefined"
@@ -45,10 +47,19 @@ function normalizeRoleValue(roleValue, { preserveCustom = true } = {}) {
   if (normalized === "globaladmin" || normalized === "global_admin") {
     return "global_admin";
   }
+  if (normalized === "system_global_admin") {
+    return "global_admin";
+  }
   if (normalized === "administrator" || normalized === "admin") {
     return "admin";
   }
+  if (normalized === "system_admin") {
+    return "admin";
+  }
   if (normalized === "member" || normalized === "user") {
+    return "member";
+  }
+  if (normalized === "system_member") {
     return "member";
   }
 
@@ -91,6 +102,7 @@ const Admin = () => {
   const { id } = useParams();
   const { user, loading: authLoading } = useAuth(); // *New*Get user from useAuth
   const [users, setUsers] = useState([]);
+  const [adminTab, setAdminTab] = useState("users");
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -319,31 +331,43 @@ const Admin = () => {
       const fetchUsers = async () => {
         try {
           const userSnapshots = [];
+          const organizationMemberIds = new Set();
+          const isGlobalAdmin = [user?.role, user?.baseRole, user?.basedOn, user?.systemRole]
+            .some((role) => normalizeRoleValue(role, { preserveCustom: false }) === "global_admin");
+          const organizationIds = [id];
+          if (isGlobalAdmin && /^\d+$/.test(String(id))) organizationIds.push(Number(id));
 
-          try {
-            userSnapshots.push(
-              await getDocs(query(collection(db, "users"), where("churchId", "==", id)))
-            );
-          } catch (error) {
-            if (isFirestorePermissionDenied(error)) {
-              throw error;
+          for (const fieldName of ["churchId", "churchID", "organizationId"]) {
+            for (const organizationId of organizationIds) {
+              try {
+                const snapshot = await getDocs(query(collection(db, "users"), where(fieldName, "==", organizationId)));
+                userSnapshots.push(snapshot);
+              } catch (error) {
+                const isPrimaryChurchQuery = fieldName === "churchId" && organizationId === id;
+                if (isFirestorePermissionDenied(error) && !isPrimaryChurchQuery) continue;
+                throw error;
+              }
             }
-            throw error;
           }
 
-          if (userSnapshots[0]?.empty) {
-            for (const fieldName of ["churchID", "organizationId"]) {
+          try {
+            const memberSnapshot = await getDocs(collection(db, "churches", String(id), "members"));
+            memberSnapshot.docs.forEach((memberDoc) => organizationMemberIds.add(memberDoc.id));
+          } catch (error) {
+            if (!isFirestorePermissionDenied(error)) throw error;
+          }
+
+          if (isGlobalAdmin && organizationMemberIds.size > 0) {
+            const memberIds = [...organizationMemberIds];
+            for (let startIndex = 0; startIndex < memberIds.length; startIndex += 30) {
+              const memberIdChunk = memberIds.slice(startIndex, startIndex + 30);
               try {
-                const snapshot = await getDocs(query(collection(db, "users"), where(fieldName, "==", id)));
-                userSnapshots.push(snapshot);
-                if (!snapshot.empty) {
-                  break;
-                }
+                userSnapshots.push(await getDocs(query(
+                  collection(db, "users"),
+                  where(documentId(), "in", memberIdChunk)
+                )));
               } catch (error) {
-                if (isFirestorePermissionDenied(error)) {
-                  continue;
-                }
-                throw error;
+                console.warn("Unable to load additional organization member profiles:", error);
               }
             }
           }
@@ -359,13 +383,11 @@ const Admin = () => {
 
           const usersData = Array.from(uniqueUsers.values())
             .filter((userRecord) => {
-              const userOrgId = String(
-                userRecord?.churchId
-                || userRecord?.churchID
-                || userRecord?.organizationId
-                || ""
-              );
-              return userOrgId === String(id);
+              const targetOrganizationId = String(id).trim();
+              const userOrganizationIds = [userRecord?.churchId, userRecord?.churchID, userRecord?.organizationId]
+                .filter((value) => value !== null && value !== undefined && String(value).trim())
+                .map((value) => String(value).trim());
+              return userOrganizationIds.includes(targetOrganizationId) || organizationMemberIds.has(userRecord.uid);
             })
             .map((userRecord) => ({
               ...userRecord,
@@ -375,7 +397,7 @@ const Admin = () => {
             }));
 
           // Get all groups first
-          const groupsData = await fetchGroupList(id);
+          const groupsData = (await fetchGroupList(id)) || [];
           setGroups(groupsData);
 
           // Map users with their group memberships
@@ -1031,7 +1053,19 @@ const Admin = () => {
           <button style={commonStyles.backButton} onClick={() => handleBackClick(id)}>
           ← Back to Organization
           </button>
-          <h2 className="header top-border">Admin Panel - Users</h2>
+          <h2 className="header top-border">Admin Panel</h2>
+          <div className="nav nav-tabs mb-3" role="tablist" aria-label="User administration">
+            <button type="button" role="tab" className={`nav-link ${adminTab === "users" ? "active" : ""}`} aria-selected={adminTab === "users"} onClick={() => setAdminTab("users")}>
+              Users
+            </button>
+            <button type="button" role="tab" className={`nav-link ${adminTab === "organizationAccess" ? "active" : ""}`} aria-selected={adminTab === "organizationAccess"} onClick={() => setAdminTab("organizationAccess")}>
+              Organization Access
+            </button>
+          </div>
+          {adminTab === "organizationAccess" ? (
+            loading ? <p role="status">Loading team members...</p> : <OrganizationAccessManager users={users} organizationId={id} currentUser={user} roleOptions={roleOptions} />
+          ) : (
+          <>
           <input
             className="search-input"
             type="text"
@@ -1470,6 +1504,8 @@ const Admin = () => {
               Next
             </button>
           </div>
+          </>
+          )}
         </div>
       )}
     </div>

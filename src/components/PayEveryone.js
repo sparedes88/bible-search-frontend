@@ -3720,6 +3720,7 @@ const EditableTimeEntriesTab = ({
         requiresSaveConfirmation: true,
         logType: normalizeValue(sourceData.logType) || row.logType || "timer",
         timeEditHistory: [],
+        enteredAt: Date.now(),
       };
 
       console.log("Creating new time entry:", newTimeEntry);
@@ -5563,6 +5564,7 @@ const PayEveryone = () => {
       ];
 
       await addDoc(collection(db, "churches", id, "timeRotateLogs"), {
+        enteredAt: Date.now(),
         ...activeData,
         churchId: id,
         logType: "timer",

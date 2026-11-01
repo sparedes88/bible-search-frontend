@@ -38,7 +38,6 @@ import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "react-toastify";
 import { FaInfoCircle, FaCog, FaEdit } from "react-icons/fa";
-import { FaShareSquare } from "react-icons/fa";
 import commonStyles from "../pages/commonStyles";
 import ChurchHeader from "./ChurchHeader";
 import { db, storage } from "../firebase";
@@ -59,11 +58,62 @@ import "./ProjectIssueDashboard.css";
 
 const E2_DETAILER_FIELD = "E2 Lead Detailer";
 const E2_DETAILER_SUPPORT_TEAM_FIELD = "E2 Detailer Support Team";
-const ISSUE_ID_FIELD_ALIASES = ["issue id", "id", "task id", "card id", "row id"];
-const TITLE_FIELD_ALIASES = ["title", "task title", "name"];
-const PROJECT_NAME_FIELD_ALIASES = ["project name", "projectname"];
-const OWNER_FIELD_ALIASES = ["assignee", "assigned to", "owner", "responsible"];
-const E2_STATUS_UPDATE_FIELD_ALIASES = ["e2 status update", "e2statusupdate"];
+const EXCEL_TABLE_COLUMNS = [
+  "Item",
+  "Direct Link",
+  "TEAM REPORTING",
+  "Build Issue #",
+  "Revizto #",
+  "APM \\Assignee",
+  "Drafter Assignee",
+  "Name Issues",
+  "Status",
+  "DATE SOLUTION",
+  "CHECK STATUS",
+  "Comentario",
+  "Column1",
+];
+const ISSUE_ID_FIELD_ALIASES = [
+  "issue id",
+  "id",
+  "item",
+  "item number",
+  "task id",
+  "card id",
+  "row id",
+  "build issue",
+  "build issue no",
+  "build issue #",
+  "build issue number",
+  "revizto",
+  "revizto #",
+  "revizto number",
+  "revizto id",
+  "issue number",
+  "issueno",
+];
+const TITLE_FIELD_ALIASES = ["title", "task title", "name", "issue name", "name issues", "issue title"];
+const PROJECT_NAME_FIELD_ALIASES = ["project name", "projectname", "team reporting", "teamreporting"];
+const OWNER_FIELD_ALIASES = [
+  "assignee",
+  "assigned to",
+  "owner",
+  "responsible",
+  "apm \\assignee",
+  "apm assignee",
+  "apmassignee",
+  "drafter assignee",
+  "drafter assignee",
+  "drafterassignee",
+];
+const E2_STATUS_UPDATE_FIELD_ALIASES = [
+  "e2 status update",
+  "e2statusupdate",
+  "status",
+  "status ",
+  "check status",
+  "checkstatus",
+];
 const TAG_FIELD_ALIASES = ["tags", "tag", "labels", "label"];
 const E2_TAGS_FIELD_ALIASES = ["e2 tags", "e2 tag", "e2tags", "e2tag"];
 
@@ -76,6 +126,12 @@ const E2_STATUS_DATE_FIELD_ALIASES = [
   "statusupdatedate",
   "status date",
   "statusdate",
+  "date solution",
+  "datesolution",
+  "date solucion",
+  "datesolucion",
+  "solution date",
+  "solutiondate",
 ];
 const TECH_DETAILS_FIELD = "Technical Details Available";
 const TECH_DETAILS_DISPLAY_LABEL = "T.D. Available";
@@ -357,6 +413,11 @@ const findFieldByAliases = (fields = [], rowData = {}, aliases = []) => {
   return null;
 };
 
+const getImportedFieldValue = (rowData = {}, aliases = []) => {
+  const field = findFieldByAliases(Object.keys(rowData), rowData, aliases);
+  return field ? normalizeValue(rowData[field]) : "";
+};
+
 
 // Patch: Use Tag Alias for Project Name display if available
 const getCardPreview = (rowData = {}, fields = [], managedTagAliases = {}) => {
@@ -387,7 +448,17 @@ const getCardPreview = (rowData = {}, fields = [], managedTagAliases = {}) => {
   const e2StatusDateField = findFieldByAliases(fields, rowData, E2_STATUS_DATE_FIELD_ALIASES);
   const techDetailsField = findFieldByAliases(fields, rowData, ["technical details available", "technical details", "techdetailsavailable"]);
   const snapshotField = findFieldByAliases(fields, rowData, ["snapshot url", "snapshoturl", "snapshot", "picture", "photo", "image"]);
-  const linkField = findFieldByAliases(fields, rowData, ["link", "url", "issue url", "card url", "task url", "issue link", "card link"]);
+  const linkField = findFieldByAliases(fields, rowData, [
+    "link",
+    "url",
+    "direct link",
+    "directlink",
+    "issue url",
+    "card url",
+    "task url",
+    "issue link",
+    "card link",
+  ]);
   const deadlineField = findFieldByAliases(fields, rowData, ["deadline", "due date", "due", "target date"]);
   const technicalDirectionField = findFieldByAliases(fields, rowData, TECHNICAL_DIRECTION_FIELD_ALIASES);
   const e2TDField = findFieldByAliases(fields, rowData, E2_TD_FIELD_ALIASES);
@@ -627,7 +698,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
         const targetRow = previousRows[issue.rowIndex];
         if (!targetRow) return;
         const previousRowData = targetRow?.rowData || {};
-        const e2StatusFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+        const e2StatusFieldName = findFieldByAliases(previousFields, previousRowData, E2_STATUS_UPDATE_FIELD_ALIASES) || E2_STATUS_UPDATE_FIELD;
         const e2StatusAgileFieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update agile", "e2statusupdateagile"]) || "E2 Status Update Agile";
         const disableFlagFieldName = findFieldByAliases(previousFields, previousRowData, ["disable flag", "disableflag"]) || "Disable Flag";
         const updatedRowData = {
@@ -846,16 +917,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
   const [pendingTechDetailsIssueKey, setPendingTechDetailsIssueKey] = useState("");
   const [showColumnVisibilityPopup, setShowColumnVisibilityPopup] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState(() => {
-    const stored = localStorage.getItem("projectIssueGridVisibleColumns");
-    if (stored) {
-      try {
-        return new Set(JSON.parse(stored));
-      } catch (e) {
-        // Ignore parsing errors
-      }
-    }
-    // Default visible columns
-    return new Set(["Issue ID", "Title", "Project Name", "Markup", "E2 Tags", "Status", "E2 Status Update", "Technical Direction", "Due Date", "Disable Flag", TECH_DETAILS_DISPLAY_LABEL]);
+    return new Set(EXCEL_TABLE_COLUMNS);
   });
   const techDetailsFieldRefs = useRef({});
   const dailyIssuesInputRef = useRef(null);
@@ -933,23 +995,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
     }
   };
 
-  const AVAILABLE_COLUMNS = [
-    "Issue ID",
-    "Title",
-    "Project Name",
-    "Markup",
-    "E2 Tags",
-    "Status",
-    "E2 Status Update",
-    "Technical Direction",
-    "Due Date",
-    "Disable Flag",
-    "Days Since Created",
-    "E2 Lead Detailer",
-    "E2 Detailer Support Team",
-    TECH_DETAILS_DISPLAY_LABEL,
-    "Status Update Date",
-  ];
+  const AVAILABLE_COLUMNS = EXCEL_TABLE_COLUMNS;
 
   const toggleColumnVisibility = (columnName) => {
     const newVisibleColumns = new Set(visibleColumns);
@@ -1376,52 +1422,85 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
   }, [id]);
 
   useEffect(() => {
-    // Hardcoded for church 2155 and project stanford-ff-rad
+    if (!id) return undefined;
+
     setLoading(true);
-    const issuesRef = collection(db, "churches", "2155", "bimProjects", "stanford-ff-rad", "issues");
+    const projectRef = doc(db, "churches", id, "bimProjects", DAILY_ISSUES_TARGET_PROJECT_ID);
     const unsubscribe = onSnapshot(
-      issuesRef,
+      projectRef,
       (snapshot) => {
-        const nextIssues = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          // Map Firestore fields to grid fields
-          nextIssues.push({
-            key: data.ID || doc.id,
-            id: data.ID || doc.id,
-            title: data.Title || "",
-            projectName: data["Project Name"] || "",
-            status: data.Status || data.status || "",
-            e2StatusUpdate: data["E2 Status Update"] || "",
-            e2StatusDate: data["E2 Status Date"] || "",
-            technicalDirection: data["Technical Direction"] || "",
-            dueDate: data.e2DueDate || data.Deadline || "",
-            disableFlag: data["Disable Flag"] || "No",
-            e2Detailer: data["E2 Detailer"] || "",
-            e2DetailerSupportTeam: Array.isArray(data["E2 Detailer Support Team"]) ? data["E2 Detailer Support Team"] : [],
-            markup: data.Markup || "",
-            markupLink: data["Link to markup"] || "",
-            tags: data.Tags || "",
-            e2Tags: data["E2 Tags"] || "",
-            e2Comments: data.e2Comments || "",
-            e2Documents: Array.isArray(data.e2Documents) ? data.e2Documents : [],
-            room: data.Room || "",
-            level: data.Level || "",
-            grid: data.Grid || "",
-            zone: data.Zone || "",
-            createdAt: data.Created || "",
-          });
+        const source = snapshot.exists() ? snapshot.data() || {} : {};
+        const fields = Array.isArray(source.fields) ? source.fields : [];
+        const rows = Array.isArray(source.rows) ? source.rows : [];
+        const nextIssues = rows.map((row, rowIndex) => {
+          const data = row?.rowData || {};
+          const item = getImportedFieldValue(data, ["item"]);
+          const directLink = getImportedFieldValue(data, ["direct link", "link", "url"]);
+          const teamReporting = getImportedFieldValue(data, ["team reporting", "project name", "project"]);
+          const buildIssue = getImportedFieldValue(data, ["build issue #", "build issue", "issue id"]);
+          const revizto = getImportedFieldValue(data, ["revizto #", "revizto", "revizto id"]);
+          const apmAssignee = getImportedFieldValue(data, ["apm \\assignee", "apm assignee", "apmassignee"]);
+          const drafterAssignee = getImportedFieldValue(data, ["drafter assignee", "drafterassignee"]);
+          const nameIssues = getImportedFieldValue(data, ["name issues", "issue name", "title", "name"]);
+          const status = getImportedFieldValue(data, ["status", "state"]);
+          const dateSolution = getImportedFieldValue(data, ["date solution", "solution date", "status date"]);
+          const checkStatus = getImportedFieldValue(data, ["check status", "e2 status update"]);
+          const comentario = getImportedFieldValue(data, ["comentario", "comment", "comments"]);
+          const column1 = getImportedFieldValue(data, ["column1", "column 1"]);
+          const issueId = item || buildIssue || revizto || `row-${rowIndex + 1}`;
+
+          return {
+            key: `${DAILY_ISSUES_TARGET_PROJECT_ID}:${rowIndex}:${issueId}`,
+            projectDocId: DAILY_ISSUES_TARGET_PROJECT_ID,
+            rowIndex,
+            id: issueId,
+            item,
+            directLink,
+            teamReporting,
+            buildIssue,
+            revizto,
+            apmAssignee,
+            drafterAssignee,
+            nameIssues,
+            dateSolution,
+            checkStatus,
+            comentario,
+            column1,
+            title: nameIssues,
+            projectName: teamReporting,
+            status,
+            e2StatusUpdate: checkStatus,
+            e2StatusDate: dateSolution,
+            technicalDirection: getImportedFieldValue(data, ["technical direction"]),
+            dueDate: getImportedFieldValue(data, ["due date", "deadline"]),
+            disableFlag: getImportedFieldValue(data, ["disable flag"]) || "No",
+            e2Detailer: getImportedFieldValue(data, ["e2 lead detailer", "e2 detailer"]),
+            e2DetailerSupportTeam: [],
+            markup: getImportedFieldValue(data, ["markup"]),
+            markupLink: getImportedFieldValue(data, ["link to markup", "markup link"]),
+            tags: getImportedFieldValue(data, ["tags", "tag"]),
+            e2Tags: getImportedFieldValue(data, ["e2 tags", "e2 tag"]),
+            e2Comments: comentario,
+            e2Documents: [],
+            room: getImportedFieldValue(data, ["room"]),
+            level: getImportedFieldValue(data, ["level", "floor"]),
+            grid: getImportedFieldValue(data, ["grid"]),
+            zone: getImportedFieldValue(data, ["zone"]),
+            createdAt: dateSolution,
+          };
         });
+        setProjectSources((previous) => ({ ...previous, [DAILY_ISSUES_TARGET_PROJECT_ID]: source }));
         setIssues(nextIssues);
         setLoading(false);
       },
-      () => {
+      (error) => {
+        console.error("Failed to load uploaded issue rows:", error);
         setIssues([]);
         setLoading(false);
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [id]);
 
   useEffect(() => {
     const lastUploadValue = projectSources?.[DAILY_ISSUES_TARGET_PROJECT_ID]?.lastUploadAt;
@@ -2880,7 +2959,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
     const nextStatus = statusFieldName ? normalizeValue(issue.status) : "";
 
     // E2 Status Update field
-    const fieldName = findFieldByAliases(previousFields, previousRowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+    const fieldName = findFieldByAliases(previousFields, previousRowData, E2_STATUS_UPDATE_FIELD_ALIASES) || E2_STATUS_UPDATE_FIELD;
     const nextValue = getDefaultE2StatusUpdate(valueOverride ?? issue.e2StatusUpdate);
     const previousValue = normalizeValue(previousRowData[fieldName]);
 
@@ -3088,12 +3167,12 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
       );
 
       const getPrimaryIssueId = (rowData = {}) => {
-        const idField = findFieldByAliases(mergedFields, rowData, ["issue id", "id", "task id", "card id", "row id"]);
+        const idField = findFieldByAliases(mergedFields, rowData, ISSUE_ID_FIELD_ALIASES);
         return normalizeValue(idField ? rowData?.[idField] : "");
       };
 
       const getImportedStatusFieldName = (rowData = {}) =>
-        findFieldByAliases(mergedFields, rowData, ["e2 status update", "e2statusupdate"]) || E2_STATUS_UPDATE_FIELD;
+        findFieldByAliases(mergedFields, rowData, E2_STATUS_UPDATE_FIELD_ALIASES) || E2_STATUS_UPDATE_FIELD;
 
       const getImportedStatusDateFieldName = (rowData = {}) =>
         findFieldByAliases(mergedFields, rowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
@@ -3225,7 +3304,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
 
         if (!issueId || incomingIssueIds.has(issueId)) return;
 
-        const statusFieldName = findFieldByAliases(mergedFields, rowData, ["status", "state", "task status"]);
+        const statusFieldName = findFieldByAliases(mergedFields, rowData, ["status", "state", "task status", ...E2_STATUS_UPDATE_FIELD_ALIASES]);
         const e2StatusDateFieldName =
           findFieldByAliases(mergedFields, rowData, E2_STATUS_DATE_FIELD_ALIASES) || E2_STATUS_DATE_FIELD;
 
@@ -4573,59 +4652,30 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
           <table className="project-issue-table">
             <thead>
               <tr>
-                {visibleColumns.has("Issue ID") && (
-                  <th>
-                    <span className="project-issue-th-with-tools">
-                      <span>Issue ID</span>
-                      <button
-                        type="button"
-                        className="project-issue-th-tools-btn"
-                        onClick={() => setShowColumnVisibilityPopup(true)}
-                        aria-label="Manage column visibility"
-                        title="Show/hide columns"
-                      >
-                        <FaCog aria-hidden="true" className="project-issue-th-tools-icon" />
-                      </button>
-                    </span>
+                {EXCEL_TABLE_COLUMNS.map((columnName, columnIndex) => (
+                  <th key={columnName}>
+                    {columnIndex === 0 ? (
+                      <span className="project-issue-th-with-tools">
+                        <span>{columnName}</span>
+                        <button
+                          type="button"
+                          className="project-issue-th-tools-btn"
+                          onClick={() => setShowColumnVisibilityPopup(true)}
+                          aria-label="Manage column visibility"
+                          title="Show/hide columns"
+                        >
+                          <FaCog aria-hidden="true" className="project-issue-th-tools-icon" />
+                        </button>
+                      </span>
+                    ) : columnName}
                   </th>
-                )}
-                {visibleColumns.has("Title") && <th>Title</th>}
-                {visibleColumns.has("Project Name") && <th>Project Name</th>}
-                {visibleColumns.has("Markup") && <th>Markup</th>}
-                {visibleColumns.has("E2 Tags") && <th>E2 Tags</th>}
-                {visibleColumns.has("Status") && <th style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}>Status</th>}
-                {visibleColumns.has("E2 Status Update") && (
-                  <th>
-                    <span className="project-issue-th-with-info">
-                      <span>E2 Status Update</span>
-                      <button
-                        type="button"
-                        className="project-issue-th-info-btn"
-                        onClick={() => setShowE2StatusInfoPopup(true)}
-                        aria-label="Show E2 Status Update information"
-                        title="Status definitions"
-                      >
-                        <FaInfoCircle aria-hidden="true" className="project-issue-th-info-icon" />
-                      </button>
-                    </span>
-                  </th>
-                )}
-                {/* Priority column removed */}
-                {visibleColumns.has("Due Date") && <th>Due Date</th>}
-                {visibleColumns.has("Disable Flag") && <th>Disable Flag</th>}
-                {visibleColumns.has("Technical Direction") && <th>Technical Direction</th>}
-                {visibleColumns.has("Days Since Created") && <th>Days Since Created</th>}
-                {visibleColumns.has("E2 Lead Detailer") && <th>E2 Lead Detailer</th>}
-                {visibleColumns.has("E2 Detailer Support Team") && <th>E2 Detailer Support Team</th>}
-                {visibleColumns.has(TECH_DETAILS_DISPLAY_LABEL) && <th>{TECH_DETAILS_DISPLAY_LABEL}</th>}
-                {visibleColumns.has("Status Update Date") && <th>Status Update<br />Date</th>}
-                <th>Action</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={visibleColumns.size} className="project-issue-empty">
+                  <td colSpan={EXCEL_TABLE_COLUMNS.length} className="project-issue-empty">
                     Loading BIM issues...
                   </td>
                 </tr>
@@ -4644,107 +4694,31 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
 
                 return (
                 <tr key={rowKey} style={normalizeValue(issue.disableFlag) === "Yes" ? { background: 'linear-gradient(90deg, #e0f2fe 60%, #e5e7eb 100%)', opacity: 0.6, pointerEvents: 'none' } : {}}>
-                  {visibleColumns.has("Issue ID") && (
-                    <td data-label="Issue ID">
-                      <span className="project-issue-issue-id">{normalizeIssueIdDisplay(issue.id)}</span>
-                    </td>
-                  )}
-                  {visibleColumns.has("Title") && <td data-label="Title">{issue.title}</td>}
-                  {visibleColumns.has("Project Name") && <td data-label="Project Name">{projectNameDisplay}</td>}
-                  {visibleColumns.has("Markup") && (
-                    <td data-label="Markup">
-                      {issue.markupLink ? (
-                        <button
-                          type="button"
-                          className="project-issue-markup-thumb-btn"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            openMarkupPopupForIssue(issue);
-                          }}
-                          title={issue.markup || "Open markup"}
-                        >
-                          <img
-                            src={issue.markupLink}
-                            alt={issue.markup || "Markup preview"}
-                            className="project-issue-markup-thumb"
-                          />
-                        </button>
-                      ) : (
-                        issue.markup || "-"
-                      )}
-                    </td>
-                  )}
-                  {visibleColumns.has("E2 Tags") && <td data-label="E2 Tags">{normalizeValue(issue.e2Tags) || "-"}</td>}
-                  {visibleColumns.has("Status") && (
-                    <td
-                      data-label="Status"
-                      style={{ width: `${statusColumnWidthCh}ch`, minWidth: `${statusColumnWidthCh}ch` }}
-                    >
-                      <span className={`issue-status issue-status-${statusClassName}`} style={statusStyle}>
-                        {statusDisplayText}
-                      </span>
-                    </td>
-                  )}
-                  {visibleColumns.has("E2 Status Update") && (
-                    <td data-label="E2 Status Update">
-                      {(() => {
-                        const selectedE2Value = getDefaultE2StatusUpdate(issue.e2StatusUpdate);
-                        const e2Format = e2StatusUpdateFormatByLowerValue[
-                          normalizeValue(selectedE2Value).toLowerCase()
-                        ] || {};
-                        const e2ShellStyle = {
-                          color: normalizeValue(e2Format.textColor) || undefined,
-                          backgroundColor: normalizeValue(e2Format.backgroundColor) || undefined,
-                        };
-                        return (
-                          <div className="project-issue-cell-select-shell" style={e2ShellStyle}>
-                            <select
-                              className="project-issue-cell-input project-issue-cell-input--bare"
-                              value={selectedE2Value}
-                              onChange={(event) => {
-                                const nextValue = getDefaultE2StatusUpdate(event.target.value);
-                                handleE2StatusUpdateChange(issue.key, nextValue);
-                                handleE2StatusUpdateSave({ ...issue, e2StatusUpdate: nextValue }, nextValue);
-                              }}
-                              disabled={!!savingIssueKeys[`e2status:${issue.key}`]}
-                            >
-                              {e2StatusUpdateOptions.map((opt) => {
-                                const optionFormat =
-                                  e2StatusUpdateFormatByLowerValue[normalizeValue(opt).toLowerCase()] || {};
-                                const optionStyle = {
-                                  color: normalizeValue(optionFormat.textColor) || undefined,
-                                  backgroundColor: normalizeValue(optionFormat.backgroundColor) || undefined,
-                                };
-                                return (
-                                  <option key={opt} value={opt} style={optionStyle}>
-                                    {opt}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          </div>
-                        );
-                      })()}
-                    </td>
-                  )}
-                  {/* Priority column removed */}
-                  {visibleColumns.has("Due Date") && <td data-label="Due Date">{formatDueDateMMDDYY(issue.dueDate)}</td>}
-                  {visibleColumns.has("Disable Flag") && <td data-label="Disable Flag">{issue.disableFlag}</td>}
-                  {visibleColumns.has("Technical Direction") && <td data-label="Technical Direction">{issue.technicalDirection}</td>}
-
-                  {visibleColumns.has("Days Since Created") && <td data-label="Days Since Created">{calculateDaysSinceCreated(issue.createdAt)}</td>}
-                  <td>
-                    {/* Removed edit icon button for T.D. Available - Required Information popup */}
-                    <button
-                      type="button"
-                      className="project-issue-td-send-agile-btn"
-                      title="Send to Agile Dashboard"
-                      style={{ background: 'none', border: 'none', padding: 0, marginLeft: 8, cursor: 'pointer' }}
-                      onClick={() => handleSendToAgileDashboard(issue)}
-                    >
-                      <FaShareSquare style={{ fontSize: '1.1em', color: '#10b981' }} />
-                    </button>
-                  </td>
+                  {EXCEL_TABLE_COLUMNS.map((columnName) => {
+                    const valueByColumn = {
+                      Item: issue.item,
+                      "Direct Link": issue.directLink,
+                      "TEAM REPORTING": issue.teamReporting || projectNameDisplay,
+                      "Build Issue #": issue.buildIssue,
+                      "Revizto #": issue.revizto,
+                      "APM \\Assignee": issue.apmAssignee,
+                      "Drafter Assignee": issue.drafterAssignee,
+                      "Name Issues": issue.nameIssues || issue.title,
+                      Status: issue.status,
+                      "DATE SOLUTION": issue.dateSolution,
+                      "CHECK STATUS": issue.checkStatus,
+                      Comentario: issue.comentario,
+                      Column1: issue.column1,
+                    };
+                    const value = normalizeValue(valueByColumn[columnName]);
+                    return (
+                      <td key={columnName} data-label={columnName}>
+                        {columnName === "Direct Link" && value ? (
+                          <a href={value} target="_blank" rel="noreferrer">Open link</a>
+                        ) : value || "-"}
+                      </td>
+                    );
+                  })}
                   {visibleColumns.has("E2 Lead Detailer") && (
                     <td data-label="E2 Lead Detailer">
                       <select
@@ -4890,7 +4864,7 @@ const ProjectIssueDashboard = ({ assigneeOptions, setAssigneeOptions }) => {
               })}
               {!loading && !visibleIssues.length ? (
                 <tr>
-                  <td colSpan={visibleColumns.size} className="project-issue-empty">
+                  <td colSpan={EXCEL_TABLE_COLUMNS.length} className="project-issue-empty">
                     No issues in this tab.
                   </td>
                 </tr>

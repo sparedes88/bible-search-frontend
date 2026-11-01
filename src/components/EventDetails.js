@@ -34,151 +34,46 @@ import QRCodeLabel from "./QRCodeLabel";
 import { PDFDownloadLink } from "@react-pdf/renderer";
 import ReactDOM from 'react-dom';
 import { useAuth } from "../contexts/AuthContext";
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return "";
-  const parts = dateStr.includes('-') ? dateStr.split('-') : dateStr.split('/');
-  if (parts[0].length === 4) {
-    const [year, month, day] = parts;
-    return `${month}/${day}/${year}`;
-  }
-  const [month, day, year] = parts;
-  return `${month}/${day}/${year}`;
-};
+import { updateEventDesign } from '../utils/eventSeriesDesign';
+import { MdAddPhotoAlternate, MdArrowBack, MdCalendarToday, MdContentCopy, MdEventAvailable, MdLocationOn, MdLogin, MdQrCodeScanner, MdRepeat, MdSave, MdSchedule, MdViewAgenda } from 'react-icons/md';
+import { formatAnnouncementDate, formatAnnouncementTime } from '../utils/eventAnnouncementLayout';
+import './EventRegistration.css';
+import './EventDetails.css';
 
 const formatRecurrenceInfo = (event) => {
   if (!event.isRecurring) return "";
-  
-  let info = `Recurring ${event.recurrencePattern}`;
+
+  const rawPattern = typeof event.recurrencePattern === 'string' ? event.recurrencePattern.trim() : '';
+  const recurrencePattern = ['undefined', 'null'].includes(rawPattern.toLowerCase())
+    ? ''
+    : rawPattern ? `${rawPattern.charAt(0).toUpperCase()}${rawPattern.slice(1)}` : '';
+  let info = recurrencePattern || '';
   if (event.recurrenceEndDate) {
-    info += ` until ${formatDate(event.recurrenceEndDate)}`;
+    info = `${info ? `${info} until ` : 'Until '}${formatAnnouncementDate(event.recurrenceEndDate) || event.recurrenceEndDate}`;
   }
-  return info;
+  return info || 'Repeats';
 };
 
 const renderEventDetails = (event) => {
   if (!event) return null;
-
+  const date = event.date || event.startDate;
+  const startTime = event.time || event.startTime || event.startHour;
+  const endTime = event.endTime || event.endHour;
   return (
-    <div style={{ marginBottom: '20px' }}>
+    <div className="event-details-information">
       {(event.categoryName || event.subcategoryName) && (
-        <div style={{ 
-          display: 'flex', 
-          gap: '8px', 
-          marginBottom: '10px',
-          fontSize: '14px',
-          color: '#6B7280'
-        }}>
-          {event.categoryName && (
-            <span style={{
-              backgroundColor: '#EEF2FF',
-              padding: '4px 12px',
-              borderRadius: '16px',
-              color: '#4F46E5'
-            }}>
-              {event.categoryName}
-            </span>
-          )}
-          {event.subcategoryName && (
-            <span style={{
-              backgroundColor: '#F0FDF4',
-              padding: '4px 12px',
-              borderRadius: '16px',
-              color: '#047857'
-            }}>
-              {event.subcategoryName}
-            </span>
-          )}
+        <div className="event-details-categories">
+          {event.categoryName && <span>{event.categoryName}</span>}
+          {event.subcategoryName && <span>{event.subcategoryName}</span>}
         </div>
       )}
-
-      <div style={{ 
-        marginBottom: '20px',
-        padding: '15px', 
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        fontSize: '16px'
-      }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          marginBottom: '10px',
-          color: '#1F2937' 
-        }}>
-          <span style={{ marginRight: '10px' }}>📅</span>
-          <span>
-            <strong>Date:</strong> {event.date || event.startDate || 'TBA'}
-            {event.endDate && event.endDate !== event.startDate && ` - ${event.endDate}`}
-          </span>
-        </div>
-        
-        {(event.time || event.startTime) && (
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            marginBottom: '10px',
-            color: '#1F2937' 
-          }}>
-            <span style={{ marginRight: '10px' }}>⏰</span>
-            <span>
-              <strong>Time:</strong> {event.time || event.startTime}
-              {event.endTime && ` - ${event.endTime}`}
-            </span>
-          </div>
-        )}
-        
-        {event.location && (
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center',
-            marginBottom: '10px',
-            color: '#1F2937' 
-          }}>
-            <span style={{ marginRight: '10px' }}>📍</span>
-            <span>
-              <strong>Location:</strong> {event.location}
-            </span>
-          </div>
-        )}
-        
-        {event.isRecurring && (
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center',
-            color: '#1F2937' 
-          }}>
-            <span style={{ marginRight: '10px' }}>🔄</span>
-            <span>
-              <strong>Recurring:</strong> {formatRecurrenceInfo(event)}
-            </span>
-          </div>
-        )}
-      </div>
-      
-      {event.description && (
-        <div style={{ marginBottom: '20px' }}>
-          <h3 style={{ 
-            fontSize: '18px', 
-            fontWeight: '600',
-            marginBottom: '10px',
-            color: '#1F2937'
-          }}>
-            Description
-          </h3>
-          <div style={{ 
-            backgroundColor: 'white',
-            padding: '15px',
-            borderRadius: '8px',
-            border: '1px solid #E5E7EB',
-            fontSize: '16px',
-            lineHeight: '1.6',
-            color: '#4B5563',
-            whiteSpace: 'pre-wrap'
-          }}>
-            {event.description}
-          </div>
-        </div>
-      )}
+      <dl className="registration-facts">
+        <div><MdCalendarToday aria-hidden="true" /><div><dt>Date</dt><dd>{date ? formatAnnouncementDate(date) || date : 'TBA'}{event.endDate && event.endDate !== date && ` - ${formatAnnouncementDate(event.endDate) || event.endDate}`}</dd></div></div>
+        {startTime && <div><MdSchedule aria-hidden="true" /><div><dt>Time</dt><dd>{formatAnnouncementTime(startTime) || startTime}{endTime && ` - ${formatAnnouncementTime(endTime) || endTime}`}</dd></div></div>}
+        {event.location && <div><MdLocationOn aria-hidden="true" /><div><dt>Location</dt><dd>{event.location}</dd></div></div>}
+        {event.isRecurring && <div><MdRepeat aria-hidden="true" /><div><dt>Recurring</dt><dd>{formatRecurrenceInfo(event)}</dd></div></div>}
+      </dl>
+      {event.description && <section className="registration-description"><h2>Description</h2><p>{event.description}</p></section>}
     </div>
   );
 };
@@ -202,6 +97,7 @@ const EventDetails = () => {
   const [selectedRooms, setSelectedRooms] = useState([]);
   const [isManagingRooms, setIsManagingRooms] = useState(false);
   const [eventImage, setEventImage] = useState(null);
+  const [eventGraphicFailed, setEventGraphicFailed] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [childCheckInForm, setChildCheckInForm] = useState({
@@ -232,7 +128,6 @@ const EventDetails = () => {
   const [registrationForm, setRegistrationForm] = useState({
     name: '',
     lastName: '',
-    email: '',
     phone: ''
   });
   const [submittingRegistration, setSubmittingRegistration] = useState(false);
@@ -1152,7 +1047,11 @@ const EventDetails = () => {
 
   useEffect(() => {
     const fetchEventImage = async () => {
-      if (!event || !event.imageUrl) return;
+      setEventGraphicFailed(false);
+      if (!event || !event.imageUrl) {
+        setEventImage(null);
+        return;
+      }
       
       try {
         if (typeof event.imageUrl === 'string' && event.imageUrl.startsWith('http')) {
@@ -1172,6 +1071,7 @@ const EventDetails = () => {
       } catch (error) {
         console.error('Error fetching event image:', error);
         setEventImage(null);
+        setEventGraphicFailed(true);
       }
     };
 
@@ -1193,6 +1093,7 @@ const EventDetails = () => {
     }
 
     setImageFile(file);
+    setEventGraphicFailed(false);
     const previewUrl = URL.createObjectURL(file);
     setEventImage(previewUrl);
   };
@@ -1210,10 +1111,7 @@ const EventDetails = () => {
       
       const downloadURL = await getDownloadURL(storageRef);
       
-      const eventRef = doc(db, "eventInstances", eventId);
-      await updateDoc(eventRef, {
-        imageUrl: imagePath
-      });
+      await updateEventDesign(id, { ...event, id: eventId }, imagePath);
 
       setEventImage(downloadURL);
       toast.success('Event image updated successfully');
@@ -1297,12 +1195,7 @@ const EventDetails = () => {
 
   const ScanLogsDisplay = () => {
     return (
-      <div style={{
-        marginTop: '20px',
-        padding: '15px',
-        backgroundColor: '#f3f4f6',
-        borderRadius: '8px'
-      }}>
+      <div className="event-details-section">
         <div>
           <h3 style={{ marginBottom: '10px', fontSize: '16px', fontWeight: '600' }}>
             Attendance Logs ({scanLogs.length})
@@ -1314,6 +1207,7 @@ const EventDetails = () => {
               {scanLogs.map((log) => (
                 <div
                   key={log.id}
+                  className="event-details-log-row"
                   style={{
                     padding: '8px',
                     backgroundColor: '#ecfdf5',
@@ -1327,7 +1221,7 @@ const EventDetails = () => {
                   <div style={{ color: '#065f46', fontWeight: '500' }}>
                     ✅ {log.firstName || ''} {log.lastName || ''}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div className="event-details-log-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{ fontSize: '12px', color: '#666' }}>
                       {log.timestamp}
                     </div>
@@ -1424,7 +1318,7 @@ const EventDetails = () => {
                 border: '1px solid #e5e7eb'
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="event-details-record-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ fontWeight: '500' }}>
                   {log.childName} (Age: {log.age})
                   <span style={{
@@ -1514,7 +1408,7 @@ const EventDetails = () => {
                 border: '1px solid #e5e7eb'
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="event-details-record-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ fontWeight: '500' }}>
                   {log.firstName} {log.lastName}
                   <span style={{
@@ -1623,18 +1517,12 @@ const EventDetails = () => {
       const newName = prompt('Enter new name:', registration.name);
       if (!newName) return;
 
-      const newEmail = prompt('Enter new email:', registration.email);
-      if (!newEmail) return;
-
       const newPhone = prompt('Enter new phone:', registration.phone);
       if (!newPhone) return;
 
-      const newComments = prompt('Enter new comments:', registration.comments || '');
       await updateDoc(doc(db, "eventRegistrations", registration.id), {
         name: newName,
-        email: newEmail,
         phone: newPhone,
-        comments: newComments,
         updatedAt: serverTimestamp(),
       });
 
@@ -1672,7 +1560,6 @@ const EventDetails = () => {
       setRegistrationForm({
         name: '',
         lastName: '',
-        email: '',
         phone: ''
       });
       
@@ -1708,28 +1595,18 @@ const EventDetails = () => {
   navigate(`/organization/${churchId}/all-events`);
   };
 
+  const handleCopyEventLink = () => {
+    navigator.clipboard.writeText(window.location.href).then(() => toast.success('Event link copied to clipboard!')).catch(() => toast.error('Failed to copy link'));
+  };
+
   const renderRoomsSection = () => {
     return (
-      <div style={{
-        marginTop: '20px',
-        padding: '15px',
-        backgroundColor: 'white',
-        borderRadius: '8px',
-        border: '1px solid #e5e7eb'
-      }}>
+      <div className="event-details-section">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
           <h3 style={{ margin: 0 }}>Event Rooms</h3>
           <button
             onClick={() => setIsManagingRooms(!isManagingRooms)}
-            style={{
-              backgroundColor: '#4F46E5',
-              color: 'white',
-              padding: '4px 12px',
-              borderRadius: '4px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
+            className="event-details-button"
           >
             {isManagingRooms ? 'Done' : 'Manage Rooms'}
           </button>
@@ -1807,13 +1684,7 @@ const EventDetails = () => {
 
   const renderRegistrationSection = () => {
     return (
-      <div style={{
-        marginTop: '20px',
-        padding: '15px',
-        backgroundColor: 'white',
-        borderRadius: '8px',
-        border: '1px solid #e5e7eb'
-      }}>
+      <div className="event-details-section">
         <h3 style={{ marginBottom: '15px', fontSize: '18px', fontWeight: '600' }}>
           Event Registrations
         </h3>
@@ -1845,7 +1716,7 @@ const EventDetails = () => {
                         border: '1px solid #e5e7eb'
                       }}
                     >
-                      <div style={{ 
+                      <div className="event-details-record-heading" style={{
                         display: 'flex', 
                         justifyContent: 'space-between',
                         alignItems: 'center'
@@ -1907,11 +1778,13 @@ const EventDetails = () => {
               <h4 style={{ marginBottom: '10px', fontSize: '16px', fontWeight: '500' }}>
                 Add New Registration
               </h4>
-              <form onSubmit={handleRegistrationSubmit}>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+              <form onSubmit={handleRegistrationSubmit} className="registration-form">
+                <div className="event-details-name-fields">
                   <input
                     type="text"
                     placeholder="First Name"
+                    aria-label="First Name"
+                    autoComplete="given-name"
                     value={registrationForm.name}
                     onChange={(e) => setRegistrationForm(prev => ({ ...prev, name: e.target.value }))}
                     required
@@ -1920,6 +1793,8 @@ const EventDetails = () => {
                   <input
                     type="text"
                     placeholder="Last Name"
+                    aria-label="Last Name"
+                    autoComplete="family-name"
                     value={registrationForm.lastName}
                     onChange={(e) => setRegistrationForm(prev => ({ ...prev, lastName: e.target.value }))}
                     required
@@ -1928,18 +1803,13 @@ const EventDetails = () => {
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
                   <input
-                    type="email"
-                    placeholder="Email"
-                    value={registrationForm.email}
-                    onChange={(e) => setRegistrationForm(prev => ({ ...prev, email: e.target.value }))}
-                    style={{ ...commonStyles.input, flex: 1 }}
-                  />
-                  <input
                     type="tel"
                     placeholder="Phone"
+                    aria-label="Phone"
+                    autoComplete="tel"
                     value={registrationForm.phone}
                     onChange={(e) => setRegistrationForm(prev => ({ ...prev, phone: e.target.value }))}
-                    style={{ ...commonStyles.input, flex: 1 }}
+                    style={{ ...commonStyles.input, width: '100%' }}
                   />
                 </div>
                 <button
@@ -1967,11 +1837,13 @@ const EventDetails = () => {
             <p style={{ marginBottom: '15px' }}>
               Please register for this event using the form below:
             </p>
-            <form onSubmit={handleRegistrationSubmit}>
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+            <form onSubmit={handleRegistrationSubmit} className="registration-form">
+              <div className="event-details-name-fields">
                 <input
                   type="text"
                   placeholder="First Name"
+                  aria-label="First Name"
+                  autoComplete="given-name"
                   value={registrationForm.name}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, name: e.target.value }))}
                   required
@@ -1980,6 +1852,8 @@ const EventDetails = () => {
                 <input
                   type="text"
                   placeholder="Last Name"
+                  aria-label="Last Name"
+                  autoComplete="family-name"
                   value={registrationForm.lastName}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, lastName: e.target.value }))}
                   required
@@ -1988,18 +1862,13 @@ const EventDetails = () => {
               </div>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
                 <input
-                  type="email"
-                  placeholder="Email"
-                  value={registrationForm.email}
-                  onChange={(e) => setRegistrationForm(prev => ({ ...prev, email: e.target.value }))}
-                  style={{ ...commonStyles.input, flex: 1 }}
-                />
-                <input
                   type="tel"
                   placeholder="Phone"
+                  aria-label="Phone"
+                  autoComplete="tel"
                   value={registrationForm.phone}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, phone: e.target.value }))}
-                  style={{ ...commonStyles.input, flex: 1 }}
+                  style={{ ...commonStyles.input, width: '100%' }}
                 />
               </div>
               <button
@@ -2028,244 +1897,73 @@ const EventDetails = () => {
 
   if (loading) {
     return (
-      <div className="text-red-600 p-4">{error}</div>
+      <main className="registration-page event-details-page"><div className="registration-loading" role="status"><span className="registration-loading-indicator" />{error || 'Loading event...'}</div></main>
     );
   }
 
   return (
-    <div style={commonStyles.fullWidthContainer}>
-      {!user && (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            marginBottom: "20px",
-          }}
-        >
-          <button
-            onClick={() => navigate(`/organization/${id}/login`)}
-            style={{
-              ...commonStyles.backButton,
-              width: "120px",
-              backgroundColor: "#53bf49",
-            }}
-          >
-            Log in →
-          </button>
-        </div>
-      )}
-      <button
-        onClick={() => handleBackClick(id)}
-        style={{ ...commonStyles.backButtonLink }}
-      >
-        ← Back
-      </button>
-      <ChurchHeader id={id} applyShadow={false} />
-      
-      {!loading && (
-        <div style={{ 
-          marginTop: '20px', 
-          marginBottom: '20px',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          position: 'relative'
-        }}>
-          {eventImage ? (
-            <div style={{
-              width: '100%',
-              maxHeight: '300px',
-              overflow: 'hidden',
-              borderRadius: '8px',
-              position: 'relative'
-            }}>
-              <img 
-                src={eventImage} 
-                alt={event?.title || 'Event'} 
-                style={{
-                  width: '100%',
-                  maxHeight: '300px',
-                  objectFit: 'cover'
-                }}
-              />
-              
-              <div style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: '15px 20px',
-                background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
-                borderBottomLeftRadius: '8px',
-                borderBottomRightRadius: '8px'
-              }}>
-                <h1 style={{
-                  ...commonStyles.title,
-                  color: 'white',
-                  margin: 0,
-                  textShadow: '0 2px 4px rgba(0,0,0,0.5)'
-                }}>
-                  {event?.title}
-                </h1>
-              </div>
-            </div>
-          ) : (
-            <h1 style={{ ...commonStyles.title }}>
-              {event?.title}
-            </h1>
-          )}
-          
-          {(user?.role === 'admin' || user?.role === 'global_admin') && (
-            <div style={{
-              position: eventImage ? 'absolute' : 'relative',
-              top: eventImage ? '10px' : '0',
-              right: eventImage ? '10px' : '0',
-              zIndex: 5,
-              display: 'flex',
-              justifyContent: eventImage ? 'flex-end' : 'flex-start',
-              marginBottom: eventImage ? '0' : '15px'
-            }}>
-              <div style={{
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-              }}>
-                <label 
-                  htmlFor="event-image-upload"
-                  style={{
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '6px 10px',
-                    backgroundColor: '#4F46E5',
-                    color: 'white',
-                    borderRadius: '4px',
-                    fontSize: '14px'
-                  }}
-                >
-                  <span role="img" aria-label="upload">{eventImage ? '🔄' : '📸'}</span>
-                  {eventImage ? 'Change Image' : 'Add Card Image'}
-                </label>
-                <input
-                  id="event-image-upload"
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageFileChange}
-                  style={{ display: 'none' }}
-                />
-                
-                {imageFile && (
-                  <button
-                    onClick={handleImageUpload}
-                    disabled={uploadingImage}
-                    style={{
-                      backgroundColor: uploadingImage ? '#9CA3AF' : '#10B981',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '6px 10px',
-                      cursor: uploadingImage ? 'not-allowed' : 'pointer',
-                      fontSize: '14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    <span role="img" aria-label="save">💾</span>
-                    {uploadingImage ? 'Saving...' : 'Save Image'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {!loading && event && (
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          marginBottom: '20px',
-          cursor: 'pointer' 
-        }}
-          onClick={() => {
-            const url = window.location.href;
-            navigator.clipboard.writeText(url)
-              .then(() => toast.success('Event link copied to clipboard!'))
-              .catch(err => toast.error('Failed to copy link'));
-          }}
-          title="Click to copy event link"
-        >
-          <div style={{ 
-            padding: '15px', 
-            backgroundColor: 'white', 
-            borderRadius: '8px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)', 
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            transition: 'transform 0.2s',
-            ':hover': { transform: 'scale(1.02)' }
-          }}>
-            <QRCodeSVG value={window.location.href} size={150} level="H" />
-            <div style={{ 
-              marginTop: '10px', 
-              fontSize: '14px', 
-              color: '#4b5563',
-              textAlign: 'center' 
-            }}>
-              Click to copy event link
-            </div>
-          </div>
-        </div>
-      )}
-      
-      <div>
+    <main className="registration-page event-details-page">
+      <nav className="registration-nav" aria-label="Event navigation"><div className="registration-nav-inner">
+        <button type="button" className="registration-back" onClick={() => handleBackClick(id)}><MdArrowBack size={19} aria-hidden="true" /> Back to events</button>
+        {!user ? <button type="button" className="event-details-button" onClick={() => navigate(`/organization/${id}/login`)}><MdLogin size={18} aria-hidden="true" /> Log in</button> : <span className="registration-nav-label">Event details</span>}
+      </div></nav>
+      {(eventImage || event?.imageUrl) && !eventGraphicFailed ? <header className="event-registration-graphic">
+        {eventImage ? <img src={eventImage} alt={event?.instanceTitle || event?.title || 'Event'} onError={() => setEventGraphicFailed(true)} /> : <div className="registration-graphic-loading" role="status">Loading event image...</div>}
+      </header> : <div className="registration-organization-header"><ChurchHeader id={id} applyShadow={false} /></div>}
+
+      <div className="event-details-shell">
+        <header className="event-details-heading">
+          <div><span className="registration-eyebrow">The event</span><h1>{event?.instanceTitle || event?.title || 'Event'}</h1><div className="registration-title-rule" /></div>
+          {(user?.role === 'admin' || user?.role === 'global_admin') && <div className="event-details-image-actions">
+            <label htmlFor="event-image-upload" className="event-details-button"><MdAddPhotoAlternate size={19} aria-hidden="true" />{eventImage ? 'Change Image' : 'Add Card Image'}</label>
+            <input id="event-image-upload" type="file" accept="image/*" onChange={handleImageFileChange} disabled={uploadingImage} className="event-details-file-input" />
+            {imageFile && <button type="button" className="event-details-button event-details-button-primary" onClick={handleImageUpload} disabled={uploadingImage}><MdSave size={18} aria-hidden="true" />{uploadingImage ? 'Saving...' : 'Save Image'}</button>}
+          </div>}
+        </header>
+
+        <div className="event-details-layout">
+          <aside className="event-details-sidebar" aria-label="Event information">
+            {renderEventDetails(event)}
+            {!loading && event && <section className="event-details-share" aria-label="Event sharing">
+              <h2>Share this event</h2>
+              <button type="button" className="event-details-share-qr" aria-label="Copy event link QR code" title="Copy event link" onClick={handleCopyEventLink}><QRCodeSVG value={window.location.href} size={150} level="H" /></button>
+              <button type="button" className="event-details-button" onClick={handleCopyEventLink}><MdContentCopy size={17} aria-hidden="true" /> Copy event link</button>
+            </section>}
+          </aside>
+          <section className="event-details-workspace" aria-labelledby="event-workspace-title">
+            <h2 id="event-workspace-title" className="event-details-section-title">{user ? 'Event workspace' : 'Registration'}</h2>
         {loading ? (
           <Skeleton count={1} />
         ) : (
-          <div className="p-4">
-            {renderEventDetails(event)}
+          <div className="event-details-tools">
             
             {user ? (
               <>
-                {(user.role === 'admin' || user.role === 'global_admin') && renderRoomsSection()}
-                
+                <button
+                  type="button"
+                  onClick={() => navigate(`/organization/${id}/event/${eventId}/counter`)}
+                  className="event-details-button event-details-button-primary event-details-counter"
+                >
+                  <MdViewAgenda size={19} aria-hidden="true" /> Attendance Counter
+                </button>
                 <button
                   onClick={handleScanClick}
-                  style={{
-                    backgroundColor: '#4F46E5',
-                    color: 'white',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500',
-                    marginTop: '20px'
-                  }}
+                  className="event-details-button event-details-scan"
                 >
-                  Scan Attendance QR
+                  <MdQrCodeScanner size={19} aria-hidden="true" /> Scan Attendance QR
                 </button>
-                <div style={{
-                  marginTop: '20px',
-                  padding: '15px',
-                  backgroundColor: '#f3f4f6',
-                  borderRadius: '8px',
-                }}>
+                {(user.role === 'admin' || user.role === 'global_admin') && renderRoomsSection()}
+                <section className="event-details-manual">
                   <h3 style={{ marginBottom: '10px', fontSize: '16px', fontWeight: '600' }}>
                     Manual Input
                   </h3>
-                  <form onSubmit={handleManualSubmit} style={{ display: 'flex', gap: '10px' }}>
+                  <form onSubmit={handleManualSubmit} className="event-details-manual-form">
                     <input
                       type="text"
                       value={manualInput}
                       onChange={(e) => setManualInput(e.target.value)}
                       placeholder="Enter QR code ID or phone number"
+                      aria-label="QR code ID or phone number"
                       style={{
                         flex: 1,
                         padding: '8px',
@@ -2276,16 +1974,7 @@ const EventDetails = () => {
                     />
                     <button
                       type="submit"
-                      style={{
-                        backgroundColor: '#4F46E5',
-                        color: 'white',
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500'
-                      }}
+                      className="event-details-button event-details-button-primary"
                       disabled={attendanceLoading}
                     >
                       {attendanceLoading ? "Processing..." : "Submit"}
@@ -2299,7 +1988,7 @@ const EventDetails = () => {
                       {scannerError}
                     </div>
                   )}
-                </div>
+                </section>
                 <ScanLogsDisplay />
                 
                 {showChildCheckIn && (
@@ -2449,48 +2138,19 @@ const EventDetails = () => {
                   </div>
                 )}
                 
-                <div style={{ 
-                  display: 'flex', 
-                  gap: '10px',
-                  marginTop: '20px',
-                  flexWrap: 'wrap'
-                }}>
+                <div className="event-details-bottom-actions">
                   <button
                     onClick={() => navigate(`/organization/${id}/event/${eventId}/coordination`)} 
-                    style={{
-                      backgroundColor: '#8B5CF6',
-                      color: 'white',
-                      padding: '12px 24px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '16px',
-                      fontWeight: '500',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
+                    className="event-details-button"
                   >
-                    <span>📋</span> Coordinación
+                    <MdEventAvailable size={19} aria-hidden="true" /> Coordinación
                   </button>
                   
                   <button
                     onClick={() => navigate(`/organization/${id}/event/${eventId}/registrations`)} 
-                    style={{
-                      backgroundColor: '#10B981',
-                      color: 'white',
-                      padding: '12px 24px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '16px',
-                      fontWeight: '500',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
+                    className="event-details-button event-details-button-primary"
                   >
-                    <span>📝</span> Manage Registration
+                    <MdEventAvailable size={19} aria-hidden="true" /> Manage Registration
                   </button>
                 </div>
               </>
@@ -2505,9 +2165,11 @@ const EventDetails = () => {
             {renderRegistrationSection()}
           </div>
         )}
+          </section>
+        </div>
       </div>
       {renderScanner()}
-    </div>
+    </main>
   );
 };
 

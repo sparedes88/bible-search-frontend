@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   FaArrowDown,
   FaArrowUp,
   FaChevronLeft,
   FaChevronRight,
+  FaCompressAlt,
   FaEdit,
+  FaExpandAlt,
   FaFacebook,
   FaGlobe,
   FaInstagram,
@@ -20,7 +22,7 @@ import {
   FaWpforms,
   FaYoutube,
 } from "react-icons/fa";
-import { collection, doc, getDocs, getDocsFromServer, serverTimestamp, updateDoc } from "firebase/firestore";
+import { collection, doc, getDocs, getDocsFromServer, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getChurchData } from "../api/church";
 import { useAuth } from "../contexts/AuthContext";
@@ -311,7 +313,7 @@ const buildInitialContentState = (churchData = {}) => {
   const config = churchData.quickLinksConfig || {};
   const sectionTexts = normalizeSectionTexts(config.sectionTexts || {});
 
-  const videos = Array.isArray(config.videos) && config.videos.length > 0
+  const videos = Array.isArray(config.videos)
     ? config.videos.map(normalizeVideo)
     : pageConfig.videos.map(normalizeVideo);
 
@@ -393,7 +395,7 @@ const buildSanitizedContentState = (videos, linkSections, sectionTexts) => {
   const nextSectionTexts = normalizeSectionTexts(sectionTexts);
 
   return {
-    videos: nextVideos.length > 0 ? nextVideos : pageConfig.videos.map(normalizeVideo),
+    videos: nextVideos,
     linkSections: ensuredSections,
     sectionTexts: nextSectionTexts,
     links: ensuredSections.flatMap((section) => section.links),
@@ -436,6 +438,7 @@ const isAppleMobileDevice = () => {
 
 const QuickLinksPage = () => {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAdmin, isGlobalAdmin } = useAuth();
 
   const [churchData, setChurchData] = useState(null);
@@ -454,6 +457,7 @@ const QuickLinksPage = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorTab, setEditorTab] = useState("videos");
   const [isSavingContent, setIsSavingContent] = useState(false);
+  const [contentSaveFeedback, setContentSaveFeedback] = useState({ type: "", text: "" });
   const [isSavingTheme, setIsSavingTheme] = useState(false);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(null);
   const [selectedMediaPreviewIndex, setSelectedMediaPreviewIndex] = useState(null);
@@ -463,11 +467,44 @@ const QuickLinksPage = () => {
   const [selectedLinkPreviewIndex, setSelectedLinkPreviewIndex] = useState(null);
   const [uploadingImageIndex, setUploadingImageIndex] = useState(null);
   const [imageUploadFeedback, setImageUploadFeedback] = useState({ index: null, type: "", text: "" });
+  const [isEventPickerOpen, setIsEventPickerOpen] = useState(false);
+  const [availableEvents, setAvailableEvents] = useState([]);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [eventsError, setEventsError] = useState("");
+  const [eventSearch, setEventSearch] = useState("");
+  const [selectedEventIds, setSelectedEventIds] = useState([]);
+  const [eventsLoadAttempt, setEventsLoadAttempt] = useState(0);
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
+  const isSlideshowFullscreen = searchParams.get("slideshow") === "fullscreen";
   const [touchStartX, setTouchStartX] = useState(null);
   const [swipeHintOffset, setSwipeHintOffset] = useState(0);
   const [hasMediaInteraction, setHasMediaInteraction] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
+
+  const setSlideshowFullscreen = (fullscreen) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (fullscreen) nextParams.set("slideshow", "fullscreen");
+    else nextParams.delete("slideshow");
+    setSearchParams(nextParams);
+  };
+
+  useEffect(() => {
+    if (!isSlideshowFullscreen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete("slideshow");
+        setSearchParams(nextParams);
+      }
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSlideshowFullscreen, searchParams, setSearchParams]);
 
   const editorSectionId = "quick-links-content-editor";
 
@@ -570,6 +607,10 @@ const QuickLinksPage = () => {
     selectedLinkSection && selectedLinkIndex !== null ? (selectedLinkSection.links || [])[selectedLinkIndex] || null : null;
   const selectedEditableVideo = selectedMediaIndex !== null ? editableVideos[selectedMediaIndex] || null : null;
 
+  const filteredEvents = availableEvents.filter((event) =>
+    `${event.title || ""} ${event.startDate || ""}`.toLowerCase().includes(eventSearch.trim().toLowerCase())
+  );
+
   const shareUrl = typeof window !== "undefined" ? window.location.href : "";
   const shareText = `${editableSectionTexts.pageTitle} ${shareUrl}`.trim();
 
@@ -639,13 +680,16 @@ const QuickLinksPage = () => {
 
       try {
         const formsCollection = collection(db, "churches", id, "forms");
+        const formsQuery = user
+          ? formsCollection
+          : query(formsCollection, where("isActive", "==", true));
         let snapshot;
 
-        // Prefer server data so the selector reflects latest permissions/auth state.
+        // Public Firestore queries must constrain the active flag allowed by the security rules.
         try {
-          snapshot = await getDocsFromServer(formsCollection);
+          snapshot = await getDocsFromServer(formsQuery);
         } catch (serverError) {
-          snapshot = await getDocs(formsCollection);
+          snapshot = await getDocs(formsQuery);
         }
 
         if (!isMounted) {
@@ -657,6 +701,7 @@ const QuickLinksPage = () => {
             id: entry.id,
             ...entry.data(),
           }))
+          .filter((form) => user || form.isActive === true)
           .sort((a, b) => {
             const aLabel = cleanText(a.title) || cleanText(a.name) || a.id;
             const bLabel = cleanText(b.title) || cleanText(b.name) || b.id;
@@ -678,6 +723,70 @@ const QuickLinksPage = () => {
       isMounted = false;
     };
   }, [id, user?.uid]);
+
+  useEffect(() => {
+    if (!isEventPickerOpen || !canEditContent || !id) return undefined;
+    let active = true;
+
+    const loadEvents = async () => {
+      setIsLoadingEvents(true);
+      setEventsError("");
+      setAvailableEvents([]);
+      setSelectedEventIds([]);
+      try {
+        const eventsQuery = query(collection(db, "eventInstances"), where("churchId", "==", id));
+        let snapshot;
+        try {
+          snapshot = await getDocsFromServer(eventsQuery);
+        } catch (error) {
+          snapshot = await getDocs(eventsQuery);
+        }
+        const events = await Promise.all(snapshot.docs
+          .map((entry) => ({ ...entry.data(), id: entry.id }))
+          .filter((event) => !event.removed && !event.isDeleted)
+          .map(async (event) => {
+            let resolvedImageUrl = cleanText(event.imageUrl);
+            if (resolvedImageUrl && !/^https?:\/\//i.test(resolvedImageUrl)) {
+              try {
+                resolvedImageUrl = await getDownloadURL(ref(storage, resolvedImageUrl.replace(/^\//, "")));
+              } catch (error) {
+                resolvedImageUrl = "";
+              }
+            }
+            return { ...event, resolvedImageUrl };
+          }));
+        const now = new Date();
+        const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+        const getDateDistance = (event) => {
+          const dateText = cleanText(event.startDate);
+          const parts = /^(\d{2})-(\d{2})-(\d{4})$/.exec(dateText);
+          const isoParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
+          if (!parts && !isoParts) return Infinity;
+          const year = Number(parts ? parts[3] : isoParts[1]);
+          const month = Number(parts ? parts[1] : isoParts[2]);
+          const day = Number(parts ? parts[2] : isoParts[3]);
+          const date = new Date(Date.UTC(year, month - 1, day));
+          if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return Infinity;
+          return Math.abs(date.getTime() - today);
+        };
+        if (active) setAvailableEvents(events.sort((first, second) => {
+          const firstDistance = getDateDistance(first);
+          const secondDistance = getDateDistance(second);
+          return firstDistance === secondDistance
+            ? cleanText(first.title).localeCompare(cleanText(second.title))
+            : firstDistance - secondDistance;
+        }));
+      } catch (error) {
+        console.error("Error loading quick links events:", error);
+        if (active) setEventsError("Could not load events. Please try again.");
+      } finally {
+        if (active) setIsLoadingEvents(false);
+      }
+    };
+
+    loadEvents();
+    return () => { active = false; };
+  }, [isEventPickerOpen, canEditContent, id, user?.uid, eventsLoadAttempt]);
 
   useEffect(() => {
     if (visibleVideos.length === 0 && activeVideoIndex !== 0) {
@@ -782,6 +891,17 @@ const QuickLinksPage = () => {
     setActiveVideoIndex(index);
   };
 
+  const handleCopyFullscreenLink = async () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("slideshow", "fullscreen");
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setShareFeedback("Fullscreen slideshow link copied.");
+    } catch (error) {
+      setShareFeedback("Copy is not available in this browser. Copy the address bar link while fullscreen is open.");
+    }
+  };
+
   const handleTouchStart = (event) => {
     setTouchStartX(event.changedTouches[0]?.clientX ?? null);
   };
@@ -846,6 +966,8 @@ const QuickLinksPage = () => {
 
   const handleCloseContentEditor = () => {
     setIsEditorOpen(false);
+    setContentSaveFeedback({ type: "", text: "" });
+    setIsEventPickerOpen(false);
     setSelectedMediaIndex(null);
     setSelectedMediaPreviewIndex(null);
     setSelectedLinkSectionIndex(null);
@@ -935,8 +1057,29 @@ const QuickLinksPage = () => {
     });
   };
 
+  const handleAddSelectedEvents = () => {
+    const eventMedia = availableEvents
+      .filter((event) => selectedEventIds.includes(event.id) && event.resolvedImageUrl)
+      .map((event) => ({
+        ...DEFAULT_EDITOR_VIDEO,
+        type: "image",
+        title: cleanText(event.title),
+        description: cleanText(event.description),
+        imageUrl: event.resolvedImageUrl,
+        sourceEventId: event.id,
+      }));
+    if (eventMedia.length === 0) return;
+    setEditableVideos((previous) => [...previous, ...eventMedia]);
+    setSelectedMediaIndex(null);
+    setSelectedMediaPreviewIndex(null);
+    setSelectedEventIds([]);
+    setIsEventPickerOpen(false);
+  };
+
   const handleDeleteVideo = (index) => {
+    const title = cleanText(editableVideos[index]?.title) || "Media item";
     setEditableVideos((previous) => previous.filter((_, videoIndex) => videoIndex !== index));
+    setContentSaveFeedback({ type: "pending", text: `Removed "${title}" from the draft. Save Content to publish this deletion.` });
 
     setSelectedMediaIndex((previous) => {
       if (previous === null) return previous;
@@ -1352,6 +1495,7 @@ const QuickLinksPage = () => {
 
     try {
       setIsSavingContent(true);
+      setContentSaveFeedback({ type: "", text: "" });
       const nextState = buildSanitizedContentState(editableVideos, editableLinkSections, editableSectionTexts);
       await updateDoc(doc(db, "churches", id), {
         quickLinksConfig: {
@@ -1368,8 +1512,10 @@ const QuickLinksPage = () => {
       setEditableLinkSections(nextState.linkSections);
       setEditableSectionTexts(nextState.sectionTexts);
       setSavedContentState(cloneContentState(nextState));
+      setContentSaveFeedback({ type: "success", text: "Content saved. Your media changes are published." });
     } catch (error) {
       console.error("Error saving quick links content:", error);
+      setContentSaveFeedback({ type: "error", text: `Changes were not saved. ${error?.message || "Please try again."}` });
     } finally {
       setIsSavingContent(false);
     }
@@ -1510,21 +1656,58 @@ const QuickLinksPage = () => {
         </section>
 
         {!!activeVideo && (
-          <section style={{ ...sectionCardStyle(palette), marginTop: "28px", padding: "20px", overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+          <section
+            className={isSlideshowFullscreen ? "quick-links-slideshow-fullscreen" : undefined}
+            role={isSlideshowFullscreen ? "dialog" : undefined}
+            aria-modal={isSlideshowFullscreen ? "true" : undefined}
+            aria-label={isSlideshowFullscreen ? "Fullscreen slideshow" : undefined}
+            style={{
+              ...sectionCardStyle(palette),
+              marginTop: isSlideshowFullscreen ? 0 : "28px",
+              padding: isSlideshowFullscreen ? "max(14px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom))" : "20px",
+              overflow: isSlideshowFullscreen ? "auto" : "hidden",
+              position: isSlideshowFullscreen ? "fixed" : undefined,
+              inset: isSlideshowFullscreen ? 0 : undefined,
+              zIndex: isSlideshowFullscreen ? 2000 : undefined,
+              width: isSlideshowFullscreen ? "100vw" : undefined,
+              height: isSlideshowFullscreen ? "100dvh" : undefined,
+              minHeight: isSlideshowFullscreen ? "100vh" : undefined,
+              maxHeight: isSlideshowFullscreen ? "100dvh" : undefined,
+              borderRadius: isSlideshowFullscreen ? 0 : undefined,
+              boxSizing: isSlideshowFullscreen ? "border-box" : undefined,
+              overscrollBehavior: isSlideshowFullscreen ? "contain" : undefined,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "14px" }}>
               <div style={{ width: "42px", height: "42px", borderRadius: "12px", display: "grid", placeItems: "center", background: palette.headingIconBg, color: palette.headingIconColor }}>
                 <FaPlay />
               </div>
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ margin: 0, fontSize: "1.45rem" }}>{activeVideo.title || "Featured Media"}</h2>
                 {activeVideo.description && <p style={{ margin: "4px 0 0", color: "#64748B" }}>{activeVideo.description}</p>}
               </div>
+              <button
+                type="button"
+                aria-label={isSlideshowFullscreen ? "Exit fullscreen slideshow" : "View slideshow fullscreen"}
+                onClick={() => setSlideshowFullscreen(!isSlideshowFullscreen)}
+                style={{ flex: "0 0 auto", minHeight: "44px", padding: "10px 12px", border: `1px solid ${palette.surfaceBorder}`, borderRadius: "6px", background: "#FFFFFF", color: palette.primary, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
+              >
+                {isSlideshowFullscreen ? <FaCompressAlt aria-hidden="true" /> : <FaExpandAlt aria-hidden="true" />}
+                <span>{isSlideshowFullscreen ? "Exit fullscreen" : "Fullscreen"}</span>
+              </button>
+              {isSlideshowFullscreen && <button
+                type="button"
+                aria-label="Copy fullscreen slideshow link"
+                onClick={handleCopyFullscreenLink}
+                style={{ flex: "0 0 auto", minHeight: "44px", padding: "10px 12px", border: `1px solid ${palette.surfaceBorder}`, borderRadius: "6px", background: "#FFFFFF", color: palette.primary, fontWeight: 700, cursor: "pointer" }}
+              >Copy link</button>}
             </div>
+            {isSlideshowFullscreen && shareFeedback && <p role="status" style={{ margin: "0 0 12px", color: palette.primary, fontSize: "13px" }}>{shareFeedback}</p>}
 
-            <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} style={{ position: "relative" }}>
-              <div style={{ position: "relative", borderRadius: "22px", overflow: "hidden", background: palette.videoShell, aspectRatio: "16 / 9", transform: `translateX(${swipeHintOffset}px)`, transition: "transform 180ms ease" }}>
+            <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} style={{ position: "relative", touchAction: "pan-y" }}>
+              <div style={{ position: "relative", borderRadius: isSlideshowFullscreen ? "8px" : "22px", overflow: "hidden", background: palette.videoShell, aspectRatio: isSlideshowFullscreen ? undefined : "16 / 9", height: isSlideshowFullscreen ? "min(68vh, 820px)" : undefined, transform: `translateX(${swipeHintOffset}px)`, transition: "transform 180ms ease" }}>
                 {activeVideo.type === "image" ? (
-                  <img src={activeVideo.imageUrl} alt={activeVideo.title || "Quick links media"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={activeVideo.imageUrl} alt={activeVideo.title || "Quick links media"} style={{ width: "100%", height: "100%", objectFit: isSlideshowFullscreen ? "contain" : "cover" }} />
                 ) : (
                   <iframe src={resolveEmbedUrl(activeVideo.embedUrl)} title={activeVideo.title || "Quick links video"} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen style={{ width: "100%", height: "100%", border: 0 }} />
                 )}
@@ -1681,9 +1864,63 @@ const QuickLinksPage = () => {
               </div>
             </div>
 
+            {(hasUnsavedContentChanges || contentSaveFeedback.text) && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginTop: "14px", padding: "12px", borderRadius: "8px", background: contentSaveFeedback.type === "error" ? "#FEF2F2" : hasUnsavedContentChanges ? "#FFFBEB" : "#F0FDF4" }}>
+                <div role={contentSaveFeedback.type === "error" ? "alert" : "status"} style={{ color: contentSaveFeedback.type === "error" ? "#B91C1C" : "#334155", fontSize: "0.9rem", overflowWrap: "anywhere", flex: "1 1 200px" }}>
+                  {contentSaveFeedback.type === "error" ? contentSaveFeedback.text : hasUnsavedContentChanges ? contentSaveFeedback.type === "pending" ? contentSaveFeedback.text : "Unsaved changes. Save Content to publish them." : contentSaveFeedback.type === "success" ? contentSaveFeedback.text : ""}
+                </div>
+                {hasUnsavedContentChanges && <button type="button" onClick={handleSaveQuickLinksContent} disabled={isSavingContent || uploadingImageIndex !== null} style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: palette.actionBg, color: "#FFFFFF", fontWeight: 700, cursor: isSavingContent || uploadingImageIndex !== null ? "not-allowed" : "pointer" }}>{isSavingContent ? "Saving..." : "Save Content"}</button>}
+              </div>
+            )}
+
             <div style={{ display: "grid", gap: "14px", marginTop: "18px" }}>
               {editorTab === "videos" && (
                 <>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button type="button" onClick={() => {
+                      setEventSearch("");
+                      setIsEventPickerOpen((previous) => !previous);
+                    }} aria-expanded={isEventPickerOpen} aria-controls="quick-links-event-picker" style={{ border: `1px solid ${palette.surfaceBorder}`, borderRadius: "8px", padding: "10px 14px", background: "#FFFFFF", color: "#0F172A", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <FaPlus />
+                      {isEventPickerOpen ? "Close Event Picker" : "Add From Events"}
+                    </button>
+                  </div>
+                  {isEventPickerOpen && (
+                    <div id="quick-links-event-picker" style={{ display: "grid", gap: "12px", minWidth: 0 }}>
+                      <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Event Images</h3>
+                      <input type="search" aria-label="Search events" placeholder="Search events" value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} style={inputStyle} />
+                      {isLoadingEvents && <div role="status">Loading events...</div>}
+                      {eventsError && <div role="alert" style={{ color: "#B91C1C" }}>{eventsError} <button type="button" onClick={() => setEventsLoadAttempt((previous) => previous + 1)}>Retry</button></div>}
+                      {!isLoadingEvents && !eventsError && (
+                        <>
+                          {filteredEvents.length === 0 && <div role="status">{availableEvents.length ? "No matching events." : "No events found."}</div>}
+                          <div style={{ display: "grid", gap: "6px", maxHeight: "480px", overflowY: "auto", padding: "2px" }}>
+                            {filteredEvents.map((event) => (
+                              <label key={event.id} style={{ border: `1px solid ${selectedEventIds.includes(event.id) ? palette.primary : palette.surfaceBorder}`, borderRadius: "8px", padding: "8px", display: "grid", gridTemplateColumns: "20px 64px minmax(0, 1fr)", alignItems: "center", gap: "10px", background: selectedEventIds.includes(event.id) ? "#F0FDF4" : "#FFFFFF", minWidth: 0, cursor: event.resolvedImageUrl ? "pointer" : "default" }}>
+                                <input type="checkbox" aria-label={`Select event ${cleanText(event.title) || event.id}`} disabled={!event.resolvedImageUrl} checked={selectedEventIds.includes(event.id)} onChange={(changeEvent) => {
+                                  setSelectedEventIds((previous) => changeEvent.target.checked ? [...previous, event.id] : previous.filter((eventId) => eventId !== event.id));
+                                }} />
+                                <div style={{ width: "64px", height: "64px", background: "#F1F5F9", borderRadius: "4px", display: "grid", placeItems: "center", overflow: "hidden" }}>
+                                  {event.resolvedImageUrl ? <img src={event.resolvedImageUrl} alt={cleanText(event.title) || "Event image"} loading="lazy" style={{ width: "auto", height: "auto", maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} onError={() => {
+                                    setAvailableEvents((previous) => previous.map((entry) => entry.id === event.id ? { ...entry, resolvedImageUrl: "" } : entry));
+                                    setSelectedEventIds((previous) => previous.filter((eventId) => eventId !== event.id));
+                                  }} /> : <span style={{ color: "#64748B", fontSize: "0.7rem", textAlign: "center", padding: "4px" }}>{event.imageUrl ? "Image unavailable" : "No image"}</span>}
+                                </div>
+                                <div style={{ minWidth: 0, overflowWrap: "anywhere", display: "grid", gap: "4px" }}>
+                                  <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{cleanText(event.title) || "Untitled Event"}</div>
+                                  <div style={{ color: "#475569", fontSize: "0.82rem" }}>{cleanText(event.startDate) || "Date not set"} {cleanText(event.startTime)}</div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      <button type="button" onClick={handleAddSelectedEvents} disabled={selectedEventIds.length === 0 || isLoadingEvents} style={{ border: "none", borderRadius: "8px", padding: "10px 14px", background: palette.actionBg, color: "#FFFFFF", fontWeight: 700, cursor: selectedEventIds.length === 0 || isLoadingEvents ? "not-allowed" : "pointer", opacity: selectedEventIds.length === 0 || isLoadingEvents ? 0.6 : 1, justifySelf: "start", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                        <FaPlus />
+                        Add Selected{selectedEventIds.length > 0 ? ` (${selectedEventIds.length})` : ""}
+                      </button>
+                    </div>
+                  )}
                   {selectedEditableVideo === null && (
                     <div style={{ display: "grid", gap: "12px" }}>
                       {editableVideos.map((video, index) => {
@@ -1715,6 +1952,12 @@ const QuickLinksPage = () => {
                           setSelectedMediaIndex(selectedMediaPreviewIndex);
                         }} disabled={selectedMediaPreviewIndex === null} style={{ border: "none", borderRadius: "999px", padding: "10px 14px", background: selectedMediaPreviewIndex === null ? "#E2E8F0" : "#0369A1", color: selectedMediaPreviewIndex === null ? "#94A3B8" : "#FFFFFF", fontWeight: 700, cursor: selectedMediaPreviewIndex === null ? "not-allowed" : "pointer" }}>
                           {selectedMediaPreviewIndex === null ? "Select Media First" : "Open Selected Item"}
+                        </button>
+                        <button type="button" aria-label="Delete selected media" title="Delete selected media" onClick={() => {
+                          if (selectedMediaPreviewIndex === null) return;
+                          handleDeleteVideo(selectedMediaPreviewIndex);
+                        }} disabled={selectedMediaPreviewIndex === null || uploadingImageIndex !== null} style={{ border: "none", borderRadius: "8px", width: "42px", height: "42px", background: "#FEE2E2", color: "#B91C1C", cursor: selectedMediaPreviewIndex === null || uploadingImageIndex !== null ? "not-allowed" : "pointer", opacity: selectedMediaPreviewIndex === null || uploadingImageIndex !== null ? 0.5 : 1, display: "inline-grid", placeItems: "center" }}>
+                          <FaTrash />
                         </button>
                         <button type="button" onClick={() => handleAddVideo("video")} style={{ border: `1px solid ${palette.surfaceBorder}`, borderRadius: "999px", padding: "10px 14px", background: "#FFFFFF", color: "#0F172A", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}>
                           <FaPlus />

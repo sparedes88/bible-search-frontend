@@ -2219,6 +2219,7 @@ const TimeRotate = () => {
         registeredBy: user?.name || user?.displayName || user?.email || "Unknown user",
         userId: user?.uid || "",
         notes: [],
+        enteredAt: Date.now(),
       });
     } catch (toggleError) {
       console.error("Error updating task completion:", toggleError);
@@ -2510,6 +2511,7 @@ const TimeRotate = () => {
       userEmail: resolvedUserEmail,
       ownerKey: activeTimerOwnerKey,
       notes: Array.isArray(activeTimer.notes) ? activeTimer.notes : [],
+      enteredAt: Date.now(),
     };
 
     try {
@@ -2602,6 +2604,7 @@ const TimeRotate = () => {
         createdBy: user?.name || user?.displayName || user?.email || "Unknown user",
         createdByUid: user?.uid || "",
         createdAt: Date.now(),
+        enteredAt: Date.now(),
       });
 
       const now = Date.now();

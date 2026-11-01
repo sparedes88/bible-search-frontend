@@ -1551,28 +1551,9 @@ const BuildMyChurch = () => {
     setUploadingFile(true);
     try {
       const uploadPromises = files.map(async (file) => {
-        const validTypes = [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/vnd.ms-excel',
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-powerpoint',
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          'text/plain',
-          'image/jpeg',
-          'image/png',
-          'image/jpg'
-        ];
-
-        if (!validTypes.includes(file.type)) {
-          safeToast.error(`Invalid file type: ${file.name}`);
-          return null;
-        }
-
-        const maxSize = 5 * 1024 * 1024;
-        if (file.size > maxSize) {
-          safeToast.error(`File too large: ${file.name}`);
+        const maxSize = 10 * 1024 * 1024;
+        if (file.size >= maxSize) {
+          safeToast.error(`File must be smaller than 10 MB: ${file.name}`);
           return null;
         }
 
@@ -1582,7 +1563,7 @@ const BuildMyChurch = () => {
         const storageRef = ref(storage, filePath);
 
         const metadata = {
-          contentType: file.type,
+          contentType: file.type || 'application/octet-stream',
           customMetadata: {
             originalName: file.name,
             uploadedAt: new Date().toISOString()

@@ -11,12 +11,15 @@ import { FaFilePdf } from 'react-icons/fa';
 const RoomsPage = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const [campuses, setCampuses] = useState([]);
+  const [selectedCampusId, setSelectedCampusId] = useState('');
   const [rooms, setRooms] = useState([]);
   const [isAddingRoom, setIsAddingRoom] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
   const [roomForm, setRoomForm] = useState({
     name: '',
     description: '',
+    campusId: '',
     capacity: 1,
     rentalCostHour: 0,
     rentalCostDay: '0.00',
@@ -74,6 +77,21 @@ const RoomsPage = () => {
   };
 
   useEffect(() => {
+    const fetchCampuses = async () => {
+      try {
+        const campusesRef = collection(db, 'churches', id, 'campuses');
+        const snapshot = await getDocs(query(campusesRef, orderBy('name')));
+        setCampuses(snapshot.docs.map(campusDoc => ({ id: campusDoc.id, ...campusDoc.data() })));
+      } catch (err) {
+        console.error('Error fetching campuses:', err);
+        toast.error('Failed to load campuses');
+      }
+    };
+
+    if (id) fetchCampuses();
+  }, [id]);
+
+  useEffect(() => {
     const fetchRooms = async () => {
       try {
         const roomsRef = collection(db, 'churches', id, 'rooms');
@@ -93,8 +111,17 @@ const RoomsPage = () => {
     fetchRooms();
   }, [id]);
 
+  const roomsForSelectedCampus = selectedCampusId
+    ? rooms.filter(room => !room.campusId || room.campusId === selectedCampusId)
+    : [];
+  const selectedCampus = campuses.find(campus => campus.id === selectedCampusId);
+
   const handleAddRoom = async (e) => {
     e.preventDefault();
+    if (!roomForm.campusId) {
+      toast.error('Select a campus before adding a room');
+      return;
+    }
     if (!roomForm.name) {
       toast.error('Room name is required');
       return;
@@ -104,6 +131,7 @@ const RoomsPage = () => {
       const roomsRef = collection(db, 'churches', id, 'rooms');
       await addDoc(roomsRef, {
         ...roomForm,
+        campusName: campuses.find(campus => campus.id === roomForm.campusId)?.name || '',
         createdAt: new Date()
       });
 
@@ -114,6 +142,7 @@ const RoomsPage = () => {
       setRoomForm({
         name: '',
         description: '',
+        campusId: '',
         capacity: 1,
         rentalCostHour: 0,
         rentalCostDay: '0.00',
@@ -128,9 +157,17 @@ const RoomsPage = () => {
   };
 
   const handleUpdateRoom = async (roomId) => {
+    if (!roomForm.campusId) {
+      toast.error('Select a campus before updating a room');
+      return;
+    }
+
     try {
       const roomRef = doc(db, 'churches', id, 'rooms', roomId);
-      await updateDoc(roomRef, roomForm);
+      await updateDoc(roomRef, {
+        ...roomForm,
+        campusName: campuses.find(campus => campus.id === roomForm.campusId)?.name || '',
+      });
 
       const roomsRef = collection(db, 'churches', id, 'rooms');
       const q = query(roomsRef, orderBy('createdAt', 'desc'));
@@ -141,6 +178,7 @@ const RoomsPage = () => {
       setRoomForm({
         name: '',
         description: '',
+        campusId: '',
         capacity: 1,
         rentalCostHour: 0,
         rentalCostDay: '0.00',
@@ -254,6 +292,17 @@ const RoomsPage = () => {
       <div style={styles.modalContent}>
         <h3>{editingRoom ? 'Edit Room' : 'Add New Room'}</h3>
         <form onSubmit={editingRoom ? () => handleUpdateRoom(editingRoom.id) : handleAddRoom}>
+          <label htmlFor="room-campus-select" style={{ display: 'block', marginBottom: '0.5rem' }}>Campus *</label>
+          <select
+            id="room-campus-select"
+            value={roomForm.campusId}
+            onChange={e => setRoomForm(prev => ({ ...prev, campusId: e.target.value }))}
+            style={styles.formControl}
+            required
+          >
+            <option value="">Select a campus first</option>
+            {campuses.map(campus => <option key={campus.id} value={campus.id}>{campus.name}</option>)}
+          </select>
           <input
             type="text"
             placeholder="Room Name"
@@ -313,7 +362,7 @@ const RoomsPage = () => {
   );
 
   return (
-    <div style={commonStyles.container}>
+    <div style={{ ...commonStyles.fullWidthContainer, minHeight: '100vh', textAlign: 'left' }}>
       <Link to={`/organization/${id}/mi-organizacion`} style={commonStyles.backButtonLink}>
         ← Back to Mi Organización
       </Link>
@@ -327,18 +376,45 @@ const RoomsPage = () => {
           <FaFilePdf style={{ marginRight: "0.5rem" }} /> Export to PDF
         </button>
         <button 
-          onClick={() => setIsAddingRoom(true)}
+          onClick={() => {
+            setRoomForm(prev => ({ ...prev, campusId: selectedCampusId }));
+            setIsAddingRoom(true);
+          }}
+          disabled={!selectedCampusId}
+          title={!selectedCampusId ? 'Select a campus first' : 'Add a room to the selected campus'}
           style={{ ...styles.button, backgroundColor: "#10B981" }}
         >
           + Add New Room
         </button>
       </div>
 
-      {rooms.map(room => (
-        <div key={room.id} style={styles.roomCard}>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <label htmlFor="rooms-campus-filter" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Select a campus before choosing a room</label>
+        <select
+          id="rooms-campus-filter"
+          value={selectedCampusId}
+          onChange={event => {
+            setSelectedCampusId(event.target.value);
+            setIsAddingRoom(false);
+            setEditingRoom(null);
+          }}
+          style={styles.formControl}
+        >
+          <option value="">Select a campus</option>
+          {campuses.map(campus => <option key={campus.id} value={campus.id}>{campus.name}</option>)}
+        </select>
+      </div>
+
+      {!selectedCampusId ? (
+        <p>Select a campus to view and manage its rooms.</p>
+      ) : roomsForSelectedCampus.length === 0 ? (
+        <p>No rooms are assigned to this campus yet.</p>
+      ) : roomsForSelectedCampus.map(room => (
+        <div key={room.id} data-room-id={room.id} style={styles.roomCard}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
             <div>
               <h3 style={{ margin: "0 0 0.5rem 0" }}>{room.name}</h3>
+              {!room.campusId && <p style={{ margin: '0 0 0.5rem', color: '#B45309' }}>Unassigned; editing will assign it to {selectedCampus?.name}.</p>}
               <p style={{ margin: "0", color: "#6B7280" }}>
                 Capacity: {room.capacity} | Hourly Rate: ${room.rentalCostHour} | Daily Rate: ${room.rentalCostDay}
                 {room.description && <br />}
@@ -349,7 +425,7 @@ const RoomsPage = () => {
               <button
                 onClick={() => {
                   setEditingRoom(room);
-                  setRoomForm(room);
+                  setRoomForm({ ...room, campusId: room.campusId || selectedCampusId });
                 }}
                 style={{ ...styles.button, backgroundColor: "#F59E0B" }}
               >

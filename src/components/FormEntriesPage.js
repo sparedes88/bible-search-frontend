@@ -18,6 +18,9 @@ import { FiDownload, FiTrash2, FiArrowLeft, FiRefreshCw, FiBarChart2 } from 'rea
 import { analyzeFormEntries, getChurchData } from '../api/church';
 import './Forms.css';
 import html2pdf from 'html2pdf.js';
+import FormEntryCharts from './FormEntryCharts';
+import FormEntryFilters from './FormEntryFilters';
+import { filterAndSortFormEntries } from '../utils/formEntryFiltering';
 
 const FormEntriesPage = () => {
   const { id, formId } = useParams();
@@ -27,6 +30,22 @@ const FormEntriesPage = () => {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [fieldFilters, setFieldFilters] = useState([]);
+  const [sortField, setSortField] = useState('createdAt');
+  const [sortDirection, setSortDirection] = useState('desc');
+  const resetEntryFilters = () => {
+    setSearchTerm('');
+    setFieldFilters([]);
+    setSortField('createdAt');
+    setSortDirection('desc');
+  };
+
+  useEffect(() => {
+    setSearchTerm('');
+    setFieldFilters([]);
+    setSortField('createdAt');
+    setSortDirection('desc');
+  }, [id, formId]);
   const [churchLogoUrl, setChurchLogoUrl] = useState(null);
   const [churchName, setChurchName] = useState('');
   
@@ -261,7 +280,7 @@ const FormEntriesPage = () => {
   };
 
   const exportToCSV = () => {
-    if (entries.length === 0) {
+    if (filteredEntries.length === 0) {
       toast.error('No entries to export');
       return;
     }
@@ -269,7 +288,7 @@ const FormEntriesPage = () => {
     const headers = ['Submission Date', 'Submitted By', ...form.fields.map(field => field.label)];
     const csvData = [
       headers,
-      ...entries.map(entry => [
+      ...filteredEntries.map(entry => [
         entry.createdAt ? new Date(entry.createdAt.toDate()).toLocaleString() : 'Unknown',
         entry.submittedBy || 'Anonymous',
         ...form.fields.map(field => {
@@ -277,7 +296,7 @@ const FormEntriesPage = () => {
           if (Array.isArray(value)) {
             return value.join(', ');
           }
-          return value || '';
+          return value ?? '';
         })
       ])
     ];
@@ -313,21 +332,7 @@ const FormEntriesPage = () => {
     }
   };
 
-  const filteredEntries = entries.filter(entry => {
-    if (!searchTerm) return true;
-    
-    const searchLower = searchTerm.toLowerCase();
-    return form.fields.some(field => {
-      const value = entry[field.name];
-      if (typeof value === 'string') {
-        return value.toLowerCase().includes(searchLower);
-      }
-      if (Array.isArray(value)) {
-        return value.some(v => String(v).toLowerCase().includes(searchLower));
-      }
-      return false;
-    });
-  });
+  const filteredEntries = filterAndSortFormEntries(entries, form?.fields || [], { searchTerm, filters: fieldFilters, sortField, sortDirection });
 
   // Show loading state
   if (!user) {
@@ -506,6 +511,10 @@ const FormEntriesPage = () => {
             }}
           />
         </div>
+
+        <FormEntryFilters key={`filters-${id}-${formId}`} fields={form.fields} filters={fieldFilters} onFiltersChange={setFieldFilters} sortField={sortField} onSortFieldChange={setSortField} sortDirection={sortDirection} onSortDirectionChange={setSortDirection} onReset={resetEntryFilters} matchingCount={filteredEntries.length} totalCount={entries.length} />
+
+        <FormEntryCharts key={`${id}-${formId}`} fields={form.fields} entries={filteredEntries} filtered={Boolean(searchTerm.trim()) || fieldFilters.length > 0} reportTitle={form.title} organizationName={churchName} organizationLogoUrl={churchLogoUrl || '/img/logo-fallback.svg'} />
 
         {/* Overview when Analysis is hidden */}
         {!showAIAnalysis && (
@@ -1749,7 +1758,7 @@ const FormEntriesPage = () => {
             padding: '3rem',
             color: '#6b7280'
           }}>
-            {searchTerm ? 'No entries match your search' : 'No submissions yet'}
+            {searchTerm || fieldFilters.length ? 'No entries match your filters' : 'No submissions yet'}
           </div>
         ) : (
           <div style={{ 

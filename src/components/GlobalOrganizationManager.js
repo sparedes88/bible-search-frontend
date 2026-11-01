@@ -36,7 +36,7 @@ const GlobalOrganizationManager = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortColumn, setSortColumn] = useState("nombre");
   const [sortDirection, setSortDirection] = useState("asc");
-  const [showInactive, setShowInactive] = useState(false);
+  const [showInactive, setShowInactive] = useState(true);
   const [brandFilter, setBrandFilter] = useState("");
   const organizationsPerPage = 10;
   const totalPages = Math.ceil(organizations.length / organizationsPerPage);
@@ -1053,7 +1053,6 @@ const GlobalOrganizationManager = () => {
       return false;
     }
 
-    // Inactive filter - hide inactive by default unless checkbox is checked
     if (!showInactive && organization.isActive === false) {
       return false;
     }

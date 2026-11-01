@@ -585,12 +585,6 @@ const Search = () => {
 
   return (
     <div className="search-container">
-      {/* Quick access link to Live Issue Tracker */}
-      <div style={{ margin: "16px 0" }}>
-        <Link to="/live-issue-tracker" style={{ fontWeight: "bold", color: "#0ea5e9" }}>
-          🚦 Live Issue Tracker
-        </Link>
-      </div>
       {/* Header Section */}
       <div className="search-header">
         {/* Logo - changes based on selected brand */}

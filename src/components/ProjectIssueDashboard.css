@@ -1360,6 +1360,31 @@
   box-shadow: 0 1px 0 #e5e7eb;
 }
 
+.project-issue-table th:nth-child(1),
+.project-issue-table td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  min-width: 110px;
+  background-color: #ffffff;
+}
+
+.project-issue-table th:nth-child(2),
+.project-issue-table td:nth-child(2) {
+  position: sticky;
+  left: 110px;
+  z-index: 3;
+  min-width: 180px;
+  background-color: #ffffff;
+  box-shadow: 2px 0 4px rgba(15, 23, 42, 0.08);
+}
+
+.project-issue-table thead th:nth-child(1),
+.project-issue-table thead th:nth-child(2) {
+  z-index: 4;
+  background-color: #f8fafc;
+}
+
 .project-issue-table tbody tr:nth-child(odd) {
   background-color: #ffffff;
 }

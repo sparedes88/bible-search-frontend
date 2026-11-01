@@ -1332,6 +1332,7 @@ const TimeTracking = () => {
           userId: user?.uid || "",
           userEmail: user?.email || "",
           notes: Array.isArray(sessionToStop.notes) ? sessionToStop.notes : [],
+          enteredAt: Date.now(),
         })
       : Promise.resolve(null);
 

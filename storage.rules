@@ -263,6 +263,19 @@ service firebase.storage {
       allow delete: if isAuthenticated() && isChurchMember(churchId);
     }
 
+    // AI Training student assessment recordings for Gemini grading.
+    match /churches/{churchId}/aiTrainingAssessments/{userId}/{fileName} {
+      allow read: if isAuthenticated() && (isChurchMember(churchId) || request.auth.uid == userId);
+      allow write: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.size < 40 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('audio/.*') ||
+          request.resource.contentType.matches('video/.*')
+        );
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isChurchAdmin(churchId));
+    }
+
     // Work Progress note attachments (documents, images, and other files)
     match /churches/{churchId}/workProgressNoteAttachments/{taskId}/{fileName} {
       allow read: if isAuthenticated() && isChurchMember(churchId);
@@ -414,24 +427,21 @@ service firebase.storage {
         && (isGlobalAdmin() || isChurchAdmin(churchId));
     }
 
+    // Lead profile documents and images - available only to authenticated church members.
+    match /churches/{churchId}/leads/{leadId}/attachments/{fileName} {
+      allow read: if isAuthenticated() && isChurchMember(churchId);
+      allow write: if isAuthenticated()
+        && isChurchMember(churchId)
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAuthenticated() && isChurchMember(churchId);
+    }
+
     // Task documents and comment files - allow church members to upload
     match /tasks/{churchId}/{taskId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null
         && isChurchMember(churchId)
-        && request.resource.size < 10 * 1024 * 1024  // 10MB max
-        && (
-          // Allow common document types
-          request.resource.contentType.matches('application/pdf') ||
-          request.resource.contentType.matches('application/msword') ||
-          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
-          request.resource.contentType.matches('application/vnd.ms-excel') ||
-          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
-          request.resource.contentType.matches('application/vnd.ms-powerpoint') ||
-          request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.presentationml.presentation') ||
-          request.resource.contentType.matches('text/plain') ||
-          request.resource.contentType.matches('image/.*')
-        );
+        && request.resource.size < 10 * 1024 * 1024;  // 10MB max, any file type
       allow delete: if request.auth != null
         && isChurchMember(churchId);
     }
@@ -497,6 +507,27 @@ service firebase.storage {
       allow read, write, delete: if request.auth != null
         && isChurchMember(churchId)
         && request.resource.size < 10 * 1024 * 1024;  // 10MB max
+    }
+
+    // Easy Projector backgrounds - public read so the broadcast screen can load them without auth
+    match /images/{churchId}/projector/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && isChurchMember(churchId)
+        && request.resource.size < 15 * 1024 * 1024  // 15MB max
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+        && isChurchMember(churchId);
+    }
+
+    // Easy Projector videos - public read for broadcast screens, member upload.
+    match /videos/{churchId}/projector/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && isChurchMember(churchId)
+        && request.resource.size < 500 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+      allow delete: if request.auth != null && isChurchMember(churchId);
     }
   }
 }

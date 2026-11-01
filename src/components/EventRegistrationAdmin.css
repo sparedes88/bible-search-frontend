@@ -1,0 +1,60 @@
+.registration-admin .event-registration-graphic { height: min(45vh, 480px); }
+.registration-admin-shell { max-width: 1240px; margin: 0 auto; padding: 38px 32px 60px; }
+.registration-admin-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 48px; padding-bottom: 30px; border-bottom: 1px solid var(--registration-line); }
+.registration-admin-summary h1 { margin: 0; color: var(--registration-ink); font-family: 'Manrope', sans-serif; font-size: 30px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
+.registration-admin-summary .registration-title-rule { margin: 20px 0 0; }
+.registration-admin-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
+.registration-admin-facts > div:last-child:nth-child(3) { grid-column: 1 / -1; }
+.registration-admin-workspace { padding-top: 30px; }
+.registration-admin-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 18px; margin-bottom: 22px; }
+.registration-admin-toolbar h2 { margin: 0; color: var(--registration-ink); font-family: 'Manrope', sans-serif; font-size: 21px; line-height: 1.4; font-weight: 700; }
+.registration-admin-count { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--registration-muted); font-size: 13px; }
+.registration-admin-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.registration-admin-button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 41px; padding: 9px 13px; border: 1px solid #cbd8ce; border-radius: 5px; background: #fff; color: var(--registration-accent); font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; }
+.registration-admin-button:hover { background: #edf5f0; color: var(--registration-accent); text-decoration: none; }
+.registration-admin-primary { background: var(--registration-accent); border-color: var(--registration-accent); color: #fff; }
+.registration-admin-primary:hover { background: #17513b; color: #fff; }
+.registration-admin-button:disabled { opacity: .6; cursor: wait; }
+.registration-admin-settings { padding: 14px 0 20px; margin-bottom: 2px; }
+.registration-admin-settings label { display: flex; align-items: flex-start; gap: 9px; color: #53665b; font-size: 13px; line-height: 1.6; cursor: pointer; }
+.registration-admin-settings input { flex-shrink: 0; width: 16px; height: 16px; margin-top: 3px; accent-color: var(--registration-accent); }
+.registration-admin-form-wrap { max-width: 640px; padding: 22px 0 0; border-top: 1px solid var(--registration-line); }
+.registration-admin-form-wrap > h3 { margin: 0 0 24px; color: var(--registration-ink); font-family: 'Manrope', sans-serif; font-size: 18px; font-weight: 700; }
+.registration-admin-phone { grid-column: 1 / -1; }
+.registration-admin-form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
+.registration-admin-form-actions .registration-submit { width: auto; min-width: 140px; min-height: 43px; margin: 0; }
+.registration-admin-success { display: flex; align-items: flex-start; gap: 14px; padding: 26px 0; color: var(--registration-accent); border-top: 1px solid var(--registration-line); }
+.registration-admin-success h3 { margin: 0 0 8px; color: var(--registration-ink); font-size: 20px; }
+.registration-admin-success p { margin: 0; color: var(--registration-muted); font-size: 14px; }
+.registration-admin-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; border-top: 1px solid var(--registration-line); }
+.registration-admin-table { width: 100%; min-width: 800px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.registration-admin-table th { padding: 13px 12px; border-bottom: 1px solid var(--registration-line); background: #eef4f0; color: #52665a; text-align: left; font-size: 12px; font-weight: 600; }
+.registration-admin-table td { padding: 18px 12px; border-bottom: 1px solid #e8eee9; vertical-align: middle; color: #40564a; line-height: 1.6; overflow-wrap: anywhere; }
+.registration-admin-table tbody tr:hover { background: #f7faf8; }
+.registration-admin-table td > strong { color: var(--registration-ink); font-weight: 600; }
+.registration-admin-table td > span, .registration-admin-table td > small { display: block; }
+.registration-admin-table td > small { margin-top: 4px; color: var(--registration-muted); font-size: 11px; }
+.registration-admin-table .registration-admin-muted { color: #8a968e; }
+.registration-admin-action-heading { width: 100px; }
+.registration-admin-row-actions { display: flex; gap: 4px; }
+.registration-admin-row-actions button { display: inline-flex; align-items: center; justify-content: center; width: 33px; height: 33px; padding: 0; border: 1px solid #d9e3dc; border-radius: 4px; background: #fff; color: var(--registration-accent); cursor: pointer; }
+.registration-admin-row-actions button:hover { background: #eaf3ed; }
+.registration-admin-row-actions .registration-admin-delete { color: #ad4b3b; }
+.registration-admin-row-actions .registration-admin-delete:hover { background: #fff0ec; }
+.registration-admin-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 50px 20px; border-top: 1px solid var(--registration-line); color: #6b8374; text-align: center; }
+.registration-admin-empty p { margin: 0 0 6px; font-size: 14px; }
+@media (max-width: 760px) {
+  .registration-admin .event-registration-graphic { height: auto; aspect-ratio: 16 / 9; }
+  .registration-admin-shell { padding: 28px 22px 44px; }
+  .registration-admin-summary { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-bottom: 26px; }
+  .registration-admin-summary h1 { font-size: 25px; }
+  .registration-admin-facts { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .registration-admin-workspace { padding-top: 25px; }
+  .registration-admin-toolbar { align-items: flex-start; gap: 16px; }
+  .registration-admin-toolbar h2 { font-size: 20px; }
+  .registration-admin-actions { width: 100%; }
+  .registration-admin-actions > * { flex: 1; }
+  .registration-admin-button { font-size: 12px; }
+  .registration-admin-form-actions { flex-wrap: wrap; }
+  .registration-admin-success > svg { flex-shrink: 0; }
+}

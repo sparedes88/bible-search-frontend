@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Live Screen</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  #blur {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    transform: scale(1.1);
+    pointer-events: none;
+  }
+  #text {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    padding: 0 4vw;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    box-sizing: border-box;
+  }
+  #caption {
+    position: absolute;
+    left: 50%;
+    bottom: 4vh;
+    transform: translateX(-50%);
+    z-index: 2;
+    max-width: 88%;
+    padding: 0.6em 1.1em;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: clamp(16px, 2.2vw, 34px);
+    line-height: 1.3;
+  }
+  #caption:empty { display: none; }
+  #video { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #text { z-index: 2; }
+  #video-error { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80%; padding: 16px 20px; border-radius: 8px; background: rgba(0,0,0,.8); color: #fff; font: 18px Arial, sans-serif; text-align: center; display: none; }
+  #video-start { position: absolute; z-index: 4; left: 50%; top: 50%; transform: translate(-50%, -50%); border: 0; border-radius: 999px; padding: 14px 24px; background: rgba(15,118,110,.95); color: #fff; font: 700 18px Arial, sans-serif; cursor: pointer; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="blur"></div><video id="video" autoplay muted playsinline preload="auto" style="display:none"></video><button id="video-start" type="button">▶ Start video audio</button><div id="video-error"></div><div id="text"></div></div>
+<div id="caption"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, doc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+const app = initializeApp({
+  apiKey: 'AIzaSyCY_XOuio1JgIW6EmUhmP7SCbUj8fXQJw0',
+  authDomain: 'igletechv1.firebaseapp.com',
+  projectId: 'igletechv1',
+  storageBucket: 'igletechv1.firebasestorage.app',
+  messagingSenderId: '656473490321',
+  appId: '1:656473490321:web:0ed1496532e9c6be8ad030',
+});
+const db = getFirestore(app);
+
+const params = new URLSearchParams(location.search);
+const lang = params.get('lang') || '';
+const stage = document.getElementById('stage');
+const blur = document.getElementById('blur');
+const textEl = document.getElementById('text');
+const captionEl = document.getElementById('caption');
+const videoEl = document.getElementById('video');
+const videoErrorEl = document.getElementById('video-error');
+const videoStartEl = document.getElementById('video-start');
+let activeVideoUrl = '';
+let videoPlayAttemptedForUrl = '';
+
+videoEl.onerror = () => {
+  videoErrorEl.textContent = 'Video format is not supported. Use MP4 with H.264 video and AAC audio.';
+  videoErrorEl.style.display = 'block';
+};
+
+videoEl.oncanplay = () => {
+  if (!videoEl.src || videoPlayAttemptedForUrl === activeVideoUrl) return;
+  videoPlayAttemptedForUrl = activeVideoUrl;
+  videoEl.play().then(() => {
+    videoStartEl.style.display = 'none';
+  }).catch(() => {
+    videoStartEl.textContent = '▶ Start video audio';
+    videoStartEl.style.display = 'block';
+  });
+};
+
+videoEl.onended = () => {
+  // Restart only when the file naturally ends; never reload during a live update.
+  videoEl.currentTime = 0;
+  videoEl.play().catch(() => {
+    videoStartEl.style.display = 'block';
+  });
+};
+
+videoStartEl.addEventListener('click', () => {
+  videoEl.muted = false;
+  videoEl.play().then(() => {
+    videoStartEl.style.display = 'none';
+    videoErrorEl.style.display = 'none';
+  }).catch(() => {
+    videoErrorEl.textContent = 'ViPlex blocked video audio. Enable autoplay/media permissions in ViPlex.';
+    videoErrorEl.style.display = 'block';
+  });
+});
+
+const resolveTarget = async () => {
+  const code = params.get('code');
+  if (code) {
+    const snap = await getDoc(doc(db, 'broadcastLinks', code.trim().toUpperCase()));
+    if (snap.exists()) return snap.data();
+  }
+  return { churchId: params.get('church'), broadcastId: params.get('broadcast') };
+};
+
+const lyricText = (song, index) => {
+  const lyrics = Array.isArray(song?.lyrics) ? song.lyrics : [];
+  const entry = lyrics[index || 0];
+  return typeof entry === 'object' ? (entry?.text || '') : (entry || '');
+};
+
+const render = (data, song) => {
+  if (data.videoUrl) {
+    const nextVideoUrl = String(data.videoUrl);
+    const videoChanged = activeVideoUrl !== nextVideoUrl;
+    // Start muted so ViPlex permits autoplay; sound is enabled only by the button.
+    videoEl.muted = true;
+    videoEl.defaultMuted = true;
+    videoErrorEl.style.display = 'none';
+    videoStartEl.style.display = 'none';
+    videoEl.style.display = 'block';
+    textEl.style.display = 'none';
+    if (videoChanged) {
+      activeVideoUrl = nextVideoUrl;
+      videoPlayAttemptedForUrl = '';
+      videoEl.dataset.broadcastUrl = nextVideoUrl;
+      videoEl.src = nextVideoUrl;
+      videoEl.load();
+      videoEl.play().catch((error) => {
+        console.warn('ViPlex video autoplay was blocked:', error);
+        videoStartEl.style.display = 'block';
+      });
+    } else {
+      const targetTime = Number(data.videoCurrentTime) || 0;
+      if (Math.abs(videoEl.currentTime - targetTime) > 1.5) videoEl.currentTime = targetTime;
+      if (data.videoPaused) videoEl.pause();
+      else if (videoEl.paused) videoEl.play().catch(() => {});
+    }
+  } else {
+    activeVideoUrl = '';
+    videoEl.pause();
+    videoEl.removeAttribute('src');
+    videoEl.dataset.broadcastUrl = '';
+    videoEl.load();
+    videoEl.style.display = 'none';
+    videoErrorEl.style.display = 'none';
+    videoStartEl.style.display = 'none';
+    textEl.style.display = 'block';
+  }
+  const isImage = data.backgroundType === 'ai' || data.backgroundType === 'image';
+  const isGradient = data.backgroundType === 'gradient';
+  const colors = data.gradientColors || ['#000', '#000'];
+
+  stage.style.backgroundImage = isImage
+    ? `url("${data.backgroundColor}")`
+    : isGradient
+      ? `linear-gradient(${data.gradientAngle || 45}deg, ${colors[0]}, ${colors[1]})`
+      : 'none';
+  stage.style.backgroundColor = isImage || isGradient ? 'transparent' : (data.backgroundColor || '#000');
+
+  const blurAmount = Number(data.backgroundBlur) || 0;
+  if (isImage && blurAmount > 0) {
+    blur.style.backgroundImage = `url("${data.backgroundColor}")`;
+    blur.style.filter = `blur(${blurAmount}px)`;
+    blur.style.display = 'block';
+  } else {
+    blur.style.display = 'none';
+  }
+
+  textEl.style.color = data.fontColor || '#fff';
+  textEl.style.fontSize = `${data.fontSize || 48}px`;
+  textEl.style.fontFamily = data.fontFamily || 'Arial';
+  textEl.style.fontWeight = data.isBold ? 'bold' : 'normal';
+  textEl.style.fontStyle = data.isItalic ? 'italic' : 'normal';
+  textEl.style.textTransform = data.isUpperCase ? 'uppercase' : 'none';
+  textEl.style.textShadow = data.textShadow || 'none';
+
+  if (data.bibleVerse && data.bibleVerse.text) {
+    const size = Math.round((Number(data.fontSize) || 48) * 0.5);
+    textEl.innerHTML = '';
+    textEl.append(data.bibleVerse.text);
+    const ref = document.createElement('div');
+    ref.style.cssText = `font-size:${size}px;margin-top:1rem;opacity:.8`;
+    ref.textContent = `${data.bibleVerse.reference} (${data.bibleVerse.version || ''})`.trim();
+    textEl.appendChild(ref);
+  } else if (data.songId) {
+    textEl.textContent = lyricText(song, data.currentLyricIndex);
+  } else {
+    textEl.textContent = '';
+  }
+
+  captionEl.textContent = lang && data.caption
+    ? (data.caption.translations && data.caption.translations[lang]) || ''
+    : '';
+};
+
+(async () => {
+  const { churchId, broadcastId } = await resolveTarget();
+  if (!churchId || !broadcastId) {
+    textEl.style.color = '#fff';
+    textEl.style.fontFamily = 'Arial';
+    textEl.style.fontSize = '24px';
+    textEl.textContent = 'Add ?code=ABC12 or ?church=ID&broadcast=ID to the address.';
+    return;
+  }
+
+  let song = null;
+  let loadedSongId = '';
+
+  onSnapshot(doc(db, `churches/${churchId}/broadcasts`, broadcastId), async (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+
+    if (data.songId && data.songId !== loadedSongId) {
+      loadedSongId = data.songId;
+      const songSnap = await getDoc(doc(db, `churches/${churchId}/songs`, data.songId));
+      song = songSnap.exists() ? songSnap.data() : null;
+    }
+
+    render(data, song);
+  });
+})();
+</script>
+</body>
+</html>

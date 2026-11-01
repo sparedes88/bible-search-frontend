@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { db } from "../firebase";
-import { collection, doc, getDoc, getDocs, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { toast } from "react-toastify";
 import {
   getModuleVisibilityRoleKeys,
@@ -18,6 +18,7 @@ import {
   normalizeModuleVisibilityRole,
 } from "../utils/organizationModules";
 import { clearSwitchAccountsForOrganization } from "../utils/accountSwitching";
+import { getAccessibleOrganizations, hasOrganizationAccess } from "../utils/organizationMemberships";
 import "./MiOrganizacion.css";
 import ChurchHeader from "./ChurchHeader";
 import commonStyles from "../pages/commonStyles";
@@ -345,18 +346,12 @@ const MiOrganizacion = () => {
       // Reset error state when ID changes
       setError(null);
 
-      // Check if user has access to this organization
-      // Global admins can access any organization
-      // Regular users (admin, member) can only access their assigned church
-      if (!isGlobalAdminUser && user.churchId && String(user.churchId) !== String(id)) {
-        setError("Access Denied: You don't have permission to access this organization.");
-        setLoading(false);
-        setModulesReady(true);
-        return;
-      }
-
       try {
         setLoading(true);
+        if (!(await hasOrganizationAccess(user, id, isGlobalAdminUser))) {
+          setError("Access Denied: You don't have permission to access this organization.");
+          return;
+        }
         const [organizationSnap, visibilitySnap, layoutSnap, metadataSnap] = await Promise.all([
           getDoc(doc(db, "churches", id)),
           getDoc(doc(db, "churches", id, MODULE_SETTINGS_SUBCOLLECTION, MODULE_VISIBILITY_DOC_ID)),
@@ -387,24 +382,54 @@ const MiOrganizacion = () => {
             (roleKey) => !["global_admin", "member"].includes(roleKey)
           );
 
+          const metadata = metadataSnap.exists() ? metadataSnap.data() || {} : {};
+          const roleNameMap = normalizeRoleMapKeys({
+            ...(data?.miOrganizacionRoleNameMap || {}),
+            ...(metadata?.roleNameMap || {}),
+          });
+          const roleBaseRoleMap = normalizeRoleMapKeys({
+            ...(data?.miOrganizacionRoleBaseRoleMap || {}),
+            ...(metadata?.roleBaseRoleMap || {}),
+          });
+
           const normalizeRoleAlias = (value) =>
             String(value || "")
               .trim()
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, "");
 
+          const customRoleIdCandidates = [user?.customRoleId, user?.assignedRoleId]
+            .map((roleKey) => normalizeModuleVisibilityRole(roleKey))
+            .filter(Boolean);
+          const roleLabelAliases = [
+            resolvedRoleLabel,
+            getRoleDisplayName(user),
+            user?.customRoleName,
+            user?.customRoleLabel,
+            user?.assignedRoleName,
+            user?.assignedRoleLabel,
+          ].map(normalizeRoleAlias).filter(Boolean);
+          const assignedBaseRole = normalizeRoleAlias(user?.baseRole || user?.basedOn || user?.roleBase || "");
+          const explicitCustomRoleKey = customRoleIdCandidates.find((roleKey) => customStoredRoleKeys.includes(roleKey));
+          const customRoleKeyByLabel = customStoredRoleKeys.find((roleKey) => {
+            const nameAlias = normalizeRoleAlias(roleNameMap[roleKey]);
+            if (!nameAlias || !roleLabelAliases.includes(nameAlias)) return false;
+            const mappedBaseRole = normalizeRoleAlias(roleBaseRoleMap[roleKey]);
+            return !assignedBaseRole || !mappedBaseRole || mappedBaseRole === assignedBaseRole;
+          });
+
           const roleCandidates = [
-            moduleRole,
             normalizeModuleVisibilityRole(user?.customRoleId),
             normalizeModuleVisibilityRole(user?.customRole),
             normalizeModuleVisibilityRole(user?.assignedRoleId),
             normalizeModuleVisibilityRole(user?.role),
+            moduleRole,
           ]
             .filter(Boolean)
             .filter((roleKey) => !isGenericCustomRoleValue(roleKey));
 
           const labelCandidateAlias = normalizeRoleAlias(resolvedRoleLabel);
-          const matchedStoredRoleKey = roleCandidates.find((roleKey) =>
+          const matchedStoredRoleKey = explicitCustomRoleKey || customRoleKeyByLabel || roleCandidates.find((roleKey) =>
             storedRoleKeys.includes(roleKey)
           );
           const fuzzyMatchedStoredRoleKey =
@@ -452,19 +477,9 @@ const MiOrganizacion = () => {
             ? moduleRole
             : "member";
 
-          const metadata = metadataSnap.exists() ? metadataSnap.data() || {} : {};
-          const metadataRoleNameMap = {
-            ...(data?.miOrganizacionRoleNameMap || {}),
-            ...(metadata?.roleNameMap || {}),
-          };
-          const metadataRoleBaseRoleMap = {
-            ...(data?.miOrganizacionRoleBaseRoleMap || {}),
-            ...(metadata?.roleBaseRoleMap || {}),
-          };
-
-          const metadataResolvedRoleName = getMappedRoleValue(metadataRoleNameMap, resolvedActiveRole);
+          const metadataResolvedRoleName = getMappedRoleValue(roleNameMap, resolvedActiveRole);
           const metadataResolvedBaseRole = String(
-            getMappedRoleValue(metadataRoleBaseRoleMap, resolvedActiveRole)
+            getMappedRoleValue(roleBaseRoleMap, resolvedActiveRole)
             || user?.baseRole
             || user?.role
             || "member"
@@ -521,6 +536,7 @@ const MiOrganizacion = () => {
   }, [isAdminUser, navigationSections]);
 
   useEffect(() => {
+    let active = true;
     const fetchAvailableOrganizations = async () => {
       if (!user || !id) {
         setAvailableOrganizations([]);
@@ -528,29 +544,21 @@ const MiOrganizacion = () => {
       }
 
       try {
-        if (isGlobalAdminUser) {
-          const churchesSnapshot = await getDocs(collection(db, "churches"));
-          const organizations = churchesSnapshot.docs.map((churchDoc) => ({
-            id: churchDoc.id,
-            ...churchDoc.data(),
-          }));
-          setAvailableOrganizations(organizations);
-          return;
-        }
-
-        const organizationSnap = await getDoc(doc(db, "churches", id));
-        if (organizationSnap.exists()) {
-          const organization = { id: organizationSnap.id, ...organizationSnap.data() };
-          setAvailableOrganizations([organization]);
-        } else {
-          setAvailableOrganizations([]);
-        }
+        const organizations = await getAccessibleOrganizations(user, isGlobalAdminUser);
+        if (active) setAvailableOrganizations(organizations);
       } catch (fetchError) {
         console.error("Error fetching organizations for switcher:", fetchError);
+        if (active) setAvailableOrganizations([]);
       }
     };
 
     fetchAvailableOrganizations();
+    const refreshOrganizations = () => { fetchAvailableOrganizations(); };
+    window.addEventListener("focus", refreshOrganizations);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refreshOrganizations);
+    };
   }, [id, isGlobalAdminUser, user]);
 
   useEffect(() => {
@@ -684,7 +692,7 @@ const MiOrganizacion = () => {
   };
 
   const handleOrganizationSwitch = (nextOrganizationId) => {
-    if (!nextOrganizationId || String(nextOrganizationId) === String(id)) {
+    if (!nextOrganizationId || String(nextOrganizationId) === String(id) || !availableOrganizations.some((organization) => String(organization.id) === String(nextOrganizationId))) {
       return;
     }
 
@@ -791,7 +799,7 @@ const MiOrganizacion = () => {
         }}>
           <h1 style={commonStyles.title}>My Organization</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {isGlobalAdminUser && availableOrganizations.length > 1 && (
+            {availableOrganizations.length > 1 && (
               <div
                 ref={organizationDropdownRef}
                 style={{

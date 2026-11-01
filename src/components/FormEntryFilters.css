@@ -1,0 +1,53 @@
+.form-entry-filters {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.form-entry-filter-toolbar, .form-entry-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.form-entry-filter-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 40px;
+}
+
+.form-entry-filters label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 5px;
+  color: #374151;
+}
+
+.form-entry-filters input, .form-entry-filters select, .form-entry-filters button {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid #cbd5da;
+  border-radius: 6px;
+  background: #fff;
+  color: #25343d;
+  font-size: 14px;
+}
+
+.form-entry-filters button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.form-entry-filters button:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-entry-filter-count { font-size: 13px; color: #5c6770; margin: 0; }
+
+@media (max-width: 680px) {
+  .form-entry-filter-toolbar, .form-entry-filter-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .form-entry-filter-row button { width: 40px; justify-self: end; }
+}

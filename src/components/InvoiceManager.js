@@ -26,6 +26,7 @@ import ChurchHeader from "./ChurchHeader";
 import commonStyles from "../pages/commonStyles";
 import { canManageModule } from "../utils/enhancedPermissions";
 import { getChurchData } from "../api/church";
+import { getOvertimePolicyLabel, useOvertimePolicy } from "../utils/overtimePolicy";
 
 const FIREBASE_FUNCTIONS_BASE_URL =
   typeof window !== "undefined" && window.location.hostname === "localhost"
@@ -406,13 +407,32 @@ const OVERTIME_THRESHOLD_MILLISECONDS = OVERTIME_THRESHOLD_HOURS * 60 * 60 * 100
 const OVERTIME_RATE = BASE_HOURLY_RATE * OVERTIME_MULTIPLIER;
 const OVERTIME_POLICY_LABEL = `OT after ${OVERTIME_THRESHOLD_HOURS}h/user/week @ $${OVERTIME_RATE}/h`;
 
+const buildBillingSnapshot = (total, hoursData = {}, policy) => {
+  const baseRate = Number(policy?.baseRate) || BASE_HOURLY_RATE;
+  const overtimeMultiplier = Number(policy?.overtimeMultiplier) || OVERTIME_MULTIPLIER;
+  const overtimeThresholdHours = Number(policy?.thresholdHours) || OVERTIME_THRESHOLD_HOURS;
+  return {
+    total: Number(total) || 0,
+    totalRegularHours: Number(hoursData.totalRegularHours) || 0,
+    totalOvertimeHours: Number(hoursData.totalOvertimeHours) || 0,
+    totalHours: Number(hoursData.totalHours) || 0,
+    baseRate,
+    overtimeMultiplier,
+    overtimeThresholdHours,
+    policyLabel: policy ? getOvertimePolicyLabel(policy) : OVERTIME_POLICY_LABEL,
+    capturedAt: Date.now(),
+  };
+};
+
 const convertMillisecondsToHours = (milliseconds) => {
   const safeMilliseconds = Number(milliseconds);
   if (!Number.isFinite(safeMilliseconds) || safeMilliseconds <= 0) return 0;
   return safeMilliseconds / (1000 * 60 * 60);
 };
 
-const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds) => {
+const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds, policy) => {
+  const baseRate = Number(policy?.baseRate) || BASE_HOURLY_RATE;
+  const overtimeMultiplier = Number(policy?.overtimeMultiplier) || OVERTIME_MULTIPLIER;
   const regularHours = convertMillisecondsToHours(regularMilliseconds);
   const overtimeHours = convertMillisecondsToHours(overtimeMilliseconds);
   const totalHours = regularHours + overtimeHours;
@@ -428,8 +448,8 @@ const getLaborCostFromSplit = (regularMilliseconds, overtimeMilliseconds) => {
     };
   }
 
-  const regularCost = regularHours * BASE_HOURLY_RATE;
-  const overtimeCost = overtimeHours * BASE_HOURLY_RATE * OVERTIME_MULTIPLIER;
+  const regularCost = regularHours * baseRate;
+  const overtimeCost = overtimeHours * baseRate * overtimeMultiplier;
 
   return {
     totalHours,
@@ -884,6 +904,10 @@ const getExpectedWeekMondayDate = (targetWeek, invoiceRows = [], fallbackDate = 
 
   const normalizedRows = (Array.isArray(invoiceRows) ? invoiceRows : [])
     .map((invoice) => {
+      if (normalizeInvoicePeriodType(invoice?.periodType) === "day") {
+        return null;
+      }
+
       const weekNumber = Number(invoice?.weekNumber || 0);
       const mondayDate = toDateInputValue(invoice?.mondayDate || invoice?.weekStartDate || "");
       if (!Number.isFinite(weekNumber) || weekNumber <= 0 || !mondayDate) {
@@ -954,6 +978,10 @@ const getNextWeekSuggestion = (invoiceRows = []) => {
   let highestWeekInvoice = null;
 
   invoiceRows.forEach((invoice) => {
+    if (normalizeInvoicePeriodType(invoice?.periodType) === "day") {
+      return;
+    }
+
     const currentWeek = Number(invoice?.weekNumber || 0);
     if (currentWeek > highestWeek) {
       highestWeek = currentWeek;
@@ -980,6 +1008,12 @@ const InvoiceManager = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+
+  // Live org-wide overtime policy; the module constants above remain as fallbacks until the
+  // policy doc loads (or if it was never set).
+  const overtimePolicy = useOvertimePolicy(id);
+  const overtimePolicyLabel = getOvertimePolicyLabel(overtimePolicy);
+  const overtimeThresholdMilliseconds = (Number(overtimePolicy?.thresholdHours) || OVERTIME_THRESHOLD_HOURS) * 60 * 60 * 1000;
 
   const routePrefix =
     typeof window !== "undefined" && window.location?.pathname?.includes("/church/")
@@ -1066,6 +1100,7 @@ const InvoiceManager = () => {
   const [recreatingWeek, setRecreatingWeek] = useState(false);
   const [insertingWeekInvoiceId, setInsertingWeekInvoiceId] = useState(null);
   const [addingNextWeek, setAddingNextWeek] = useState(false);
+  const [deletingWeekNumber, setDeletingWeekNumber] = useState(null);
   const [activeInvoicesTab, setActiveInvoicesTab] = useState(() => getInvoiceTabFromCurrentLocation());
   const [tdMatcherSearch, setTdMatcherSearch] = useState("");
   const [tdMatcherProjectFilter, setTdMatcherProjectFilter] = useState("");
@@ -1102,6 +1137,7 @@ const InvoiceManager = () => {
   const [invoiceLogModalInvoice, setInvoiceLogModalInvoice] = useState(null);
   const [externalPdfInvoiceId, setExternalPdfInvoiceId] = useState("");
   const [downloadingInvoiceStatusReport, setDownloadingInvoiceStatusReport] = useState(false);
+  const [downloadingTimeBreakdownReport, setDownloadingTimeBreakdownReport] = useState(false);
   const [uploadingExternalPdfInvoiceId, setUploadingExternalPdfInvoiceId] = useState("");
   const [timeRotateLogs, setTimeRotateLogs] = useState([]);
   const [organizationUserDirectory, setOrganizationUserDirectory] = useState([]);
@@ -1459,21 +1495,31 @@ const InvoiceManager = () => {
   }, [associatedTimeRotateProjectNameKeysByProjectId]);
 
   // Assignments are stored per task identity, but a TD can produce new identities over time,
-  // so also resolve them by TD number to keep newly logged hours matched.
+  // so also resolve them by TD number within the same project to keep newly logged hours matched.
+  // Matching across projects would bill hours logged under one project to another project's invoice.
   const tdInvoiceProjectIdByIssueId = useMemo(() => {
     const lookup = {};
     Object.entries(tdInvoiceProjectIdByIdentity).forEach(([identity, invoiceProjectId]) => {
-      const issueId = String(identity.split("::").pop() || "").trim().toLowerCase();
-      if (issueId && invoiceProjectId) lookup[issueId] = invoiceProjectId;
+      const identityParts = String(identity || "").split("::");
+      const issueId = String(identityParts.pop() || "").trim().toLowerCase();
+      const projectDocId = identityParts.join("::").trim();
+      if (!issueId || !projectDocId || !invoiceProjectId) return;
+      if (!lookup[issueId]) lookup[issueId] = {};
+      lookup[issueId][projectDocId] = invoiceProjectId;
     });
     return lookup;
   }, [tdInvoiceProjectIdByIdentity]);
 
-  const getAssignedInvoiceProjectIdForLog = (log) => (
-    tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)]
-    || tdInvoiceProjectIdByIssueId[String(log?.issueId || "").trim().toLowerCase()]
-    || ""
-  );
+  const getAssignedInvoiceProjectIdForLog = (log) => {
+    const exactMatch = tdInvoiceProjectIdByIdentity[getTimeRotateTaskIdentity(log)];
+    if (exactMatch) return exactMatch;
+    const issueId = String(log?.issueId || "").trim().toLowerCase();
+    const projectDocId = String(log?.projectDocId || "").trim();
+    // Without a projectDocId we can't verify the TD number belongs to the same project,
+    // so leave the log unmatched rather than risk billing it to the wrong project.
+    if (!issueId || !projectDocId) return "";
+    return tdInvoiceProjectIdByIssueId[issueId]?.[projectDocId] || "";
+  };
 
   // TD Matcher assignments are authoritative: a log bills to a project only when its TD is assigned there.
   const isLogMatchedToInvoiceProject = (log, invoiceProjectId) => (
@@ -1540,10 +1586,16 @@ const InvoiceManager = () => {
     return Array.from(rowsByIdentity.values())
       .map((row) => {
         const identities = Array.from(row.identities || [row.identity]).filter(Boolean);
+        const rowIssueIdKey = String(row.issueId || "").trim().toLowerCase();
         const explicitProjectId = identities
           .map((identity) => tdInvoiceProjectIdByIdentity[identity])
           .find(Boolean)
-          || tdInvoiceProjectIdByIssueId[String(row.issueId || "").trim().toLowerCase()]
+          || identities
+            .map((identity) => {
+              const projectDocId = String(identity).split("::").slice(0, -1).join("::").trim();
+              return projectDocId ? tdInvoiceProjectIdByIssueId[rowIssueIdKey]?.[projectDocId] : "";
+            })
+            .find(Boolean)
           || "";
         const matchedProjects = explicitProjectId
           ? projects.filter((project) => project.id === explicitProjectId)
@@ -2025,8 +2077,8 @@ const InvoiceManager = () => {
         // Regular always stays pinned at a clean 40h (or the full total if under 40h) -- it should
         // never get reduced just because the overtime portion got rounded up, so it stays obvious
         // that this person hit the 40h mark.
-        const regularCapacityMilliseconds = Math.min(targetTotalMilliseconds, OVERTIME_THRESHOLD_MILLISECONDS);
-        const rawExcessMilliseconds = Math.max(0, targetTotalMilliseconds - OVERTIME_THRESHOLD_MILLISECONDS);
+        const regularCapacityMilliseconds = Math.min(targetTotalMilliseconds, overtimeThresholdMilliseconds);
+        const rawExcessMilliseconds = Math.max(0, targetTotalMilliseconds - overtimeThresholdMilliseconds);
         const hourMilliseconds = 60 * 60 * 1000;
         const overtimeRoundingCutoffMilliseconds = 45 * 60 * 1000;
         const wholeOvertimeHours = Math.floor(rawExcessMilliseconds / hourMilliseconds);
@@ -2070,7 +2122,7 @@ const InvoiceManager = () => {
     });
 
     return allocationByLogId;
-  }, [billableTimeRotateLogs, overtimeOverrideByWeekUser, tdInvoiceProjectIdByIdentity]);
+  }, [billableTimeRotateLogs, overtimeOverrideByWeekUser, tdInvoiceProjectIdByIdentity, overtimeThresholdMilliseconds]);
 
   const projectNameById = useMemo(() => {
     const map = {};
@@ -2149,7 +2201,7 @@ const InvoiceManager = () => {
             // Per policy, a project only owes overtime once it alone gives this person more than
             // 40h that week; flag that here so a manager can make an explicit billing decision
             // instead of it silently auto-billing.
-            const needsDecision = !hasOverride && projects.some((project) => project.milliseconds > OVERTIME_THRESHOLD_MILLISECONDS);
+            const needsDecision = !hasOverride && projects.some((project) => project.milliseconds > overtimeThresholdMilliseconds);
             return {
               ...userEntry,
               // Chronological order mirrors the FIFO overtime allocation, so the first project
@@ -2164,7 +2216,7 @@ const InvoiceManager = () => {
           .sort((left, right) => left.userLabel.localeCompare(right.userLabel)),
       }))
       .sort((left, right) => right.weekKey.localeCompare(left.weekKey));
-  }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById, overtimeOverrideByWeekUser]);
+  }, [billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, projectNameById, overtimeOverrideByWeekUser, overtimeThresholdMilliseconds]);
 
   const filteredOvertimeAnalysisByWeek = useMemo(() => {
     const searchTerm = overtimeAnalysisUserSearch.trim().toLowerCase();
@@ -2290,6 +2342,7 @@ const InvoiceManager = () => {
             projectName: String(log.associatedProjectName || "").trim() || "Unknown Project",
             firstUsedAt: 0,
             lastUsedAt: 0,
+            lastEnteredAt: 0,
             logIds: [],
           };
           existingCard.milliseconds += log.safeDuration;
@@ -2300,6 +2353,10 @@ const InvoiceManager = () => {
           }
           if (logUsedAt > existingCard.lastUsedAt) {
             existingCard.lastUsedAt = logUsedAt;
+          }
+          const logEnteredAt = Number(log.enteredAt) || 0;
+          if (logEnteredAt > existingCard.lastEnteredAt) {
+            existingCard.lastEnteredAt = logEnteredAt;
           }
           if (!existingCard.projectDocId) {
             existingCard.projectDocId = String(log.projectDocId || "").trim();
@@ -2482,6 +2539,56 @@ const InvoiceManager = () => {
     return (Number(allProjectsTotal || 0) || 0) + (Number(allProjectsBudgetedInvoiceTotal || 0) || 0);
   }, [allProjectsBudgetedInvoiceTotal, allProjectsTotal]);
 
+  const allProjectsGrandTotal = useMemo(() => {
+    return (allProjectInvoices || []).reduce((sum, invoice) => {
+      return sum + (Number(invoice?.total || 0) || 0);
+    }, 0);
+  }, [allProjectInvoices]);
+
+  const allProjectsPaidTotal = useMemo(() => {
+    return (allProjectInvoices || []).reduce((sum, invoice) => {
+      if (!invoice?.isPaid) return sum;
+      return sum + (Number(invoice?.total || 0) || 0);
+    }, 0);
+  }, [allProjectInvoices]);
+
+  const allProjectsPendingTotal = useMemo(() => {
+    return (allProjectInvoices || []).reduce((sum, invoice) => {
+      if (invoice?.isPaid) return sum;
+      return sum + (Number(invoice?.total || 0) || 0);
+    }, 0);
+  }, [allProjectInvoices]);
+
+  const projectPaidTotalsLiveById = useMemo(() => {
+    const totals = {};
+    (allProjectInvoices || []).forEach((invoice) => {
+      const projectId = String(invoice?.projectId || "").trim();
+      if (!projectId) return;
+      if (!invoice?.isPaid) return;
+
+      totals[projectId] = (totals[projectId] || 0) + (Number(invoice?.total || 0) || 0);
+    });
+
+    return Object.fromEntries(
+      Object.entries(totals).map(([projectId, total]) => [projectId, Math.round(total * 100) / 100])
+    );
+  }, [allProjectInvoices]);
+
+  const projectPendingTotalsLiveById = useMemo(() => {
+    const totals = {};
+    (allProjectInvoices || []).forEach((invoice) => {
+      const projectId = String(invoice?.projectId || "").trim();
+      if (!projectId) return;
+      if (invoice?.isPaid) return;
+
+      totals[projectId] = (totals[projectId] || 0) + (Number(invoice?.total || 0) || 0);
+    });
+
+    return Object.fromEntries(
+      Object.entries(totals).map(([projectId, total]) => [projectId, Math.round(total * 100) / 100])
+    );
+  }, [allProjectInvoices]);
+
   const projectTotalsLiveById = useMemo(() => {
     const totals = {};
     (allProjectInvoices || []).forEach((invoice) => {
@@ -2597,7 +2704,7 @@ const InvoiceManager = () => {
       totals.totalOvertimeMilliseconds += Number(hoursData.totalOvertimeMilliseconds || 0) || 0;
     });
 
-    const laborCost = getLaborCostFromSplit(totals.totalRegularMilliseconds, totals.totalOvertimeMilliseconds);
+    const laborCost = getLaborCostFromSplit(totals.totalRegularMilliseconds, totals.totalOvertimeMilliseconds, overtimePolicy);
     return {
       totalInvoiceAmount: totals.totalInvoiceAmount,
       totalFinalInvoiceAmount: totals.totalFinalInvoiceAmount,
@@ -2607,7 +2714,7 @@ const InvoiceManager = () => {
       totalLaborCost: laborCost.totalCost,
       totalOvertimeHours: laborCost.overtimeHours,
     };
-  }, [invoiceHoursById, invoices]);
+  }, [invoiceHoursById, invoices, overtimePolicy]);
 
   const availableProjectWeeksByProjectId = useMemo(() => {
     const weekMap = new Map();
@@ -3073,7 +3180,8 @@ const InvoiceManager = () => {
       };
       const rowLaborCost = getLaborCostFromSplit(
         rowHoursData.totalRegularMilliseconds,
-        rowHoursData.totalOvertimeMilliseconds
+        rowHoursData.totalOvertimeMilliseconds,
+        overtimePolicy
       );
 
       return sum + (Number(rowLaborCost.totalCost || 0) || 0);
@@ -3104,7 +3212,7 @@ const InvoiceManager = () => {
       ...previous,
       [selectedProjectId]: Math.round(selectedProjectFinalTotal * 100) / 100,
     }));
-  }, [selectedProjectId, invoices, invoiceHoursById]);
+  }, [selectedProjectId, invoices, invoiceHoursById, overtimePolicy]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -3251,14 +3359,14 @@ const InvoiceManager = () => {
         rowOvertimeMilliseconds += allocation.overtimeMilliseconds;
       });
 
-      const rowCost = getLaborCostFromSplit(rowRegularMilliseconds, rowOvertimeMilliseconds).totalCost;
+      const rowCost = getLaborCostFromSplit(rowRegularMilliseconds, rowOvertimeMilliseconds, overtimePolicy).totalCost;
       totalsByProjectId[projectId] = (totalsByProjectId[projectId] || 0) + (Number(rowCost) || 0);
     });
 
     return Object.fromEntries(
       Object.entries(totalsByProjectId).map(([projectId, totalCost]) => [projectId, Math.round(totalCost * 100) / 100])
     );
-  }, [allProjectInvoices, associatedTimeRotateProjectNameKeysByProjectId, billableTimeRotateLogs, weeklyOvertimeAllocationByLogId]);
+  }, [allProjectInvoices, associatedTimeRotateProjectNameKeysByProjectId, billableTimeRotateLogs, weeklyOvertimeAllocationByLogId, overtimePolicy]);
 
   const allProjectsBudgetedHoursCost = useMemo(() => {
     return Object.values(projectBudgetedHoursCostById || {}).reduce((sum, value) => {
@@ -3309,7 +3417,7 @@ const InvoiceManager = () => {
         });
       });
 
-      const laborCost = getLaborCostFromSplit(totalRegularMilliseconds, totalOvertimeMilliseconds);
+      const laborCost = getLaborCostFromSplit(totalRegularMilliseconds, totalOvertimeMilliseconds, overtimePolicy);
       const variance = invoiceAmountTotal - laborCost.totalCost;
       const marginPercent = invoiceAmountTotal > 0 ? (variance / invoiceAmountTotal) * 100 : 0;
 
@@ -3335,7 +3443,7 @@ const InvoiceManager = () => {
         marginPercent,
       };
     }).sort((left, right) => right.invoiceAmountTotal - left.invoiceAmountTotal);
-  }, [allProjectInvoices, associatedTimeRotateProjectNameKeysByProjectId, billableTimeRotateLogs, projectBudgetedHoursCostById, projects, weeklyOvertimeAllocationByLogId]);
+  }, [allProjectInvoices, associatedTimeRotateProjectNameKeysByProjectId, billableTimeRotateLogs, projectBudgetedHoursCostById, projects, weeklyOvertimeAllocationByLogId, overtimePolicy]);
 
   const businessIntelligenceSummary = useMemo(() => {
     const rows = businessIntelligenceProjectRows;
@@ -3933,6 +4041,7 @@ const InvoiceManager = () => {
     const rows = [];
     const normalizedTargetWeek = Number(targetWeek);
     const sequenceInvoiceRows = Array.from(existingInvoiceMap.values())
+      .filter((invoice) => normalizeInvoicePeriodType(invoice?.periodType) !== "day")
       .filter((invoice) => Number.isFinite(Number(invoice?.weekNumber || 0)) && Number(invoice?.weekNumber || 0) > 0)
       .map((invoice) => ({
         weekNumber: Number(invoice.weekNumber),
@@ -4067,6 +4176,7 @@ const InvoiceManager = () => {
       const existingByWeek = new Map(
         existingSnapshot.docs
           .map((invoiceDoc) => ({ id: invoiceDoc.id, ...invoiceDoc.data() }))
+          .filter((invoice) => normalizeInvoicePeriodType(invoice.periodType) !== "day")
           .map((invoice) => [Number(invoice.weekNumber), invoice])
       );
 
@@ -4114,6 +4224,7 @@ const InvoiceManager = () => {
             invoiceStatus: normalizeInvoiceStatus("", row.total, row.invoiceNumber),
             isPlaceholder: Boolean(row.isPlaceholder),
             generatedFromWeek: row.generatedFromWeek,
+            billingSnapshot: buildBillingSnapshot(row.total, {}, overtimePolicy),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
             createdByUid: user?.uid || "",
@@ -4164,6 +4275,10 @@ const InvoiceManager = () => {
     }
 
     const invoiceNumber = String(invoice.invoiceNumber || `W${String(invoice.weekNumber || "").padStart(2, "0")}`).trim();
+    const policyBaseRate = Number(overtimePolicy?.baseRate) || BASE_HOURLY_RATE;
+    const policyOvertimeMultiplier = Number(overtimePolicy?.overtimeMultiplier) || OVERTIME_MULTIPLIER;
+    const policyThresholdHours = Number(overtimePolicy?.thresholdHours) || OVERTIME_THRESHOLD_HOURS;
+    const policyOvertimeRate = policyBaseRate * policyOvertimeMultiplier;
     const mondayDate = toDateInputValue(invoice.mondayDate);
     const weekEndDate = shiftDateInputValue(mondayDate, getInvoicePeriodDayCount(invoice.periodType));
     const dueDate = toDateInputValue(invoice.dueDate);
@@ -4184,7 +4299,8 @@ const InvoiceManager = () => {
       .map((userEntry) => {
         const cost = getLaborCostFromSplit(
           userEntry.regularMilliseconds,
-          userEntry.overtimeMilliseconds
+          userEntry.overtimeMilliseconds,
+          overtimePolicy
         );
 
         const cards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
@@ -4209,8 +4325,8 @@ const InvoiceManager = () => {
           regularHours: Number(cost.regularHours || 0),
           overtimeHours: Number(cost.overtimeHours || 0),
           totalHours: Number(cost.totalHours || 0),
-          regularRate: BASE_HOURLY_RATE,
-          overtimeRate: BASE_HOURLY_RATE * OVERTIME_MULTIPLIER,
+          regularRate: policyBaseRate,
+          overtimeRate: policyOvertimeRate,
           regularCost: Number(cost.regularCost || 0),
           overtimeCost: Number(cost.overtimeCost || 0),
           lineTotal: Number(cost.totalCost || 0),
@@ -4238,12 +4354,12 @@ const InvoiceManager = () => {
       ["End of Week", weekEndDate || "-"],
       ["Due Date", dueDate || "-"],
       ["Payment Terms", getPaymentTermLabel(invoice.paymentTerms, invoice.netDays)],
-      ["Overtime Policy", OVERTIME_POLICY_LABEL],
+      ["Overtime Policy", overtimePolicyLabel],
       [],
       [
         "Person",
-        `Regular Hours (<= ${OVERTIME_THRESHOLD_HOURS}/wk)`,
-        `Overtime Hours (> ${OVERTIME_THRESHOLD_HOURS}/wk)`,
+        `Regular Hours (<= ${policyThresholdHours}/wk)`,
+        `Overtime Hours (> ${policyThresholdHours}/wk)`,
         "Total Hours",
         "Regular Rate",
         "Overtime Rate",
@@ -4399,11 +4515,11 @@ const InvoiceManager = () => {
       workTimestampRange,
       separatelyBilledDays,
       overtimePolicy: {
-        thresholdHours: OVERTIME_THRESHOLD_HOURS,
-        baseRate: BASE_HOURLY_RATE,
-        overtimeMultiplier: OVERTIME_MULTIPLIER,
-        overtimeRate: OVERTIME_RATE,
-        label: OVERTIME_POLICY_LABEL,
+        thresholdHours: policyThresholdHours,
+        baseRate: policyBaseRate,
+        overtimeMultiplier: policyOvertimeMultiplier,
+        overtimeRate: policyOvertimeRate,
+        label: overtimePolicyLabel,
       },
       totals: {
         totalRegularHours: Number(totalRegularHours.toFixed(2)),
@@ -4411,6 +4527,13 @@ const InvoiceManager = () => {
         totalHours: Number(totalHours.toFixed(2)),
         totalAmount: Number(totalAmount.toFixed(2)),
       },
+      savedInvoiceTotal: Number(invoice.total) || 0,
+      savedBillingSnapshot: invoice.billingSnapshot || null,
+      currentBillingSnapshot: buildBillingSnapshot(totalAmount, {
+        totalRegularHours,
+        totalOvertimeHours,
+        totalHours,
+      }, overtimePolicy),
       users: sortedUsers.map((userEntry) => ({
         name: userEntry.name,
         regularHours: Number(userEntry.regularHours || 0),
@@ -4432,6 +4555,7 @@ const InvoiceManager = () => {
           projectDocId: String(card.projectDocId || "").trim(),
           firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
+          lastEnteredAt: Number(card.lastEnteredAt) || 0,
           milliseconds: Number(card.milliseconds) || 0,
           logIds: Array.isArray(card.logIds) ? card.logIds.filter(Boolean) : [],
           hoursUsed: formatHoursUsed(card.milliseconds),
@@ -4445,6 +4569,7 @@ const InvoiceManager = () => {
           projectDocId: String(card.projectDocId || "").trim(),
           firstUsedAt: Number(card.firstUsedAt) || 0,
           lastUsedAt: Number(card.lastUsedAt) || 0,
+          lastEnteredAt: Number(card.lastEnteredAt) || 0,
           includedInInvoice: Boolean(card.includedInInvoice),
           milliseconds: Number(card.milliseconds) || 0,
           logIds: Array.isArray(card.logIds) ? card.logIds.filter(Boolean) : [],
@@ -4898,7 +5023,8 @@ const InvoiceManager = () => {
     };
     const editingRowLaborCost = getLaborCostFromSplit(
       editingRowHoursData.totalRegularMilliseconds,
-      editingRowHoursData.totalOvertimeMilliseconds
+      editingRowHoursData.totalOvertimeMilliseconds,
+      overtimePolicy
     );
     const total = billingSource === "main_system"
       ? Number(editingRowLaborCost.totalCost.toFixed(2))
@@ -5263,6 +5389,7 @@ const InvoiceManager = () => {
       const sortedInvoices = [...invoices].sort(
         (left, right) => (parseWeekNumber(left.weekNumber) || 0) - (parseWeekNumber(right.weekNumber) || 0)
       );
+      const todayDateInput = toDateInputValue(new Date());
       const reportTotals = {
         finalAmount: 0,
         budgetedAmount: 0,
@@ -5270,20 +5397,26 @@ const InvoiceManager = () => {
         totalLaborCost: 0,
         totalOvertimeHours: 0,
       };
+      const rowOverdueFlags = [];
+      let overdueNinetyCount = 0;
+      let overdueNinetyAmount = 0;
+      let grandTotalAmount = 0;
 
       const rows = sortedInvoices.map((invoice) => {
         const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
+        const weekEndDateInput = toDateInputValue(weekEndDate);
+        const overdueNinetyDate = weekEndDateInput ? shiftDateInputValue(weekEndDateInput, 90) : "";
+        const isOverNinetyDaysDue = !invoice?.isPaid && Boolean(overdueNinetyDate) && overdueNinetyDate < todayDateInput;
         const rowHoursData = invoiceHoursById[invoice.id] || {
           totalRegularMilliseconds: 0,
           totalOvertimeMilliseconds: 0,
         };
         const rowLaborCost = getLaborCostFromSplit(
           rowHoursData.totalRegularMilliseconds,
-          rowHoursData.totalOvertimeMilliseconds
+          rowHoursData.totalOvertimeMilliseconds,
+          overtimePolicy
         );
-        const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
-          ? rowLaborCost.totalCost
-          : invoice.total;
+        const effectiveInvoiceTotal = invoice.total;
         const effectiveTotalAmount = Number(effectiveInvoiceTotal) || 0;
         const invoiceStatus = normalizeInvoiceStatus(invoice.invoiceStatus, effectiveTotalAmount, invoice.invoiceNumber);
         if (invoiceStatus === "final") {
@@ -5294,6 +5427,12 @@ const InvoiceManager = () => {
         reportTotals.totalMilliseconds += Number(rowHoursData.totalMilliseconds) || 0;
         reportTotals.totalLaborCost += Number(rowLaborCost.totalCost) || 0;
         reportTotals.totalOvertimeHours += Number(rowLaborCost.overtimeHours) || 0;
+        if (isOverNinetyDaysDue) {
+          overdueNinetyCount += 1;
+          overdueNinetyAmount += effectiveTotalAmount;
+        }
+        grandTotalAmount += effectiveTotalAmount;
+        rowOverdueFlags.push(isOverNinetyDaysDue);
         return [
           invoice.weekNumber ? `Week ${invoice.weekNumber}` : "-",
           formatDisplayDate(invoice.mondayDate) || "-",
@@ -5303,30 +5442,108 @@ const InvoiceManager = () => {
           getInvoiceStatusLabel(invoiceStatus),
           getBillingSourceLabel(invoice.billingSource),
           getApStatusLabel(invoice.apStatus),
+          invoice?.isPaid ? "Paid" : "Unpaid",
+          overdueNinetyDate
+            ? `${isOverNinetyDaysDue ? "Yes" : "No"} (Due: ${formatDisplayDate(overdueNinetyDate)})`
+            : (isOverNinetyDaysDue ? "Yes" : "No"),
         ];
       });
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(153, 27, 27);
+      pdf.text(
+        `Unpaid Over 90 Days Due: ${overdueNinetyCount} invoice${overdueNinetyCount === 1 ? "" : "s"} - Total: ${formatCurrency(overdueNinetyAmount)}`,
+        logoDataUrl ? 132 : margin,
+        74
+      );
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFont("helvetica", "normal");
 
       autoTable(pdf, {
         startY: 88,
         theme: "grid",
-        head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source", "AP Status"]],
+        head: [["Week", "Start of Week", "End of Week", "Total", "Invoice #", "Invoice Status", "Billing Source", "AP Status", "Paid", "Over 90 Days Due"]],
         body: rows,
+        foot: [["", "", "", formatCurrency(grandTotalAmount), "", "", "", "", "", ""]],
+        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
         styles: { font: "helvetica", fontSize: 9, cellPadding: 6 },
         headStyles: { fillColor: [29, 78, 216], textColor: [255, 255, 255], fontStyle: "bold" },
         margin: { left: margin, right: margin },
+        didParseCell: (data) => {
+          if (data.section === "body" && rowOverdueFlags[data.row.index]) {
+            data.cell.styles.fillColor = [254, 226, 226];
+            data.cell.styles.textColor = [153, 27, 27];
+          }
+        },
       });
 
-      // Under every invoice line item, break down exactly which TD cards each person worked on
-      // and how much time they logged, so the report doubles as a per-invoice audit trail.
+      const safeProjectName = projectName.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "project";
+      pdf.save(`${safeProjectName}-invoice-status-report.pdf`);
+    } catch (error) {
+      console.error("Failed to generate invoice status report PDF:", error);
+      toast.error("Failed to generate the invoice status report PDF.");
+    } finally {
+      setDownloadingInvoiceStatusReport(false);
+    }
+  };
+
+  const handleDownloadTimeBreakdownReportPdf = async () => {
+    if (!invoices.length) {
+      toast.error("No invoices available to export.");
+      return;
+    }
+
+    setDownloadingTimeBreakdownReport(true);
+    try {
+      const [jspdfModule, autoTableModule] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const JsPdfConstructor = jspdfModule.jsPDF || jspdfModule.default?.jsPDF || jspdfModule.default;
+      const autoTable = autoTableModule.default || autoTableModule;
+      if (typeof JsPdfConstructor !== "function" || typeof autoTable !== "function") {
+        throw new Error("PDF generation libraries did not load correctly.");
+      }
+
+      const projectName = String(selectedInvoiceProject?.name || "Project").trim();
+      const pdf = new JsPdfConstructor({ orientation: "landscape", unit: "pt", format: "letter" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      let detailCursorY = (pdf.lastAutoTable?.finalY || 88) + 24;
+      const margin = 40;
+      let logoDataUrl = "";
+
+      try {
+        logoDataUrl = await getOrganizationLogoDataUrl(id);
+      } catch (logoError) {
+        console.warn("Unable to load organization logo for time breakdown report:", logoError);
+      }
+
+      if (logoDataUrl) {
+        try {
+          const { width, height } = await getImageDimensions(logoDataUrl);
+          const scale = Math.min(80 / width, 40 / height);
+          const logoWidth = width * scale;
+          const logoHeight = height * scale;
+          pdf.addImage(logoDataUrl, margin, 24 + ((40 - logoHeight) / 2), logoWidth, logoHeight);
+        } catch (logoError) {
+          console.warn("Unable to size organization logo for time breakdown report:", logoError);
+          logoDataUrl = "";
+        }
+      }
 
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(12);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text("Time Breakdown by Invoice", margin, detailCursorY);
-      detailCursorY += 8;
+      pdf.setFontSize(16);
+      pdf.text("Time Breakdown by Invoice", logoDataUrl ? 132 : margin, 40);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(`Project: ${projectName}`, logoDataUrl ? 132 : margin, 58);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, 58, { align: "right" });
 
+      const sortedInvoices = [...invoices].sort(
+        (left, right) => (parseWeekNumber(left.weekNumber) || 0) - (parseWeekNumber(right.weekNumber) || 0)
+      );
+
+      let detailCursorY = 88;
       sortedInvoices.forEach((invoice) => {
         const weekEndDate = shiftDateInputValue(invoice.mondayDate, getInvoicePeriodDayCount(invoice.periodType));
         const invoiceNumberLabel = (invoice.invoiceNumber || "-").toString().toUpperCase();
@@ -5340,6 +5557,7 @@ const InvoiceManager = () => {
             detailRows.push([userEntry.name || "Unknown User", "-", "-", formatHoursUsed(userEntry.milliseconds || 0)]);
             return;
           }
+
           userCards
             .sort((left, right) => right.milliseconds - left.milliseconds)
             .forEach((card) => {
@@ -5381,48 +5599,13 @@ const InvoiceManager = () => {
         detailCursorY = (pdf.lastAutoTable?.finalY || detailCursorY + 6) + 20;
       });
 
-      if (detailCursorY > pageHeight - 140) {
-        pdf.addPage();
-        detailCursorY = margin;
-      }
-
-      const summaryStartY = detailCursorY;
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(12);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text("Project Totals", margin, summaryStartY);
-
-      autoTable(pdf, {
-        startY: summaryStartY + 8,
-        theme: "grid",
-        head: [["Invoice Amounts", "Hours & Labor", "Overtime Policy"]],
-        body: [[
-          [
-            `Final: ${formatCurrency(reportTotals.finalAmount)}`,
-            `Budgeted: ${formatCurrency(reportTotals.budgetedAmount)}`,
-            `Subtotal: ${formatCurrency(reportTotals.finalAmount + reportTotals.budgetedAmount)}`,
-          ].join("\n"),
-          [
-            `Total Hours: ${formatHoursUsed(reportTotals.totalMilliseconds)}`,
-            `Labor Cost: ${formatCurrency(reportTotals.totalLaborCost)}`,
-            `Overtime: ${reportTotals.totalOvertimeHours.toFixed(2)}h`,
-          ].join("\n"),
-          OVERTIME_POLICY_LABEL,
-        ]],
-        styles: { font: "helvetica", fontSize: 9, cellPadding: 7, valign: "top" },
-        headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: "bold" },
-        columnStyles: { 0: { cellWidth: 220 }, 1: { cellWidth: 220 }, 2: { cellWidth: 232 } },
-        margin: { left: margin, right: margin },
-      });
-      pdf.setTextColor(0, 0, 0);
-
       const safeProjectName = projectName.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "project";
-      pdf.save(`${safeProjectName}-invoice-status-report.pdf`);
+      pdf.save(`${safeProjectName}-time-breakdown-by-invoice.pdf`);
     } catch (error) {
-      console.error("Failed to generate invoice status report PDF:", error);
-      toast.error("Failed to generate the invoice status report PDF.");
+      console.error("Failed to generate time breakdown PDF:", error);
+      toast.error("Failed to generate the time breakdown PDF.");
     } finally {
-      setDownloadingInvoiceStatusReport(false);
+      setDownloadingTimeBreakdownReport(false);
     }
   };
 
@@ -5572,6 +5755,65 @@ const InvoiceManager = () => {
     } catch (error) {
       console.error("Error deleting invoice:", error);
       toast.error("Failed to delete invoice.");
+    }
+  };
+
+  const handleDeleteWeek = async (invoice) => {
+    if (!canManageInvoices || !selectedProjectId || !invoice) {
+      return;
+    }
+
+    const weekNumber = Number(invoice.weekNumber);
+    if (!Number.isFinite(weekNumber) || weekNumber <= 0) {
+      toast.error("This invoice does not have a valid week number.");
+      return;
+    }
+
+    const isDayInvoice = normalizeInvoicePeriodType(invoice.periodType) === "day";
+    const weekInvoices = invoices.filter(
+      (candidate) => Number(candidate.weekNumber) === weekNumber
+    );
+    const linkedGeneratedInvoices = !isDayInvoice && invoice.isPlaceholder !== true
+      ? invoices.filter(
+        (candidate) =>
+          candidate.isPlaceholder === true
+          && Number(candidate.generatedFromWeek) === weekNumber
+      )
+      : [];
+    const invoicesToDelete = [...new Map(
+      [...weekInvoices, ...linkedGeneratedInvoices].map((candidate) => [candidate.id, candidate])
+    ).values()];
+    const dayInvoiceCount = weekInvoices.filter(
+      (candidate) => normalizeInvoicePeriodType(candidate.periodType) === "day"
+    ).length;
+    const generatedWeekCount = linkedGeneratedInvoices.length;
+    const details = [
+      `${weekInvoices.length} invoice${weekInvoices.length === 1 ? "" : "s"} for Week ${weekNumber}`,
+      dayInvoiceCount ? `${dayInvoiceCount} day invoice${dayInvoiceCount === 1 ? "" : "s"}` : "",
+      generatedWeekCount ? `${generatedWeekCount} auto-generated week${generatedWeekCount === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(", ");
+
+    if (!window.confirm(`Delete ${details}? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingWeekNumber(weekNumber);
+    try {
+      await Promise.all(
+        invoicesToDelete.map((candidate) =>
+          deleteDoc(doc(db, "churches", id, "invoiceProjects", selectedProjectId, "invoices", candidate.id))
+        )
+      );
+      if (editingInvoiceId && invoicesToDelete.some((candidate) => candidate.id === editingInvoiceId)) {
+        setEditingInvoiceId("");
+        setEditInvoiceDraft({ ...emptyInvoiceDraft });
+      }
+      toast.success(`Week ${weekNumber} deleted.`);
+    } catch (error) {
+      console.error("Error deleting invoice week:", error);
+      toast.error("Failed to delete week.");
+    } finally {
+      setDeletingWeekNumber(null);
     }
   };
 
@@ -6221,15 +6463,12 @@ const InvoiceManager = () => {
               fontSize: "0.9rem",
             }}
           >
-            <div>All Projects Total Billed (Final): {formatCurrency(allProjectsTotal)}</div>
+            <div>All Projects Total: {formatCurrency(allProjectsGrandTotal)}</div>
             <div style={{ marginTop: "4px" }}>
-              All Projects Total Budgeted: {formatCurrency(allProjectsBudgetedInvoiceTotal)}
+              All Projects Total Paid: {formatCurrency(allProjectsPaidTotal)}
             </div>
             <div style={{ marginTop: "4px" }}>
-              All Projects Subtotal (Final + Budgeted): {formatCurrency(allProjectsSubtotalInvoiceTotal)}
-            </div>
-            <div style={{ marginTop: "4px" }}>
-              All Projects Total Due: {formatCurrency(allProjectsDueTotal)}
+              All Projects Total Pending: {formatCurrency(allProjectsPendingTotal)}
             </div>
           </div>
 
@@ -6272,10 +6511,9 @@ const InvoiceManager = () => {
               {projects.map((project) => {
                 const selected = project.id === selectedProjectId;
                 const isEditing = editingProjectId === project.id;
-                const projectTotalFinal = Number(projectFinalTotalsLiveById[project.id] || 0);
-                const projectTotalBudgeted = Number(projectBudgetedInvoiceTotalsLiveById[project.id] || 0);
-                const projectSubtotal = Number(projectSubtotalInvoiceTotalsLiveById[project.id] || 0);
-                const projectDueTotal = Number(projectDueTotalsLiveById[project.id] || 0);
+                const projectGrandTotal = Number(projectTotalsLiveById[project.id] || 0);
+                const projectPaidTotal = Number(projectPaidTotalsLiveById[project.id] || 0);
+                const projectPendingTotal = Number(projectPendingTotalsLiveById[project.id] || 0);
 
                 return (
                   <div
@@ -6351,17 +6589,14 @@ const InvoiceManager = () => {
                               {project.description}
                             </div>
                           ) : null}
-                          <div style={{ marginTop: "6px", color: "#1F2937", fontSize: "0.82rem", fontWeight: 600 }}>
-                            Total Final: {formatCurrency(projectTotalFinal)}
+                          <div style={{ marginTop: "6px", color: "#0F172A", fontSize: "0.82rem", fontWeight: 700 }}>
+                            Total: {formatCurrency(projectGrandTotal)}
                           </div>
-                          <div style={{ marginTop: "4px", color: "#1F2937", fontSize: "0.82rem", fontWeight: 600 }}>
-                            Total Budgeted: {formatCurrency(projectTotalBudgeted)}
-                          </div>
-                          <div style={{ marginTop: "4px", color: "#0F172A", fontSize: "0.82rem", fontWeight: 700 }}>
-                            Subtotal: {formatCurrency(projectSubtotal)}
+                          <div style={{ marginTop: "4px", color: "#166534", fontSize: "0.82rem", fontWeight: 600 }}>
+                            Total Paid: {formatCurrency(projectPaidTotal)}
                           </div>
                           <div style={{ marginTop: "4px", color: "#7C2D12", fontSize: "0.82rem", fontWeight: 700 }}>
-                            Total Due: {formatCurrency(projectDueTotal)}
+                            Total Pending: {formatCurrency(projectPendingTotal)}
                           </div>
                         </button>
 
@@ -6697,7 +6932,7 @@ const InvoiceManager = () => {
                   Add Invoice defaults to the next week. If you add Week 10, missing weeks before it are auto-created with shifted Monday and due dates.
                 </small>
                 <small style={{ color: "#0C4A6E", fontWeight: 700 }}>
-                  Billable labor policy: {OVERTIME_POLICY_LABEL}
+                  Billable labor policy: {overtimePolicyLabel}
                 </small>
               </form>
 
@@ -6756,18 +6991,32 @@ const InvoiceManager = () => {
                     </label>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={handleDownloadInvoiceStatusReportPdf}
-                  disabled={downloadingInvoiceStatusReport || !invoices.length}
-                  style={{
-                    ...compactButtonStyle,
-                    background: "#1D4ED8",
-                    opacity: downloadingInvoiceStatusReport || !invoices.length ? 0.7 : 1,
-                  }}
-                >
-                  {downloadingInvoiceStatusReport ? "Generating PDF..." : "Download Invoice Status Report (PDF)"}
-                </button>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={handleDownloadInvoiceStatusReportPdf}
+                    disabled={downloadingInvoiceStatusReport || !invoices.length}
+                    style={{
+                      ...compactButtonStyle,
+                      background: "#1D4ED8",
+                      opacity: downloadingInvoiceStatusReport || !invoices.length ? 0.7 : 1,
+                    }}
+                  >
+                    {downloadingInvoiceStatusReport ? "Generating PDF..." : "Download Invoice Status Report (PDF)"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadTimeBreakdownReportPdf}
+                    disabled={downloadingTimeBreakdownReport || !invoices.length}
+                    style={{
+                      ...compactButtonStyle,
+                      background: "#0F766E",
+                      opacity: downloadingTimeBreakdownReport || !invoices.length ? 0.7 : 1,
+                    }}
+                  >
+                    {downloadingTimeBreakdownReport ? "Generating PDF..." : "Download Time Breakdown by Invoice (PDF)"}
+                  </button>
+                </div>
               </div>
 
               {editingInvoiceId ? (() => {
@@ -6794,33 +7043,42 @@ const InvoiceManager = () => {
                     >
                       Log
                     </button>
-                    <button
-                      type="button"
-                      style={{ ...compactButtonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === activeInvoice.id ? 0.7 : 1 }}
-                      onClick={() => handleSelectExternalPdf(activeInvoice.id)}
-                      disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === activeInvoice.id}
-                    >
-                      {uploadingExternalPdfInvoiceId === activeInvoice.id ? "Uploading PDF..." : "Upload External PDF"}
-                    </button>
-                    {activeInvoice.externalPdf?.url ? (
-                      <a
-                        href={activeInvoice.externalPdf.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ ...compactButtonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
-                        title={activeInvoice.externalPdf.name || "View external invoice PDF"}
+                    {normalizeBillingSource(activeInvoice.billingSource) === "freshbooks" ? (
+                      <>
+                        <button
+                          type="button"
+                          style={{ ...compactButtonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === activeInvoice.id ? 0.7 : 1 }}
+                          onClick={() => handleSelectExternalPdf(activeInvoice.id)}
+                          disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === activeInvoice.id}
+                        >
+                          {uploadingExternalPdfInvoiceId === activeInvoice.id
+                            ? "Uploading PDF..."
+                            : activeInvoice.externalPdf?.url
+                              ? "Replace External PDF"
+                              : "Upload External PDF"}
+                        </button>
+                        {activeInvoice.externalPdf?.url ? (
+                          <a
+                            href={activeInvoice.externalPdf.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ ...compactButtonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
+                            title={activeInvoice.externalPdf.name || "View external invoice PDF"}
+                          >
+                            View External PDF
+                          </a>
+                        ) : null}
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        style={{ ...compactButtonStyle, background: "#1D4ED8" }}
+                        onClick={() => handleExportBillableInvoice(activeInvoice, activeRowHoursData)}
+                        title="View billable invoice"
                       >
-                        View External PDF
-                      </a>
-                    ) : null}
-                    <button
-                      type="button"
-                      style={{ ...compactButtonStyle, background: "#1D4ED8" }}
-                      onClick={() => handleExportBillableInvoice(activeInvoice, activeRowHoursData)}
-                      title="View billable invoice"
-                    >
-                      View Billable Invoice
-                    </button>
+                        View Billable Invoice
+                      </button>
+                    )}
                     <button
                       type="button"
                       style={{ ...compactButtonStyle, background: "#DC2626" }}
@@ -6882,13 +7140,12 @@ const InvoiceManager = () => {
                         const rowUsersHours = Array.isArray(rowHoursData.users) ? rowHoursData.users : [];
                         const rowLaborCost = getLaborCostFromSplit(
                           rowHoursData.totalRegularMilliseconds,
-                          rowHoursData.totalOvertimeMilliseconds
+                          rowHoursData.totalOvertimeMilliseconds,
+                          overtimePolicy
                         );
-                        // Main System billing always tracks the live Hours & Labor cost instead of
-                        // whatever total was last saved, so the two never drift out of sync.
-                        const effectiveInvoiceTotal = normalizeBillingSource(invoice.billingSource) === "main_system"
-                          ? rowLaborCost.totalCost
-                          : invoice.total;
+                        // The Total column always shows the saved invoice total, so it stays in sync
+                        // with the sidebar, BI summary, and PDF report.
+                        const effectiveInvoiceTotal = invoice.total;
                         // A week whose days were billed on their own rows carries no hours of its own,
                         // so surface that split instead of flagging the week as missing a total.
                         const childDayInvoices = normalizeInvoicePeriodType(invoice.periodType) === "day"
@@ -6904,11 +7161,10 @@ const InvoiceManager = () => {
                           };
                           const dayCost = getLaborCostFromSplit(
                             dayHours.totalRegularMilliseconds,
-                            dayHours.totalOvertimeMilliseconds
+                            dayHours.totalOvertimeMilliseconds,
+                            overtimePolicy
                           );
-                          const dayTotal = normalizeBillingSource(dayInvoice.billingSource) === "main_system"
-                            ? dayCost.totalCost
-                            : dayInvoice.total;
+                          const dayTotal = dayInvoice.total;
                           return sum + (Number(dayTotal) || 0);
                         }, 0);
                         const isMissingInvoiceTotal = !effectiveInvoiceTotal && childDayInvoices.length === 0;
@@ -7249,6 +7505,16 @@ const InvoiceManager = () => {
                                   {insertingWeekInvoiceId === invoice.id ? "Inserting..." : "Insert Week Immediately"}
                                 </button>
                               ) : null}
+                              {canManageInvoices && normalizeInvoicePeriodType(invoice.periodType) !== "day" ? (
+                                <button
+                                  type="button"
+                                  style={{ ...compactButtonStyle, marginTop: "6px", background: "#DC2626", opacity: deletingWeekNumber === Number(invoice.weekNumber) ? 0.7 : 1 }}
+                                  onClick={() => handleDeleteWeek(invoice)}
+                                  disabled={deletingWeekNumber === Number(invoice.weekNumber)}
+                                >
+                                  {deletingWeekNumber === Number(invoice.weekNumber) ? "Deleting Week..." : "Delete Week"}
+                                </button>
+                              ) : null}
                             </td>
                             <td style={tableBodyCellStyle}>
                               {formatDisplayDate(invoice.mondayDate)}
@@ -7421,14 +7687,42 @@ const InvoiceManager = () => {
                                 >
                                   Edit
                                 </button>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonStyle, background: "#1D4ED8" }}
-                                  onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
-                                  title="View billable invoice"
-                                >
-                                  View
-                                </button>
+                                {normalizeBillingSource(invoice.billingSource) === "freshbooks" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      style={{ ...buttonStyle, background: "#7C3AED", opacity: uploadingExternalPdfInvoiceId === invoice.id ? 0.7 : 1 }}
+                                      onClick={() => handleSelectExternalPdf(invoice.id)}
+                                      disabled={!canManageInvoices || uploadingExternalPdfInvoiceId === invoice.id}
+                                    >
+                                      {uploadingExternalPdfInvoiceId === invoice.id
+                                        ? "Uploading..."
+                                        : invoice.externalPdf?.url
+                                          ? "Replace PDF"
+                                          : "Upload PDF"}
+                                    </button>
+                                    {invoice.externalPdf?.url ? (
+                                      <a
+                                        href={invoice.externalPdf.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{ ...buttonStyle, display: "inline-flex", alignItems: "center", background: "#475569", textDecoration: "none" }}
+                                        title={invoice.externalPdf.name || "View external invoice PDF"}
+                                      >
+                                        View
+                                      </a>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonStyle, background: "#1D4ED8" }}
+                                    onClick={() => handleExportBillableInvoice(invoice, rowHoursData)}
+                                    title="View billable invoice"
+                                  >
+                                    View
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -7452,8 +7746,11 @@ const InvoiceManager = () => {
                             </div>
                             <div style={{ border: "1px solid #E2E8F0", background: "#FFFFFF", padding: "12px" }}>
                               <div style={{ color: "#475569", fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Overtime Policy</div>
-                              <div style={{ marginTop: "7px", color: "#334155", fontSize: "0.86rem", lineHeight: 1.4 }}>{OVERTIME_POLICY_LABEL}</div>
+                              <div style={{ marginTop: "7px", color: "#334155", fontSize: "0.86rem", lineHeight: 1.4 }}>{overtimePolicyLabel}</div>
                             </div>
+                          </div>
+                          <div style={{ marginTop: "10px", padding: "10px 12px", border: "1px solid #FDE68A", background: "#FFFBEB", borderRadius: "8px", color: "#92400E", fontSize: "0.82rem", lineHeight: 1.5 }}>
+                            <strong>Why Total and Labor Cost may not match:</strong> the Total column shows the invoice amount saved when the invoice was created (or the amount typed in for FreshBooks invoices). The Labor Cost under Hours is recalculated live from the current hours, pay rates, and overtime policy. If the overtime policy or rates were changed after an invoice was created, the live Labor Cost will differ from the saved Total — edit the invoice or re-export it to bring the saved Total up to date.
                           </div>
                         </td>
                       </tr>
@@ -9015,7 +9312,8 @@ const InvoiceManager = () => {
                 const worklogUsers = Array.isArray(worklogData.users) ? worklogData.users : [];
                 const worklogCost = getLaborCostFromSplit(
                   worklogData.totalRegularMilliseconds,
-                  worklogData.totalOvertimeMilliseconds
+                  worklogData.totalOvertimeMilliseconds,
+                  overtimePolicy
                 );
 
                 return (
@@ -9045,7 +9343,8 @@ const InvoiceManager = () => {
                         worklogUsers.map((userEntry) => {
                           const userCost = getLaborCostFromSplit(
                             userEntry.regularMilliseconds,
-                            userEntry.overtimeMilliseconds
+                            userEntry.overtimeMilliseconds,
+                            overtimePolicy
                           );
                           const userCards = Array.isArray(userEntry.cards) ? userEntry.cards : [];
                           const userNotes = Array.isArray(userEntry.notes) ? userEntry.notes : [];

@@ -8,6 +8,7 @@ import commonStyles from "../pages/commonStyles";
 import { getChurchData } from "../api/church";
 import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
+import { getOvertimePolicyLabel, getOvertimePolicyRef, useOvertimePolicy } from "../utils/overtimePolicy";
 
 const SECTION_DEFS = [
   { key: "companyHeader", label: "Company Header & Client" },
@@ -169,6 +170,41 @@ const formatWorkDateRange = (firstUsedAt, lastUsedAt) => {
 const DEFAULT_OVERTIME_THRESHOLD_HOURS = 40;
 const DEFAULT_OVERTIME_MULTIPLIER = 1.5;
 
+const REGULAR_ONLY_OVERTIME_OVERRIDE = "__regular_only__";
+
+// Mirrors InvoiceManager's weeklyOvertimeAllocationByLogId decision handling, but applied to a
+// person's invoice-total hours for the week instead of log-by-log: per-log ordering never changes
+// the per-person totals, so the split matches while staying decoupled from the TD-matcher pipeline.
+const resolveLiveOvertimeSplit = ({ totalMilliseconds, weekKey, userName, invoiceProjectId, overtimeOverrideByWeekUser, thresholdHours }) => {
+  const safeTotalMilliseconds = Math.max(0, Number(totalMilliseconds) || 0);
+  const normalizedWeekKey = String(weekKey || "").trim();
+  const normalizedUserKey = String(userName || "").trim().toLowerCase();
+  if (!normalizedWeekKey || !normalizedUserKey || safeTotalMilliseconds <= 0) return null;
+
+  const override = overtimeOverrideByWeekUser[`${normalizedWeekKey}::${normalizedUserKey}`];
+
+  // No decision yet, an explicit "bill it all as regular" decision, or a decision that assigned
+  // the overtime to a DIFFERENT project: this invoice's hours for the person stay fully regular.
+  if (!override || override === REGULAR_ONLY_OVERTIME_OVERRIDE || override !== invoiceProjectId) {
+    return { regularHours: safeTotalMilliseconds / 3600000, overtimeHours: 0 };
+  }
+
+  // This invoice's project was chosen to absorb the person's overtime: regular stays pinned at a
+  // clean 40h (or the full total if under), and the excess past 40h rounds to the nearest whole
+  // hour with a 45-minute cutoff (45+ minutes rounds up, anything less bills as regular).
+  const thresholdMilliseconds = (Number(thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS) * 3600000;
+  const regularMilliseconds = Math.min(safeTotalMilliseconds, thresholdMilliseconds);
+  const rawExcessMilliseconds = Math.max(0, safeTotalMilliseconds - thresholdMilliseconds);
+  const hourMilliseconds = 3600000;
+  const overtimeRoundingCutoffMilliseconds = 45 * 60000;
+  const wholeOvertimeHours = Math.floor(rawExcessMilliseconds / hourMilliseconds);
+  const overtimeRemainderMilliseconds = rawExcessMilliseconds - wholeOvertimeHours * hourMilliseconds;
+  const overtimeMilliseconds =
+    (overtimeRemainderMilliseconds >= overtimeRoundingCutoffMilliseconds ? wholeOvertimeHours + 1 : wholeOvertimeHours) * hourMilliseconds;
+
+  return { regularHours: regularMilliseconds / 3600000, overtimeHours: overtimeMilliseconds / 3600000 };
+};
+
 const getIssueDetailsText = (entry = {}) => {
   const explicitDescription = String(entry.description || entry.title || "").trim();
   if (explicitDescription) return explicitDescription;
@@ -242,6 +278,8 @@ const BillableInvoicePreviewPage = () => {
   const { id } = useParams();
   const location = useLocation();
   const { user } = useAuth();
+  // Live org-wide overtime policy (falls back to defaults until the org doc loads).
+  const livePolicy = useOvertimePolicy(id);
   const pdfContentRef = useRef(null);
   const [companyBranding, setCompanyBranding] = useState({ name: "", logo: "" });
   const [logoDataUrl, setLogoDataUrl] = useState("");
@@ -530,7 +568,9 @@ const BillableInvoicePreviewPage = () => {
     return String(params.get("draft") || "").trim();
   }, [location.search]);
 
+  const [draftPayloadOverride, setDraftPayloadOverride] = useState(null);
   const draftPayload = useMemo(() => {
+    if (draftPayloadOverride) return draftPayloadOverride;
     if (!draftKey) return null;
 
     try {
@@ -541,7 +581,7 @@ const BillableInvoicePreviewPage = () => {
       console.error("Failed to parse billable invoice preview payload:", error);
       return null;
     }
-  }, [draftKey]);
+  }, [draftKey, draftPayloadOverride]);
 
   const invoiceDocRef = useMemo(() => {
     if (!id || !draftPayload?.projectId || !draftPayload?.invoiceId) return null;
@@ -552,6 +592,99 @@ const BillableInvoicePreviewPage = () => {
     if (!id || !draftPayload?.projectId) return null;
     return doc(db, "churches", id, "invoiceProjects", draftPayload.projectId);
   }, [id, draftPayload?.projectId]);
+
+  // Live-subscribe to the invoice doc so any saved change (revert, policy save, OT re-export)
+  // updates the comparison boxes automatically without re-opening the preview.
+  const [liveInvoiceData, setLiveInvoiceData] = useState(null);
+  useEffect(() => {
+    if (!invoiceDocRef) return undefined;
+    return onSnapshot(invoiceDocRef, (snapshot) => {
+      setLiveInvoiceData(snapshot.exists() ? (snapshot.data() || {}) : null);
+    }, (error) => {
+      console.error("Failed to live-load invoice for preview:", error);
+    });
+  }, [invoiceDocRef]);
+
+  // Live-subscribes to the manager's overtime-allocation decisions (made in the Overtime Analysis
+  // tab) so this preview's regular/overtime split updates without regenerating the draft. Keyed
+  // exactly like InvoiceManager: "weekKey::userLabel" -> invoiceProjectId. Null means "not loaded
+  // yet", so the frozen draft split is used until the first snapshot arrives.
+  const [overtimeOverrideByWeekUser, setOvertimeOverrideByWeekUser] = useState(null);
+  useEffect(() => {
+    if (!id) {
+      setOvertimeOverrideByWeekUser(null);
+      return undefined;
+    }
+
+    return onSnapshot(collection(db, "churches", id, "overtimeAllocationOverrides"), (snapshot) => {
+      const nextOverrides = {};
+      snapshot.forEach((overrideDoc) => {
+        const data = overrideDoc.data() || {};
+        const weekKey = String(data.weekKey || "").trim();
+        const userKey = String(data.userLabel || "").trim().toLowerCase();
+        const invoiceProjectId = String(data.invoiceProjectId || "").trim();
+        if (weekKey && userKey && invoiceProjectId) {
+          nextOverrides[`${weekKey}::${userKey}`] = invoiceProjectId;
+        }
+      });
+      setOvertimeOverrideByWeekUser(nextOverrides);
+    }, (error) => {
+      console.error("Error loading overtime allocation overrides:", error);
+      setOvertimeOverrideByWeekUser({});
+    });
+  }, [id]);
+
+  const [billingChangeLog, setBillingChangeLog] = useState([]);
+
+  // Live Time Rotate edit log, filtered to this invoice's week + project so card moves / duration
+  // edits that changed this invoice's total are visible next to the saved-vs-live comparison.
+  const [timeRotateEditLogs, setTimeRotateEditLogs] = useState([]);
+  useEffect(() => {
+    if (!id) {
+      setTimeRotateEditLogs([]);
+      return undefined;
+    }
+    return onSnapshot(query(collection(db, "churches", id, "timeRotateEditLogs")), (snapshot) => {
+      const next = snapshot.docs.map((logDoc) => {
+        const data = logDoc.data() || {};
+        return {
+          id: logDoc.id,
+          issueId: String(data.issueId || "").trim(),
+          projectName: String(data.projectName || "").trim(),
+          editedAt: Number(data.editedAt) || 0,
+          editedBy: String(data.editedBy || "").trim(),
+          fromDurationMs: Number(data.fromDurationMs) || 0,
+          toDurationMs: Number(data.toDurationMs) || 0,
+          fromNotes: Array.isArray(data.fromNotes) ? data.fromNotes.map((n) => String(n || "")) : [],
+          toNotes: Array.isArray(data.toNotes) ? data.toNotes.map((n) => String(n || "")) : [],
+          changedFields: Array.isArray(data.changedFields) ? data.changedFields.map((f) => String(f || "").trim()).filter(Boolean) : [],
+          source: String(data.source || "").trim(),
+        };
+      });
+      setTimeRotateEditLogs(next);
+    }, (error) => {
+      console.error("Failed to load Time Rotate edit logs for preview:", error);
+      setTimeRotateEditLogs([]);
+    });
+  }, [id]);
+
+  // Org invoice projects, for the "Bill overtime to ..." decision dropdown (mirrors Overtime Analysis).
+  const [invoiceProjectsList, setInvoiceProjectsList] = useState([]);
+  useEffect(() => {
+    if (!id) {
+      setInvoiceProjectsList([]);
+      return undefined;
+    }
+    return onSnapshot(collection(db, "churches", id, "invoiceProjects"), (snapshot) => {
+      setInvoiceProjectsList(snapshot.docs.map((projectDoc) => ({
+        id: projectDoc.id,
+        name: String(projectDoc.data()?.name || "Untitled Project").trim() || "Untitled Project",
+      })));
+    }, (error) => {
+      console.error("Failed to load invoice projects for OT decision:", error);
+      setInvoiceProjectsList([]);
+    });
+  }, [id]);
 
   const [billTo, setBillTo] = useState(null);
   const [billToClients, setBillToClients] = useState([]);
@@ -764,6 +897,7 @@ const BillableInvoicePreviewPage = () => {
   const [roundHoursUp, setRoundHoursUp] = useState(false);
   const [showDrafterNames, setShowDrafterNames] = useState(false);
   const [drafterNamesByUser, setDrafterNamesByUser] = useState({});
+  const [additionalDrafterNames, setAdditionalDrafterNames] = useState([]);
   const [showRegularOvertimeLabels, setShowRegularOvertimeLabels] = useState(true);
   const [documentInfoVisibility, setDocumentInfoVisibility] = useState({
     week: true,
@@ -819,6 +953,7 @@ const BillableInvoicePreviewPage = () => {
         setRoundHoursUp(settings.roundHoursUp === true);
         setShowDrafterNames(settings.showDrafterNames === true);
         setDrafterNamesByUser(settings.drafterNamesByUser || {});
+        setAdditionalDrafterNames(Array.isArray(settings.additionalDrafterNames) ? settings.additionalDrafterNames : []);
         setShowRegularOvertimeLabels(settings.showRegularOvertimeLabels !== false);
         setDocumentInfoVisibility((previous) => ({ ...previous, ...(settings.infoVisibility || {}) }));
       } catch (error) {
@@ -843,7 +978,8 @@ const BillableInvoicePreviewPage = () => {
     nextRoundHoursUp = roundHoursUp,
     nextShowDrafterNames = showDrafterNames,
     nextDrafterNamesByUser = drafterNamesByUser,
-    nextShowRegularOvertimeLabels = showRegularOvertimeLabels
+    nextShowRegularOvertimeLabels = showRegularOvertimeLabels,
+    nextAdditionalDrafterNames = additionalDrafterNames
   ) => {
     setDocumentType(nextDocumentType);
     setShowDocumentTotals(nextShowTotals);
@@ -854,6 +990,7 @@ const BillableInvoicePreviewPage = () => {
     setRoundHoursUp(nextRoundHoursUp);
     setShowDrafterNames(nextShowDrafterNames);
     setDrafterNamesByUser(nextDrafterNamesByUser);
+    setAdditionalDrafterNames(nextAdditionalDrafterNames);
     setShowRegularOvertimeLabels(nextShowRegularOvertimeLabels);
     if (!invoiceDocRef) return;
 
@@ -870,6 +1007,7 @@ const BillableInvoicePreviewPage = () => {
           roundHoursUp: nextRoundHoursUp,
           showDrafterNames: nextShowDrafterNames,
           drafterNamesByUser: nextDrafterNamesByUser,
+          additionalDrafterNames: nextAdditionalDrafterNames,
           showRegularOvertimeLabels: nextShowRegularOvertimeLabels,
         },
         billableDocumentSettingsUpdatedAt: serverTimestamp(),
@@ -881,6 +1019,20 @@ const BillableInvoicePreviewPage = () => {
       setIsSavingDocumentSettings(false);
     }
   };
+
+  const saveAdditionalDrafterNames = (nextNames) => handleDocumentSettingsChange(
+    documentType,
+    showDocumentTotals,
+    documentInfoVisibility,
+    includeWorkSummaryInPdf,
+    clientWorkOrderNumber,
+    showClientWorkOrderNumber,
+    roundHoursUp,
+    showDrafterNames,
+    drafterNamesByUser,
+    showRegularOvertimeLabels,
+    nextNames
+  );
 
   const [documentPresets, setDocumentPresets] = useState([]);
   const [selectedPresetId, setSelectedPresetId] = useState("");
@@ -934,6 +1086,7 @@ const BillableInvoicePreviewPage = () => {
           roundHoursUp,
           showDrafterNames,
           drafterNamesByUser,
+          additionalDrafterNames,
           showRegularOvertimeLabels,
           sectionVisibility,
         },
@@ -966,7 +1119,8 @@ const BillableInvoicePreviewPage = () => {
       settings.roundHoursUp === true,
       settings.showDrafterNames === true,
       settings.drafterNamesByUser || {},
-      settings.showRegularOvertimeLabels !== false
+      settings.showRegularOvertimeLabels !== false,
+      Array.isArray(settings.additionalDrafterNames) ? settings.additionalDrafterNames : []
     );
     toast.success(`Preset "${preset.name || "Preset"}" applied.`);
   };
@@ -1032,6 +1186,7 @@ const BillableInvoicePreviewPage = () => {
     try {
       const newProjectDocId = String(selectedOption.projectDocId || "").trim() || "unknown-project";
       const newIssueId = String(selectedOption.issueId || "").trim();
+      const cardMilliseconds = Number(card.milliseconds) || 0;
       const batch = writeBatch(db);
       logIds.forEach((logId) => {
         batch.update(doc(db, "churches", id, "timeRotateLogs", logId), {
@@ -1043,6 +1198,28 @@ const BillableInvoicePreviewPage = () => {
         });
       });
       await batch.commit();
+
+      // Record the move in the Time Rotate edit log so the "Recent time edits" box can show why
+      // an invoice's hours changed after it was saved.
+      try {
+        await addDoc(collection(db, "churches", id, "timeRotateEditLogs"), {
+          issueId: newIssueId || card.label || "",
+          projectName: selectedOption.projectName || card.projectName || "",
+          editedAt: Date.now(),
+          editedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+          fromRegisteredBy: personName || "",
+          toRegisteredBy: personName || "",
+          fromDurationMs: cardMilliseconds,
+          toDurationMs: cardMilliseconds,
+          fromNotes: [`Moved from ${String(card.label || "").trim() || "previous card"}`],
+          toNotes: [`Moved to ${newIssueId} — ${selectedOption.issueLabel || selectedOption.projectName}`],
+          changedFields: ["card", "project"],
+          source: "invoice-time-review-move",
+        });
+      } catch (logError) {
+        console.warn("Time moved, but failed to write the edit log:", logError);
+      }
+
       toast.success("Time moved to the new TD card. Regenerate this invoice from Invoices to see the correction reflected here.");
       setTimeReviewCardSelections((previous) => {
         const next = { ...previous };
@@ -1073,6 +1250,12 @@ const BillableInvoicePreviewPage = () => {
     endTime: "",
   });
   const [isSavingManualEntry, setIsSavingManualEntry] = useState(false);
+  const [isRevertingSnapshot, setIsRevertingSnapshot] = useState(false);
+  const [isPolicyEditorOpen, setIsPolicyEditorOpen] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState({ baseRate: "", overtimeMultiplier: "", thresholdHours: "" });
+  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+  const [savingOvertimeDecisionFor, setSavingOvertimeDecisionFor] = useState("");
+  const [expandedAuditPerson, setExpandedAuditPerson] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -1098,6 +1281,36 @@ const BillableInvoicePreviewPage = () => {
     };
   }, [invoiceDocRef]);
 
+  const handleSetOvertimeDecision = async (userName, invoiceProjectId) => {
+    const weekKey = String(draftPayload?.mondayDate || "").trim();
+    const userLabel = String(userName || "").trim();
+    if (!id || !weekKey || !userLabel) return;
+
+    const docId = `${weekKey}_${userLabel}`.toLowerCase().replace(/[^a-z0-9_]+/g, "");
+    setSavingOvertimeDecisionFor(userLabel.toLowerCase());
+    try {
+      if (!invoiceProjectId) {
+        await deleteDoc(doc(db, "churches", id, "overtimeAllocationOverrides", docId));
+        toast.success("Overtime decision reset to automatic for this person.");
+      } else {
+        await setDoc(doc(db, "churches", id, "overtimeAllocationOverrides", docId), {
+          weekKey,
+          userLabel,
+          invoiceProjectId,
+          updatedAt: Date.now(),
+          updatedByUid: user?.uid || "",
+          updatedBy: user?.name || user?.displayName || user?.email || "Unknown user",
+        }, { merge: true });
+        toast.success("Overtime billing decision saved.");
+      }
+    } catch (error) {
+      console.error("Failed to save overtime decision from preview:", error);
+      toast.error(`Failed to save the overtime decision: ${error?.message || "permission denied"}`);
+    } finally {
+      setSavingOvertimeDecisionFor("");
+    }
+  };
+
   const persistManualTimeEntries = async (nextEntries) => {
     setManualTimeEntries(nextEntries);
     if (!invoiceDocRef) return;
@@ -1113,6 +1326,183 @@ const BillableInvoicePreviewPage = () => {
       toast.error("Failed to save the added time entry.");
     } finally {
       setIsSavingManualEntry(false);
+    }
+  };
+
+  const handleRevertToSavedSnapshot = async () => {
+    if (!invoiceDocRef) {
+      toast.error("Cannot find this invoice to update.");
+      return;
+    }
+    if (!hasSavedInvoiceTotal || savedInvoiceTotal <= 0) {
+      toast.error("No saved total available to revert to.");
+      return;
+    }
+    setIsRevertingSnapshot(true);
+    try {
+      const existingLog = Array.isArray(liveInvoiceData?.billingChangeLog) ? liveInvoiceData.billingChangeLog : [];
+      await updateDoc(invoiceDocRef, {
+        total: savedInvoiceTotal,
+        billingChangeLog: [
+          ...existingLog,
+          {
+            action: "Reverted to saved total",
+            total: savedInvoiceTotal,
+            previousTotal: liveInvoiceTotal,
+            at: Date.now(),
+            by: "Preview",
+          },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+      setDraftPayloadOverride((prev) => (prev ? {
+        ...prev,
+        savedInvoiceTotal,
+      } : { ...(draftPayload || {}), savedInvoiceTotal }));
+      toast.success("Invoice total reverted to the saved billing split. Total column now shows the saved amount.");
+    } catch (error) {
+      console.error("Failed to revert invoice to saved billing snapshot:", error);
+      toast.error(`Failed to revert the invoice total: ${error?.message || "permission denied"}`);
+    } finally {
+      setIsRevertingSnapshot(false);
+    }
+  };
+
+  const handleApplyLiveAsSnapshot = async () => {
+    if (!invoiceDocRef) return;
+    setIsRevertingSnapshot(true);
+    try {
+      const liveSnapshot = {
+        total: liveInvoiceTotal,
+        totalRegularHours: liveRegularHours,
+        totalOvertimeHours: liveOvertimeHours,
+        totalHours: liveTotalHours,
+        baseRate: regularRateValue,
+        overtimeMultiplier: Number(livePolicy?.overtimeMultiplier) || Number(draftPayload?.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER,
+        overtimeThresholdHours: Number(livePolicy?.thresholdHours) || Number(draftPayload?.overtimePolicy?.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS,
+        policyLabel: overtimePolicyLabel,
+        capturedAt: Date.now(),
+      };
+      const existingLog = Array.isArray(liveInvoiceData?.billingChangeLog) ? liveInvoiceData.billingChangeLog : [];
+      await updateDoc(invoiceDocRef, {
+        total: liveInvoiceTotal,
+        billingSnapshot: liveSnapshot,
+        billingChangeLog: [
+          ...existingLog,
+          {
+            action: "Updated to live total",
+            total: liveInvoiceTotal,
+            previousTotal: savedInvoiceTotal,
+            policyLabel: overtimePolicyLabel,
+            at: Date.now(),
+            by: "Preview",
+          },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+      setDraftPayloadOverride((prev) => (prev ? {
+        ...prev,
+        savedInvoiceTotal: liveInvoiceTotal,
+        savedBillingSnapshot: liveSnapshot,
+      } : { ...(draftPayload || {}), savedInvoiceTotal: liveInvoiceTotal, savedBillingSnapshot: liveSnapshot }));
+      toast.success("Invoice total updated to the current live billing split.");
+    } catch (error) {
+      console.error("Failed to apply live billing snapshot:", error);
+      toast.error(`Failed to update the invoice total: ${error?.message || "permission denied"}`);
+    } finally {
+      setIsRevertingSnapshot(false);
+    }
+  };
+
+  const openPolicyEditor = () => {
+    setPolicyDraft({
+      baseRate: String(regularRateValue || ""),
+      overtimeMultiplier: String(Number(livePolicy?.overtimeMultiplier) || Number(draftPayload?.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER),
+      thresholdHours: String(Number(livePolicy?.thresholdHours) || Number(draftPayload?.overtimePolicy?.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS),
+    });
+    setIsPolicyEditorOpen(true);
+  };
+
+  const handleApplyPolicyChange = async (persist) => {
+    const nextBaseRate = Number(policyDraft.baseRate) || 0;
+    const nextMultiplier = Number(policyDraft.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER;
+    const nextThreshold = Number(policyDraft.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS;
+    if (nextBaseRate <= 0) {
+      toast.error("Enter a valid base rate.");
+      return;
+    }
+    const nextOvertimeRate = nextBaseRate * nextMultiplier;
+    const nextPolicy = {
+      thresholdHours: nextThreshold,
+      baseRate: nextBaseRate,
+      overtimeMultiplier: nextMultiplier,
+      overtimeRate: nextOvertimeRate,
+      label: `OT after ${nextThreshold}h/user/week @ $${nextOvertimeRate}/h`,
+    };
+
+    const base = draftPayloadOverride || draftPayload || {};
+    const nextPayload = { ...base, overtimePolicy: nextPolicy };
+    setDraftPayloadOverride(nextPayload);
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify(nextPayload));
+    } catch (error) {
+      console.warn("Unable to persist policy to draft storage:", error);
+    }
+    // The policy is org-wide: save it to the org doc so the whole app (Invoice Manager and
+    // every preview) recomputes with the same rates via the live policy subscription.
+    try {
+      await setDoc(getOvertimePolicyRef(id), {
+        baseRate: nextBaseRate,
+        overtimeMultiplier: nextMultiplier,
+        thresholdHours: nextThreshold,
+      }, { merge: true });
+    } catch (error) {
+      console.error("Failed to save org overtime policy:", error);
+      toast.error(`Policy applied to preview, but saving the org-wide policy failed: ${error?.message || "permission denied"}`);
+    }
+    setIsPolicyEditorOpen(false);
+
+    if (persist && invoiceDocRef) {
+      setIsSavingPolicy(true);
+      try {
+        const nextTotal = Number(effectiveTotals.totalAmount) || 0;
+        const existingLog = Array.isArray(liveInvoiceData?.billingChangeLog) ? liveInvoiceData.billingChangeLog : [];
+        await updateDoc(invoiceDocRef, {
+          total: nextTotal,
+          billingSnapshot: {
+            total: nextTotal,
+            totalRegularHours: Number(effectiveTotals.totalRegularHours) || 0,
+            totalOvertimeHours: Number(effectiveTotals.totalOvertimeHours) || 0,
+            totalHours: Number(effectiveTotals.totalHours) || 0,
+            baseRate: nextBaseRate,
+            overtimeMultiplier: nextMultiplier,
+            overtimeThresholdHours: nextThreshold,
+            policyLabel: nextPolicy.label,
+            capturedAt: Date.now(),
+          },
+          billingChangeLog: [
+            ...existingLog,
+            {
+              action: "Changed overtime policy",
+              total: nextTotal,
+              previousTotal: savedInvoiceTotal,
+              policyLabel: nextPolicy.label,
+              at: Date.now(),
+              by: "Preview",
+            },
+          ],
+          updatedAt: serverTimestamp(),
+        });
+        setDraftPayloadOverride({ ...nextPayload, savedInvoiceTotal: nextTotal, savedBillingSnapshot: { ...nextPolicy, total: nextTotal } });
+        toast.success("Overtime policy applied and invoice total updated.");
+      } catch (error) {
+        console.error("Failed to save overtime policy to invoice:", error);
+        toast.error(`Policy applied to preview, but saving to invoice failed: ${error?.message || "permission denied"}`);
+      } finally {
+        setIsSavingPolicy(false);
+      }
+    } else {
+      toast.success("Overtime policy applied to this preview.");
     }
   };
 
@@ -1232,6 +1622,7 @@ const BillableInvoicePreviewPage = () => {
       logType: "manual",
       requiresSaveConfirmation: false,
       createdViaBillableInvoice: true,
+      enteredAt: Date.now(),
     };
 
     const existingEntry = editingManualEntryId
@@ -1293,9 +1684,10 @@ const BillableInvoicePreviewPage = () => {
   const effectiveUsers = useMemo(() => {
     if (!draftPayload) return [];
 
-    const overtimeThresholdHoursValue = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
-    const overtimeMultiplierValue = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
-    const baseRate = Number(draftPayload.overtimePolicy?.baseRate) || 0;
+    const overtimeThresholdHoursValue = Number(livePolicy?.thresholdHours) || Number(draftPayload.overtimePolicy?.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS;
+    const overtimeMultiplierValue = Number(livePolicy?.overtimeMultiplier) || Number(draftPayload.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER;
+    const baseRate = Number(livePolicy?.baseRate) || Number(draftPayload.overtimePolicy?.baseRate) || 0;
+    const invoiceWeekKey = String(draftPayload.mondayDate || "").trim();
 
     const usersByKey = new Map();
     const baseUsers = Array.isArray(draftPayload.users) ? draftPayload.users : [];
@@ -1403,17 +1795,31 @@ const BillableInvoicePreviewPage = () => {
     return Array.from(usersByKey.values())
       .map((userEntry) => {
         const totalHours = Number(userEntry.baseTotalHours + userEntry.manualHours) || 0;
-        // Preserve the regular/overtime split already computed in InvoiceManager, which accounts
-        // for a person's OTHER project hours that week consuming part of their 40h regular quota.
-        // Recomputing min(total,40)/max(0,total-40) here in isolation would wrongly reclassify
-        // overtime hours as regular whenever this invoice isn't their only project that week.
-        const baseRegularHours = Number(userEntry.baseRegularHours || 0);
-        const baseOvertimeHours = Number(userEntry.baseOvertimeHours || 0);
+        // Once the manager's overtime-allocation decisions have loaded, re-derive this person's
+        // regular/overtime split live (same weekly threshold and 45-minute rounding as InvoiceManager)
+        // so a decision changed in the Overtime Analysis tab updates this preview without
+        // regenerating the draft. Until then, preserve the split frozen into the draft, which
+        // accounts for a person's OTHER project hours that week consuming part of their weekly quota.
+        const liveSplit = overtimeOverrideByWeekUser !== null
+          ? resolveLiveOvertimeSplit({
+              totalMilliseconds: Number(userEntry.baseTotalHours || 0) * 3600000,
+              weekKey: invoiceWeekKey,
+              userName: userEntry.name,
+              invoiceProjectId: draftPayload.projectId,
+              overtimeOverrideByWeekUser,
+              thresholdHours: overtimeThresholdHoursValue,
+            })
+          : null;
+        const baseRegularHours = liveSplit ? liveSplit.regularHours : Number(userEntry.baseRegularHours || 0);
+        const baseOvertimeHours = liveSplit ? liveSplit.overtimeHours : Number(userEntry.baseOvertimeHours || 0);
         const unroundedRegularHours = Math.min(baseRegularHours, totalHours);
         const unroundedOvertimeHours = Math.max(0, totalHours - unroundedRegularHours);
-        const regularHours = roundHoursUp ? roundHoursUpToHalfHour(unroundedRegularHours) : unroundedRegularHours;
-        const overtimeHours = roundHoursUp ? roundHoursUpToHalfHour(unroundedOvertimeHours) : unroundedOvertimeHours;
-        const billedTotalHours = regularHours + overtimeHours;
+        // Round the person's TOTAL once, then split the rounded total back into regular/overtime.
+        // Rounding regular and overtime independently would inflate the billed hours past the real
+        // total (e.g. 40.1h regular + 0.1h OT -> 40.5 + 0.5 = 41h billed for 40.2h of work).
+        const billedTotalHours = roundHoursUp ? roundHoursUpToHalfHour(totalHours) : totalHours;
+        const regularHours = Math.min(unroundedRegularHours, billedTotalHours);
+        const overtimeHours = Math.max(0, billedTotalHours - regularHours);
         const regularCost = regularHours * baseRate;
         const overtimeCost = overtimeHours * baseRate * overtimeMultiplierValue;
 
@@ -1429,7 +1835,7 @@ const BillableInvoicePreviewPage = () => {
         };
       })
       .sort((left, right) => right.lineTotal - left.lineTotal);
-  }, [draftPayload, manualTimeEntries, roundHoursUp]);
+  }, [draftPayload, manualTimeEntries, roundHoursUp, overtimeOverrideByWeekUser, livePolicy]);
 
   // Keeps new time entries consistent with each person's established naming convention in
   // Time Rotate (e.g. most of Salomon's real logs say "Salomon", not "Salomon Paredes") by
@@ -1492,6 +1898,58 @@ const BillableInvoicePreviewPage = () => {
       realTotalHours: Number(totals.realTotalHours.toFixed(4)),
     };
   }, [effectiveUsers]);
+
+  const regularRateValue = Number(livePolicy?.baseRate) || Number(draftPayload?.overtimePolicy?.baseRate) || 0;
+  const overtimeRateValue = regularRateValue * (Number(livePolicy?.overtimeMultiplier) || Number(draftPayload?.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER);
+  const regularCostTotal = Number((effectiveTotals.totalRegularHours || 0) * regularRateValue) || 0;
+  const overtimeCostTotal = Number((effectiveTotals.totalOvertimeHours || 0) * overtimeRateValue) || 0;
+  const savedInvoiceTotal = Number(liveInvoiceData?.total ?? draftPayload?.savedInvoiceTotal) || 0;
+  const liveInvoiceTotal = Number(effectiveTotals.totalAmount) || 0;
+  const totalDifference = liveInvoiceTotal - savedInvoiceTotal;
+  const hasSavedInvoiceTotal = Number.isFinite(Number(draftPayload?.savedInvoiceTotal)) && savedInvoiceTotal >= 0;
+  const hasTotalMismatch = hasSavedInvoiceTotal && Math.abs(totalDifference) >= 0.01;
+
+  const savedBillingSnapshot = liveInvoiceData?.billingSnapshot || draftPayload?.savedBillingSnapshot || null;
+  const savedRegularHours = Number(savedBillingSnapshot?.totalRegularHours) || 0;
+  const savedOvertimeHours = Number(savedBillingSnapshot?.totalOvertimeHours) || 0;
+  const savedTotalHours = Number(savedBillingSnapshot?.totalHours) || (savedRegularHours + savedOvertimeHours);
+  const hasSavedHoursSplit = Boolean(savedBillingSnapshot) && savedTotalHours > 0;
+  const savedPolicyLabel = String(savedBillingSnapshot?.policyLabel || "").trim();
+  const liveRegularHours = Number(effectiveTotals.totalRegularHours) || 0;
+  const liveOvertimeHours = Number(effectiveTotals.totalOvertimeHours) || 0;
+  const liveTotalHours = Number(effectiveTotals.totalHours) || 0;
+  const regularHoursDifference = liveRegularHours - savedRegularHours;
+  const overtimeHoursDifference = liveOvertimeHours - savedOvertimeHours;
+  const totalHoursDifference = liveTotalHours - savedTotalHours;
+  const formatSignedHours = (value) => `${value >= 0 ? "+" : "−"}${formatHoursClock(Math.abs(value))}`;
+  const formatSignedCurrency = (value) => `${value >= 0 ? "+" : "−"}${formatCurrency(Math.abs(value))}`;
+
+  // Time Rotate edits that touch this invoice's project within its billed week and change duration
+  // (or move a card) — the likely cause when the live total differs from the saved snapshot.
+  const relevantTimeRotateEdits = useMemo(() => {
+    if (!draftPayload) return [];
+    const projectName = String(draftPayload.projectName || "").trim().toLowerCase();
+    const weekStart = Date.parse(`${String(draftPayload.mondayDate || "").trim()}T00:00:00`);
+    const weekEnd = Date.parse(`${String(draftPayload.weekEndDate || "").trim()}T23:59:59.999`);
+    if (!Number.isFinite(weekStart) || !Number.isFinite(weekEnd)) return [];
+
+    return timeRotateEditLogs
+      .filter((entry) => {
+        const durationChanged = entry.fromDurationMs !== entry.toDurationMs;
+        const moved = entry.changedFields.some((field) => /duration|project|issue|started|ended|card/i.test(field));
+        if (!durationChanged && !moved) return false;
+        if (!projectName) return true;
+        const haystack = [
+          entry.projectName,
+          entry.issueId,
+          ...(Array.isArray(entry.fromNotes) ? entry.fromNotes : []),
+          ...(Array.isArray(entry.toNotes) ? entry.toNotes : []),
+        ].map((value) => String(value || "").trim().toLowerCase()).join(" ");
+        return haystack.includes(projectName);
+      })
+      .sort((left, right) => right.editedAt - left.editedAt)
+      .slice(0, 12);
+  }, [timeRotateEditLogs, draftPayload]);
 
   const profitLossRows = useMemo(() => {
     // Use the end of the billed period (not "now") so a later raise/rate change in Pay Everyone
@@ -1584,14 +2042,15 @@ const BillableInvoicePreviewPage = () => {
     if (!draftPayload) return;
 
     const users = effectiveUsers;
-      const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
-      const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
-      const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
+      const overtimeThresholdHours = Number(livePolicy?.thresholdHours) || Number(draftPayload.overtimePolicy?.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS;
+      const overtimeMultiplier = Number(livePolicy?.overtimeMultiplier) || Number(draftPayload.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER;
+      const overtimePolicyLabel = getOvertimePolicyLabel({ baseRate: regularRateValue, overtimeMultiplier, thresholdHours: overtimeThresholdHours });
 
     const worksheetRows = [
       ["Billable Invoice"],
       ["Project", draftPayload.projectName || "Unknown Project"],
       ["Invoice #", draftPayload.invoiceNumber || "-"],
+      ["Reference #", draftPayload.projectName || "-"],
       ["Week", `Week ${draftPayload.weekNumber || "-"}`],
       ["Start of Week", formatMonthDayYear(draftPayload.mondayDate)],
       ["End of Week", formatMonthDayYear(draftPayload.weekEndDate)],
@@ -1823,9 +2282,10 @@ const BillableInvoicePreviewPage = () => {
   }
 
   const users = effectiveUsers;
-  const overtimeThresholdHours = Number(draftPayload.overtimePolicy?.thresholdHours || DEFAULT_OVERTIME_THRESHOLD_HOURS);
-  const overtimeMultiplier = Number(draftPayload.overtimePolicy?.overtimeMultiplier || DEFAULT_OVERTIME_MULTIPLIER);
-  const overtimePolicyLabel = String(draftPayload.overtimePolicy?.label || `OT after ${overtimeThresholdHours}h/user/week @ ${overtimeMultiplier.toFixed(2)}x rate`);
+  const invoiceWeekKey = String(draftPayload.mondayDate || "").trim();
+  const overtimeThresholdHours = Number(livePolicy?.thresholdHours) || Number(draftPayload.overtimePolicy?.thresholdHours) || DEFAULT_OVERTIME_THRESHOLD_HOURS;
+  const overtimeMultiplier = Number(livePolicy?.overtimeMultiplier) || Number(draftPayload.overtimePolicy?.overtimeMultiplier) || DEFAULT_OVERTIME_MULTIPLIER;
+  const overtimePolicyLabel = getOvertimePolicyLabel({ baseRate: regularRateValue, overtimeMultiplier, thresholdHours: overtimeThresholdHours });
   const documentTypeLabel = documentType === "work_order"
     ? "Work Order"
     : documentType === "change_order"
@@ -1836,6 +2296,7 @@ const BillableInvoicePreviewPage = () => {
     : documentType === "change_order"
       ? "Change Order #"
       : "Invoice #";
+  const projectReferenceNumber = String(draftPayload?.projectName || draftPayload?.referenceNumber || "-").trim() || "-";
   const summaryGridColumns = showDocumentTotals
     ? "minmax(0, 2.8fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr)"
     : "minmax(0, 3fr) minmax(0, 1fr)";
@@ -2393,6 +2854,45 @@ const BillableInvoicePreviewPage = () => {
             </label>
           );
         })}
+        {additionalDrafterNames.map((personName, index) => (
+          <div key={`additional-drafter-${index}`} style={{ display: "flex", alignItems: "end", gap: "8px", flexWrap: "wrap" }}>
+            <label style={{ display: "grid", gap: "4px", color: "#334155", fontSize: "0.82rem", fontWeight: 700 }}>
+              {`Additional Drafter #${index + 1}`}
+              <select
+                value={personName}
+                disabled={isSavingDocumentSettings}
+                onChange={(event) => {
+                  const nextNames = [...additionalDrafterNames];
+                  nextNames[index] = event.target.value;
+                  saveAdditionalDrafterNames(nextNames);
+                }}
+                style={{ padding: "6px 8px", border: "1px solid #CBD5E1", borderRadius: "6px", fontSize: "0.82rem", minWidth: "220px" }}
+              >
+                <option value="">Select drafter name</option>
+                {personNameOptions.map((option) => (
+                  <option key={`additional-${index}-${option}`} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => saveAdditionalDrafterNames(additionalDrafterNames.filter((_, nameIndex) => nameIndex !== index))}
+              disabled={isSavingDocumentSettings}
+              title={`Remove Additional Drafter #${index + 1}`}
+              style={{ border: "1px solid #CBD5E1", borderRadius: "6px", padding: "6px 10px", background: "#FFFFFF", color: "#B91C1C", fontSize: "0.82rem", fontWeight: 700, cursor: isSavingDocumentSettings ? "not-allowed" : "pointer" }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => saveAdditionalDrafterNames([...additionalDrafterNames, ""])}
+          disabled={isSavingDocumentSettings}
+          style={{ justifySelf: "start", border: "1px solid #0F766E", borderRadius: "6px", padding: "7px 11px", background: "#FFFFFF", color: "#0F766E", fontSize: "0.82rem", fontWeight: 700, cursor: isSavingDocumentSettings ? "not-allowed" : "pointer" }}
+        >
+          Add Drafter
+        </button>
       </div>
 
       <div
@@ -2511,6 +3011,9 @@ const BillableInvoicePreviewPage = () => {
               <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#0F172A", letterSpacing: "0.08em" }}>{documentTypeLabel.toUpperCase()}</div>
               <div style={{ fontSize: "0.9rem", color: "#64748B", marginTop: "4px" }}>
                 {`${documentReferenceLabel}${draftPayload.invoiceNumber || "-"}`}
+              </div>
+              <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: "4px", fontWeight: 700 }}>
+                {`Reference # ${projectReferenceNumber}`}
               </div>
               {showClientWorkOrderNumber && clientWorkOrderNumber.trim() ? (
                 <div style={{ fontSize: "0.82rem", color: "#334155", marginTop: "4px", fontWeight: 700 }}>
@@ -2634,6 +3137,7 @@ const BillableInvoicePreviewPage = () => {
             documentInfoVisibility.period && ["Period", `${formatMonthDayYear(draftPayload.mondayDate)} – ${formatMonthDayYear(draftPayload.weekEndDate)}`],
             documentInfoVisibility.dateOfWork && ["Date of Work", formatWorkDateRange(workTimestampRange.firstUsedAt, workTimestampRange.lastUsedAt)],
             documentInfoVisibility.dueDate && ["Due Date", formatMonthDayYear(draftPayload.dueDate)],
+            ["Reference #", projectReferenceNumber],
             documentInfoVisibility.terms && ["Terms", draftPayload.paymentTermsLabel || "-"],
             documentType === "work_order" && ["Total Hours", formatHoursClock(effectiveTotals.totalHours || 0)],
           ].filter(Boolean).map(([label, value]) => (
@@ -2697,11 +3201,16 @@ const BillableInvoicePreviewPage = () => {
             const drafterLabel = `Drafter #${index + 1}`;
             const userKey = String(userEntry.name || `drafter-${index}`).trim().toLowerCase();
             const drafterRowKey = `drafter-${index + 1}`;
-            const selectedDrafterName = String(
-              drafterNamesByUser[drafterRowKey]
-              || drafterNamesByUser[userKey]
-              || ""
-            ).trim();
+            const selectedDrafterNames = [
+              drafterNamesByUser[drafterRowKey] || drafterNamesByUser[userKey] || "",
+              ...(index === 0 ? additionalDrafterNames : []),
+            ]
+              .map((name) => String(name || "").trim())
+              .filter(Boolean)
+              .filter((name, nameIndex, names) =>
+                names.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase()) === nameIndex
+              );
+            const selectedDrafterName = selectedDrafterNames.join(", ");
             const rowBackground = index % 2 === 0 ? "#F1F5F9" : "#FFFFFF";
             const regularHours = Number(userEntry.regularHours || 0);
             const overtimeHours = Number(userEntry.overtimeHours || 0);
@@ -2742,6 +3251,29 @@ const BillableInvoicePreviewPage = () => {
                         {cardSummaries.map((summary, summaryIndex) => (
                           <div key={`${index}-card-${summaryIndex}`}>{summary}</div>
                         ))}
+                      </div>
+                    ) : null}
+                    {overtimeOverrideByWeekUser !== null ? (
+                      <div data-html2canvas-ignore="true" style={{ marginTop: "8px", paddingTop: "6px", borderTop: "1px dashed #E2E8F0" }}>
+                        <label style={{ display: "grid", gap: "3px", fontSize: "0.72rem", fontWeight: 700, color: "#92400E" }}>
+                          Bill overtime to
+                          <select
+                            value={overtimeOverrideByWeekUser[`${invoiceWeekKey}::${String(userEntry.name || "").trim().toLowerCase()}`] || ""}
+                            onChange={(event) => handleSetOvertimeDecision(userEntry.name, event.target.value)}
+                            disabled={savingOvertimeDecisionFor === String(userEntry.name || "").trim().toLowerCase()}
+                            style={{ padding: "4px 6px", fontSize: "0.76rem", border: "1px solid #F59E0B", borderRadius: "4px", background: "#FFFFFF", color: "#334155", maxWidth: "240px" }}
+                          >
+                            <option value="">No overtime (bill as regular)</option>
+                            {invoiceProjectsList.map((project) => (
+                              <option key={`ot-project-${project.id}`} value={project.id}>
+                                {`Bill overtime to ${project.name}`}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div style={{ marginTop: "3px", fontSize: "0.68rem", color: "#B45309" }}>
+                          Same decision as the Overtime Analysis tab — changes apply live.
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -2786,10 +3318,17 @@ const BillableInvoicePreviewPage = () => {
                 borderTop: "1px solid #CBD5E1",
               }}
             >
-              <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>Subtotal (Regular + Overtime Hours)</div>
+              <div style={{ ...tableBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>
+                Subtotal (Regular + Overtime Hours)
+                <div style={{ marginTop: "2px", fontSize: "0.72rem", fontWeight: 600, color: "#64748B" }}>
+                  {formatHoursClock(effectiveTotals.totalRegularHours || 0)} reg × {formatCurrency(regularRateValue)} = {formatCurrency(regularCostTotal)}
+                  {" · "}
+                  {formatHoursClock(effectiveTotals.totalOvertimeHours || 0)} OT × {formatCurrency(overtimeRateValue)} = {formatCurrency(overtimeCostTotal)}
+                </div>
+              </div>
               <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatHoursClock(effectiveTotals.totalHours || 0)}</div>
               <div style={{ ...numericBodyCellStyle, background: "#F8FAFC" }}></div>
-              <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(effectiveTotals.totalAmount || 0)}</div>
+              <div style={{ ...numericBodyCellStyle, fontWeight: 700, background: "#F8FAFC" }}>{formatCurrency(regularCostTotal + overtimeCostTotal)}</div>
             </div>
             <div
               style={{
@@ -2808,6 +3347,344 @@ const BillableInvoicePreviewPage = () => {
               </div>
             </div>
           </div> : null}
+          <div
+            data-html2canvas-ignore="true"
+            style={{
+              marginTop: "10px",
+              padding: "10px 12px",
+              border: "1px solid #FDE68A",
+              background: "#FFFBEB",
+              borderRadius: "8px",
+              color: "#92400E",
+              fontSize: "0.82rem",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Why Total Due and Labor Cost may not match:</strong> Total Due on this preview is recalculated live from the current hours, pay rates, and overtime policy. The Total column on the invoice table shows the amount saved when the invoice was created. If the overtime policy or rates were changed after the invoice was saved, the two numbers will differ — re-export the invoice to update the saved total.
+            {hasTotalMismatch ? (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #FDE68A", fontVariantNumeric: "tabular-nums" }}>
+                <div>Saved on invoice: <strong>{formatCurrency(savedInvoiceTotal)}</strong></div>
+                <div>Recalculated now: <strong>{formatCurrency(liveInvoiceTotal)}</strong></div>
+                {regularRateValue > 0 ? (
+                  <div style={{ marginTop: "4px" }}>
+                    Implied hours when saved: <strong>{formatHoursClock(savedInvoiceTotal / regularRateValue)}</strong>
+                    {" "}· Current billable hours: <strong>{formatHoursClock(effectiveTotals.totalHours || 0)}</strong>
+                  </div>
+                ) : null}
+                <div style={{ marginTop: "4px", fontWeight: 800 }}>
+                  Difference: {totalDifference >= 0 ? "+" : "−"}{formatCurrency(Math.abs(totalDifference))}
+                  {totalDifference > 0
+                    ? " — current rates/policy produce a higher amount than what was saved."
+                    : " — current rates/policy produce a lower amount than what was saved."}
+                </div>
+                <div style={{ marginTop: "6px", fontWeight: 400, fontStyle: "italic", color: "#92400E" }}>
+                  If the implied hours when saved are far lower than the current billable hours, the gap is from more time being logged (or reassigned to this project in TD Matcher / Overtime Analysis) after the invoice was created — not a rate change. Check the TD Matcher and Time Review for this week to confirm the hours.
+                </div>
+              </div>
+            ) : null}
+            {!hasSavedInvoiceTotal ? (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #FDE68A", fontStyle: "italic" }}>
+                Close this preview and click View again from the invoice table to see the saved-vs-recalculated comparison.
+              </div>
+            ) : null}
+          </div>
+          <div
+            data-html2canvas-ignore="true"
+            style={{
+              marginTop: "10px",
+              display: "grid",
+              gap: "10px",
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            }}
+          >
+            <div
+              style={{
+                padding: "12px 14px",
+                border: "2px solid #2563EB",
+                background: "#EFF6FF",
+                borderRadius: "8px",
+                color: "#1E3A8A",
+                fontSize: "0.82rem",
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                <strong>Current policy</strong>
+                <span style={{ padding: "2px 8px", borderRadius: "999px", background: "#2563EB", color: "#FFFFFF", fontSize: "0.68rem", fontWeight: 800, textTransform: "uppercase" }}>Applied</span>
+              </div>
+              <div style={{ marginTop: "4px", color: "#1D4ED8", fontWeight: 700 }}>{overtimePolicyLabel}</div>
+              <div style={{ marginTop: "6px", display: "grid", gap: "4px", fontVariantNumeric: "tabular-nums" }}>
+                <div>
+                  Regular: <strong>{formatHoursClock(effectiveTotals.totalRegularHours || 0)}</strong>
+                  {regularRateValue > 0 ? <> × {formatCurrency(regularRateValue)}/h = <strong>{formatCurrency(regularCostTotal)}</strong></> : null}
+                </div>
+                <div>
+                  Overtime: <strong>{formatHoursClock(effectiveTotals.totalOvertimeHours || 0)}</strong>
+                  {overtimeRateValue > 0 ? <> × {formatCurrency(overtimeRateValue)}/h = <strong>{formatCurrency(overtimeCostTotal)}</strong></> : null}
+                </div>
+                <div style={{ marginTop: "2px", paddingTop: "6px", borderTop: "1px solid #BFDBFE", fontWeight: 800 }}>
+                  Total: {formatHoursClock(effectiveTotals.totalHours || 0)} = {formatCurrency(regularCostTotal + overtimeCostTotal)}
+                </div>
+              </div>
+            </div>
+
+            {hasSavedInvoiceTotal ? (
+              <div
+                style={{
+                  padding: "12px 14px",
+                  border: hasTotalMismatch ? "2px solid #F59E0B" : "1px solid #CBD5E1",
+                  background: hasTotalMismatch ? "#FFFBEB" : "#F8FAFC",
+                  borderRadius: "8px",
+                  color: "#92400E",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                  <strong>Previously saved</strong>
+                  <span style={{ padding: "2px 8px", borderRadius: "999px", background: hasTotalMismatch ? "#F59E0B" : "#94A3B8", color: "#FFFFFF", fontSize: "0.68rem", fontWeight: 800, textTransform: "uppercase" }}>
+                    {hasTotalMismatch ? "Changed" : "Same"}
+                  </span>
+                </div>
+                <div style={{ marginTop: "4px", color: "#B45309", fontWeight: 700 }}>
+                  {savedPolicyLabel || "Total stored on the invoice when it was created"}
+                </div>
+                <div style={{ marginTop: "6px", display: "grid", gap: "4px", fontVariantNumeric: "tabular-nums", color: "#0F172A" }}>
+                  {hasSavedHoursSplit ? (
+                    <>
+                      <div>
+                        Regular: <strong>{formatHoursClock(savedRegularHours)}</strong>
+                        <span style={{ color: regularHoursDifference !== 0 ? "#B45309" : "#64748B", fontWeight: 700 }}>
+                          {" "}({formatSignedHours(regularHoursDifference)})
+                        </span>
+                      </div>
+                      <div>
+                        Overtime: <strong>{formatHoursClock(savedOvertimeHours)}</strong>
+                        <span style={{ color: overtimeHoursDifference !== 0 ? "#B45309" : "#64748B", fontWeight: 700 }}>
+                          {" "}({formatSignedHours(overtimeHoursDifference)})
+                        </span>
+                      </div>
+                      <div>
+                        Total hours: <strong>{formatHoursClock(savedTotalHours)}</strong>
+                        <span style={{ color: totalHoursDifference !== 0 ? "#B45309" : "#64748B", fontWeight: 700 }}>
+                          {" "}({formatSignedHours(totalHoursDifference)})
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                  <div style={{ marginTop: hasSavedHoursSplit ? "2px" : 0, paddingTop: hasSavedHoursSplit ? "6px" : 0, borderTop: hasSavedHoursSplit ? "1px solid #FDE68A" : "none" }}>
+                    Saved total: <strong>{formatCurrency(savedInvoiceTotal)}</strong>
+                  </div>
+                  {hasTotalMismatch ? (
+                    <div style={{ fontWeight: 800, color: "#92400E" }}>
+                      Difference: {formatSignedCurrency(totalDifference)}
+                    </div>
+                  ) : null}
+                </div>
+                {hasTotalMismatch ? (
+                  <button
+                    type="button"
+                    onClick={handleRevertToSavedSnapshot}
+                    disabled={isRevertingSnapshot}
+                    style={{
+                      marginTop: "8px",
+                      border: "none",
+                      borderRadius: "6px",
+                      padding: "7px 10px",
+                      background: "#B45309",
+                      color: "#FFFFFF",
+                      fontWeight: 700,
+                      fontSize: "0.78rem",
+                      cursor: isRevertingSnapshot ? "not-allowed" : "pointer",
+                      opacity: isRevertingSnapshot ? 0.7 : 1,
+                    }}
+                  >
+                    {isRevertingSnapshot ? "Reverting..." : "Revert invoice to this saved total"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {hasTotalMismatch ? (
+            <div style={{ marginTop: "10px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={handleApplyLiveAsSnapshot}
+                disabled={isRevertingSnapshot}
+                style={{
+                  border: "none",
+                  borderRadius: "6px",
+                  padding: "8px 12px",
+                  background: "#2563EB",
+                  color: "#FFFFFF",
+                  fontWeight: 700,
+                  fontSize: "0.8rem",
+                  cursor: isRevertingSnapshot ? "not-allowed" : "pointer",
+                  opacity: isRevertingSnapshot ? 0.7 : 1,
+                }}
+              >
+                {isRevertingSnapshot ? "Saving..." : "Update invoice to the current live total"}
+              </button>
+            </div>
+          ) : null}
+
+          {Array.isArray(liveInvoiceData?.billingChangeLog) && liveInvoiceData.billingChangeLog.length > 0 ? (
+            <div
+              data-html2canvas-ignore="true"
+              style={{
+                marginTop: "10px",
+                padding: "10px 12px",
+                border: "1px solid #E2E8F0",
+                background: "#F8FAFC",
+                borderRadius: "8px",
+                color: "#334155",
+                fontSize: "0.78rem",
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: "6px", color: "#0F172A" }}>Billing change log</div>
+              <div style={{ display: "grid", gap: "6px" }}>
+                {[...liveInvoiceData.billingChangeLog].reverse().map((entry, logIndex) => (
+                  <div key={`billing-log-${logIndex}`} style={{ borderBottom: logIndex < liveInvoiceData.billingChangeLog.length - 1 ? "1px solid #E2E8F0" : "none", paddingBottom: "6px" }}>
+                    <div style={{ fontWeight: 700, color: "#1D4ED8" }}>{entry.action || "Updated"}</div>
+                    <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {formatCurrency(entry.previousTotal || 0)} → <strong>{formatCurrency(entry.total || 0)}</strong>
+                      {entry.policyLabel ? <span style={{ color: "#64748B" }}> · {entry.policyLabel}</span> : null}
+                    </div>
+                    <div style={{ color: "#94A3B8", fontSize: "0.72rem" }}>
+                      {entry.at ? new Date(Number(entry.at)).toLocaleString() : ""}{entry.by ? ` · ${entry.by}` : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {hasTotalMismatch ? (
+            <div
+              data-html2canvas-ignore="true"
+              style={{
+                marginTop: "10px",
+                padding: "10px 12px",
+                border: "1px solid #FBCFE8",
+                background: "#FDF2F8",
+                borderRadius: "8px",
+                color: "#9D174D",
+                fontSize: "0.78rem",
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: "6px", color: "#831843" }}>
+                Recent time edits on this project (may explain total changes)
+              </div>
+              {relevantTimeRotateEdits.length > 0 ? (
+                <div style={{ display: "grid", gap: "6px" }}>
+                  {relevantTimeRotateEdits.map((entry, editIndex) => (
+                    <div key={`tr-edit-${entry.id}-${editIndex}`} style={{ borderBottom: editIndex < relevantTimeRotateEdits.length - 1 ? "1px solid #FBCFE8" : "none", paddingBottom: "6px" }}>
+                      <div style={{ fontWeight: 700 }}>
+                        {entry.issueId || "Card"} — {entry.changedFields.join(", ") || "edited"}
+                      </div>
+                      {entry.fromDurationMs !== entry.toDurationMs ? (
+                        <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                          Hours: {formatHoursClock(entry.fromDurationMs / 3600000)} → <strong>{formatHoursClock(entry.toDurationMs / 3600000)}</strong>
+                        </div>
+                      ) : null}
+                      <div style={{ color: "#BE185D", fontSize: "0.72rem" }}>
+                        {entry.editedAt ? new Date(entry.editedAt).toLocaleString() : ""}{entry.editedBy ? ` · ${entry.editedBy}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: "#9D174D", fontStyle: "italic", lineHeight: 1.5 }}>
+                  No card-move or duration edits are recorded in the Time Rotate edit log for this project. The hours changed because time was logged, reassigned in the TD Matcher, or an overtime decision was changed after the invoice was saved. Open the <strong>Time Review</strong> section above to see exactly which cards/hours make up the current {formatHoursClock(liveTotalHours)}.
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          <div
+            data-html2canvas-ignore="true"
+            style={{
+              marginTop: "10px",
+              padding: "10px 12px",
+              border: "1px solid #E2E8F0",
+              background: "#FFFFFF",
+              borderRadius: "8px",
+              fontSize: "0.78rem",
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: "6px", color: "#0F172A" }}>Per-person audit (who makes up the current total)</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Person</th>
+                    <th style={{ textAlign: "right", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Regular</th>
+                    <th style={{ textAlign: "right", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Overtime</th>
+                    <th style={{ textAlign: "right", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Total Hours</th>
+                    <th style={{ textAlign: "right", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Cost</th>
+                    <th style={{ textAlign: "right", padding: "4px 6px", borderBottom: "1px solid #E2E8F0", color: "#64748B", fontSize: "0.72rem" }}>Last Entered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {effectiveUsers.map((userEntry, personIndex) => {
+                    const personCards = Array.isArray(userEntry.allCards) && userEntry.allCards.length > 0
+                      ? userEntry.allCards
+                      : (Array.isArray(userEntry.cards) ? userEntry.cards : []);
+                    const lastEnteredAt = personCards.reduce((latest, card) => Math.max(latest, Number(card.lastEnteredAt) || 0), 0);
+                    const isExpanded = expandedAuditPerson === personIndex;
+                    return (
+                    <React.Fragment key={`audit-person-${personIndex}`}>
+                    <tr>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", fontWeight: 700, color: "#0F172A" }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedAuditPerson(isExpanded ? null : personIndex)}
+                          style={{ border: "none", background: "none", padding: 0, fontWeight: 700, color: "#1D4ED8", cursor: "pointer", textAlign: "left" }}
+                        >
+                          {isExpanded ? "▾ " : "▸ "}{userEntry.name || `Person ${personIndex + 1}`}
+                        </button>
+                      </td>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatHoursClock(userEntry.regularHours || 0)}</td>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", textAlign: "right", fontVariantNumeric: "tabular-nums", color: Number(userEntry.overtimeHours) > 0 ? "#B45309" : "#0F172A" }}>{formatHoursClock(userEntry.overtimeHours || 0)}</td>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{formatHoursClock(userEntry.totalHours || 0)}</td>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{formatCurrency(userEntry.lineTotal || 0)}</td>
+                      <td style={{ padding: "4px 6px", borderBottom: "1px solid #F1F5F9", textAlign: "right", fontSize: "0.72rem", color: "#64748B" }}>
+                        {lastEnteredAt > 0 ? new Date(lastEnteredAt).toLocaleString() : "-"}
+                      </td>
+                    </tr>
+                    {isExpanded ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: "6px 12px", background: "#F8FAFC", borderBottom: "1px solid #E2E8F0" }}>
+                          <div style={{ display: "grid", gap: "4px" }}>
+                            {personCards.length === 0 ? (
+                              <div style={{ color: "#64748B", fontStyle: "italic" }}>No cards for this person.</div>
+                            ) : personCards.map((card, cardIndex) => (
+                              <div key={`audit-card-${personIndex}-${cardIndex}`} style={{ display: "flex", justifyContent: "space-between", gap: "12px", fontSize: "0.74rem" }}>
+                                <span style={{ color: "#334155" }}>{card.label || card.issueId || "Card"}</span>
+                                <span style={{ color: "#64748B", fontVariantNumeric: "tabular-nums" }}>
+                                  {formatHoursClock((Number(card.milliseconds) || 0) / 3600000)}
+                                  {" · worked "}
+                                  {formatWorkDateRange(card.firstUsedAt, card.lastUsedAt)}
+                                  {Number(card.lastEnteredAt) > 0 ? (
+                                    <span style={{ color: "#B45309", fontWeight: 700 }}>
+                                      {" · entered "}{new Date(Number(card.lastEnteredAt)).toLocaleString()}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
       )}

@@ -5,6 +5,7 @@ let twilioLib = null;
 // const stripe = require('stripe')(functions.config().stripe.secret_key); // Commented out to fix deployment error
 const axios = require('axios');
 const crypto = require('crypto');
+const { createPublicLeadPhoneCheckInHandler } = require('./publicLeadPhoneCheckIn');
 let sql = null;
 // const { freshbooksToken } = require('./freshbooksToken'); // Temporarily commented out to fix deployment
 
@@ -55,6 +56,8 @@ const handleCors = (req, res) => {
 if (!admin.apps.length) {
   admin.initializeApp();
 }
+
+exports.publicLeadPhoneCheckIn = functions.https.onRequest(createPublicLeadPhoneCheckInHandler({ admin, handleCors }));
 
 // SQL Server Configuration
 const sqlConfig = {
@@ -244,6 +247,31 @@ const toInlineDataFromUrl = async (url) => {
       },
     },
     hash,
+  };
+};
+
+const toAssessmentInlineDataFromUrl = async ({ url, fallbackMimeType = '' }) => {
+  const normalizedUrl = normalizeText(url);
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  const response = await axios.get(normalizedUrl, {
+    responseType: 'arraybuffer',
+    timeout: 90000,
+    maxContentLength: 40 * 1024 * 1024,
+    maxBodyLength: 40 * 1024 * 1024,
+  });
+
+  const mimeType = normalizeText(response.headers?.['content-type']) || normalizeText(fallbackMimeType) || 'application/octet-stream';
+  const rawBuffer = Buffer.from(response.data);
+
+  return {
+    inlineData: {
+      mimeType,
+      data: rawBuffer.toString('base64'),
+    },
+    byteLength: rawBuffer.length,
   };
 };
 
@@ -3054,6 +3082,7 @@ exports.generateTimeRotateInvoiceReview = functions.https.onRequest((req, res) =
 
       const prompt = String(req.body?.prompt || '').trim();
       const model = String(req.body?.model || 'gemini-flash-latest').trim() || 'gemini-flash-latest';
+      const maxOutputTokens = Math.min(Math.max(Number(req.body?.maxOutputTokens || 2048), 256), 8192);
 
       if (!prompt) {
         return res.status(400).json({ error: 'Missing `prompt` in request body.' });
@@ -3078,7 +3107,7 @@ exports.generateTimeRotateInvoiceReview = functions.https.onRequest((req, res) =
             generationConfig: {
               temperature: 0.2,
               topP: 0.9,
-              maxOutputTokens: 2048,
+              maxOutputTokens,
             },
           },
           {
@@ -3099,7 +3128,7 @@ exports.generateTimeRotateInvoiceReview = functions.https.onRequest((req, res) =
           return res.status(502).json({ error: 'Gemini returned no summary text for this dataset.' });
         }
 
-        return res.status(200).json({ text: responseText, model });
+        return res.status(200).json({ text: responseText, model, maxOutputTokens });
       } catch (geminiError) {
         console.error('Gemini invoice review proxy error:', geminiError.response?.data || geminiError.message);
         return res.status(500).json({
@@ -3112,6 +3141,199 @@ exports.generateTimeRotateInvoiceReview = functions.https.onRequest((req, res) =
       return res.status(500).json({ error: 'Internal server error', message: error.message });
     }
   });
+});
+
+exports.generateAITrainingCourseDraft = functions.runWith({ memory: '512MB', timeoutSeconds: 120 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const prompt = normalizeText(req.body?.prompt);
+      const model = normalizeGeminiModelName(req.body?.model) || 'gemini-flash-latest';
+
+      if (!prompt) {
+        return res.status(400).json({ error: 'Missing prompt.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      const requestBody = {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          topP: 0.9,
+          maxOutputTokens: 8192,
+        },
+      };
+
+      const modelCandidates = Array.from(new Set([
+        model,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-flash-latest',
+      ].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean)));
+
+      const { geminiResponse, resolvedModel, lastModelError, attemptedModels } = await requestGeminiWithModelFallback({
+        geminiApiKey,
+        modelCandidates,
+        requestBody,
+        fallbackModel: 'gemini-2.0-flash',
+      });
+
+      if (!geminiResponse) {
+        const upstreamMessage = normalizeText(lastModelError?.response?.data?.error?.message)
+          || normalizeText(lastModelError?.message)
+          || 'No Gemini model accepted the course generation request.';
+        return res.status(502).json({
+          error: 'Gemini course generation failed',
+          message: upstreamMessage,
+          attemptedModels,
+          upstream: lastModelError?.response?.data || upstreamMessage,
+        });
+      }
+
+      const text = extractGeminiText(geminiResponse.data);
+      if (!text) {
+        return res.status(502).json({ error: 'Gemini returned no course draft text.' });
+      }
+
+      return res.status(200).json({ text, model: resolvedModel, attemptedModels });
+    } catch (error) {
+      console.error('generateAITrainingCourseDraft error:', error?.response?.data || error.message);
+      return res.status(500).json({
+        error: error.message || 'Unexpected error while generating AI training course draft.',
+        details: error?.response?.data || '',
+      });
+    }
+  });
+});
+
+exports.gradeAITrainingAssessment = functions.runWith({ memory: '1GB', timeoutSeconds: 180 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+
+  corsHandler(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      }
+
+      const authHeader = normalizeText(req.headers.authorization);
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      if (!tokenMatch) {
+        return res.status(401).json({ error: 'Missing Authorization Bearer token.' });
+      }
+
+      let decodedToken = null;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(tokenMatch[1]);
+      } catch (authError) {
+        return res.status(401).json({ error: 'Invalid Authorization token.' });
+      }
+
+      const prompt = normalizeText(req.body?.prompt);
+      const mediaUrl = normalizeText(req.body?.mediaUrl);
+      const mediaMimeType = normalizeText(req.body?.mediaMimeType);
+      const responseMode = normalizeText(req.body?.responseMode || 'text');
+      const model = normalizeGeminiModelName(req.body?.model) || 'gemini-2.0-flash';
+
+      if (!prompt) {
+        return res.status(400).json({ error: 'Missing prompt.' });
+      }
+
+      const geminiApiKey = getGeminiApiKey();
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: 'Gemini API key not configured on Firebase.' });
+      }
+
+      const parts = [{ text: prompt }];
+      let mediaIncluded = false;
+      if (mediaUrl && responseMode !== 'text') {
+        const mediaPart = await toAssessmentInlineDataFromUrl({ url: mediaUrl, fallbackMimeType: mediaMimeType });
+        if (mediaPart?.inlineData?.data) {
+          parts.push({ inlineData: mediaPart.inlineData });
+          mediaIncluded = true;
+        }
+      }
+
+      const requestBody = {
+        contents: [
+          {
+            role: 'user',
+            parts,
+          },
+        ],
+        generationConfig: {
+          temperature: 0.15,
+          topP: 0.9,
+          maxOutputTokens: 2048,
+        },
+      };
+
+      const modelCandidates = Array.from(new Set([
+        model,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-flash-latest',
+      ].map((entry) => normalizeGeminiModelName(entry)).filter(Boolean)));
+
+      const { geminiResponse, resolvedModel, lastModelError, attemptedModels } = await requestGeminiWithModelFallback({
+        geminiApiKey,
+        modelCandidates,
+        requestBody,
+        fallbackModel: 'gemini-2.0-flash',
+      });
+
+      if (!geminiResponse) {
+        const upstreamMessage = normalizeText(lastModelError?.response?.data?.error?.message)
+          || normalizeText(lastModelError?.message)
+          || 'No Gemini model accepted this assessment media.';
+        return res.status(502).json({
+          error: 'Gemini grading request failed',
+          message: upstreamMessage,
+          attemptedModels,
+          upstream: lastModelError?.response?.data || upstreamMessage,
+        });
+      }
+
+      const text = extractGeminiText(geminiResponse.data);
+      if (!text) {
+        return res.status(502).json({ error: 'Gemini returned no grading text.' });
+      }
+
+      return res.status(200).json({ text, model: resolvedModel, mediaIncluded, uid: decodedToken.uid, attemptedModels });
+    } catch (error) {
+      console.error('gradeAITrainingAssessment error:', error?.response?.data || error.message);
+      return res.status(500).json({
+        error: error.message || 'Unexpected error while grading AI training assessment.',
+        details: error?.response?.data || '',
+      });
+    }
+  });
+});
+
+const openAIDesignHandler = require('./openaiDesign').createOpenAIDesignHandler({
+  admin,
+  axios,
+  getApiKey: () => process.env.OPENAI_API_KEY || functions.config().openai?.apikey,
+  getModel: () => process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst',
+  projectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'igletechv1',
+});
+
+exports.generateEventDesignWithOpenAI = functions.runWith({ memory: '512MB', timeoutSeconds: 300 }).https.onRequest((req, res) => {
+  if (handleCors(req, res)) return;
+  return corsHandler(req, res, () => openAIDesignHandler(req, res));
 });
 
 exports.generateDesignWithGemini = functions.runWith({ memory: "512MB", timeoutSeconds: 120 }).https.onRequest((req, res) => {

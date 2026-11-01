@@ -161,6 +161,14 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
+        id: "leads",
+        title: "Leads",
+        description: "Track leads with comments and customizable statuses",
+        icon: "🧲",
+        buildPath: (organizationId) => `/organization/${organizationId}/leads`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
         id: "song-manager",
         title: "Song Manager",
         description: "Create and edit songs for presentations",
@@ -261,6 +269,14 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
+        id: "ai-training",
+        title: "AI Training",
+        description: "Build courses and lessons that Gemini can use to tutor students",
+        icon: "🎓",
+        buildPath: (organizationId) => `/organization/${organizationId}/ai-training`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
         id: "donors",
         title: "Donors",
         description: "Upload and manage donor lists",
@@ -304,12 +320,28 @@ const organizationModuleDefinitions = [
         defaultVisibilityByRole: { member: true },
       }),
       createModule({
+        id: "issues-main-list",
+        title: "Issues Main List",
+        description: "Select a project and log issue numbers with a time stamp and date",
+        icon: "📝",
+        buildPath: (organizationId) => `/organization/${organizationId}/issues-main-list`,
+        defaultVisibilityByRole: { member: true },
+      }),
+      createModule({
         id: "commitments",
         title: "Work Progress",
         description: "Add quick commitments and link each task to an IglesiaTech project",
         icon: "✅",
         buildPath: (organizationId) => `/organization/${organizationId}/work-progress`,
         defaultVisibilityByRole: { member: false },
+      }),
+      createModule({
+        id: "work-requests",
+        title: "Work Requests",
+        description: "Submit project-linked tasks with documents and supporting files",
+        icon: "📨",
+        buildPath: (organizationId) => `/organization/${organizationId}/work-requests`,
+        defaultVisibilityByRole: { member: true },
       }),
       createModule({
         id: "e2-agile-board",

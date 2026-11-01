@@ -14,6 +14,7 @@ import "react-loading-skeleton/dist/skeleton.css";
 import commonStyles from "../pages/commonStyles";
 import "../styles/LoginStyles.css";
 import "./Register.css";
+import LoginEventSlideshow from './LoginEventSlideshow';
 import {
   decodeSwitchPassword,
   encodeSwitchPassword,
@@ -1106,14 +1107,7 @@ const Login = () => {
           <p className="login-kicker">Secure Access</p>
 
           <h1 className="login-title">Welcome to your organization</h1>
-          <p className="login-subtitle">
-            Sign in to manage members, events, and church resources from a trusted workspace.
-          </p>
-          <ul className="login-benefits-list">
-            <li>Email or phone authentication</li>
-            <li>Optional persistent session on your device</li>
-            <li>Fast password recovery</li>
-          </ul>
+          {id && <LoginEventSlideshow organizationId={id} />}
         </section>
 
         <section className="login-card" aria-label="Sign-in form">

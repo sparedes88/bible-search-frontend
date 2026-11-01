@@ -7,19 +7,23 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function roleValueIn(roleValue, roleList) {
+      return roleValue is string && roleValue.lower() in roleList;
+    }
+
     function hasGlobalAdminRole(userDoc) {
-      return userDoc.data.role in ['global_admin', 'system_global_admin'] ||
-        userDoc.data.baseRole in ['global_admin', 'system_global_admin'] ||
-        userDoc.data.basedOn in ['global_admin', 'system_global_admin'] ||
-        userDoc.data.systemRole in ['global_admin', 'system_global_admin'] ||
+      return roleValueIn(userDoc.data.get('role', ''), ['global_admin', 'system_global_admin']) ||
+        roleValueIn(userDoc.data.get('baseRole', ''), ['global_admin', 'system_global_admin']) ||
+        roleValueIn(userDoc.data.get('basedOn', ''), ['global_admin', 'system_global_admin']) ||
+        roleValueIn(userDoc.data.get('systemRole', ''), ['global_admin', 'system_global_admin']) ||
         hasCustomRoleBase(userDoc, ['global_admin', 'system_global_admin']);
     }
 
     function hasChurchAdminRole(userDoc) {
-      return userDoc.data.role in ['admin', 'system_admin'] ||
-        userDoc.data.baseRole in ['admin', 'system_admin'] ||
-        userDoc.data.basedOn in ['admin', 'system_admin'] ||
-        userDoc.data.systemRole in ['admin', 'system_admin'] ||
+      return roleValueIn(userDoc.data.get('role', ''), ['admin', 'system_admin']) ||
+        roleValueIn(userDoc.data.get('baseRole', ''), ['admin', 'system_admin']) ||
+        roleValueIn(userDoc.data.get('basedOn', ''), ['admin', 'system_admin']) ||
+        roleValueIn(userDoc.data.get('systemRole', ''), ['admin', 'system_admin']) ||
         hasCustomRoleBase(userDoc, ['admin', 'system_admin', 'global_admin', 'system_global_admin']);
     }
 
@@ -44,24 +48,24 @@ service cloud.firestore {
       return roleId != '' &&
         exists(/databases/$(database)/documents/roles/$(roleId)) &&
         (
-          get(/databases/$(database)/documents/roles/$(roleId)).data.baseRole in roleList ||
-          get(/databases/$(database)/documents/roles/$(roleId)).data.basedOn in roleList ||
-          get(/databases/$(database)/documents/roles/$(roleId)).data.role in roleList ||
-          get(/databases/$(database)/documents/roles/$(roleId)).data.systemRole in roleList
+          roleValueIn(get(/databases/$(database)/documents/roles/$(roleId)).data.get('baseRole', ''), roleList) ||
+          roleValueIn(get(/databases/$(database)/documents/roles/$(roleId)).data.get('basedOn', ''), roleList) ||
+          roleValueIn(get(/databases/$(database)/documents/roles/$(roleId)).data.get('role', ''), roleList) ||
+          roleValueIn(get(/databases/$(database)/documents/roles/$(roleId)).data.get('systemRole', ''), roleList)
         );
     }
 
     function isSameChurchAsCurrentUser(userData) {
       let currentUser = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      return userData.churchId == currentUser.churchId ||
-        userData.churchID == currentUser.churchId ||
-        userData.organizationId == currentUser.churchId ||
-        userData.churchId == currentUser.churchID ||
-        userData.churchID == currentUser.churchID ||
-        userData.organizationId == currentUser.churchID ||
-        userData.churchId == currentUser.organizationId ||
-        userData.churchID == currentUser.organizationId ||
-        userData.organizationId == currentUser.organizationId;
+      return string(userData.get('churchId', '')) == string(currentUser.get('churchId', '')) ||
+        string(userData.get('churchID', '')) == string(currentUser.get('churchId', '')) ||
+        string(userData.get('organizationId', '')) == string(currentUser.get('churchId', '')) ||
+        string(userData.get('churchId', '')) == string(currentUser.get('churchID', '')) ||
+        string(userData.get('churchID', '')) == string(currentUser.get('churchID', '')) ||
+        string(userData.get('organizationId', '')) == string(currentUser.get('churchID', '')) ||
+        string(userData.get('churchId', '')) == string(currentUser.get('organizationId', '')) ||
+        string(userData.get('churchID', '')) == string(currentUser.get('organizationId', '')) ||
+        string(userData.get('organizationId', '')) == string(currentUser.get('organizationId', ''));
     }
 
     function isOwner(userId) {
@@ -73,11 +77,14 @@ service cloud.firestore {
       return isAuthenticated() && hasGlobalAdminRole(userDoc);
     }
 
+    // Path segments are always strings, but churchId is stored as a number on some user docs,
+    // so compare both sides as strings and tolerate the field being absent.
     function userBelongsToChurch(churchId) {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return userDoc.data.churchId == churchId ||
-        userDoc.data.churchID == churchId ||
-        userDoc.data.organizationId == churchId ||
+      let target = string(churchId);
+      return string(userDoc.data.get('churchId', '')) == target ||
+        string(userDoc.data.get('churchID', '')) == target ||
+        string(userDoc.data.get('organizationId', '')) == target ||
         exists(/databases/$(database)/documents/churches/$(churchId)/members/$(request.auth.uid));
     }
 
@@ -231,7 +238,11 @@ service cloud.firestore {
     // ✅ Event Instances
     match /eventInstances/{eventId} {
       allow read: if true;
-      allow write, delete: if isChurchAdmin(resource.data.churchId);
+      allow create: if isAuthenticated() && isChurchAdmin(request.resource.data.churchId);
+      allow update: if isAuthenticated() &&
+        isChurchAdmin(resource.data.churchId) &&
+        request.resource.data.churchId == resource.data.churchId;
+      allow delete: if isAuthenticated() && isChurchAdmin(resource.data.churchId);
     }
 
     // ✅ Events
@@ -253,7 +264,9 @@ service cloud.firestore {
             resource.data != null &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'viewerIceCandidate',
-              'answer'
+              'answer',
+              'lastReaction',
+              'reactionCounts'
             ]);
         }
 
@@ -275,6 +288,29 @@ service cloud.firestore {
         allow write: if isChurchAdmin(churchId);
       }
 
+      match /aiTrainingCourses/{courseId} {
+        allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+        allow create, update, delete: if isChurchAdmin(churchId);
+
+        match /lessons/{lessonId} {
+          allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+          allow create, update, delete: if isChurchAdmin(churchId);
+        }
+      }
+
+      match /aiTrainingProgress/{progressId} {
+        allow read: if isChurchAdmin(churchId) || (isAuthenticated() && resource.data.userId == request.auth.uid);
+        allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if isChurchAdmin(churchId) || (isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid);
+
+        match /messages/{messageId} {
+          allow read: if isChurchAdmin(churchId) ||
+            (isAuthenticated() && get(/databases/$(database)/documents/churches/$(churchId)/aiTrainingProgress/$(progressId)).data.userId == request.auth.uid);
+          allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+          allow update, delete: if isChurchAdmin(churchId) || (isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid);
+        }
+      }
+
       match /quickCards/{cardId} {
         allow read: if true;
         allow write: if isChurchAdmin(churchId);
@@ -291,6 +327,7 @@ service cloud.firestore {
       }
 
       match /members/{memberId} {
+        allow get: if isAuthenticated() && request.auth.uid == memberId;
         allow read, write, delete: if isChurchAdmin(churchId);
       }
 
@@ -307,6 +344,41 @@ service cloud.firestore {
       match /settings/{settingId} {
         allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
         allow write: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Issues Main List - organization members can work issue entries; admins manage shared settings.
+      match /issuesMainList/{issueId} {
+        allow read, create, update, delete: if isAuthenticated() && isUserInChurch(churchId);
+      }
+
+      match /issuesMainListSettings/{settingId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Leads - organization members can manage leads and their comments; admins manage statuses.
+      match /leads/{leadId} {
+        allow read, create, update, delete: if isAuthenticated() && isUserInChurch(churchId);
+
+        match /comments/{commentId} {
+          allow read, create, update, delete: if isAuthenticated() && isUserInChurch(churchId);
+        }
+      }
+
+      match /leadsSettings/{settingId} {
+        allow read: if isAuthenticated() && isUserInChurch(churchId);
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      // Organization members need venue lists for event creation and planning.
+      match /campuses/{campusId} {
+        allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
+      }
+
+      match /rooms/{roomId} {
+        allow read: if isAuthenticated() && (isUserInChurch(churchId) || isGlobalAdmin());
+        allow create, update, delete: if isAuthenticated() && isChurchAdmin(churchId);
       }
 
       // Work Progress sheet type catalog/settings
@@ -910,6 +982,13 @@ service cloud.firestore {
     match /brands/{brandId} {
       allow read: if true;
       allow write: if isAuthenticated();
+    }
+
+    // ✅ Broadcast short links (publicly readable so viewers can resolve a typed code)
+    match /broadcastLinks/{code} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
     }
 
     // ✅ Global Admin Override

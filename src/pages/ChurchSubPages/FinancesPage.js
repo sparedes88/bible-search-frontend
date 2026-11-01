@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { auth, db, storage } from '../../firebase';
-import { collection, addDoc, getDocs, getDoc, setDoc, deleteDoc, doc, updateDoc, query, orderBy, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, getDoc, setDoc, deleteDoc, doc, updateDoc, query, orderBy, where, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getChurchData } from '../../api/church';
 import commonStyles from '../../pages/commonStyles';
 import { toast } from 'react-toastify';
-import { FaPlus, FaSearch, FaFilter, FaComment, FaFilePdf, FaArrowUp, FaArrowDown, FaBalanceScale, FaClock, FaCheckCircle, FaInfoCircle } from 'react-icons/fa';
+import { FaPlus, FaSearch, FaFilter, FaComment, FaFilePdf, FaArrowUp, FaArrowDown, FaBalanceScale, FaClock, FaCheckCircle, FaInfoCircle, FaEnvelopeOpenText } from 'react-icons/fa';
 import Modal from '../../components/Modal';
 import ChurchHeader from '../../components/ChurchHeader';
 import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const formatDate = (timestamp) => {
   if (!timestamp) return '';
@@ -201,13 +203,26 @@ const getOverallReimbursementStatus = (finance, getTransactionFlow) => {
   return 'fully-reimbursed';
 };
 
-const formatCurrency = (value) => `$${Number(value || 0).toFixed(2)}`;
+const FIREBASE_FUNCTIONS_BASE_URL =
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? '/firebase-api'
+    : 'https://us-central1-igletechv1.cloudfunctions.net';
+
+const formatCurrency = (value) =>
+  `$${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const capitalizeLabel = (value) => {
+  const str = String(value || '').trim();
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+};
 
 const getBase64Image = async (imgUrl) => {
   if (!imgUrl) return null;
 
   try {
-    const response = await fetch(imgUrl);
+    const response = await fetch(imgUrl, { mode: 'cors' });
+    if (!response.ok) throw new Error(`Image fetch failed with status ${response.status}`);
     const blob = await response.blob();
 
     return await new Promise((resolve, reject) => {
@@ -216,11 +231,52 @@ const getBase64Image = async (imgUrl) => {
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-  } catch (error) {
-    console.error('Error converting image to base64:', error);
-    return null;
+  } catch (directFetchError) {
+    try {
+      const proxyUrl = `${FIREBASE_FUNCTIONS_BASE_URL}/fetchRemoteImageAsDataUrl?url=${encodeURIComponent(imgUrl)}`;
+      const proxyResponse = await fetch(proxyUrl);
+      if (!proxyResponse.ok) throw directFetchError;
+      const proxyPayload = await proxyResponse.json();
+      return proxyPayload?.dataUrl || null;
+    } catch (proxyError) {
+      console.error('Error converting image to base64:', proxyError);
+      return null;
+    }
   }
 };
+
+const getImageDimensions = (dataUrl) =>
+  new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || 0, height: image.naturalHeight || 0 });
+    image.onerror = () => resolve({ width: 0, height: 0 });
+    image.src = dataUrl;
+  });
+
+// Church logos are often wide banners with the emblem in the middle. Center-crop to a square
+// (same crop as the circular logo shown on the site) so PDFs don't squash the wide image.
+const cropImageDataUrlToSquare = (dataUrl) =>
+  new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const { naturalWidth: width, naturalHeight: height } = image;
+      if (!width || !height || width === height) {
+        resolve(dataUrl);
+        return;
+      }
+      const side = Math.min(width, height);
+      const sx = (width - side) / 2;
+      const sy = (height - side) / 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = side;
+      canvas.height = side;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, sx, sy, side, side, 0, 0, side, side);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    image.onerror = () => resolve(dataUrl);
+    image.src = dataUrl;
+  });
 
 const getChurchBrandingDisplayName = (branding) => (
   branding?.nombre
@@ -239,6 +295,82 @@ const getChurchBrandingLogo = (branding) => (
   || branding?.churchLogo
   || null
 );
+
+const getChurchAddressLines = (branding) => {
+  const address = branding?.address;
+  if (!address) return [];
+  if (typeof address === 'string') return address ? [address] : [];
+
+  const line1 = [address.street, address.addressLine1, address.line1]
+    .map((part) => String(part || '').trim())
+    .find(Boolean) || '';
+  const cityStateZip = [
+    String(address.city || '').trim(),
+    String(address.state || '').trim(),
+    String(address.zip || address.zipCode || address.postalCode || '').trim(),
+  ].filter(Boolean).join(', ');
+
+  return [line1, cityStateZip].filter(Boolean);
+};
+
+const DONATION_LETTER_STRINGS = {
+  en: {
+    letterTitle: 'Donation Acknowledgment Letter',
+    letterDateLabel: 'Letter Date',
+    dear: 'Dear',
+    body: (churchName, total, period) => `Thank you for your generous support of ${churchName}. This letter confirms that you gave a total of ${total} to ${churchName} during the period of ${period}.`,
+    totalContributions: 'Total Contributions',
+    donationsRecorded: (count) => `${count} donation${count === 1 ? '' : 's'} recorded`,
+    givingByMethod: 'Giving by Method',
+    subtotal: 'Subtotal',
+    donationDetail: 'Donation Detail',
+    dateColumn: 'Date',
+    titleColumn: 'Title',
+    fundColumn: 'Method',
+    amountColumn: 'Amount',
+    donationFallback: 'Donation',
+    acknowledgment: (churchName) => `${churchName} is a nonprofit organization. No goods or services were provided in exchange for these contributions. Please retain this letter as a record of your charitable contributions for tax purposes.`,
+    sincerely: 'Sincerely,',
+    authorizedSignature: 'Authorized Signature',
+    periodThrough: 'through',
+  },
+  es: {
+    letterTitle: 'Carta de Reconocimiento de Donaciones',
+    letterDateLabel: 'Fecha de la carta',
+    dear: 'Estimado/a',
+    body: (churchName, total, period) => `Gracias por su generoso apoyo a ${churchName}. Esta carta confirma que usted donó un total de ${total} a ${churchName} durante el período de ${period}.`,
+    totalContributions: 'Contribuciones Totales',
+    donationsRecorded: (count) => `${count} donación${count === 1 ? '' : 'es'} registrada${count === 1 ? '' : 's'}`,
+    givingByMethod: 'Donaciones por Método',
+    subtotal: 'Subtotal',
+    donationDetail: 'Detalle de Donaciones',
+    dateColumn: 'Fecha',
+    titleColumn: 'Título',
+    fundColumn: 'Método',
+    amountColumn: 'Cantidad',
+    donationFallback: 'Donación',
+    acknowledgment: (churchName) => `${churchName} es una organización sin fines de lucro. No se proporcionaron bienes ni servicios a cambio de estas contribuciones. Conserve esta carta como registro de sus contribuciones benéficas para fines fiscales.`,
+    sincerely: 'Atentamente,',
+    authorizedSignature: 'Firma Autorizada',
+    periodThrough: 'a',
+  },
+};
+
+// jsPDF standard fonts (WinAnsi) can't render accented characters — strip diacritics for PDF output.
+const stripDiacriticsForPdf = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+const normalizePersonKey = (firstName, lastName) => (
+  `${String(firstName || '').trim().toLowerCase().replace(/\s+/g, ' ')}|${String(lastName || '').trim().toLowerCase().replace(/\s+/g, ' ')}`
+);
+
+const normalizePersonNamePart = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const calculateDraftReimbursementAmount = (entries = []) => {
   if (!Array.isArray(entries)) return 0;
@@ -421,6 +553,7 @@ const FinancesPage = () => {
   const [filters, setFilters] = useState({
     type: 'all',
     category: 'all',
+    fundType: 'all',
     startDate: '',
     endDate: ''
   });
@@ -431,7 +564,7 @@ const FinancesPage = () => {
   const [newComment, setNewComment] = useState('');
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editingCommentText, setEditingCommentText] = useState('');
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(10); // 0 = show all
   const [categories, setCategories] = useState([]);
   const [newCategory, setNewCategory] = useState('');
   const [managingCategory, setManagingCategory] = useState(false);
@@ -454,7 +587,30 @@ const FinancesPage = () => {
   const [showNewPersonInput, setShowNewPersonInput] = useState(false);
   const [attachmentFiles, setAttachmentFiles] = useState([]);
   const [summaryView, setSummaryView] = useState('overall');
+  const [quickAddEntry, setQuickAddEntry] = useState({
+    firstName: '',
+    lastName: '',
+    amount: '',
+    fundType: 'cash',
+    type: 'expense',
+    category: '',
+    date: formatDateInputValue(),
+  });
+  const [quickAddSaving, setQuickAddSaving] = useState(false);
+  const [showLetterModal, setShowLetterModal] = useState(false);
+  const [letterPersonId, setLetterPersonId] = useState('');
+  const [letterStartDate, setLetterStartDate] = useState(`${new Date().getFullYear()}-01-01`);
+  const [letterEndDate, setLetterEndDate] = useState(`${new Date().getFullYear()}-12-31`);
+  const [letterLanguage, setLetterLanguage] = useState('en');
+  const [mergingGroupKey, setMergingGroupKey] = useState(null);
+  const [peopleSearchTerm, setPeopleSearchTerm] = useState('');
+  const [editingPersonId, setEditingPersonId] = useState(null);
+  const [editingPersonDraft, setEditingPersonDraft] = useState({ firstName: '', lastName: '', phone: '' });
+  const [savingPersonId, setSavingPersonId] = useState(null);
+  const [visibleColumns, setVisibleColumns] = useState({ title: false, description: false });
+  const [entryGroupings, setEntryGroupings] = useState([]); // ordered array of grouping keys
   const entryFormRef = useRef(null);
+  const quickAddRef = useRef(null);
   const isAddEntryRoute = location.pathname.endsWith('/finances/new');
   const isEditEntryRoute = location.pathname.includes('/finances/edit/');
   const isViewEntryRoute = location.pathname.includes('/finances/view/');
@@ -595,6 +751,20 @@ const FinancesPage = () => {
     return getPersonDisplayName(matchedPerson);
   };
 
+  const getFinancePersonParts = (finance) => {
+    const matchedPerson = people.find((person) => person.id === finance?.personId);
+    if (matchedPerson) {
+      return {
+        firstName: String(matchedPerson.firstName || '').trim(),
+        lastName: String(matchedPerson.lastName || '').trim(),
+      };
+    }
+    const fullName = String(finance?.personName || '').trim();
+    if (!fullName) return { firstName: '', lastName: '' };
+    const parts = fullName.split(/\s+/);
+    return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') };
+  };
+
   const getFinanceSettingsRef = () => doc(db, `churches/${id}/settings`, FINANCE_SETTINGS_DOC_ID);
 
   const persistFinanceSettings = async (nextCategories, nextFundTypes, nextTransactionTypes = transactionTypes) => {
@@ -614,6 +784,76 @@ const FinancesPage = () => {
     accumulator[finance.personId] = (accumulator[finance.personId] || 0) + 1;
     return accumulator;
   }, {});
+
+  const handleStartEditPerson = (person) => {
+    setEditingPersonId(person.id);
+    setEditingPersonDraft({
+      firstName: String(person.firstName || ''),
+      lastName: String(person.lastName || ''),
+      phone: String(person.phone || ''),
+    });
+  };
+
+  const handleSavePerson = async (person) => {
+    const firstName = editingPersonDraft.firstName.trim();
+    const lastName = editingPersonDraft.lastName.trim();
+    const phone = editingPersonDraft.phone.trim();
+    if (!firstName && !lastName) {
+      toast.error('First or last name is required');
+      return;
+    }
+
+    setSavingPersonId(person.id);
+    try {
+      const newDisplayName = `${firstName} ${lastName}`.trim();
+      await updateDoc(doc(db, `churches/${id}/financePeople`, person.id), {
+        firstName,
+        lastName,
+        phone,
+        updatedAt: new Date(),
+      });
+
+      // Keep denormalized entry fields in sync.
+      const oldDisplayName = getPersonDisplayName(person);
+      if (oldDisplayName !== newDisplayName) {
+        const entriesToUpdate = finances.filter((finance) => finance.personId === person.id);
+        for (const finance of entriesToUpdate) {
+          await updateDoc(doc(db, `churches/${id}/finances`, finance.id), {
+            personName: newDisplayName,
+            personPhone: phone,
+            updatedAt: new Date(),
+          });
+        }
+      }
+
+      toast.success('Person updated');
+      setEditingPersonId(null);
+      await Promise.all([fetchPeople(), fetchFinances()]);
+    } catch (error) {
+      console.error('Error updating person:', error);
+      toast.error('Failed to update person');
+    } finally {
+      setSavingPersonId(null);
+    }
+  };
+
+  const handleDeletePerson = async (person) => {
+    const entryCount = personEntryCounts[person.id] || 0;
+    if (entryCount > 0) {
+      toast.error(`Cannot delete ${getPersonDisplayName(person)} — they have ${entryCount} linked ${entryCount === 1 ? 'entry' : 'entries'}. Merge them into another record first.`);
+      return;
+    }
+    if (!window.confirm(`Delete ${getPersonDisplayName(person)}? This cannot be undone.`)) return;
+
+    try {
+      await deleteDoc(doc(db, `churches/${id}/financePeople`, person.id));
+      toast.success('Person deleted');
+      await fetchPeople();
+    } catch (error) {
+      console.error('Error deleting person:', error);
+      toast.error('Failed to delete person');
+    }
+  };
 
   const fetchFinances = async () => {
     try {
@@ -638,6 +878,108 @@ const FinancesPage = () => {
       toast.error('Failed to load finances');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const personDuplicateGroups = (() => {
+    // Two people are potential duplicates only if first names match AND last names
+    // are similar (exact, one is a prefix of the other, or one is blank).
+    const lastNamesCompatible = (a, b) => {
+      if (!a || !b) return true; // blank last name can merge with a filled one
+      if (a === b) return true;
+      return a.startsWith(b) || b.startsWith(a);
+    };
+
+    const compatible = (personA, personB) => {
+      const firstA = normalizePersonNamePart(personA.firstName);
+      const firstB = normalizePersonNamePart(personB.firstName);
+      const lastA = normalizePersonNamePart(personA.lastName);
+      const lastB = normalizePersonNamePart(personB.lastName);
+      if (firstA !== firstB) return false;
+      return lastNamesCompatible(lastA, lastB);
+    };
+
+    // Union-find to build connected components of compatible people.
+    const parent = new Map(people.map((person) => [person.id, person.id]));
+    const find = (id) => {
+      let root = id;
+      while (parent.get(root) !== root) root = parent.get(root);
+      return root;
+    };
+    const union = (a, b) => {
+      const rootA = find(a);
+      const rootB = find(b);
+      if (rootA !== rootB) parent.set(rootB, rootA);
+    };
+
+    for (let i = 0; i < people.length; i++) {
+      for (let j = i + 1; j < people.length; j++) {
+        if (compatible(people[i], people[j])) {
+          union(people[i].id, people[j].id);
+        }
+      }
+    }
+
+    const groupsByRoot = new Map();
+    people.forEach((person) => {
+      const root = find(person.id);
+      if (!groupsByRoot.has(root)) groupsByRoot.set(root, []);
+      groupsByRoot.get(root).push(person);
+    });
+
+    return Array.from(groupsByRoot.values())
+      .filter((group) => group.length > 1)
+      .sort((a, b) => getPersonDisplayName(a[0]).localeCompare(getPersonDisplayName(b[0])));
+  })();
+
+  const handleMergePeople = async (keepPerson, duplicates) => {
+    if (!keepPerson || !Array.isArray(duplicates) || duplicates.length === 0) return;
+
+    const keepName = getPersonDisplayName(keepPerson);
+    const duplicateNames = duplicates.map(getPersonDisplayName).join(', ');
+    if (!window.confirm(
+      `Merge ${duplicates.length} duplicate record(s) into "${keepName}"?\n\nAll finance entries will be re-assigned to "${keepName}" and the duplicate record(s) will be deleted. This cannot be undone.`
+    )) return;
+
+    const groupKey = normalizePersonKey(keepPerson.firstName, keepPerson.lastName);
+    setMergingGroupKey(groupKey);
+
+    try {
+      const duplicateIds = duplicates.map((person) => person.id);
+      const duplicateNameSet = new Set(duplicates.map((person) => getPersonDisplayName(person).toLowerCase()));
+
+      const entriesToUpdate = finances.filter((finance) => {
+        if (finance.personId && duplicateIds.includes(finance.personId)) return true;
+        if (!finance.personId && finance.personName && duplicateNameSet.has(String(finance.personName).trim().toLowerCase())) return true;
+        return false;
+      });
+
+      // Firestore batches are limited to 500 operations — chunk them.
+      const chunkSize = 450;
+      for (let start = 0; start < entriesToUpdate.length; start += chunkSize) {
+        const batch = writeBatch(db);
+        entriesToUpdate.slice(start, start + chunkSize).forEach((finance) => {
+          batch.update(doc(db, `churches/${id}/finances`, finance.id), {
+            personId: keepPerson.id,
+            personName: keepName,
+            personPhone: keepPerson.phone || '',
+            updatedAt: new Date(),
+          });
+        });
+        await batch.commit();
+      }
+
+      for (const person of duplicates) {
+        await deleteDoc(doc(db, `churches/${id}/financePeople`, person.id));
+      }
+
+      toast.success(`Merged ${duplicates.length} duplicate(s) into ${keepName} (${entriesToUpdate.length} entries updated)`);
+      await Promise.all([fetchPeople(), fetchFinances()]);
+    } catch (error) {
+      console.error('Error merging people:', error);
+      toast.error('Failed to merge people');
+    } finally {
+      setMergingGroupKey(null);
     }
   };
 
@@ -915,11 +1257,6 @@ const FinancesPage = () => {
         setPeople((prev) => [...prev, selectedPerson].sort((a, b) => getPersonDisplayName(a).localeCompare(getPersonDisplayName(b))));
       }
 
-      if (!selectedPerson) {
-        toast.error('Please select a person for this entry');
-        return;
-      }
-
       const normalizedFundType = getNormalizedFundType(newEntry);
       const normalizedTransactionType = getNormalizedTransactionType(newEntry);
       const normalizedCategory = normalizeCategoryValue(newEntry.category);
@@ -996,9 +1333,9 @@ const FinancesPage = () => {
             ]
           : [],
         fundType: normalizedFundType,
-        personId: selectedPerson.id,
-        personName: getPersonDisplayName(selectedPerson),
-        personPhone: selectedPerson.phone || '',
+        personId: selectedPerson?.id || '',
+        personName: selectedPerson ? getPersonDisplayName(selectedPerson) : '',
+        personPhone: selectedPerson?.phone || '',
         attachments: existingAttachments,
         createdAt: existingFinance?.createdAt || new Date(),
         updatedAt: new Date(),
@@ -1545,6 +1882,110 @@ const FinancesPage = () => {
     navigate(`/organization/${id}/finances/new`);
   };
 
+  const findPersonByName = (firstName, lastName) => {
+    const normalizedFirst = String(firstName || '').trim().toLowerCase();
+    const normalizedLast = String(lastName || '').trim().toLowerCase();
+    if (!normalizedFirst && !normalizedLast) return null;
+    return people.find((person) => {
+      const personFirst = String(person?.firstName || '').trim().toLowerCase();
+      const personLast = String(person?.lastName || '').trim().toLowerCase();
+      if (normalizedLast) {
+        return personFirst === normalizedFirst && personLast === normalizedLast;
+      }
+      const fullName = `${personFirst} ${personLast}`.trim();
+      return personFirst === normalizedFirst || fullName === normalizedFirst;
+    }) || null;
+  };
+
+  const handleQuickAddSubmit = async (e) => {
+    e.preventDefault();
+    if (quickAddSaving) return;
+
+    const rawName = String(quickAddEntry.firstName || '').trim();
+    let lastName = String(quickAddEntry.lastName || '').trim();
+    let firstName = rawName;
+
+    // Allow typing the full name in one box: "John Smith" splits into first + last.
+    if (!lastName && rawName.includes(' ')) {
+      const parts = rawName.split(/\s+/);
+      firstName = parts.shift();
+      lastName = parts.join(' ');
+    }
+
+    const amount = Number(quickAddEntry.amount);
+    if (!firstName) {
+      toast.error('Enter a person name');
+      return;
+    }
+    if (!amount || amount <= 0) {
+      toast.error('Enter a valid total amount');
+      return;
+    }
+    if (!quickAddEntry.date) {
+      toast.error('Select a batch date');
+      return;
+    }
+
+    try {
+      setQuickAddSaving(true);
+
+      let selectedPerson = findPersonByName(firstName, lastName);
+      if (!selectedPerson) {
+        const personPayload = {
+          firstName,
+          lastName,
+          phone: '',
+          pinHash: '',
+          createdAt: new Date(),
+        };
+        const newPersonDoc = await addDoc(collection(db, `churches/${id}/financePeople`), personPayload);
+        selectedPerson = { id: newPersonDoc.id, ...personPayload };
+        setPeople((prev) => [...prev, selectedPerson].sort((a, b) => getPersonDisplayName(a).localeCompare(getPersonDisplayName(b))));
+      }
+
+      const normalizedFundType = String(quickAddEntry.fundType || 'cash').trim().toLowerCase() || 'cash';
+      const normalizedTransactionType = String(quickAddEntry.type || '').trim().toLowerCase() || 'expense';
+      const normalizedCategory = normalizeCategoryValue(quickAddEntry.category);
+      const normalizedDate = normalizeDateOnlyValue(quickAddEntry.date);
+
+      const financeData = {
+        title: '',
+        description: '',
+        amount,
+        category: normalizedCategory,
+        type: normalizedTransactionType,
+        reimbursed: false,
+        reimbursementEntries: [],
+        reimbursementLog: [],
+        fundType: normalizedFundType,
+        personId: selectedPerson.id,
+        personName: getPersonDisplayName(selectedPerson),
+        personPhone: selectedPerson.phone || '',
+        attachments: [],
+        batchName: normalizedDate,
+        date: normalizedDate,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await addDoc(collection(db, `churches/${id}/finances`), financeData);
+      toast.success(`Added ${formatCurrency(amount)} to batch ${formatDateOnlyForDisplay(normalizedDate)}`);
+
+      setQuickAddEntry((prev) => ({
+        ...prev,
+        firstName: '',
+        lastName: '',
+        amount: '',
+      }));
+      fetchFinances();
+    } catch (error) {
+      console.error('Error quick-adding finance entry:', error);
+      toast.error('Failed to add entry');
+    } finally {
+      setQuickAddSaving(false);
+    }
+  };
+
   const handleStartEditEntry = (financeId) => {
     navigate(`/organization/${id}/finances/edit/${financeId}`);
   };
@@ -1568,7 +2009,8 @@ const FinancesPage = () => {
       if (churchLogo) {
         const base64Logo = await getBase64Image(churchLogo);
         if (base64Logo) {
-          doc.addImage(base64Logo, 'PNG', 15, yPosition, 28, 28);
+          const squareLogo = await cropImageDataUrlToSquare(base64Logo);
+          doc.addImage(squareLogo, 'PNG', 15, yPosition, 28, 28);
         }
       }
 
@@ -1809,7 +2251,7 @@ const FinancesPage = () => {
       doc.setFontSize(12);
       doc.text('Total Income', 20, yOffset + 15);
       doc.setFontSize(14);
-      doc.text(`$${totals.income.toFixed(2)}`, 20, yOffset + 30);
+      doc.text(formatCurrency(totals.income), 20, yOffset + 30);
 
       // Expenses box
       doc.setFillColor(254, 226, 226);
@@ -1818,7 +2260,7 @@ const FinancesPage = () => {
       doc.setFontSize(12);
       doc.text('Total Expenses', 30 + summaryBoxWidth, yOffset + 15);
       doc.setFontSize(14);
-      doc.text(`$${totals.expense.toFixed(2)}`, 30 + summaryBoxWidth, yOffset + 30);
+      doc.text(formatCurrency(totals.expense), 30 + summaryBoxWidth, yOffset + 30);
 
       // Net Balance box
       const fillColor = netBalance >= 0 ? [209, 250, 229] : [254, 226, 226];
@@ -1829,7 +2271,7 @@ const FinancesPage = () => {
       doc.setFontSize(11);
       doc.text('Net Balance', 40 + (summaryBoxWidth * 2), yOffset + 15);
       doc.setFontSize(13);
-      doc.text(`$${netBalance.toFixed(2)}`, 40 + (summaryBoxWidth * 2), yOffset + 30);
+      doc.text(formatCurrency(netBalance), 40 + (summaryBoxWidth * 2), yOffset + 30);
 
       // Net Balance with Pending Reimbursements
       const pendingNetFillColor = netBalanceWithPendingReimbursements >= 0 ? [209, 250, 229] : [254, 226, 226];
@@ -1840,7 +2282,7 @@ const FinancesPage = () => {
       doc.setFontSize(9);
       doc.text('Net (with pending)', 50 + (summaryBoxWidth * 3), yOffset + 15);
       doc.setFontSize(13);
-      doc.text(`$${netBalanceWithPendingReimbursements.toFixed(2)}`, 50 + (summaryBoxWidth * 3), yOffset + 30);
+      doc.text(formatCurrency(netBalanceWithPendingReimbursements), 50 + (summaryBoxWidth * 3), yOffset + 30);
 
       yOffset += summaryBoxHeight + 20;
 
@@ -1881,16 +2323,16 @@ const FinancesPage = () => {
         
         xOffset += columnWidths[0];
         doc.setTextColor(...[4, 120, 87]);
-        doc.text(`$${amounts.income.toFixed(2)}`, xOffset, yOffset);
+        doc.text(formatCurrency(amounts.income), xOffset, yOffset);
         
         xOffset += columnWidths[1];
         doc.setTextColor(...[220, 38, 38]);
-        doc.text(`$${amounts.expense.toFixed(2)}`, xOffset, yOffset);
+        doc.text(formatCurrency(amounts.expense), xOffset, yOffset);
         
         xOffset += columnWidths[2];
         const netTextColor = net >= 0 ? [4, 120, 87] : [220, 38, 38];
         doc.setTextColor(...netTextColor);
-        doc.text(`$${net.toFixed(2)}`, xOffset, yOffset);
+        doc.text(formatCurrency(net), xOffset, yOffset);
 
         yOffset += 10;
       });
@@ -1925,7 +2367,7 @@ const FinancesPage = () => {
         doc.setFontSize(12);
         const amountColor = getTransactionTypeFlow(finance) === 'income' ? [4, 120, 87] : [220, 38, 38];
         doc.setTextColor(...amountColor);
-        const amountText = `${getTransactionTypeFlow(finance) === 'income' ? '+' : '-'} $${finance.amount}`;
+        const amountText = `${getTransactionTypeFlow(finance) === 'income' ? '+' : '-'} ${formatCurrency(finance.amount)}`;
         doc.text(amountText, doc.internal.pageSize.width - 35, yOffset + 15, { align: 'right' });
 
         // Details
@@ -1982,6 +2424,230 @@ const FinancesPage = () => {
     }
   };
 
+  const letterPerson = people.find((person) => person.id === letterPersonId) || null;
+  const letterPersonName = letterPerson ? getPersonDisplayName(letterPerson) : '';
+  const letterDonations = finances
+    .filter((finance) => {
+      if (!letterPerson) return false;
+      if (getTransactionTypeFlow(finance) !== 'income') return false;
+      const matchesPerson = finance.personId === letterPerson.id
+        || (!finance.personId
+          && String(finance.personName || '').trim().toLowerCase() === letterPersonName.toLowerCase());
+      if (!matchesPerson) return false;
+      if (letterStartDate && String(finance.date || '') < letterStartDate) return false;
+      if (letterEndDate && String(finance.date || '') > letterEndDate) return false;
+      return true;
+    })
+    .sort((left, right) => String(left.date || '').localeCompare(String(right.date || '')));
+  const letterTotalAmount = letterDonations.reduce((sum, finance) => sum + Number(finance.amount || 0), 0);
+  const letterMethodTotals = letterDonations.reduce((acc, finance) => {
+    const method = getNormalizedFundType(finance) || 'other';
+    acc[method] = (acc[method] || 0) + Number(finance.amount || 0);
+    return acc;
+  }, {});
+
+  const generateDonationLetter = async () => {
+    if (!letterPerson) {
+      toast.error('Please select a donor');
+      return;
+    }
+    if (letterDonations.length === 0) {
+      toast.error('No donations found for this donor in the selected date range');
+      return;
+    }
+
+    const strings = DONATION_LETTER_STRINGS[letterLanguage] || DONATION_LETTER_STRINGS.en;
+    const locale = letterLanguage === 'es' ? 'es-ES' : 'en-US';
+    const formatLetterDate = (value) => {
+      const normalized = normalizeDateOnlyValue(value);
+      if (!normalized) return '';
+      const [year, month, day] = normalized.split('-').map(Number);
+      return new Date(year, month - 1, day).toLocaleDateString(locale);
+    };
+    // Spanish copy contains accents; strip diacritics so jsPDF's built-in fonts render it cleanly.
+    const pdfText = (value) => (letterLanguage === 'es' ? stripDiacriticsForPdf(value) : String(value || ''));
+
+    try {
+      const toastId = toast.loading('Generating donation letter...', { autoClose: false });
+      const resolvedBranding = churchBranding || (id ? await getChurchData(id) : null);
+      const churchName = getChurchBrandingDisplayName(resolvedBranding);
+      const churchLogo = getChurchBrandingLogo(resolvedBranding);
+      const addressLines = getChurchAddressLines(resolvedBranding);
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      let yPosition = 18;
+
+      // Letterhead: logo centered above church name
+      if (churchLogo) {
+        const base64Logo = await getBase64Image(churchLogo);
+        if (base64Logo) {
+          const squareLogo = await cropImageDataUrlToSquare(base64Logo);
+          const logoSize = 26;
+          doc.addImage(squareLogo, 'PNG', (pageWidth - logoSize) / 2, yPosition, logoSize, logoSize);
+          yPosition += logoSize + 6;
+        }
+      }
+
+      doc.setFontSize(20);
+      doc.setTextColor(31, 41, 55);
+      doc.text(pdfText(churchName), pageWidth / 2, yPosition + 4, { align: 'center' });
+      yPosition += 12;
+
+      if (addressLines.length > 0) {
+        doc.setFontSize(9);
+        doc.setTextColor(100, 116, 139);
+        addressLines.forEach((line) => {
+          doc.text(pdfText(line), pageWidth / 2, yPosition, { align: 'center' });
+          yPosition += 5;
+        });
+        yPosition += 2;
+      }
+
+      doc.setFontSize(13);
+      doc.setTextColor(100, 116, 139);
+      doc.text(pdfText(strings.letterTitle), pageWidth / 2, yPosition, { align: 'center' });
+      yPosition += 6;
+      doc.setFontSize(10);
+      doc.text(`${pdfText(strings.letterDateLabel)}: ${new Date().toLocaleDateString(locale)}`, pageWidth / 2, yPosition, { align: 'center' });
+
+      yPosition += 8;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(15, yPosition, pageWidth - 15, yPosition);
+      yPosition += 12;
+
+      doc.setFontSize(11);
+      doc.setTextColor(31, 41, 55);
+      doc.text(`${pdfText(strings.dear)} ${pdfText(letterPersonName)},`, 15, yPosition);
+      yPosition += 10;
+
+      const periodLabel = `${formatLetterDate(letterStartDate) || letterStartDate} ${pdfText(strings.periodThrough)} ${formatLetterDate(letterEndDate) || letterEndDate}`;
+      const bodyLines = doc.splitTextToSize(
+        pdfText(strings.body(churchName, formatCurrency(letterTotalAmount), periodLabel)),
+        pageWidth - 30
+      );
+      doc.text(bodyLines, 15, yPosition);
+      yPosition += (bodyLines.length * 6) + 8;
+
+      doc.setFillColor(236, 253, 245);
+      doc.roundedRect(15, yPosition, pageWidth - 30, 20, 3, 3, 'F');
+      doc.setFontSize(13);
+      doc.setTextColor(4, 120, 87);
+      doc.text(`${pdfText(strings.totalContributions)}: ${formatCurrency(letterTotalAmount)}`, 20, yPosition + 13);
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(pdfText(strings.donationsRecorded(letterDonations.length)), pageWidth - 20, yPosition + 13, { align: 'right' });
+      yPosition += 30;
+
+      // Totals by giving method (cash, check, any other fund types)
+      const methodEntries = Object.entries(letterMethodTotals).sort((a, b) => b[1] - a[1]);
+      if (methodEntries.length > 0) {
+        doc.setFontSize(12);
+        doc.setTextColor(31, 41, 55);
+        doc.text(pdfText(strings.givingByMethod), 15, yPosition);
+        yPosition += 8;
+
+        doc.setFillColor(243, 244, 246);
+        doc.rect(15, yPosition - 5, pageWidth - 30, 9, 'F');
+        doc.setFontSize(10);
+        doc.setTextColor(75, 85, 99);
+        doc.text(pdfText(strings.fundColumn), 20, yPosition + 1);
+        doc.text(pdfText(strings.amountColumn), pageWidth - 20, yPosition + 1, { align: 'right' });
+        yPosition += 11;
+
+        methodEntries.forEach(([method, amount]) => {
+          doc.setTextColor(31, 41, 55);
+          doc.text(pdfText(capitalizeLabel(method)), 20, yPosition);
+          doc.setTextColor(4, 120, 87);
+          doc.text(formatCurrency(amount), pageWidth - 20, yPosition, { align: 'right' });
+          yPosition += 8;
+        });
+
+        // Subtotal row beneath the per-method totals
+        doc.setDrawColor(203, 213, 225);
+        doc.line(15, yPosition - 3, pageWidth - 15, yPosition - 3);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(31, 41, 55);
+        doc.text(pdfText(strings.subtotal), 20, yPosition + 3);
+        doc.setTextColor(4, 120, 87);
+        doc.text(formatCurrency(letterTotalAmount), pageWidth - 20, yPosition + 3, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        yPosition += 13;
+      }
+
+      doc.setFontSize(12);
+      doc.setTextColor(31, 41, 55);
+      doc.text(pdfText(strings.donationDetail), 15, yPosition);
+      yPosition += 8;
+
+      doc.setFillColor(243, 244, 246);
+      doc.rect(15, yPosition - 5, pageWidth - 30, 9, 'F');
+      doc.setFontSize(10);
+      doc.setTextColor(75, 85, 99);
+      doc.text(pdfText(strings.dateColumn), 20, yPosition + 1);
+      doc.text(pdfText(strings.titleColumn), 55, yPosition + 1);
+      doc.text(pdfText(strings.fundColumn), 125, yPosition + 1);
+      doc.text(pdfText(strings.amountColumn), pageWidth - 20, yPosition + 1, { align: 'right' });
+      yPosition += 11;
+
+      letterDonations.forEach((donation) => {
+        if (yPosition > doc.internal.pageSize.height - 60) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        doc.setTextColor(31, 41, 55);
+        doc.text(formatLetterDate(donation.date) || '-', 20, yPosition);
+        doc.text(pdfText(String(donation.title || strings.donationFallback)).substring(0, 42), 55, yPosition);
+        doc.text(pdfText(capitalizeLabel(getNormalizedFundType(donation))), 125, yPosition);
+        doc.setTextColor(4, 120, 87);
+        doc.text(formatCurrency(donation.amount), pageWidth - 20, yPosition, { align: 'right' });
+        yPosition += 8;
+      });
+
+      yPosition += 10;
+      if (yPosition > doc.internal.pageSize.height - 80) {
+        doc.addPage();
+        yPosition = 20;
+      }
+
+      doc.setDrawColor(226, 232, 240);
+      doc.line(15, yPosition, pageWidth - 15, yPosition);
+      yPosition += 10;
+
+      doc.setFontSize(10);
+      doc.setTextColor(71, 85, 105);
+      const acknowledgmentLines = doc.splitTextToSize(
+        pdfText(strings.acknowledgment(churchName)),
+        pageWidth - 30
+      );
+      doc.text(acknowledgmentLines, 15, yPosition);
+      yPosition += (acknowledgmentLines.length * 5) + 16;
+
+      doc.setFontSize(11);
+      doc.setTextColor(31, 41, 55);
+      doc.text(pdfText(strings.sincerely), 15, yPosition);
+      yPosition += 18;
+      doc.text('________________________________', 15, yPosition);
+      yPosition += 7;
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`${pdfText(churchName)} - ${pdfText(strings.authorizedSignature)}`, 15, yPosition);
+
+      const safeName = letterPersonName.replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'donor';
+      doc.save(`donation-letter-${letterLanguage}-${safeName}-${letterStartDate || 'start'}-to-${letterEndDate || 'end'}.pdf`);
+
+      toast.update(toastId, {
+        render: 'Donation letter generated!',
+        type: 'success',
+        isLoading: false,
+        autoClose: 3000,
+      });
+      setShowLetterModal(false);
+    } catch (error) {
+      console.error('Error generating donation letter:', error);
+      toast.error('Failed to generate donation letter');
+    }
+  };
+
   const filteredFinances = finances.filter(finance => {
     const matchesSearch = 
       finance.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1991,18 +2657,27 @@ const FinancesPage = () => {
 
     const matchesType = filters.type === 'all' || finance.type === filters.type;
     const matchesCategory = filters.category === 'all' || finance.category === filters.category;
+    const matchesFundType = filters.fundType === 'all' || getNormalizedFundType(finance) === filters.fundType;
     const matchesDate = (!filters.startDate || finance.date >= filters.startDate) &&
                        (!filters.endDate || finance.date <= filters.endDate);
 
-    return matchesSearch && matchesType && matchesCategory && matchesDate;
+    return matchesSearch && matchesType && matchesCategory && matchesFundType && matchesDate;
   }).sort(compareFinancesNewestFirst);
 
+  const effectiveItemsPerPage = itemsPerPage > 0 ? itemsPerPage : Math.max(filteredFinances.length, 1);
+  const totalPages = Math.max(1, Math.ceil(filteredFinances.length / effectiveItemsPerPage) || 1);
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
   const paginatedFinances = filteredFinances.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    (safeCurrentPage - 1) * effectiveItemsPerPage,
+    safeCurrentPage * effectiveItemsPerPage
   );
 
-  const totalPages = Math.ceil(filteredFinances.length / itemsPerPage);
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
   const selectedFinanceForView = isViewEntryRoute
     ? finances.find((finance) => finance.id === entryId) || null
     : null;
@@ -2022,6 +2697,145 @@ const FinancesPage = () => {
   );
 
   const totals = calculateTotalsByType(filteredFinances, getTransactionTypeFlow);
+
+  const entryGroupingConfigs = [
+    { key: 'batch', label: 'Batch', getLabel: (entry) => formatDateOnlyForDisplay(entry.batchName) || formatDateOnlyForDisplay(entry.date) || 'No batch' },
+    { key: 'person', label: 'Person', getLabel: (entry) => getFinancePersonName(entry) || 'Unknown person' },
+    { key: 'category', label: 'Category', getLabel: (entry) => (entry.category ? capitalizeLabel(entry.category) : 'Uncategorized') },
+    { key: 'funds', label: 'Funds', getLabel: (entry) => capitalizeLabel(getNormalizedFundType(entry)) || 'Other' },
+  ];
+  const summarizeEntries = (entries) => {
+    const income = entries.reduce((sum, entry) => sum + (getTransactionTypeFlow(entry) === 'income' ? Number(entry.amount || 0) : 0), 0);
+    const expense = entries.reduce((sum, entry) => sum + (getTransactionTypeFlow(entry) === 'expense' ? Number(entry.amount || 0) : 0), 0);
+    return { count: entries.length, income, expense, net: income - expense };
+  };
+  const activeEntryGroupings = entryGroupings
+    .map((key) => entryGroupingConfigs.find((config) => config.key === key))
+    .filter(Boolean);
+  // Build a nested group tree in the order the user selected the groupings.
+  const buildEntryGroups = (entries, depth) => {
+    const config = activeEntryGroupings[depth];
+    if (!config) return [];
+    const groupMap = new Map();
+    entries.forEach((entry) => {
+      const label = config.getLabel(entry);
+      if (!groupMap.has(label)) groupMap.set(label, []);
+      groupMap.get(label).push(entry);
+    });
+    return Array.from(groupMap.entries()).map(([label, groupEntries]) => ({
+      label,
+      config,
+      depth,
+      entries: groupEntries,
+      children: buildEntryGroups(groupEntries, depth + 1),
+      ...summarizeEntries(groupEntries),
+    }));
+  };
+  const entryGroupTree = activeEntryGroupings.length > 0 ? buildEntryGroups(filteredFinances, 0) : null;
+
+  const exportTableToPDF = async () => {
+    try {
+      const toastId = toast.loading('Exporting table to PDF...', { autoClose: false });
+      const doc = new jsPDF({ orientation: 'landscape' });
+      const resolvedBranding = churchBranding || (id ? await getChurchData(id) : null);
+      const churchName = getChurchBrandingDisplayName(resolvedBranding);
+      const churchLogo = getChurchBrandingLogo(resolvedBranding);
+
+      let headerTextX = 14;
+      if (churchLogo) {
+        const base64Logo = await getBase64Image(churchLogo);
+        if (base64Logo) {
+          const squareLogo = await cropImageDataUrlToSquare(base64Logo);
+          doc.addImage(squareLogo, 'PNG', 14, 8, 14, 14);
+          headerTextX = 32;
+        }
+      }
+
+      doc.setFontSize(14);
+      doc.setTextColor(31, 41, 55);
+      doc.text(`${churchName} — Financial Entries`, headerTextX, 14);
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      const activeFilters = [
+        searchTerm ? `Search: "${searchTerm}"` : null,
+        filters.type !== 'all' ? `Type: ${filters.type}` : null,
+        filters.category !== 'all' ? `Category: ${filters.category}` : null,
+        filters.fundType !== 'all' ? `Funds: ${filters.fundType}` : null,
+        filters.startDate ? `From: ${filters.startDate}` : null,
+        filters.endDate ? `To: ${filters.endDate}` : null,
+        activeEntryGroupings.length > 0 ? `Grouped by: ${activeEntryGroupings.map((config) => config.label).join(' → ')}` : null,
+      ].filter(Boolean).join(' | ');
+      doc.text(`Generated: ${new Date().toLocaleString()}${activeFilters ? ` | ${activeFilters}` : ''}`, headerTextX, 20);
+
+      const head = [[
+        'Date', 'Batch',
+        ...(visibleColumns.title ? ['Title'] : []),
+        ...(visibleColumns.description ? ['Description'] : []),
+        'First Name', 'Last Name', 'Category', 'Type', 'Reimbursed', 'Funds', 'Amount',
+      ]];
+
+      const buildEntryPdfRow = (entry) => ([
+        formatDateOnlyForDisplay(entry.date),
+        formatDateOnlyForDisplay(entry.batchName) || formatDateOnlyForDisplay(entry.date) || entry.batchName || '-',
+        ...(visibleColumns.title ? [entry.title || ''] : []),
+        ...(visibleColumns.description ? [entry.description || ''] : []),
+        getFinancePersonParts(entry).firstName || '-',
+        getFinancePersonParts(entry).lastName || '-',
+        entry.category || '-',
+        getTransactionTypeLabel(entry.type),
+        getReimbursementStatus(entry, getTransactionTypeFlow),
+        getNormalizedFundType(entry),
+        `${getTransactionTypeFlow(entry) === 'income' ? '+' : '-'} ${formatCurrency(entry.amount)}`,
+      ]);
+
+      const body = [];
+      if (entryGroupTree) {
+        const appendGroups = (groups) => {
+          groups.forEach((group) => {
+            body.push([{
+              content: `${group.config.label}: ${group.label} · ${group.count} ${group.count === 1 ? 'entry' : 'entries'} · +${formatCurrency(group.income)} / −${formatCurrency(group.expense)} · Net ${formatCurrency(group.net)}`,
+              colSpan: head[0].length,
+              styles: { fillColor: [238, 242, 255], textColor: [67, 56, 202], fontStyle: 'bold', fontSize: 7.5, halign: 'left', cellWidth: 'auto' },
+            }]);
+            if (group.children.length > 0) {
+              appendGroups(group.children);
+            } else {
+              group.entries.forEach((entry) => body.push(buildEntryPdfRow(entry)));
+            }
+          });
+        };
+        appendGroups(entryGroupTree);
+      } else {
+        filteredFinances.forEach((entry) => body.push(buildEntryPdfRow(entry)));
+      }
+
+      const footerRow = [
+        { content: `Subtotal (${filteredFinances.length} ${filteredFinances.length === 1 ? 'entry' : 'entries'})`, colSpan: head[0].length - 1, styles: { halign: 'right', fontStyle: 'bold', fillColor: [243, 244, 246], textColor: [31, 41, 55] } },
+        { content: `${formatCurrency(totals.income - totals.expense)}\n+${formatCurrency(totals.income)} / −${formatCurrency(totals.expense)}`, styles: { halign: 'right', fontStyle: 'bold', fillColor: [243, 244, 246], textColor: totals.income - totals.expense >= 0 ? [4, 120, 87] : [220, 38, 38], fontSize: 7 } },
+      ];
+
+      doc.autoTable({
+        startY: 26,
+        head,
+        body,
+        foot: [footerRow],
+        showFoot: 'lastPage',
+        styles: { fontSize: 7.5, cellPadding: 1.5, cellWidth: 'auto', overflow: 'linebreak' },
+        headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold', fontSize: 7.5, lineWidth: 0.1, lineColor: [209, 213, 219] },
+        footStyles: { lineWidth: 0.1, lineColor: [209, 213, 219] },
+        alternateRowStyles: { fillColor: [249, 250, 251] },
+        columnStyles: { [head[0].length - 1]: { halign: 'right' } },
+        margin: { left: 14, right: 14 },
+        tableWidth: 'auto',
+      });
+
+      doc.save(`financial-entries-${activeEntryGroupings.length > 0 ? 'grouped-' : ''}${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.update(toastId, { render: 'Table exported to PDF!', type: 'success', isLoading: false, autoClose: 3000 });
+    } catch (error) {
+      console.error('Error exporting table PDF:', error);
+      toast.error('Failed to export table PDF');
+    }
+  };
   const categoryTotals = calculateTotalsByCategory(filteredFinances, getTransactionTypeFlow);
   const reimbursementTotals = filteredFinances.reduce(
     (acc, finance) => {
@@ -2037,6 +2851,43 @@ const FinancesPage = () => {
   const netBalance = totals.income - reimbursementTotals.reimbursed;
   const netBalanceWithPendingReimbursements = netBalance - reimbursementTotals.needsReimbursement;
   const monthlySummaries = calculateMonthlySummaries(filteredFinances, getTransactionTypeFlow);
+
+  const fundTypeTotals = filteredFinances.reduce((acc, finance) => {
+    const fundType = getNormalizedFundType(finance) || 'cash';
+    if (!acc[fundType]) acc[fundType] = { income: 0, expense: 0 };
+    acc[fundType][getTransactionTypeFlow(finance)] += Number(finance.amount || 0);
+    return acc;
+  }, {});
+
+  const transactionTypeTotals = filteredFinances.reduce((acc, finance) => {
+    const type = getTransactionTypeLabel(finance.type) || 'expense';
+    if (!acc[type]) acc[type] = { income: 0, expense: 0 };
+    acc[type][getTransactionTypeFlow(finance)] += Number(finance.amount || 0);
+    return acc;
+  }, {});
+
+  const batchSummaries = Object.entries(
+    filteredFinances.reduce((batches, entry) => {
+      const key = entry.batchName || normalizeDateOnlyValue(entry.date) || 'No batch';
+      if (!batches[key]) batches[key] = { count: 0, income: 0, expense: 0 };
+      batches[key].count += 1;
+      if (getTransactionTypeFlow(entry) === 'income') {
+        batches[key].income += Number(entry.amount || 0);
+      } else {
+        batches[key].expense += Number(entry.amount || 0);
+      }
+      return batches;
+    }, {})
+  )
+    .map(([batchName, data]) => ({
+      batchName,
+      label: formatDateOnlyForDisplay(batchName) || batchName,
+      count: data.count,
+      income: data.income,
+      expense: data.expense,
+      net: data.income - data.expense,
+    }))
+    .sort((a, b) => String(a.batchName).localeCompare(String(b.batchName)));
   const summaryCards = [
     {
       key: 'income',
@@ -2086,6 +2937,22 @@ const FinancesPage = () => {
       icon: FaCheckCircle,
       description: 'The reimbursement amounts already recorded across the filtered expense entries.',
     },
+    ...Object.entries(fundTypeTotals).map(([fundType, amounts]) => ({
+      key: `fund-${fundType}`,
+      label: `${capitalizeLabel(fundType)} (Fund)`,
+      value: formatCurrency(amounts.income - amounts.expense),
+      color: '#7C3AED',
+      icon: FaBalanceScale,
+      description: `Net for fund type "${fundType}": income ${formatCurrency(amounts.income)} minus expenses ${formatCurrency(amounts.expense)}.`,
+    })),
+    ...Object.entries(transactionTypeTotals).map(([type, amounts]) => ({
+      key: `type-${type}`,
+      label: `${capitalizeLabel(type)} (Type)`,
+      value: formatCurrency(amounts.income - amounts.expense),
+      color: '#0284C7',
+      icon: FaInfoCircle,
+      description: `Net for transaction type "${type}": income ${formatCurrency(amounts.income)} minus expenses ${formatCurrency(amounts.expense)}.`,
+    })),
   ];
 
   return (
@@ -2111,6 +2978,36 @@ const FinancesPage = () => {
           </button>
           <button
             type="button"
+            onClick={() => setActiveMainTab('batches')}
+            style={{
+              ...styles.mainTabButton,
+              ...(activeMainTab === 'batches' ? styles.mainTabButtonActive : {}),
+            }}
+          >
+            Batches
+          </button>
+          <button
+            type="button"
+            onClick={handleStartAddEntry}
+            style={{
+              ...styles.mainTabButton,
+              ...(isAddEntryRoute ? styles.mainTabButtonActive : {}),
+            }}
+          >
+            <FaPlus style={{ marginRight: '0.35rem', verticalAlign: '-0.1em' }} />Add Entry
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('actions')}
+            style={{
+              ...styles.mainTabButton,
+              ...(activeMainTab === 'actions' ? styles.mainTabButtonActive : {}),
+            }}
+          >
+            Actions
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveMainTab('settings')}
             style={{
               ...styles.mainTabButton,
@@ -2118,6 +3015,16 @@ const FinancesPage = () => {
             }}
           >
             Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('people')}
+            style={{
+              ...styles.mainTabButton,
+              ...(activeMainTab === 'people' ? styles.mainTabButtonActive : {}),
+            }}
+          >
+            People{personDuplicateGroups.length > 0 ? ` (${personDuplicateGroups.length} dupes)` : ''}
           </button>
         </div>
         )}
@@ -2194,31 +3101,31 @@ const FinancesPage = () => {
                   <div style={styles.monthlySummaryAmounts}>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Income</span>
-                      <strong style={{ color: '#059669' }}>${monthSummary.income.toFixed(2)}</strong>
+                      <strong style={{ color: '#059669' }}>{formatCurrency(monthSummary.income)}</strong>
                     </div>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Expenses</span>
-                      <strong style={{ color: '#DC2626' }}>${monthSummary.expense.toFixed(2)}</strong>
+                      <strong style={{ color: '#DC2626' }}>{formatCurrency(monthSummary.expense)}</strong>
                     </div>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Net Balance</span>
                       <strong style={{ color: monthSummary.netBalance >= 0 ? '#059669' : '#DC2626' }}>
-                        ${monthSummary.netBalance.toFixed(2)}
+                        {formatCurrency(monthSummary.netBalance)}
                       </strong>
                     </div>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Net With Pending</span>
                       <strong style={{ color: monthSummary.netBalanceWithPending >= 0 ? '#059669' : '#DC2626' }}>
-                        ${monthSummary.netBalanceWithPending.toFixed(2)}
+                        {formatCurrency(monthSummary.netBalanceWithPending)}
                       </strong>
                     </div>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Needs Reimbursement</span>
-                      <strong style={{ color: '#B45309' }}>${monthSummary.needsReimbursement.toFixed(2)}</strong>
+                      <strong style={{ color: '#B45309' }}>{formatCurrency(monthSummary.needsReimbursement)}</strong>
                     </div>
                     <div style={styles.monthlySummaryAmountRow}>
                       <span>Is Reimbursed</span>
-                      <strong style={{ color: '#0F766E' }}>${monthSummary.reimbursed.toFixed(2)}</strong>
+                      <strong style={{ color: '#0F766E' }}>{formatCurrency(monthSummary.reimbursed)}</strong>
                     </div>
                   </div>
                 </div>
@@ -2230,6 +3137,110 @@ const FinancesPage = () => {
         )}
 
         {!isFinanceDetailRoute && activeMainTab === 'entries' && (
+        <div ref={quickAddRef} style={styles.quickAddSection} className="finances-quick-add">
+          <div style={styles.entryFormHeader}>
+            <h3 style={styles.modalTitle}>Quick Add to Batch</h3>
+            <span style={styles.summarySubtitle}>
+              Batch: <strong>{formatDateOnlyForDisplay(quickAddEntry.date) || quickAddEntry.date}</strong>
+              {' '}(total {formatCurrency(
+                finances
+                  .filter((finance) => normalizeDateOnlyValue(finance.date) === normalizeDateOnlyValue(quickAddEntry.date))
+                  .reduce((sum, finance) => sum + Number(finance.amount || 0), 0)
+              )})
+            </span>
+          </div>
+          <form onSubmit={handleQuickAddSubmit} style={styles.quickAddForm}>
+            <input
+              type="date"
+              value={quickAddEntry.date}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, date: e.target.value }))}
+              title="Batch date"
+              style={styles.input}
+            />
+            <input
+              type="text"
+              value={quickAddEntry.firstName}
+              onChange={(e) => {
+                const value = e.target.value;
+                setQuickAddEntry((prev) => {
+                  const trimmed = String(value || '').trim().toLowerCase();
+                  // Split only when the value exactly matches a known person's full name (autocomplete pick).
+                  const match = people.find(
+                    (person) => getPersonDisplayName(person).trim().toLowerCase() === trimmed
+                  );
+                  if (match) {
+                    return {
+                      ...prev,
+                      firstName: String(match.firstName || '').trim() || value,
+                      lastName: String(match.lastName || '').trim(),
+                    };
+                  }
+                  return { ...prev, firstName: value };
+                });
+              }}
+              placeholder="First name (or full name)"
+              style={styles.input}
+              list="finances-people-names"
+            />
+            <input
+              type="text"
+              value={quickAddEntry.lastName}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, lastName: e.target.value }))}
+              placeholder="Last name"
+              style={styles.input}
+            />
+            <input
+              type="number"
+              value={quickAddEntry.amount}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, amount: e.target.value }))}
+              placeholder="Total"
+              min="0"
+              step="0.01"
+              style={styles.input}
+            />
+            <select
+              value={quickAddEntry.fundType}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, fundType: e.target.value }))}
+              style={styles.input}
+            >
+              {fundTypes.map((fundType) => (
+                <option key={fundType} value={fundType}>{fundType}</option>
+              ))}
+            </select>
+            <select
+              value={quickAddEntry.type}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, type: e.target.value }))}
+              style={styles.input}
+            >
+              {transactionTypes.map((transactionType) => (
+                <option key={transactionType.value} value={transactionType.value}>
+                  {transactionType.value}
+                </option>
+              ))}
+            </select>
+            <select
+              value={quickAddEntry.category}
+              onChange={(e) => setQuickAddEntry((prev) => ({ ...prev, category: e.target.value }))}
+              style={styles.input}
+            >
+              <option value="">Category</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+            <button type="submit" disabled={quickAddSaving} style={styles.button}>
+              {quickAddSaving ? 'Adding...' : 'Add to Batch'}
+            </button>
+          </form>
+          <datalist id="finances-people-names">
+            {people.map((person) => (
+              <option key={person.id} value={getPersonDisplayName(person)} />
+            ))}
+          </datalist>
+        </div>
+        )}
+
+        {!isFinanceDetailRoute && activeMainTab === 'entries' && (
         <div style={styles.toolbar} className="finances-toolbar">
           <div style={styles.searchContainer} className="finances-search-container">
             <FaSearch style={styles.searchIcon} />
@@ -2237,7 +3248,10 @@ const FinancesPage = () => {
               type="text"
               placeholder="Search finances..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
               style={styles.searchInput}
             />
           </div>
@@ -2245,7 +3259,10 @@ const FinancesPage = () => {
         <div style={styles.filters} className="finances-filters">
           <select
             value={filters.type}
-            onChange={(e) => setFilters({...filters, type: e.target.value})}
+            onChange={(e) => {
+              setFilters({...filters, type: e.target.value});
+              setCurrentPage(1);
+            }}
             style={styles.filterSelect}
             className="finances-filter-select"
           >
@@ -2259,7 +3276,10 @@ const FinancesPage = () => {
 
           <select
             value={filters.category}
-            onChange={(e) => setFilters({...filters, category: e.target.value})}
+            onChange={(e) => {
+              setFilters({...filters, category: e.target.value});
+              setCurrentPage(1);
+            }}
             style={styles.filterSelect}
             className="finances-filter-select"
           >
@@ -2269,44 +3289,80 @@ const FinancesPage = () => {
             ))}
           </select>
 
+          <select
+            value={filters.fundType}
+            onChange={(e) => {
+              setFilters({...filters, fundType: e.target.value});
+              setCurrentPage(1);
+            }}
+            style={styles.filterSelect}
+            className="finances-filter-select"
+          >
+            <option value="all">All Funds</option>
+            {fundTypes.map((fundType) => (
+              <option key={fundType} value={fundType}>{capitalizeLabel(fundType)}</option>
+            ))}
+          </select>
+
           <input
             type="date"
             value={filters.startDate}
-            onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+            onChange={(e) => {
+              setFilters({...filters, startDate: e.target.value});
+              setCurrentPage(1);
+            }}
             style={styles.filterDate}
             className="finances-filter-date"
           />
           <input
             type="date"
             value={filters.endDate}
-            onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+            onChange={(e) => {
+              setFilters({...filters, endDate: e.target.value});
+              setCurrentPage(1);
+            }}
             style={styles.filterDate}
             className="finances-filter-date"
           />
         </div>
-
-        <div style={{ display: "flex", gap: "1rem" }} className="finances-actions">
-          <Link
-            to={`/organization/${id}/finances/person-lookup`}
-            style={styles.addButton}
-            className="finances-add-button"
-          >
-            Person Giving Lookup
-          </Link>
-          <button 
-            onClick={exportToPDF}
-            style={{
-              ...styles.addButton,
-              backgroundColor: "#2563eb"
-            }}
-            className="finances-add-button"
-          >
-            <FaFilePdf /> Export to PDF
-          </button>
-          <button onClick={handleStartAddEntry} style={styles.addButton} className="finances-add-button">
-            <FaPlus /> Add New Entry
-          </button>
         </div>
+        )}
+
+        {!isFinanceDetailRoute && activeMainTab === 'actions' && (
+        <div style={styles.summarySection} className="finances-actions-section">
+          <h3 style={styles.summaryTitle}>Actions</h3>
+          <p style={styles.summarySubtitle}>Reports, letters, and lookup tools. These respect the current search and filters.</p>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+            <Link
+              to={`/organization/${id}/finances/person-lookup`}
+              style={styles.addButton}
+              className="finances-add-button"
+            >
+              Person Giving Lookup
+            </Link>
+            <button
+              type="button"
+              onClick={exportToPDF}
+              style={{
+                ...styles.addButton,
+                backgroundColor: "#2563eb"
+              }}
+              className="finances-add-button"
+            >
+              <FaFilePdf /> Export to PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowLetterModal(true)}
+              style={{
+                ...styles.addButton,
+                backgroundColor: "#7C3AED"
+              }}
+              className="finances-add-button"
+            >
+              <FaEnvelopeOpenText /> Donation Letter
+            </button>
+          </div>
         </div>
         )}
 
@@ -2467,6 +3523,193 @@ const FinancesPage = () => {
         </div>
         )}
 
+        {!isEntryFormRoute && activeMainTab === 'people' && (
+        <div style={styles.summarySection} className="finances-people-section">
+          <h3 style={styles.summaryTitle}>People Consolidation</h3>
+          <p style={styles.summarySubtitle}>
+            Find duplicate people (same first and last name) and merge them into a single record. All finance entries will be moved to the record you keep.
+          </p>
+
+          {personDuplicateGroups.length === 0 ? (
+            <div style={{ padding: '1.5rem', backgroundColor: '#F0FDF4', borderRadius: '8px', color: '#166534' }}>
+              <FaCheckCircle style={{ marginRight: '0.5rem' }} />
+              No duplicates found — every person has a unique name ({people.length} total).
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {personDuplicateGroups.map((group) => {
+                const groupKey = normalizePersonKey(group[0].firstName, group[0].lastName);
+                const isMerging = mergingGroupKey === groupKey;
+                return (
+                  <div key={groupKey} style={{ border: '1px solid #FDE68A', backgroundColor: '#FFFBEB', borderRadius: '8px', padding: '1rem' }}>
+                    <h4 style={{ margin: '0 0 0.75rem', color: '#92400E' }}>
+                      {getPersonDisplayName(group[0])} — {group.length} duplicate records
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {group.map((person) => {
+                        const entryCount = personEntryCounts[person.id] || 0;
+                        return (
+                          <div
+                            key={person.id}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '0.75rem',
+                              flexWrap: 'wrap',
+                              backgroundColor: 'white',
+                              borderRadius: '6px',
+                              padding: '0.6rem 0.85rem',
+                              border: '1px solid #E2E8F0',
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: 600, color: '#1F2937' }}>{getPersonDisplayName(person)}</div>
+                              <div style={{ fontSize: '0.85rem', color: '#64748B' }}>
+                                {person.phone || 'no phone'} · {entryCount} {entryCount === 1 ? 'entry' : 'entries'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isMerging}
+                              onClick={() => handleMergePeople(person, group.filter((other) => other.id !== person.id))}
+                              style={{
+                                ...styles.addCategoryButton,
+                                opacity: isMerging ? 0.6 : 1,
+                              }}
+                            >
+                              {isMerging ? 'Merging...' : 'Keep this one & merge others'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ marginTop: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <h3 style={{ ...styles.summaryTitle, marginBottom: 0 }}>All People ({people.length})</h3>
+              <div style={{ position: 'relative' }}>
+                <FaSearch style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', fontSize: '0.8rem' }} />
+                <input
+                  type="text"
+                  placeholder="Search people..."
+                  value={peopleSearchTerm}
+                  onChange={(e) => setPeopleSearchTerm(e.target.value)}
+                  style={{ ...styles.input, paddingLeft: '28px', minWidth: '220px' }}
+                />
+              </div>
+            </div>
+            <div style={styles.logTableWrapper}>
+              <table style={styles.logTable} className="finances-log-table">
+                <thead>
+                  <tr>
+                    <th style={styles.logTh}>First Name</th>
+                    <th style={styles.logTh}>Last Name</th>
+                    <th style={styles.logTh}>Phone</th>
+                    <th style={{ ...styles.logTh, textAlign: 'right' }}>Entries</th>
+                    <th style={styles.logTh}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {people
+                    .filter((person) => {
+                      const term = peopleSearchTerm.trim().toLowerCase();
+                      if (!term) return true;
+                      return getPersonDisplayName(person).toLowerCase().includes(term)
+                        || String(person.phone || '').toLowerCase().includes(term);
+                    })
+                    .map((person) => {
+                      const isEditingPerson = editingPersonId === person.id;
+                      const entryCount = personEntryCounts[person.id] || 0;
+                      return (
+                        <tr key={`person-${person.id}`} className="finances-log-row">
+                          <td style={styles.logTd}>
+                            {isEditingPerson ? (
+                              <input
+                                type="text"
+                                value={editingPersonDraft.firstName}
+                                onChange={(e) => setEditingPersonDraft((prev) => ({ ...prev, firstName: e.target.value }))}
+                                style={{ ...styles.input, padding: '4px 8px', width: '100%' }}
+                              />
+                            ) : (person.firstName || '-')}
+                          </td>
+                          <td style={styles.logTd}>
+                            {isEditingPerson ? (
+                              <input
+                                type="text"
+                                value={editingPersonDraft.lastName}
+                                onChange={(e) => setEditingPersonDraft((prev) => ({ ...prev, lastName: e.target.value }))}
+                                style={{ ...styles.input, padding: '4px 8px', width: '100%' }}
+                              />
+                            ) : (person.lastName || '-')}
+                          </td>
+                          <td style={styles.logTd}>
+                            {isEditingPerson ? (
+                              <input
+                                type="text"
+                                value={editingPersonDraft.phone}
+                                onChange={(e) => setEditingPersonDraft((prev) => ({ ...prev, phone: e.target.value }))}
+                                style={{ ...styles.input, padding: '4px 8px', width: '100%' }}
+                              />
+                            ) : (person.phone || '-')}
+                          </td>
+                          <td style={{ ...styles.logTd, textAlign: 'right' }}>{entryCount}</td>
+                          <td style={styles.logTd}>
+                            <div style={styles.logActionRow}>
+                              {isEditingPerson ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSavePerson(person)}
+                                    disabled={savingPersonId === person.id}
+                                    style={styles.editButton}
+                                  >
+                                    {savingPersonId === person.id ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingPersonId(null)}
+                                    style={styles.commentButton}
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditPerson(person)}
+                                    style={styles.editButton}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeletePerson(person)}
+                                    style={{ ...styles.deleteButton, opacity: entryCount > 0 ? 0.5 : 1 }}
+                                    title={entryCount > 0 ? 'Has linked entries — merge first' : 'Delete person'}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        )}
+
         {isEntryFormRoute && (
         <div ref={entryFormRef} style={styles.summarySection} className="finances-entry-form-section">
           <div style={styles.entryFormHeader}>
@@ -2481,12 +3724,11 @@ const FinancesPage = () => {
           </div>
           <form onSubmit={handleSubmit} style={styles.form} className="finances-modal-form">
             <div style={styles.formGroup}>
-              <label style={styles.label}>Title *</label>
+              <label style={styles.label}>Title</label>
               <input
                 type="text"
                 value={newEntry.title}
                 onChange={e => setNewEntry({...newEntry, title: e.target.value})}
-                required
                 style={styles.input}
               />
             </div>
@@ -2729,7 +3971,7 @@ const FinancesPage = () => {
             )}
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>Person *</label>
+              <label style={styles.label}>Person</label>
               {showNewPersonInput ? (
                 <div style={styles.newCategoryContainer}>
                   <input
@@ -2786,7 +4028,6 @@ const FinancesPage = () => {
                       setNewEntry({ ...newEntry, personId: e.target.value });
                     }
                   }}
-                  required
                   style={styles.input}
                 >
                   <option value="">Select person</option>
@@ -3034,10 +4275,95 @@ const FinancesPage = () => {
         </div>
         )}
 
-        {!isFinanceDetailRoute && (
-        <div style={styles.summarySection}>
-        <h3 style={styles.summaryTitle}>Financial Entries ({filteredFinances.length})</h3>
+        {!isFinanceDetailRoute && activeMainTab === 'entries' && (
+        <div style={{ ...styles.summarySection, width: '100%', boxSizing: 'border-box' }}>
+        <div style={styles.entriesHeaderRow}>
+          <h3 style={styles.summaryTitle}>Financial Entries ({filteredFinances.length})</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <label style={{ ...styles.pageSizeLabel, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={visibleColumns.title}
+                onChange={(e) => setVisibleColumns((prev) => ({ ...prev, title: e.target.checked }))}
+              />
+              Title
+            </label>
+            <label style={{ ...styles.pageSizeLabel, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={visibleColumns.description}
+                onChange={(e) => setVisibleColumns((prev) => ({ ...prev, description: e.target.checked }))}
+              />
+              Description
+            </label>
+            <label style={styles.pageSizeLabel}>
+              Show
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                style={styles.pageSizeSelect}
+              >
+                <option value={0}>All</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              per page
+            </label>
+          </div>
+        </div>
         <div style={styles.logTableWrapper}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.6rem 0.75rem', borderBottom: '1px solid #E5E7EB', backgroundColor: '#FAFAFA' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Group by:</span>
+            {entryGroupingConfigs.map((config) => {
+              const orderIndex = entryGroupings.indexOf(config.key);
+              const isActive = orderIndex !== -1;
+              return (
+                <button
+                  key={config.key}
+                  type="button"
+                  onClick={() => setEntryGroupings((prev) => (
+                    prev.includes(config.key)
+                      ? prev.filter((key) => key !== config.key)
+                      : [...prev, config.key]
+                  ))}
+                  style={{
+                    ...styles.summaryToggleButton,
+                    padding: '0.25rem 0.7rem',
+                    fontSize: '0.75rem',
+                    ...(isActive ? styles.summaryToggleButtonActive : {}),
+                  }}
+                >
+                  {isActive && (
+                    <span style={{ backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: '999px', padding: '0 0.4rem', marginRight: '0.35rem', fontSize: '0.7rem' }}>
+                      {orderIndex + 1}
+                    </span>
+                  )}
+                  {config.label}
+                </button>
+              );
+            })}
+            {entryGroupings.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setEntryGroupings([])}
+                style={{ ...styles.summaryToggleButton, padding: '0.25rem 0.7rem', fontSize: '0.75rem', borderColor: '#FCA5A5', color: '#B91C1C', backgroundColor: '#FEF2F2' }}
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={exportTableToPDF}
+              style={{ ...styles.summaryToggleButton, padding: '0.25rem 0.7rem', fontSize: '0.75rem', marginLeft: 'auto', borderColor: '#93C5FD', color: '#1D4ED8', backgroundColor: '#EFF6FF' }}
+            >
+              <FaFilePdf style={{ marginRight: '0.3rem', verticalAlign: '-0.1em' }} /> Export Table PDF
+            </button>
+          </div>
           {loading ? (
             <p>Loading...</p>
           ) : paginatedFinances.length === 0 ? (
@@ -3047,10 +4373,12 @@ const FinancesPage = () => {
               <thead>
                 <tr>
                   <th style={styles.logTh}>Date</th>
-                  <th style={styles.logTh}>Title</th>
-                  <th style={styles.logTh}>Description</th>
+                  <th style={styles.logTh}>Batch</th>
+                  {visibleColumns.title && <th style={styles.logTh}>Title</th>}
+                  {visibleColumns.description && <th style={styles.logTh}>Description</th>}
+                  <th style={styles.logTh}>First Name</th>
+                  <th style={styles.logTh}>Last Name</th>
                   <th style={styles.logTh}>Category</th>
-                  <th style={styles.logTh}>Person</th>
                   <th style={styles.logTh}>Type</th>
                   <th style={styles.logTh}>Reimbursed</th>
                   <th style={styles.logTh}>Funds</th>
@@ -3059,13 +4387,20 @@ const FinancesPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {paginatedFinances.map((entry) => (
+                {(() => {
+                  const totalColumnCount = 11 + (visibleColumns.title ? 1 : 0) + (visibleColumns.description ? 1 : 0);
+                  const groupHeaderColors = ['#EEF2FF', '#F5F3FF', '#FAF5FF', '#FDF4FF'];
+                  const groupTextColors = ['#4338CA', '#5B21B6', '#7E22CE', '#86198F'];
+
+                  const renderEntryRow = (entry) => (
                   <tr key={`entry-${entry.id}`} className="finances-log-row">
                     <td style={styles.logTd}>{formatDateOnlyForDisplay(entry.date)}</td>
-                    <td style={styles.logTd}>{entry.title}</td>
-                    <td style={styles.logTd}>{entry.description || '-'}</td>
+                    <td style={styles.logTd}>{formatDateOnlyForDisplay(entry.batchName) || formatDateOnlyForDisplay(entry.date) || entry.batchName || '-'}</td>
+                    {visibleColumns.title && <td style={styles.logTd}>{entry.title}</td>}
+                    {visibleColumns.description && <td style={styles.logTd}>{entry.description || '-'}</td>}
+                    <td style={styles.logTd}>{getFinancePersonParts(entry).firstName || '-'}</td>
+                    <td style={styles.logTd}>{getFinancePersonParts(entry).lastName || '-'}</td>
                     <td style={styles.logTd}>{entry.category || '-'}</td>
-                    <td style={styles.logTd}>{getFinancePersonName(entry)}</td>
                     <td style={styles.logTd}>{getTransactionTypeLabel(entry.type)}</td>
                     <td style={styles.logTd}>{getReimbursementStatus(entry, getTransactionTypeFlow)}</td>
                     <td style={styles.logTd}>{getNormalizedFundType(entry)}</td>
@@ -3076,7 +4411,7 @@ const FinancesPage = () => {
                         fontWeight: '600',
                       }}
                     >
-                      {getTransactionTypeFlow(entry) === 'income' ? '+' : '-'} ${Number(entry.amount || 0).toFixed(2)}
+                      {getTransactionTypeFlow(entry) === 'income' ? '+' : '-'} {formatCurrency(entry.amount)}
                     </td>
                     <td style={styles.logTd}>
                       <div style={styles.logActionRow}>
@@ -3114,33 +4449,249 @@ const FinancesPage = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+
+                  const renderGroupRows = (groups) => groups.map((group, groupIndex) => (
+                    <React.Fragment key={`group-${group.depth}-${group.label}`}>
+                      {groupIndex > 0 && (
+                        <tr>
+                          <td
+                            colSpan={totalColumnCount}
+                            style={{
+                              padding: 0,
+                              height: group.depth === 0 ? '12px' : '6px',
+                              backgroundColor: group.depth === 0 ? '#E2E8F0' : '#F1F5F9',
+                              borderTop: group.depth === 0 ? '1px solid #94A3B8' : '1px solid #E2E8F0',
+                              borderBottom: group.depth === 0 ? '1px solid #94A3B8' : '1px solid #E2E8F0',
+                            }}
+                          ></td>
+                        </tr>
+                      )}
+                      <tr style={{ backgroundColor: groupHeaderColors[group.depth % groupHeaderColors.length] }}>
+                        <td
+                          colSpan={totalColumnCount}
+                          style={{
+                            ...styles.logTd,
+                            fontWeight: 700,
+                            fontSize: group.depth === 0 ? '0.95rem' : '0.85rem',
+                            color: groupTextColors[group.depth % groupTextColors.length],
+                            textAlign: 'left',
+                            paddingLeft: `${14 + group.depth * 20}px`,
+                            paddingTop: group.depth === 0 ? '12px' : '8px',
+                            paddingBottom: group.depth === 0 ? '12px' : '8px',
+                            borderTop: group.depth === 0 ? '2px solid #818CF8' : '1px solid #DDD6FE',
+                            borderLeft: `4px solid ${groupTextColors[group.depth % groupTextColors.length]}`,
+                          }}
+                        >
+                          {group.config.label}: {group.label} · {group.count} {group.count === 1 ? 'entry' : 'entries'}
+                          {' · '}+{formatCurrency(group.income)} / −{formatCurrency(group.expense)}
+                          {' · Net '}<span style={{ color: group.net >= 0 ? '#059669' : '#DC2626' }}>{formatCurrency(group.net)}</span>
+                        </td>
+                      </tr>
+                      {group.children.length > 0
+                        ? renderGroupRows(group.children)
+                        : group.entries.map(renderEntryRow)}
+                    </React.Fragment>
+                  ));
+
+                  return entryGroupTree ? renderGroupRows(entryGroupTree) : paginatedFinances.map(renderEntryRow);
+                })()}
               </tbody>
+              <tfoot>
+                <tr className="finances-log-subtotal-row">
+                  <td
+                    style={{ ...styles.logTd, fontWeight: '700', textAlign: 'right' }}
+                    colSpan={8 + (visibleColumns.title ? 1 : 0) + (visibleColumns.description ? 1 : 0)}
+                  >
+                    Subtotal ({filteredFinances.length} {filteredFinances.length === 1 ? 'entry' : 'entries'})
+                  </td>
+                  <td style={{ ...styles.logTd, fontWeight: '700', whiteSpace: 'nowrap' }}>
+                    <div style={{ color: totals.income - totals.expense >= 0 ? '#059669' : '#DC2626' }}>
+                      {formatCurrency(totals.income - totals.expense)}
+                    </div>
+                    <div style={{ fontSize: '11px', fontWeight: '400', color: '#6B7280' }}>
+                      +{formatCurrency(totals.income)} / −{formatCurrency(totals.expense)}
+                    </div>
+                  </td>
+                  <td style={styles.logTd}></td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>
         </div>
         )}
 
-        {!isFinanceDetailRoute && (
+        {!isFinanceDetailRoute && activeMainTab === 'batches' && !loading && filteredFinances.length > 0 && (
+        <div style={styles.summarySection}>
+        <h3 style={styles.summaryTitle}>Batch Totals</h3>
+        <div style={styles.logTableWrapper}>
+          <table style={styles.logTable} className="finances-batch-table">
+            <thead>
+              <tr>
+                <th style={styles.logTh}>Batch</th>
+                <th style={styles.logTh}>Entries</th>
+                <th style={styles.logTh}>Income</th>
+                <th style={styles.logTh}>Expenses</th>
+                <th style={styles.logTh}>Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...batchSummaries].sort((a, b) => String(b.batchName).localeCompare(String(a.batchName))).map((batch) => (
+                <tr key={`batch-${batch.batchName}`} className="finances-log-row">
+                  <td style={styles.logTd}>{batch.label}</td>
+                  <td style={styles.logTd}>{batch.count}</td>
+                  <td style={{ ...styles.logTd, color: '#059669', fontWeight: '600' }}>+{formatCurrency(batch.income)}</td>
+                  <td style={{ ...styles.logTd, color: '#DC2626', fontWeight: '600' }}>-{formatCurrency(batch.expense)}</td>
+                  <td style={{ ...styles.logTd, color: batch.net >= 0 ? '#059669' : '#DC2626', fontWeight: '700' }}>
+                    {formatCurrency(batch.net)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        </div>
+        )}
+
+        {!isFinanceDetailRoute && activeMainTab === 'batches' && !loading && batchSummaries.length > 0 && (
+        <div style={styles.summarySection}>
+        <h3 style={styles.summaryTitle}>Income by Batch</h3>
+        <div style={styles.chartWrapper}>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={batchSummaries} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#6B7280' }} />
+              <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} tickFormatter={(v) => `$${v}`} />
+              <RechartsTooltip formatter={(value) => formatCurrency(value)} />
+              <Legend />
+              <Bar dataKey="income" name="Income" fill="#059669" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expense" name="Expenses" fill="#DC2626" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="net" name="Net" fill="#4F46E5" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        </div>
+        )}
+
+        {!isFinanceDetailRoute && activeMainTab === 'entries' && activeEntryGroupings.length === 0 && totalPages > 1 && (
         <div style={styles.pagination} className="finances-pagination">
-        {[...Array(totalPages)].map((_, index) => (
+          <span style={styles.paginationInfo}>
+            Showing {Math.min((safeCurrentPage - 1) * effectiveItemsPerPage + 1, filteredFinances.length)}–{Math.min(safeCurrentPage * effectiveItemsPerPage, filteredFinances.length)} of {filteredFinances.length} entries
+          </span>
           <button
-            key={index}
-            onClick={() => setCurrentPage(index + 1)}
-            style={{
-              ...styles.pageButton,
-              backgroundColor: currentPage === index + 1 ? '#4F46E5' : 'white',
-              color: currentPage === index + 1 ? 'white' : '#4F46E5'
-            }}
+            type="button"
+            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+            disabled={safeCurrentPage === 1}
+            style={{ ...styles.pageButton, opacity: safeCurrentPage === 1 ? 0.5 : 1 }}
           >
-            {index + 1}
+            Prev
           </button>
-        ))}
+          {[...Array(Math.max(0, totalPages))].map((_, index) => (
+            <button
+              key={index}
+              onClick={() => setCurrentPage(index + 1)}
+              style={{
+                ...styles.pageButton,
+                backgroundColor: safeCurrentPage === index + 1 ? '#4F46E5' : 'white',
+                color: safeCurrentPage === index + 1 ? 'white' : '#374151',
+                borderColor: safeCurrentPage === index + 1 ? '#4F46E5' : '#D1D5DB',
+              }}
+            >
+              {index + 1}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+            disabled={safeCurrentPage === totalPages}
+            style={{ ...styles.pageButton, opacity: safeCurrentPage === totalPages ? 0.5 : 1 }}
+          >
+            Next
+          </button>
         </div>
         )}
 
         
+
+        {showLetterModal && (
+        <Modal onClose={() => setShowLetterModal(false)} className="finances-letter-modal">
+          <div style={styles.commentModal}>
+            <h3>Donation Tax Letter</h3>
+            <p style={{ margin: '0.5rem 0 0', color: '#64748B', fontSize: '0.9rem' }}>
+              Select a donor and date range to generate a letter confirming their total giving for tax purposes.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem', color: '#475569' }}>Donor</label>
+                <select
+                  value={letterPersonId}
+                  onChange={(e) => setLetterPersonId(e.target.value)}
+                  style={{ ...styles.input, width: '100%' }}
+                >
+                  <option value="">Select a donor...</option>
+                  {people.map((person) => (
+                    <option key={person.id} value={person.id}>{getPersonDisplayName(person)}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem', color: '#475569' }}>Start Date</label>
+                  <input
+                    type="date"
+                    value={letterStartDate}
+                    onChange={(e) => setLetterStartDate(e.target.value)}
+                    style={{ ...styles.input, width: '100%' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem', color: '#475569' }}>End Date</label>
+                  <input
+                    type="date"
+                    value={letterEndDate}
+                    onChange={(e) => setLetterEndDate(e.target.value)}
+                    style={{ ...styles.input, width: '100%' }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem', color: '#475569' }}>Language / Idioma</label>
+                <select
+                  value={letterLanguage}
+                  onChange={(e) => setLetterLanguage(e.target.value)}
+                  style={{ ...styles.input, width: '100%' }}
+                >
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+              </div>
+              {letterPerson && (
+                <div style={{ padding: '0.75rem', backgroundColor: '#F0FDF4', borderRadius: '6px', color: '#166534', fontSize: '0.95rem' }}>
+                  {letterDonations.length} donation{letterDonations.length === 1 ? '' : 's'} found — Total: <strong>{formatCurrency(letterTotalAmount)}</strong>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={generateDonationLetter}
+                  disabled={!letterPerson || letterDonations.length === 0}
+                  style={{ ...styles.button, backgroundColor: !letterPerson || letterDonations.length === 0 ? '#94A3B8' : '#059669' }}
+                >
+                  <FaFilePdf style={{ marginRight: '0.4rem' }} /> Generate Letter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLetterModal(false)}
+                  style={{ ...styles.button, backgroundColor: '#64748B' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+        )}
 
         {showCommentModal && (
         <Modal onClose={() => setShowCommentModal(false)} className="finances-comment-modal">
@@ -3365,14 +4916,49 @@ const styles = {
   pagination: {
     display: 'flex',
     justifyContent: 'center',
+    alignItems: 'center',
     gap: '0.5rem',
     marginTop: '2rem',
+    flexWrap: 'wrap',
   },
-  pageButton: {
-    padding: '8px 12px',
-    border: '1px solid #4F46E5',
+  paginationInfo: {
+    color: '#6B7280',
+    fontSize: '0.85rem',
+    marginRight: '0.5rem',
+  },
+  entriesHeaderRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '1rem',
+    flexWrap: 'wrap',
+  },
+  chartWrapper: {
+    width: '100%',
+    marginTop: '0.5rem',
+  },
+  pageSizeLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    color: '#6B7280',
+    fontSize: '0.85rem',
+  },
+  pageSizeSelect: {
+    padding: '4px 8px',
+    border: '1px solid #D1D5DB',
     borderRadius: '4px',
     cursor: 'pointer',
+  },
+  pageButton: {
+    padding: '7px 12px',
+    border: '1px solid #D1D5DB',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    backgroundColor: 'white',
+    color: '#374151',
+    fontWeight: '500',
+    fontSize: '0.85rem',
   },
   commentModal: {
     display: 'flex',
@@ -3470,6 +5056,22 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: '1rem',
+  },
+  quickAddSection: {
+    backgroundColor: '#ECFDF5',
+    border: '1px solid #99F6E4',
+    borderRadius: '12px',
+    padding: '1rem 1.25rem',
+    marginBottom: '1rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+  },
+  quickAddForm: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+    gap: '0.75rem',
+    alignItems: 'center',
   },
   closeInlineButton: {
     padding: '6px 10px',
@@ -3858,29 +5460,44 @@ const styles = {
   logTableWrapper: {
     marginTop: '0.75rem',
     overflowX: 'auto',
-    border: '1px solid #E5E7EB',
-    borderRadius: '8px',
+    border: '1px solid #D1D5DB',
+    borderRadius: '6px',
+    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.06)',
+    backgroundColor: 'white',
+    width: '100%',
   },
   logTable: {
     width: '100%',
+    tableLayout: 'fixed',
     borderCollapse: 'collapse',
-    minWidth: '680px',
     backgroundColor: 'white',
   },
   logTh: {
     textAlign: 'left',
-    padding: '10px',
-    borderBottom: '1px solid #E5E7EB',
-    backgroundColor: '#F9FAFB',
+    padding: '12px 14px',
+    borderBottom: '2px solid #9CA3AF',
+    borderRight: '1px solid #E5E7EB',
+    backgroundColor: '#F3F4F6',
     color: '#374151',
-    fontSize: '0.85rem',
-    fontWeight: '600',
+    fontSize: '0.72rem',
+    fontWeight: '700',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
   },
   logTd: {
-    padding: '10px',
-    borderBottom: '1px solid #F3F4F6',
-    color: '#1F2937',
-    fontSize: '0.9rem',
+    padding: '10px 14px',
+    borderBottom: '1px solid #E5E7EB',
+    borderRight: '1px solid #F3F4F6',
+    color: '#111827',
+    fontSize: '0.875rem',
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+    verticalAlign: 'middle',
   },
   logActionRow: {
     display: 'flex',
@@ -4020,15 +5637,24 @@ const responsiveStyles = `
   }
 
   .finances-log-row:nth-child(even) {
-    background-color: #F8FAFC;
+    background-color: #F9FAFB;
+  }
+
+  .finances-log-row {
+    transition: background-color 0.12s ease;
   }
 
   .finances-log-row:hover {
-    background-color: #EEF2FF;
+    background-color: #F3F4F6 !important;
   }
 
-  .finances-log-row td {
-    border-bottom: 1px solid #E5E7EB;
+  .finances-log-row:last-child td {
+    border-bottom: none;
+  }
+
+  .finances-log-row td:last-child,
+  .finances-log-table th:last-child {
+    border-right: none;
   }
 
   @media (max-width: 1024px) {

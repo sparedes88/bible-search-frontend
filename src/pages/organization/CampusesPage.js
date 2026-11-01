@@ -8,6 +8,19 @@ import commonStyles from '../../pages/commonStyles';
 import { FiEdit2, FiTrash2, FiPlus, FiSave, FiX, FiMapPin } from 'react-icons/fi';
 import './CampusesPage.css';
 
+const formatCampusAddress = (address) => {
+  if (typeof address === 'string') return address;
+  if (!address || typeof address !== 'object') return '';
+  const parts = [address.street, address.city, address.state, address.zip, address.country]
+    .filter((part) => (typeof part === 'string' && part.trim()) || typeof part === 'number')
+    .map(String);
+  if (parts.length) return parts.join(', ');
+  return Object.values(address)
+    .filter((part) => typeof part === 'string' || typeof part === 'number')
+    .map(String)
+    .join(', ');
+};
+
 const CampusesPage = () => {
   const { id } = useParams();
   const { user } = useAuth();
@@ -31,10 +44,10 @@ const CampusesPage = () => {
       const campusesRef = collection(db, 'churches', id, 'campuses');
       const q = query(campusesRef, orderBy('name'));
       const snapshot = await getDocs(q);
-      const campusesData = snapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      }));
+      const campusesData = snapshot.docs.map(campusDoc => {
+        const data = campusDoc.data();
+        return { id: campusDoc.id, ...data, address: formatCampusAddress(data.address) };
+      });
       setCampuses(campusesData);
     } catch (err) {
       console.error('Error fetching campuses:', err);

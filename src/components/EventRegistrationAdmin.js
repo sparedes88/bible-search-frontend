@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import { 
   collection, 
   addDoc, 
@@ -16,18 +16,24 @@ import {
 } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import commonStyles from '../pages/commonStyles';
 import ChurchHeader from './ChurchHeader';
 import 'react-toastify/dist/ReactToastify.css';
-import Skeleton from 'react-loading-skeleton';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import RegistrationsPDF from './RegistrationsPDF';
+import { getDownloadURL, ref } from 'firebase/storage';
+import { MdAdd, MdArrowBack, MdCalendarToday, MdCheckCircleOutline, MdDeleteOutline, MdEdit, MdFileDownload, MdLocationOn, MdPeopleOutline, MdSchedule } from 'react-icons/md';
+import { formatAnnouncementDate, formatAnnouncementTime } from '../utils/eventAnnouncementLayout';
+import './EventRegistration.css';
+import './EventRegistrationAdmin.css';
 
 const EventRegistrationAdmin = () => {
   const { id, eventId } = useParams();
   const navigate = useNavigate();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, loading: authLoading } = useAuth();
   const [eventDetails, setEventDetails] = useState(null);
+  const [eventImage, setEventImage] = useState(null);
+  const [graphicUnavailable, setGraphicUnavailable] = useState(false);
+  const [eventLoading, setEventLoading] = useState(true);
   const [registrations, setRegistrations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isExternalBrowser, setIsExternalBrowser] = useState(false);
@@ -36,11 +42,12 @@ const EventRegistrationAdmin = () => {
   const [formData, setFormData] = useState({
     name: '',
     lastName: '',
-    email: '',
     phone: '',
-    comments: ''
+    potluckChoice: ''
   });
   const [submitting, setSubmitting] = useState(false);
+  const [publicRegistrationSubmitted, setPublicRegistrationSubmitted] = useState(false);
+  const canManageRegistrations = Boolean(user && isAdmin());
 
   // Detect if coming from external source like Facebook
   useEffect(() => {
@@ -56,14 +63,6 @@ const EventRegistrationAdmin = () => {
     }
   }, []);
 
-  // Redirect non-admin users
-  useEffect(() => {
-    if (user && !isAdmin()) {
-      navigate(`/church/${id}/event/${eventId}`);
-      toast.error('Only admins can access this page');
-    }
-  }, [user, isAdmin, id, eventId, navigate]);
-
   // Fetch event details
   useEffect(() => {
     const fetchEventDetails = async () => {
@@ -78,11 +77,43 @@ const EventRegistrationAdmin = () => {
       } catch (error) {
         console.error('Error fetching event:', error);
         toast.error('Failed to load event details');
+      } finally {
+        setEventLoading(false);
       }
     };
 
     fetchEventDetails();
   }, [eventId, id, navigate]);
+
+  useEffect(() => {
+    let active = true;
+    setEventImage(null);
+    setGraphicUnavailable(false);
+    const resolveEventImage = async () => {
+      const imageUrl = eventDetails?.imageUrl;
+      if (!imageUrl) {
+        setEventImage(null);
+        return;
+      }
+
+      if (typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl)) {
+        setEventImage(imageUrl);
+        return;
+      }
+
+      try {
+        const storagePath = String(imageUrl).replace(/^\//, '');
+        const downloadUrl = await getDownloadURL(ref(storage, storagePath));
+        if (active) setEventImage(downloadUrl);
+      } catch (error) {
+        console.error('Error loading event image:', error);
+        if (active) setGraphicUnavailable(true);
+      }
+    };
+
+    resolveEventImage();
+    return () => { active = false; };
+  }, [eventDetails?.imageUrl]);
 
   // Fetch all registrations for this event
   useEffect(() => {
@@ -111,19 +142,23 @@ const EventRegistrationAdmin = () => {
       }
     };
 
-    if (eventId) {
+    if (authLoading) return undefined;
+    if (eventId && canManageRegistrations) {
       fetchRegistrations();
+    } else {
+      setRegistrations([]);
+      setLoading(false);
     }
-  }, [eventId]);
+    return undefined;
+  }, [eventId, authLoading, canManageRegistrations]);
 
   const handleAddNew = () => {
     setSelectedRegistration(null);
     setFormData({
       name: '',
       lastName: '',
-      email: '',
       phone: '',
-      comments: ''
+      potluckChoice: ''
     });
     setIsAddingNew(true);
   };
@@ -133,11 +168,26 @@ const EventRegistrationAdmin = () => {
     setFormData({
       name: registration.name || '',
       lastName: registration.lastName || '',
-      email: registration.email || '',
       phone: registration.phone || '',
-      comments: registration.comments || ''
+      potluckChoice: registration.potluckChoice || ''
     });
     setIsAddingNew(true);
+  };
+
+  const handlePotluckToggle = async (enabled) => {
+    const previousValue = Boolean(eventDetails?.potluckEnabled);
+    setEventDetails(previous => ({ ...previous, potluckEnabled: enabled }));
+    try {
+      await updateDoc(doc(db, 'eventInstances', eventId), {
+        potluckEnabled: enabled,
+        updatedAt: serverTimestamp(),
+      });
+      toast.success(enabled ? 'Potluck question enabled' : 'Potluck question disabled');
+    } catch (error) {
+      setEventDetails(previous => ({ ...previous, potluckEnabled: previousValue }));
+      console.error('Error updating potluck setting:', error);
+      toast.error('Failed to update potluck setting');
+    }
   };
 
   const handleDelete = async (registrationId) => {
@@ -194,30 +244,38 @@ const EventRegistrationAdmin = () => {
         
         toast.success('Registration updated successfully');
       } else {
-        // Create new registration
-        const docRef = await addDoc(collection(db, 'eventRegistrations'), {
+        const potluckChoice = eventDetails?.potluckEnabled
+          ? String(formData.potluckChoice || '').trim()
+          : undefined;
+        const registrationPayload = {
           eventId,
           churchId: id,
-          userId: null, // Admin-created registration has no user
-          ...formData,
+          userId: user?.uid || null,
+          name: formData.name.trim(),
+          lastName: formData.lastName.trim(),
+          phone: formData.phone || '',
+          ...(potluckChoice !== undefined ? { potluckChoice } : {}),
           status: 'registered',
           registeredAt: serverTimestamp(),
           eventName: eventDetails?.title || '',
           eventDate: eventDetails?.startDate || '',
-          createdBy: user?.email || 'admin'
+          ...(canManageRegistrations ? { createdBy: user?.email || 'admin' } : {}),
+        };
+        const docRef = await addDoc(collection(db, 'eventRegistrations'), {
+          ...registrationPayload,
         });
+
+        if (!canManageRegistrations) {
+          setPublicRegistrationSubmitted(true);
+          toast.success('RSVP submitted successfully');
+          return;
+        }
         
         // Add to local state
         setRegistrations(prev => [{
           id: docRef.id,
-          ...formData,
-          eventId,
-          churchId: id,
-          status: 'registered',
+          ...registrationPayload,
           registeredAt: new Date(),
-          eventName: eventDetails?.title || '',
-          eventDate: eventDetails?.startDate || '',
-          createdBy: user?.email || 'admin'
         }, ...prev]);
         
         toast.success('Registration created successfully');
@@ -227,9 +285,8 @@ const EventRegistrationAdmin = () => {
       setFormData({
         name: '',
         lastName: '',
-        email: '',
         phone: '',
-        comments: ''
+        potluckChoice: ''
       });
       setIsAddingNew(false);
       setSelectedRegistration(null);
@@ -241,369 +298,80 @@ const EventRegistrationAdmin = () => {
     }
   };
 
-  if (loading) {
+  if (authLoading || eventLoading || (canManageRegistrations && loading)) {
     return (
-      <div className="page-container">
-        <button
-          onClick={() => navigate(`/church/${id}/event/${eventId}`)}
-          style={commonStyles.backButtonLink}
-        >
-          ← Back to Event
-        </button>
-        <ChurchHeader id={id} />
-        <div className="content-box" style={{ padding: '2rem' }}>
-          <Skeleton height={50} style={{ marginBottom: '1rem' }} />
-          <Skeleton height={100} style={{ marginBottom: '2rem' }} />
-          <Skeleton height={40} count={5} style={{ marginBottom: '1rem' }} />
-        </div>
-      </div>
+      <main className="registration-page registration-admin"><div className="registration-loading" role="status"><span className="registration-loading-indicator" />Loading registrations...</div></main>
     );
   }
 
+  const eventTitle = eventDetails?.instanceTitle || eventDetails?.title || 'Event';
+  const eventDate = formatAnnouncementDate(eventDetails?.startDate);
+  const eventTime = [formatAnnouncementTime(eventDetails?.startHour), formatAnnouncementTime(eventDetails?.endHour)].filter(Boolean).join(' - ');
+
   return (
-    <div className="page-container">
-      <button
-        onClick={() => navigate(`/church/${id}/event/${eventId}`)}
-        style={commonStyles.backButtonLink}
-      >
-        ← Back to Event
-      </button>
-      <ChurchHeader id={id} />
-      
-      <div className="content-box" style={{ padding: '2rem' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          marginBottom: '1.5rem'
-        }}>
-          <h2 style={{ 
-            fontSize: '1.5rem', 
-            fontWeight: 'bold',
-            color: '#1f2937'
-          }}>
-            Manage Event Registrations
-          </h2>
-          
-          {!isAddingNew && (
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <PDFDownloadLink
-                document={(
-                  <RegistrationsPDF
-                    event={eventDetails}
-                    registrations={(registrations || []).map(r => ({
-                      id: r.id,
-                      name: r.name,
-                      lastName: r.lastName,
-                      email: r.email,
-                      phone: r.phone,
-                      registeredAt: r.registeredAt?.toLocaleString ? r.registeredAt.toLocaleString() : String(r.registeredAt || '')
-                    }))}
-                  />
-                )}
-                fileName={`event-${eventId}-registrations.pdf`}
-                style={{
-                  backgroundColor: '#10B981',
-                  color: 'white',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  fontWeight: '500',
-                  textDecoration: 'none'
-                }}
-              >
-                Export PDF
-              </PDFDownloadLink>
-              <button
-                onClick={handleAddNew}
-                style={{
-                  backgroundColor: '#4F46E5',
-                  color: 'white',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  fontWeight: '500',
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                Add New Registration
-              </button>
+    <main className="registration-page registration-admin">
+      <nav className="registration-nav" aria-label="Event navigation"><div className="registration-nav-inner">
+        <button type="button" className="registration-back" onClick={() => navigate(`/organization/${id}/event/${eventId}`)}><MdArrowBack size={19} aria-hidden="true" /> Back to event</button>
+        <span className="registration-nav-label">{canManageRegistrations ? 'Registration management' : 'Event registration'}</span>
+      </div></nav>
+
+      {eventDetails?.imageUrl && !graphicUnavailable ? <header className="event-registration-graphic">
+        {eventImage ? <img src={eventImage} alt={`${eventTitle} image`} onError={() => { setEventImage(null); setGraphicUnavailable(true); }} /> : <div className="registration-graphic-loading" role="status">Loading event image...</div>}
+      </header> : <div className="registration-organization-header"><ChurchHeader id={id} /></div>}
+
+      <div className="registration-admin-shell">
+        <section className="registration-admin-summary" aria-labelledby="registrations-event-title">
+          <div><span className="registration-eyebrow">The event</span><h1 id="registrations-event-title">{eventTitle}</h1><div className="registration-title-rule" /></div>
+          <dl className="registration-facts registration-admin-facts">
+            {eventDate && <div><MdCalendarToday aria-hidden="true" /><div><dt>Date</dt><dd>{eventDate}</dd></div></div>}
+            {eventTime && <div><MdSchedule aria-hidden="true" /><div><dt>Time</dt><dd>{eventTime}</dd></div></div>}
+            {eventDetails?.location && <div><MdLocationOn aria-hidden="true" /><div><dt>Location</dt><dd>{eventDetails.location}</dd></div></div>}
+          </dl>
+        </section>
+
+        <section className="registration-admin-workspace" aria-labelledby="registration-management-title">
+          <header className="registration-admin-toolbar">
+            <div><h2 id="registration-management-title">{canManageRegistrations ? 'Manage Event Registrations' : 'RSVP for this Event'}</h2>
+              {canManageRegistrations && <span className="registration-admin-count"><MdPeopleOutline aria-hidden="true" />{registrations.length} registered</span>}
             </div>
-          )}
-        </div>
-        
-        {eventDetails && (
-          <div style={{
-            marginBottom: '2rem',
-            padding: '1rem',
-            backgroundColor: '#f3f4f6',
-            borderRadius: '0.5rem'
-          }}>
-            <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>
-              {eventDetails.title}
-            </h3>
-            <p>Date: {eventDetails.startDate}</p>
-            <p>Time: {eventDetails.startHour} - {eventDetails.endHour}</p>
-            <p>Total Registrations: {registrations.length}</p>
-          </div>
-        )}
+            {canManageRegistrations && !isAddingNew && <div className="registration-admin-actions">
+              <PDFDownloadLink className="registration-admin-button" document={<RegistrationsPDF event={eventDetails} registrations={registrations.map(registration => ({ id: registration.id, name: registration.name, lastName: registration.lastName, email: registration.email, phone: registration.phone, registeredAt: registration.registeredAt?.toLocaleString ? registration.registeredAt.toLocaleString() : String(registration.registeredAt || '') }))} />} fileName={`event-${eventId}-registrations.pdf`}><MdFileDownload size={19} aria-hidden="true" />Export PDF</PDFDownloadLink>
+              <button type="button" className="registration-admin-button registration-admin-primary" onClick={handleAddNew}><MdAdd size={20} aria-hidden="true" />Add New Registration</button>
+            </div>}
+          </header>
 
-        {isAddingNew ? (
-          <div style={{ 
-            maxWidth: '32rem', 
-            margin: '0 auto',
-            padding: '1.5rem',
-            backgroundColor: '#f9fafb',
-            borderRadius: '0.5rem',
-            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
-          }}>
-            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>
-              {selectedRegistration ? 'Edit Registration' : 'New Registration'}
-            </h3>
-            
-            <form onSubmit={handleSubmit}>
-              <div style={{ marginBottom: '1rem' }}>
-                <label className="block text-sm font-medium text-gray-700">Name *</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({...prev, name: e.target.value}))}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    marginTop: '0.25rem'
-                  }}
-                />
-              </div>
+          {canManageRegistrations && <div className="registration-admin-settings"><label><input type="checkbox" aria-label="Enable potluck question" checked={Boolean(eventDetails?.potluckEnabled)} onChange={change => handlePotluckToggle(change.target.checked)} /><span>Ask registrants what potluck item they will bring</span></label></div>}
 
-              <div style={{ marginBottom: '1rem' }}>
-                <label className="block text-sm font-medium text-gray-700">Last Name *</label>
-                <input
-                  type="text"
-                  value={formData.lastName}
-                  onChange={(e) => setFormData(prev => ({...prev, lastName: e.target.value}))}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    marginTop: '0.25rem'
-                  }}
-                />
+          {!canManageRegistrations && publicRegistrationSubmitted ? <div className="registration-admin-success" role="status"><MdCheckCircleOutline size={30} aria-hidden="true" /><div><h3>You&apos;re registered</h3><p>Your RSVP has been received. Thank you!</p></div></div>
+          : (!canManageRegistrations || isAddingNew) ? <div className="registration-admin-form-wrap">
+            <h3>{!canManageRegistrations ? 'Your RSVP' : selectedRegistration ? 'Edit Registration' : 'New Registration'}</h3>
+            <form className="registration-form" onSubmit={handleSubmit}>
+              <div className="registration-field-grid">
+                <div className="registration-field"><label htmlFor="admin-registration-first-name">First name <span aria-hidden="true">*</span></label><input id="admin-registration-first-name" type="text" autoComplete="given-name" placeholder="First name" value={formData.name} onChange={change => setFormData(previous => ({ ...previous, name: change.target.value }))} required disabled={submitting} /></div>
+                <div className="registration-field"><label htmlFor="admin-registration-last-name">Last name <span aria-hidden="true">*</span></label><input id="admin-registration-last-name" type="text" autoComplete="family-name" placeholder="Last name" value={formData.lastName} onChange={change => setFormData(previous => ({ ...previous, lastName: change.target.value }))} required disabled={submitting} /></div>
+                <div className="registration-field registration-admin-phone"><label htmlFor="admin-registration-phone">Phone <small>Optional</small></label><input id="admin-registration-phone" type="tel" autoComplete="tel" placeholder="Phone number" value={formData.phone} onChange={change => setFormData(previous => ({ ...previous, phone: change.target.value }))} disabled={submitting} /></div>
               </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData(prev => ({...prev, email: e.target.value}))}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    marginTop: '0.25rem'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label className="block text-sm font-medium text-gray-700">Phone</label>
-                <input
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) => setFormData(prev => ({...prev, phone: e.target.value}))}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    marginTop: '0.25rem'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label className="block text-sm font-medium text-gray-700">Comments</label>
-                <textarea
-                  value={formData.comments}
-                  onChange={(e) => setFormData(prev => ({...prev, comments: e.target.value}))}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    marginTop: '0.25rem',
-                    minHeight: '6rem'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  style={{
-                    flex: 1,
-                    backgroundColor: submitting ? '#9CA3AF' : '#4F46E5',
-                    color: 'white',
-                    padding: '0.75rem',
-                    borderRadius: '0.375rem',
-                    fontWeight: '500',
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    border: 'none',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  {submitting ? 'Saving...' : (selectedRegistration ? 'Update' : 'Create')}
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  style={{
-                    flex: 1,
-                    backgroundColor: '#6B7280',
-                    color: 'white',
-                    padding: '0.75rem',
-                    borderRadius: '0.375rem',
-                    fontWeight: '500',
-                    cursor: 'pointer',
-                    border: 'none'
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
+              {eventDetails?.potluckEnabled && <div className="registration-potluck"><label htmlFor="admin-registration-potluck-choice">At this event, everyone is bringing a plate, snack, or drink. Can you bring an item to share? If so, please tell us what.</label><input id="admin-registration-potluck-choice" type="text" list="admin-registration-potluck-suggestions" value={formData.potluckChoice} onChange={change => setFormData(previous => ({ ...previous, potluckChoice: change.target.value }))} placeholder="e.g. chicken, soda, chips, or your own idea" disabled={submitting} /><datalist id="admin-registration-potluck-suggestions"><option value="Chicken" /><option value="Soda" /><option value="Chips" /><option value="Salad" /><option value="Dessert" /></datalist></div>}
+              <div className="registration-admin-form-actions"><button type="button" className="registration-admin-button" onClick={handleCancel} disabled={submitting}>Cancel</button><button type="submit" className="registration-submit" disabled={submitting} aria-busy={submitting}><MdCheckCircleOutline size={20} aria-hidden="true" />{submitting ? 'Submitting...' : (!canManageRegistrations ? 'Submit RSVP' : selectedRegistration ? 'Update' : 'Create')}</button></div>
             </form>
           </div>
-        ) : (
-          <>
-            {registrations.length > 0 ? (
-              <div className="registrations-list" style={{ marginTop: '1.5rem' }}>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr 1fr 1fr auto',
-                  gap: '1rem',
-                  padding: '0.75rem',
-                  borderBottom: '1px solid #e5e7eb',
-                  fontWeight: 'bold',
-                  backgroundColor: '#f3f4f6'
-                }}>
-                  <div>Name</div>
-                  <div>Contact</div>
-                  <div>Registered</div>
-                  <div>Comments</div>
-                  <div>Actions</div>
-                </div>
-                
-                {registrations.map(registration => (
-                  <div 
-                    key={registration.id}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr 1fr 1fr auto',
-                      gap: '1rem',
-                      padding: '1rem 0.75rem',
-                      borderBottom: '1px solid #e5e7eb',
-                      alignItems: 'center'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: '500' }}>
-                        {registration.name} {registration.lastName}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      {registration.email && (
-                        <div style={{ fontSize: '0.875rem' }}>{registration.email}</div>
-                      )}
-                      {registration.phone && (
-                        <div style={{ fontSize: '0.875rem' }}>{registration.phone}</div>
-                      )}
-                    </div>
-                    
-                    <div>
-                      <div style={{ fontSize: '0.875rem' }}>
-                        {registration.registeredAt.toLocaleString()}
-                      </div>
-                      {registration.updatedAt && (
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                          Updated: {registration.updatedAt.toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div style={{ fontSize: '0.875rem' }}>
-                      {registration.comments || <em style={{ color: '#9ca3af' }}>No comments</em>}
-                    </div>
-                    
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        onClick={() => handleEdit(registration)}
-                        style={{
-                          backgroundColor: '#4F46E5',
-                          color: 'white',
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '0.25rem',
-                          fontSize: '0.875rem',
-                          border: 'none',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Edit
-                      </button>
-                      
-                      <button
-                        onClick={() => handleDelete(registration.id)}
-                        style={{
-                          backgroundColor: '#EF4444',
-                          color: 'white',
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '0.25rem',
-                          fontSize: '0.875rem',
-                          border: 'none',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: '3rem 0',
-                color: '#6b7280'
-              }}>
-                <p style={{ marginBottom: '1rem' }}>No registrations found for this event.</p>
-                <button
-                  onClick={handleAddNew}
-                  style={{
-                    backgroundColor: '#4F46E5',
-                    color: 'white',
-                    padding: '0.5rem 1rem',
-                    borderRadius: '0.375rem',
-                    fontWeight: '500',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Create First Registration
-                </button>
-              </div>
-            )}
-          </>
-        )}
+          : registrations.length > 0 ? <div className="registration-admin-table-scroll" role="region" aria-label="Event registration roster" tabIndex={0}>
+            <table className="registration-admin-table"><thead><tr><th scope="col">Name</th><th scope="col">Contact</th>{eventDetails?.potluckEnabled && <th scope="col">Potluck item</th>}<th scope="col">Registered</th><th scope="col">Comments</th><th scope="col" className="registration-admin-action-heading">Actions</th></tr></thead>
+              <tbody>{registrations.map(registration => <tr key={registration.id}>
+                <td><strong>{registration.name} {registration.lastName}</strong></td>
+                <td>{registration.email && <span>{registration.email}</span>}{registration.phone && <span>{registration.phone}</span>}</td>
+                {eventDetails?.potluckEnabled && <td>{registration.potluckChoice || <span className="registration-admin-muted">Not specified</span>}</td>}
+                <td><span>{registration.registeredAt.toLocaleString()}</span>{registration.updatedAt && <small>Updated: {registration.updatedAt.toLocaleString()}</small>}</td>
+                <td>{registration.comments || <span className="registration-admin-muted">No comments</span>}</td>
+                <td><div className="registration-admin-row-actions"><button type="button" aria-label={`Edit registration for ${registration.name} ${registration.lastName}`} title="Edit registration" onClick={() => handleEdit(registration)}><MdEdit size={19} /></button><button type="button" className="registration-admin-delete" aria-label={`Delete registration for ${registration.name} ${registration.lastName}`} title="Delete registration" onClick={() => handleDelete(registration.id)}><MdDeleteOutline size={20} /></button></div></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          : <div className="registration-admin-empty"><MdPeopleOutline size={40} aria-hidden="true" /><p>No registrations found for this event.</p><button type="button" className="registration-admin-button" onClick={handleAddNew}><MdAdd size={20} aria-hidden="true" />Create First Registration</button></div>}
+        </section>
       </div>
-    </div>
+      <footer className="registration-footer">{eventTitle}</footer>
+    </main>
   );
 };
 

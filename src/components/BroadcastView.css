@@ -6,10 +6,18 @@
   bottom: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
+  height: calc(var(--app-vh, 1vh) * 100);
+  max-width: 100vw;
+  max-height: 100vh;
+  max-height: 100dvh;
+  max-height: calc(var(--app-vh, 1vh) * 100);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
   margin: 0;
   padding: 0;
   transition: all 0.3s ease-in-out; /* Smooth transition for background changes */
@@ -20,8 +28,10 @@
 
 .broadcast-microphone {
   position: absolute;
-  top: 1rem;
-  right: 1rem;
+  top: 4.5rem;
+  left: 1rem;
+  right: auto;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -29,6 +39,7 @@
   background: rgba(0, 0, 0, 0.3);
   border-radius: 0.5rem;
   backdrop-filter: blur(4px);
+  max-width: calc(100vw - 2rem);
 }
 
 .microphone-indicator {
@@ -42,6 +53,7 @@
   align-items: center;
   gap: 0.5rem;
   animation: pulse 2s infinite ease-in-out;
+  white-space: nowrap;
 }
 
 .broadcast-content {
@@ -52,7 +64,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem;
+  padding: clamp(0.5rem, 4vw, 2rem);
+  overflow: hidden;
   background: transparent;
 }
 
@@ -61,7 +74,9 @@
   width: 100%;
   max-width: 90%;
   max-height: 90%;
-  padding: 0 2rem;
+  padding: 0 clamp(0.5rem, 4vw, 2rem);
+  overflow: hidden;
+  overflow-wrap: break-word;
   transition: color 0.3s ease, font-size 0.3s ease;
   background: transparent;
 }
@@ -72,6 +87,8 @@
   left: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
+  height: calc(var(--app-vh, 1vh) * 100);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -90,6 +107,8 @@
   left: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
+  height: calc(var(--app-vh, 1vh) * 100);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -120,7 +139,7 @@ audio {
 /* Add after existing styles */
 .audio-visualizer {
   position: relative;
-  width: 200px;
+  width: min(200px, 38vw);
   height: 40px;
   background: rgba(0, 0, 0, 0.3);
   border-radius: 4px;
@@ -138,6 +157,75 @@ audio {
 
 .wave-animation {
   animation: wave 0.5s infinite ease-in-out;
+}
+
+.floating-reaction {
+  position: absolute;
+  bottom: 90px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 90vw;
+  animation: floatUpReaction 3s ease-out forwards;
+  pointer-events: none;
+}
+
+.floating-reaction-emoji {
+  font-size: clamp(2.2rem, 12vw, 5rem);
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+}
+
+.floating-reaction-label {
+  font-size: clamp(0.85rem, 4vw, 1.6rem);
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@keyframes floatUpReaction {
+  0% {
+    transform: translateX(-50%) translateY(0) scale(0.7);
+    opacity: 0;
+  }
+  10% {
+    transform: translateX(-50%) translateY(-20px) scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-70vh) scale(1.5);
+    opacity: 0;
+  }
+}
+
+.floating-reaction--fade-text {
+  animation-name: floatUpReactionFadeText;
+}
+
+@keyframes floatUpReactionFadeText {
+  0% {
+    transform: translateX(-50%) translateY(0) scale(0.7);
+    opacity: 0;
+  }
+  10% {
+    transform: translateX(-50%) translateY(-20px) scale(1.15);
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  45% {
+    opacity: 0.25;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-70vh) scale(1.5);
+    opacity: 0;
+  }
 }
 
 .viewer-count {
