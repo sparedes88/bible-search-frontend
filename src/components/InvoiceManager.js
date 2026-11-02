@@ -27,6 +27,7 @@ import commonStyles from "../pages/commonStyles";
 import { canManageModule } from "../utils/enhancedPermissions";
 import { getChurchData } from "../api/church";
 import { getOvertimePolicyLabel, useOvertimePolicy } from "../utils/overtimePolicy";
+import { saveBillableInvoiceDraft } from "../utils/billableInvoiceDraftStorage";
 
 const FIREBASE_FUNCTIONS_BASE_URL =
   typeof window !== "undefined" && window.location.hostname === "localhost"
@@ -4587,7 +4588,7 @@ const InvoiceManager = () => {
       })),
     };
 
-    sessionStorage.setItem(draftStorageKey, JSON.stringify(previewPayload));
+    saveBillableInvoiceDraft(draftStorageKey, previewPayload);
     const previewUrl = `/organization/${id}/invoices/billable-preview?draft=${encodeURIComponent(draftStorageKey)}`;
     navigate(previewUrl);
   };

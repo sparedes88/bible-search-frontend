@@ -9,6 +9,7 @@ import { getChurchData } from "../api/church";
 import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { getOvertimePolicyLabel, getOvertimePolicyRef, useOvertimePolicy } from "../utils/overtimePolicy";
+import { loadBillableInvoiceDraft, saveBillableInvoiceDraft } from "../utils/billableInvoiceDraftStorage";
 
 const SECTION_DEFS = [
   { key: "companyHeader", label: "Company Header & Client" },
@@ -571,16 +572,7 @@ const BillableInvoicePreviewPage = () => {
   const [draftPayloadOverride, setDraftPayloadOverride] = useState(null);
   const draftPayload = useMemo(() => {
     if (draftPayloadOverride) return draftPayloadOverride;
-    if (!draftKey) return null;
-
-    try {
-      const raw = sessionStorage.getItem(draftKey);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (error) {
-      console.error("Failed to parse billable invoice preview payload:", error);
-      return null;
-    }
+    return loadBillableInvoiceDraft(draftKey);
   }, [draftKey, draftPayloadOverride]);
 
   const invoiceDocRef = useMemo(() => {
@@ -1443,11 +1435,7 @@ const BillableInvoicePreviewPage = () => {
     const base = draftPayloadOverride || draftPayload || {};
     const nextPayload = { ...base, overtimePolicy: nextPolicy };
     setDraftPayloadOverride(nextPayload);
-    try {
-      sessionStorage.setItem(draftKey, JSON.stringify(nextPayload));
-    } catch (error) {
-      console.warn("Unable to persist policy to draft storage:", error);
-    }
+    saveBillableInvoiceDraft(draftKey, nextPayload);
     // The policy is org-wide: save it to the org doc so the whole app (Invoice Manager and
     // every preview) recomputes with the same rates via the live policy subscription.
     try {
